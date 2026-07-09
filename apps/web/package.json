@@ -13,6 +13,8 @@
   "dependencies": {
     "@convex-dev/better-auth": "catalog:",
     "@hookform/resolvers": "^5.4.0",
+    "@hugeicons/core-free-icons": "^4.2.2",
+    "@hugeicons/react": "^1.1.9",
     "@qali/backend": "workspace:*",
     "@qali/env": "workspace:*",
     "@qali/ui": "workspace:*",
@@ -22,7 +24,6 @@
     "better-auth": "catalog:",
     "convex": "catalog:",
     "dotenv": "catalog:",
-    "lucide-react": "catalog:",
     "next-themes": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",

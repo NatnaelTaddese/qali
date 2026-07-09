@@ -1,18 +1,18 @@
 import { Navigate, Outlet, createFileRoute } from "@tanstack/react-router";
 import { Authenticated, AuthLoading, Unauthenticated } from "convex/react";
 
-export const Route = createFileRoute("/_auth")({
-  component: AuthLayout,
+export const Route = createFileRoute("/_workspace")({
+  component: WorkspaceLayout,
 });
 
-function AuthLayout() {
+function WorkspaceLayout() {
   return (
     <>
       <Authenticated>
-        <Navigate to="/" />
+        <Outlet />
       </Authenticated>
       <Unauthenticated>
-        <Outlet />
+        <Navigate to="/login" />
       </Unauthenticated>
       <AuthLoading>
         <div>Loading...</div>

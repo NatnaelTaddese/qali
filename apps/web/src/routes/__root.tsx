@@ -1,4 +1,5 @@
 import { Toaster } from "@qali/ui/components/sonner";
+import { TooltipProvider } from "@qali/ui/components/tooltip";
 import { HeadContent, Outlet, createRootRouteWithContext } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 
@@ -39,9 +40,11 @@ function RootComponent() {
         disableTransitionOnChange
         storageKey="vite-ui-theme"
       >
-        <div className="grid grid-rows-[1fr] h-svh">
-          <Outlet />
-        </div>
+        <TooltipProvider>
+          <div className="grid grid-rows-[1fr] h-svh">
+            <Outlet />
+          </div>
+        </TooltipProvider>
         <Toaster richColors />
       </ThemeProvider>
       <TanStackRouterDevtools position="bottom-left" />

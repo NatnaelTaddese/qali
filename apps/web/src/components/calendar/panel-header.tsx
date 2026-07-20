@@ -2,7 +2,8 @@ import { cn } from "@qali/ui/lib/utils";
 import { differenceInCalendarDays, format, isToday } from "date-fns";
 import { motion } from "motion/react";
 
-import { EventPopover } from "./event-popover";
+import { useDock } from "@/components/workspace/dock-context";
+
 import {
   dayColsTemplate,
   eventColorVar,
@@ -22,6 +23,7 @@ interface PanelHeaderProps {
 /** Weekday/date row plus the all-day band for a single day or week page.
  * Contains no gutter column — the time gutter is pinned as a sibling. */
 export function PanelHeader({ days, allDayEvents, allDayHeight }: PanelHeaderProps) {
+  const { open } = useDock();
   const template = dayColsTemplate(days.length);
   return (
     <div
@@ -77,9 +79,10 @@ export function PanelHeader({ days, allDayEvents, allDayHeight }: PanelHeaderPro
             );
             const colorVar = eventColorVar(event);
             return (
-              <EventPopover key={event._id} event={event}>
-                <motion.div
+              <motion.div
+                  key={event._id}
                   data-event
+                  onClick={() => open({ kind: "event", event })}
                   whileTap={press.whileTap}
                   transition={{ scale: press.transition }}
                   className="mx-0.5 cursor-pointer truncate rounded-md border-l-[3px] px-2 py-0.5 text-xs font-medium ring-1 ring-border/60"
@@ -91,7 +94,6 @@ export function PanelHeader({ days, allDayEvents, allDayHeight }: PanelHeaderPro
                 >
                   {event.summary ?? "(No title)"}
                 </motion.div>
-              </EventPopover>
             );
           })}
         </div>

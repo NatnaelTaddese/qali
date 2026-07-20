@@ -1,11 +1,9 @@
-import { api } from "@qali/backend/convex/_generated/api";
 import { cn } from "@qali/ui/lib/utils";
-import { useAction } from "convex/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
+
+import { useDock } from "@/components/workspace/dock-context";
 
 import { EventCard } from "./event-card";
-import { EventPopover } from "./event-popover";
 import { GhostEvent } from "./ghost-event";
 import {
   layoutDayEvents,
@@ -19,7 +17,7 @@ interface Draft {
   anchorMs: number;
   startMs: number;
   endMs: number;
-  status: "armed" | "dragging" | "pending";
+  status: "armed" | "dragging";
 }
 
 const DRAG_THRESHOLD_PX = 4;
@@ -34,10 +32,17 @@ interface DayColumnProps {
 export function DayColumn({ day, events, snapAlign }: DayColumnProps) {
   const dayStartMs = day.getTime();
   const dayEndMs = dayStartMs + MS_PER_DAY;
-  const createEvent = useAction(api.calendar.createEvent);
+  const { view, open } = useDock();
   const ref = useRef<HTMLDivElement>(null);
   const pressClientY = useRef(0);
   const [draft, setDraft] = useState<Draft | null>(null);
+
+  // A create awaiting confirmation in the dock keeps its ghost on whichever
+  // column it falls in, and follows the times as they're edited there.
+  const pendingRange =
+    view?.kind === "create" && view.startMs < dayEndMs && view.endMs > dayStartMs
+      ? view
+      : null;
 
   const positioned = useMemo(
     () => layoutDayEvents(events, dayStartMs),
@@ -45,7 +50,7 @@ export function DayColumn({ day, events, snapAlign }: DayColumnProps) {
   );
 
   useEffect(() => {
-    if (!draft || draft.status === "pending") return;
+    if (!draft) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setDraft(null);
     };
@@ -62,7 +67,6 @@ export function DayColumn({ day, events, snapAlign }: DayColumnProps) {
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
-    if (draft?.status === "pending") return;
     if ((e.target as HTMLElement).closest("[data-event]")) return;
     const anchorMs = Math.min(snappedMs(e.clientY), dayEndMs - SNAP_MS);
     pressClientY.current = e.clientY;
@@ -71,7 +75,7 @@ export function DayColumn({ day, events, snapAlign }: DayColumnProps) {
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!draft || draft.status === "pending") return;
+    if (!draft) return;
     if (
       draft.status === "armed" &&
       Math.abs(e.clientY - pressClientY.current) < DRAG_THRESHOLD_PX
@@ -88,22 +92,18 @@ export function DayColumn({ day, events, snapAlign }: DayColumnProps) {
   };
 
   const onPointerUp = () => {
-    if (!draft || draft.status === "pending") return;
+    if (!draft) return;
     // A plain click (never crossed the drag threshold) creates nothing.
     if (draft.status === "armed") {
       setDraft(null);
       return;
     }
+    // The drag only proposes a range — the dock takes it from here and the user
+    // confirms. Hand the range over and drop the local draft; the ghost that
+    // stays on the grid is now driven by the dock's create view.
     const { startMs, endMs } = draft;
-    setDraft({ anchorMs: draft.anchorMs, startMs, endMs, status: "pending" });
-    createEvent({ summary: "New event", startMs, endMs })
-      .then(() => setDraft(null))
-      .catch((error: unknown) => {
-        setDraft(null);
-        toast.error("Couldn't create event", {
-          description: error instanceof Error ? error.message : undefined,
-        });
-      });
+    setDraft(null);
+    open({ kind: "create", startMs, endMs });
   };
 
   return (
@@ -119,16 +119,26 @@ export function DayColumn({ day, events, snapAlign }: DayColumnProps) {
       style={snapAlign ? { scrollSnapAlign: "start" } : undefined}
     >
       {positioned.map((p) => (
-        <EventPopover key={p.event._id} event={p.event}>
-          <EventCard positioned={p} />
-        </EventPopover>
+        <EventCard
+          key={p.event._id}
+          positioned={p}
+          onClick={() => open({ kind: "event", event: p.event })}
+        />
       ))}
-      {draft && draft.status !== "armed" && (
+      {draft && draft.status === "dragging" && (
         <GhostEvent
           startMs={draft.startMs}
           endMs={draft.endMs}
           dayStartMs={dayStartMs}
-          pending={draft.status === "pending"}
+          pending={false}
+        />
+      )}
+      {pendingRange && (
+        <GhostEvent
+          startMs={pendingRange.startMs}
+          endMs={pendingRange.endMs}
+          dayStartMs={dayStartMs}
+          pending
         />
       )}
     </div>

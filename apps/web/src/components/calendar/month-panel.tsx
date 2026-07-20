@@ -2,7 +2,8 @@ import { cn } from "@qali/ui/lib/utils";
 import { addDays, format, isSameMonth, isToday, startOfWeek } from "date-fns";
 import { useMemo } from "react";
 
-import { EventPopover } from "./event-popover";
+import { useDock } from "@/components/workspace/dock-context";
+
 import { eventColorVar, MS_PER_DAY, WEEK_STARTS_ON, type CalendarEvent } from "./lib";
 
 const MAX_CHIPS = 3;
@@ -24,6 +25,7 @@ interface MonthPanelProps {
 
 /** A single month page: weekday labels over a 6×7 grid of day cells. */
 export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanelProps) {
+  const { open } = useDock();
   const eventsByDay = useMemo(() => {
     return days.map((day) => {
       const dayStartMs = day.getTime();
@@ -73,10 +75,14 @@ export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanel
                 {dayEvents.slice(0, MAX_CHIPS).map((event) => {
                   const colorVar = eventColorVar(event);
                   return (
-                    <EventPopover key={event._id} event={event}>
-                      <span
+                    <span
+                        key={event._id}
                         data-event
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          // Don't let the day cell's onSelectDay fire too.
+                          e.stopPropagation();
+                          open({ kind: "event", event });
+                        }}
                         className="flex items-center gap-1 truncate rounded px-1 py-0.5 text-[11px] leading-tight"
                         style={{
                           backgroundColor: `color-mix(in oklab, var(${colorVar}) 18%, var(--card))`,
@@ -88,7 +94,6 @@ export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanel
                         />
                         <span className="truncate">{event.summary ?? "(No title)"}</span>
                       </span>
-                    </EventPopover>
                   );
                 })}
                 {dayEvents.length > MAX_CHIPS && (

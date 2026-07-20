@@ -123,12 +123,12 @@ export function CalendarWeekView() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center justify-between gap-4 border-b border-border px-4 py-2.5">
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Calendar</span>
+        <div className="flex items-center justify-center gap-2 text-sm">
+          <span className="text-muted-foreground">View</span>
           <HugeiconsIcon
             icon={ArrowRight01Icon}
             strokeWidth={2}
-            className="size-3.5 text-muted-foreground/60"
+            className="size-4 text-muted-foreground/60"
           />
           <MonthPicker selectedWeekStart={pageStart("week", anchor)} onSelect={jumpTo}>
             <button
@@ -179,12 +179,6 @@ export function CalendarWeekView() {
 
           <CalendarPicker calendars={calendars} />
 
-          <button
-            type="button"
-            className="rounded-lg bg-primary px-3.5 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90"
-          >
-            Share
-          </button>
         </div>
       </header>
 

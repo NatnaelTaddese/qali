@@ -9,7 +9,8 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { format, isSameDay } from "date-fns";
 import type { ReactNode } from "react";
 
-import { eventColorVar, type CalendarEvent } from "./lib";
+import { useEventColor } from "./colors";
+import type { CalendarEvent } from "./lib";
 
 function timeText(event: CalendarEvent): string {
   if (event.allDay) {
@@ -42,7 +43,7 @@ export function EventDetail({
   event: CalendarEvent;
   onClose: () => void;
 }) {
-  const colorVar = eventColorVar(event);
+  const colorVar = useEventColor()(event);
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex items-start gap-2">

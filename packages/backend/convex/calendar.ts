@@ -120,6 +120,11 @@ export const createEvent = action({
     description: v.optional(v.string()),
     location: v.optional(v.string()),
     allDay: v.optional(v.boolean()),
+    /** Google calendar to create in; defaults to the user's primary. */
+    calendarId: v.optional(v.string()),
+    /** Google event colour override ("1".."11"); absent inherits the calendar. */
+    colorId: v.optional(v.string()),
+    visibility: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<MappedEvent> => {
     const user = await authComponent.safeGetAuthUser(ctx);
@@ -134,25 +139,30 @@ export const createEvent = action({
       throw new Error("No Google access token available for user");
     }
 
-    // Write to (and stamp the mirrored row with) the real primary calendar id,
-    // so the optimistic row matches what the next sync produces. Falls back to
-    // the "primary" keyword if the calendar list hasn't synced yet.
-    const primaryCalendarId: string =
+    // Write to (and stamp the mirrored row with) a real calendar id, so the
+    // optimistic row matches what the next sync produces. Without an explicit
+    // choice that's the user's primary, falling back to the "primary" keyword
+    // if the calendar list hasn't synced yet.
+    const targetCalendarId: string =
+      args.calendarId ??
       (await ctx.runQuery(internal.calendar.getPrimaryCalendarId, {
         userId: user._id,
-      })) ?? "primary";
+      })) ??
+      "primary";
 
     const toGoogleTime = (ms: number) =>
       args.allDay
         ? { date: new Date(ms).toISOString().slice(0, 10) }
         : { dateTime: new Date(ms).toISOString() };
 
-    const event = await insertCalendarEvent(accessToken, primaryCalendarId, {
+    const event = await insertCalendarEvent(accessToken, targetCalendarId, {
       summary: args.summary,
       description: args.description,
       location: args.location,
       start: toGoogleTime(args.startMs),
       end: toGoogleTime(args.endMs),
+      colorId: args.colorId,
+      visibility: args.visibility,
     });
 
     await ctx.runMutation(internal.calendar.upsertEvent, {
@@ -190,6 +200,8 @@ export const upsertEvent = internalMutation({
       allDay: v.boolean(),
       status: v.string(),
       htmlLink: v.optional(v.string()),
+      colorId: v.optional(v.string()),
+      visibility: v.optional(v.string()),
       googleUpdatedMs: v.number(),
     }),
   },

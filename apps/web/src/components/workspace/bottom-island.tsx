@@ -21,16 +21,22 @@ import {
   dockVariantsReduced,
   SPRING_DOCK,
 } from "@/components/calendar/motion";
-import { authClient } from "@/lib/auth-client";
 import { AccountPanel } from "./account-panel";
 import { useDock, type DockView } from "./dock-context";
+import { UserAvatar } from "./user-avatar";
 
-/** Each view gets its own width so the shell visibly adapts to what it holds. */
+/** Each view gets its own width so the shell visibly adapts to what it holds.
+ * Padding is deliberately not part of this — every panel shares one inset. */
 function widthClass(view: DockView | null): string {
-  if (!view) return "px-2 py-1.5";
-  if (view.kind === "account") return "w-[min(19rem,100%)] p-4";
-  if (view.kind === "create") return "w-[min(22rem,100%)] p-4";
-  return "w-[min(26rem,100%)] p-4";
+  if (!view) return "";
+  if (view.kind === "account") return "w-[min(19rem,100%)]";
+  if (view.kind === "create") return "w-[min(27rem,100%)]";
+  return "w-[min(26rem,100%)]";
+}
+
+/** The collapsed nav is a pill; the panels are cards, so they round less. */
+function cornerRadius(view: DockView | null): number {
+  return view ? 20 : 28;
 }
 
 export function BottomIsland() {
@@ -78,9 +84,12 @@ export function BottomIsland() {
         ref={ref}
         layout
         transition={SPRING_DOCK}
-        style={{ borderRadius: 28 }}
+        // Plain style, not `animate` — `layout` rewrites borderRadius each frame
+        // to correct for the box scaling, and an animated value fights that.
+        style={{ borderRadius: cornerRadius(view) }}
         className={cn(
           "pointer-events-auto overflow-hidden border border-border bg-popover/90 shadow-lg backdrop-blur",
+          view ? "p-4" : "px-2 py-1.5",
           widthClass(view),
         )}
       >
@@ -120,10 +129,6 @@ export function BottomIsland() {
 }
 
 function NavRow({ onOpenAccount }: { onOpenAccount: () => void }) {
-  const { data: session } = authClient.useSession();
-  const user = session?.user;
-  const initial = (user?.name ?? user?.email ?? "?").charAt(0).toUpperCase();
-
   return (
     <div className="flex items-center gap-1">
       <NavButton icon={Calendar03Icon} label="Calendar" active />
@@ -137,13 +142,9 @@ function NavRow({ onOpenAccount }: { onOpenAccount: () => void }) {
         type="button"
         aria-label="Account"
         onClick={onOpenAccount}
-        className="flex size-8 items-center justify-center rounded-full bg-secondary text-xs font-medium text-secondary-foreground ring-1 ring-border outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {user?.image ? (
-          <img src={user.image} alt="" className="size-full rounded-full object-cover" />
-        ) : (
-          initial
-        )}
+        <UserAvatar className="size-8" />
       </button>
     </div>
   );

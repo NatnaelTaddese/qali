@@ -221,24 +221,5 @@ export function layoutDayEvents(
   }));
 }
 
-const CHART_VARS = [
-  "--chart-1",
-  "--chart-2",
-  "--chart-3",
-  "--chart-4",
-  "--chart-5",
-] as const;
-
-/** Stable chart-color variable for a calendar id. */
-export function chartVarForId(calendarId: string): string {
-  let hash = 0;
-  for (const ch of calendarId) {
-    hash = (hash * 31 + ch.charCodeAt(0)) | 0;
-  }
-  return CHART_VARS[Math.abs(hash) % CHART_VARS.length];
-}
-
-/** Stable chart-color variable for an event, hashed from its calendar id. */
-export function eventColorVar(event: CalendarEvent): string {
-  return chartVarForId(event.calendarId);
-}
+// Event/calendar colors live in ./colors.ts — they resolve against Google's
+// synced color data rather than anything derived here.

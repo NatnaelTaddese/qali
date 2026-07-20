@@ -30,6 +30,8 @@ const eventValidator = v.object({
   allDay: v.boolean(),
   status: v.string(),
   htmlLink: v.optional(v.string()),
+  colorId: v.optional(v.string()),
+  visibility: v.optional(v.string()),
   googleUpdatedMs: v.number(),
 });
 

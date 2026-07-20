@@ -4,7 +4,8 @@ import { useMemo } from "react";
 
 import { useDock } from "@/components/workspace/dock-context";
 
-import { eventColorVar, MS_PER_DAY, WEEK_STARTS_ON, type CalendarEvent } from "./lib";
+import { useEventColor } from "./colors";
+import { MS_PER_DAY, WEEK_STARTS_ON, type CalendarEvent } from "./lib";
 
 const MAX_CHIPS = 3;
 const WEEK_REF = startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_ON });
@@ -26,6 +27,7 @@ interface MonthPanelProps {
 /** A single month page: weekday labels over a 6×7 grid of day cells. */
 export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanelProps) {
   const { open } = useDock();
+  const colorFor = useEventColor();
   const eventsByDay = useMemo(() => {
     return days.map((day) => {
       const dayStartMs = day.getTime();
@@ -73,7 +75,7 @@ export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanel
               </span>
               <div className="flex min-h-0 flex-col gap-0.5 overflow-hidden">
                 {dayEvents.slice(0, MAX_CHIPS).map((event) => {
-                  const colorVar = eventColorVar(event);
+                  const colorVar = colorFor(event);
                   return (
                     <span
                         key={event._id}

@@ -11,15 +11,17 @@
     "prefix": ""
   },
   "iconLibrary": "hugeicons",
+  "rtl": false,
+  "menuColor": "default",
+  "menuAccent": "subtle",
   "aliases": {
     "components": "@qali/ui/components",
     "utils": "@qali/ui/lib/utils",
-    "hooks": "@qali/ui/hooks",
+    "ui": "@qali/ui/components",
     "lib": "@qali/ui/lib",
-    "ui": "@qali/ui/components"
+    "hooks": "@qali/ui/hooks"
   },
-  "menuColor": "default",
-  "menuAccent": "subtle",
-  "registries": {},
-  "rtl": false
+  "registries": {
+    "@beui": "https://beui.dev/r/{name}.json"
+  }
 }

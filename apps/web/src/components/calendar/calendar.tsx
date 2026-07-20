@@ -18,11 +18,11 @@ import { addDays, getISOWeek } from "date-fns";
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import { CalendarPager, type CalendarPagerHandle } from "./calendar-pager";
+import { calendarColorVar } from "./colors";
 import {
   addPages,
   ALLDAY_ROW_HEIGHT,
   type CalendarView,
-  chartVarForId,
   MS_PER_DAY,
   pageDays,
   pageStart,
@@ -238,7 +238,7 @@ function CalendarPicker({ calendars }: { calendars: Doc<"calendars">[] }) {
                 key={c._id}
                 className="size-4 rounded-full ring-2 ring-background"
                 style={{
-                  backgroundColor: `var(${chartVarForId(c.googleCalendarId)})`,
+                  backgroundColor: `var(${calendarColorVar(c)})`,
                 }}
               />
             ))}
@@ -273,7 +273,7 @@ function CalendarPicker({ calendars }: { calendars: Doc<"calendars">[] }) {
               <span
                 className="size-3 shrink-0 rounded-full"
                 style={{
-                  backgroundColor: `var(${chartVarForId(cal.googleCalendarId)})`,
+                  backgroundColor: `var(${calendarColorVar(cal)})`,
                 }}
               />
               <span className="min-w-0 flex-1 truncate text-sm">

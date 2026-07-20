@@ -61,6 +61,8 @@ export type MappedEvent = {
   allDay: boolean;
   status: string;
   htmlLink?: string;
+  colorId?: string;
+  visibility?: string;
   googleUpdatedMs: number;
 };
 
@@ -72,6 +74,8 @@ type RawEvent = {
   description?: string;
   location?: string;
   htmlLink?: string;
+  colorId?: string;
+  visibility?: string;
   updated?: string;
   start?: RawCalendarDateTime;
   end?: RawCalendarDateTime;
@@ -157,6 +161,8 @@ export function mapGoogleEvent(raw: RawEvent, calendarId: string): MappedEvent {
     allDay,
     status: raw.status ?? "confirmed",
     htmlLink: raw.htmlLink,
+    colorId: raw.colorId,
+    visibility: raw.visibility,
     googleUpdatedMs: raw.updated ? new Date(raw.updated).getTime() : Date.now(),
   };
 }
@@ -212,6 +218,8 @@ export async function insertCalendarEvent(
     location?: string;
     start: RawCalendarDateTime;
     end: RawCalendarDateTime;
+    colorId?: string;
+    visibility?: string;
   },
 ): Promise<MappedEvent> {
   const data = (await googleFetch(

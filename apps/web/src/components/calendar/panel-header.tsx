@@ -4,12 +4,8 @@ import { motion } from "motion/react";
 
 import { useDock } from "@/components/workspace/dock-context";
 
-import {
-  dayColsTemplate,
-  eventColorVar,
-  HEADER_DATE_HEIGHT,
-  type CalendarEvent,
-} from "./lib";
+import { useEventColor } from "./colors";
+import { dayColsTemplate, HEADER_DATE_HEIGHT, type CalendarEvent } from "./lib";
 import { press } from "./motion";
 
 interface PanelHeaderProps {
@@ -24,6 +20,7 @@ interface PanelHeaderProps {
  * Contains no gutter column — the time gutter is pinned as a sibling. */
 export function PanelHeader({ days, allDayEvents, allDayHeight }: PanelHeaderProps) {
   const { open } = useDock();
+  const colorFor = useEventColor();
   const template = dayColsTemplate(days.length);
   return (
     <div
@@ -77,7 +74,7 @@ export function PanelHeader({ days, allDayEvents, allDayHeight }: PanelHeaderPro
               differenceInCalendarDays(event.endMs - 1, days[0]),
               days.length - 1,
             );
-            const colorVar = eventColorVar(event);
+            const colorVar = colorFor(event);
             return (
               <motion.div
                   key={event._id}

@@ -47,6 +47,11 @@ export default defineSchema({
     allDay: v.boolean(),
     status: v.string(),
     htmlLink: v.optional(v.string()),
+    // Google's per-event color override ("1".."11"); absent means the event
+    // inherits its calendar's color.
+    colorId: v.optional(v.string()),
+    // Google's `visibility`: "default" | "public" | "private" | "confidential".
+    visibility: v.optional(v.string()),
     googleUpdatedMs: v.number(),
   })
     .index("by_user_and_start", ["userId", "startMs"])

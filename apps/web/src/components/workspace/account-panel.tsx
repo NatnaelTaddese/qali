@@ -3,22 +3,16 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Button } from "@qali/ui/components/button";
 
 import { authClient } from "@/lib/auth-client";
+import { UserAvatar } from "./user-avatar";
 
 export function AccountPanel({ onClose }: { onClose: () => void }) {
   const { data: session } = authClient.useSession();
   const user = session?.user;
-  const initial = (user?.name ?? user?.email ?? "?").charAt(0).toUpperCase();
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2.5">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-medium text-secondary-foreground ring-1 ring-border">
-          {user?.image ? (
-            <img src={user.image} alt="" className="size-full rounded-full object-cover" />
-          ) : (
-            initial
-          )}
-        </span>
+        <UserAvatar className="size-9" />
         <div className="min-w-0 flex-1">
           {user?.name && <p className="truncate text-sm font-medium">{user.name}</p>}
           <p className="truncate text-xs text-muted-foreground">{user?.email}</p>

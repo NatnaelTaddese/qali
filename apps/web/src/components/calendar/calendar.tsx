@@ -151,7 +151,7 @@ export function CalendarWeekView() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex items-center justify-between gap-4 border-b border-border px-4 py-2.5">
+      <header className="flex items-center justify-between gap-4 border-t border-border/80 bg-muted/40 px-4 py-2.5 dark:bg-black/20">
         <div className="flex items-center justify-center gap-2 text-sm">
           <span className="text-muted-foreground">View</span>
           <HugeiconsIcon

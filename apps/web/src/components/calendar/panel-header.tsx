@@ -34,7 +34,7 @@ export function PanelHeader({
   const template = dayColsTemplate(days.length);
   return (
     <div
-      className="relative flex flex-col border-b border-border bg-background transition-[height] duration-200 motion-reduce:transition-none"
+      className="relative flex flex-col border-b border-border bg-muted/40 backdrop-blur-xs transition-[height] duration-200 motion-reduce:transition-none dark:bg-black/20"
       style={{ height: HEADER_DATE_HEIGHT + allDayHeight }}
     >
       {/* Column dividers as one continuous overlay so the lines run the full

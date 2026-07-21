@@ -226,7 +226,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
         data-time-strip-scroller
         ref={scrollerRef}
         onScroll={onScroll}
-        className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain bg-muted/40 [scrollbar-width:none] dark:bg-black/20 [&::-webkit-scrollbar]:hidden"
         style={{ scrollSnapType: "x mandatory", scrollPaddingLeft: GUTTER_TOTAL }}
       >
         <div
@@ -244,7 +244,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
           />
         </div>
         <div
-          className="flex shrink-0 flex-col"
+          className="flex shrink-0 flex-col bg-background"
           style={{
             flex: `0 0 calc(${days.length} * (100% - ${GUTTER_TOTAL}px) / ${columns})`,
           }}

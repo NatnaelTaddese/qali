@@ -109,7 +109,7 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
       <div
         ref={scrollerRef}
         onScroll={onScroll}
-        className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain bg-muted/40 [scrollbar-width:none] dark:bg-black/20 [&::-webkit-scrollbar]:hidden"
         style={{ scrollSnapType: "x mandatory", scrollPaddingLeft: gutterWidth }}
       >
         {gutter && (
@@ -123,7 +123,7 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
         {pageStarts.map((start) => (
           <div
             key={start.getTime()}
-            className="shrink-0"
+            className="shrink-0 bg-background"
             style={{
               flex: `0 0 calc(100% - ${gutterWidth}px)`,
               scrollSnapAlign: "start",

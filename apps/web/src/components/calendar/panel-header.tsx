@@ -46,7 +46,15 @@ export function PanelHeader({
         style={{ gridTemplateColumns: template }}
       >
         {days.map((day) => (
-          <div key={day.getTime()} className="border-l border-border" />
+          <div key={day.getTime()} className="relative">
+            <span
+              className="absolute inset-y-0 left-0 w-px"
+              style={{
+                backgroundImage:
+                  "linear-gradient(to bottom, transparent 0, var(--border) 32px, var(--border) 100%)",
+              }}
+            />
+          </div>
         ))}
       </div>
       <div

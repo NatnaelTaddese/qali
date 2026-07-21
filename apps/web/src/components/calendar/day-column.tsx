@@ -1,5 +1,5 @@
 import { cn } from "@qali/ui/lib/utils";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 
 import { useDock } from "@/components/workspace/dock-context";
 
@@ -12,6 +12,7 @@ import {
   snappedMsFromOffsetY,
   type CalendarEvent,
 } from "./lib";
+import type { DragMode } from "./use-event-drag";
 
 interface Draft {
   anchorMs: number;
@@ -27,9 +28,27 @@ interface DayColumnProps {
   events: CalendarEvent[];
   /** Mark this column as a horizontal scroll-snap target. */
   snapAlign?: boolean;
+  /** The shared `data-time-grid` element, read by card drags for geometry. */
+  gridRef: RefObject<HTMLDivElement | null>;
+  /** Start a move/resize gesture from a card. */
+  beginDrag: (
+    event: CalendarEvent,
+    mode: DragMode,
+    e: React.PointerEvent,
+    gridEl: HTMLElement | null,
+  ) => void;
+  /** Id of the card currently being dragged, or null. */
+  draggingId: string | null;
 }
 
-export function DayColumn({ day, events, snapAlign }: DayColumnProps) {
+export function DayColumn({
+  day,
+  events,
+  snapAlign,
+  gridRef,
+  beginDrag,
+  draggingId,
+}: DayColumnProps) {
   const dayStartMs = day.getTime();
   const dayEndMs = dayStartMs + MS_PER_DAY;
   const { view, open } = useDock();
@@ -122,7 +141,10 @@ export function DayColumn({ day, events, snapAlign }: DayColumnProps) {
         <EventCard
           key={p.event._id}
           positioned={p}
-          onClick={() => open({ kind: "event", event: p.event })}
+          isDragging={draggingId === p.event._id}
+          onDragStart={(mode, e) =>
+            beginDrag(p.event, mode, e, gridRef.current)
+          }
         />
       ))}
       {draft && draft.status === "dragging" && (

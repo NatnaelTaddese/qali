@@ -190,12 +190,15 @@ export interface PositionedEvent {
   topPct: number;
   /** 0–100, share of the day height. */
   heightPct: number;
-  /** Depth within its overlap stack: 0 is the bottom (leftmost) card, and each
-   * later-starting overlapping event increments it. Drives the cascade indent
-   * and paint order — deeper cards sit further right and on top. */
+  /** Cascade depth: how many earlier events in the cluster are still running at
+   * this event's start. 0 is the leftmost card; deeper cards indent further
+   * right. Drives the horizontal indent only — not the paint order. */
   stackIndex: number;
   /** Number of cards in this event's overlap cluster (1 when it stands alone). */
   stackCount: number;
+  /** Paint order within the cluster (0 = earliest start). Higher sits on top, so
+   * a later-starting event is never buried under an earlier, longer one. */
+  elevation: number;
 }
 
 /** Horizontal shift, in pixels, applied per stack level in the overlap cascade. */
@@ -215,9 +218,11 @@ export function stackIndentPx(stackIndex: number): number {
 }
 
 /**
- * Position a day's timed events: clamp to the day, then assign transitively
- * overlapping events a cascade stack depth (later-starting events sit further
- * right and on top) via the same lane-packing used for side-by-side columns.
+ * Position a day's timed events: clamp to the day, then cascade transitively
+ * overlapping events. Each event indents past the earlier events still running
+ * at its start (`stackIndex`) and paints in start order (`elevation`), so a
+ * later, shorter event always sits on top of the earlier ones it overlaps
+ * instead of being buried under them.
  */
 export function layoutDayEvents(
   events: CalendarEvent[],
@@ -228,37 +233,38 @@ export function layoutDayEvents(
     .map((event) => {
       const start = Math.max(event.startMs, dayStartMs);
       const end = Math.min(Math.max(event.endMs, start + SNAP_MS), dayEndMs);
-      return { event, start, end, col: 0, cols: 1 };
+      return { event, start, end, stackIndex: 0, stackCount: 1, elevation: 0 };
     })
     .sort((a, b) => a.start - b.start || b.end - b.start - (a.end - a.start));
 
-  // Clusters of transitively overlapping events share a column count.
+  // Walk events in start order, grouping transitively overlapping ones into
+  // clusters. `cluster` holds the earlier members still relevant to the run.
   let cluster: typeof items = [];
   let clusterEnd = -Infinity;
-  let colEnds: number[] = [];
 
   const closeCluster = () => {
-    for (const item of cluster) item.cols = colEnds.length;
+    for (const item of cluster) item.stackCount = cluster.length;
     cluster = [];
-    colEnds = [];
   };
 
   for (const item of items) {
     if (item.start >= clusterEnd) closeCluster();
-    const free = colEnds.findIndex((end) => end <= item.start);
-    item.col = free === -1 ? colEnds.length : free;
-    colEnds[item.col] = item.end;
+    // Indent past every earlier cluster member still running at our start.
+    item.stackIndex = cluster.filter((prev) => prev.end > item.start).length;
+    // Paint order: later starts sit on top of earlier ones in the cluster.
+    item.elevation = cluster.length;
     cluster.push(item);
     clusterEnd = Math.max(clusterEnd, item.end);
   }
   closeCluster();
 
-  return items.map(({ event, start, end, col, cols }) => ({
+  return items.map(({ event, start, end, stackIndex, stackCount, elevation }) => ({
     event,
     topPct: msToPct(start, dayStartMs),
     heightPct: msToPct(end, dayStartMs) - msToPct(start, dayStartMs),
-    stackIndex: col,
-    stackCount: cols,
+    stackIndex,
+    stackCount,
+    elevation,
   }));
 }
 

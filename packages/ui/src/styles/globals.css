@@ -160,6 +160,24 @@
   .event-card {
     container-type: size;
   }
+  /* Own the title clamp here rather than via a Tailwind `line-clamp-*` utility:
+   * the utilities layer outranks the components layer, so a utility would beat
+   * the container-query overrides below and the title could never step down to
+   * one line. Default to two lines... */
+  .event-card-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  /* ...but a second line only earns its place when the card is tall enough for
+   * two title lines plus the time line. Below that, collapse to one line so the
+   * title never wraps into a clipped second row. */
+  @container (max-height: 52px) {
+    .event-card-title {
+      -webkit-line-clamp: 1;
+    }
+  }
   /* Too short for a second line: drop the time and switch the title to a
    * small, vertically centered single line so it stays legible, not clipped. */
   @container (max-height: 38px) {

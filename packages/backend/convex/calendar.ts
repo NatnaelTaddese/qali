@@ -11,7 +11,11 @@ import {
 } from "./_generated/server";
 import { authComponent, createAuth } from "./auth";
 import { CALENDAR_HISTORY_MS, syncOneCalendar } from "./googleSync";
-import { insertCalendarEvent, type MappedEvent } from "./lib/google";
+import {
+  insertCalendarEvent,
+  type MappedEvent,
+  patchCalendarEvent,
+} from "./lib/google";
 
 /** The set of `googleCalendarId`s the user has toggled visible. */
 async function selectedCalendarIds(
@@ -189,6 +193,65 @@ export const createEvent = action({
       }
       return event;
     }
+
+    await ctx.runMutation(internal.calendar.upsertEvent, {
+      userId: user._id,
+      event,
+    });
+    return event;
+  },
+});
+
+/** The synced row for an event, used by actions (which can't read the db). */
+export const getEvent = internalQuery({
+  args: { eventId: v.id("events") },
+  handler: async (ctx, { eventId }) => {
+    return await ctx.db.get(eventId);
+  },
+});
+
+/** Reschedule an existing event: patch Google, then mirror the new times
+ * locally. The frontend calls this on drag/resize; it holds an optimistic
+ * override until this returns and the next sync reflects the change. */
+export const updateEventTime = action({
+  args: {
+    eventId: v.id("events"),
+    startMs: v.number(),
+    endMs: v.number(),
+    /** Client IANA time zone; Google needs it to anchor a timed instant. */
+    timeZone: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<MappedEvent> => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    if (!user) {
+      throw new Error("Not authenticated");
+    }
+
+    const row = await ctx.runQuery(internal.calendar.getEvent, {
+      eventId: args.eventId,
+    });
+    if (!row || row.userId !== user._id) {
+      throw new Error("Event not found");
+    }
+
+    const { accessToken } = await createAuth(ctx).api.getAccessToken({
+      body: { providerId: "google", userId: user._id },
+    });
+    if (!accessToken) {
+      throw new Error("No Google access token available for user");
+    }
+
+    const toGoogleTime = (ms: number) =>
+      row.allDay
+        ? { date: new Date(ms).toISOString().slice(0, 10) }
+        : { dateTime: new Date(ms).toISOString(), timeZone: args.timeZone };
+
+    const event = await patchCalendarEvent(
+      accessToken,
+      row.calendarId,
+      row.googleEventId,
+      { start: toGoogleTime(args.startMs), end: toGoogleTime(args.endMs) },
+    );
 
     await ctx.runMutation(internal.calendar.upsertEvent, {
       userId: user._id,

@@ -21,6 +21,7 @@ import {
 } from "./lib";
 import { getNowIndicatorLayout, NowIndicator } from "./now-indicator";
 import { PanelHeader } from "./panel-header";
+import { useEventDrag } from "./use-event-drag";
 
 export interface TimeStripHandle {
   /** Scroll to a day column index. Use "smooth" for button nav. */
@@ -153,9 +154,11 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       }, 120);
     };
 
+    const { effectiveEvents, beginDrag, draggingId } = useEventDrag(events, days);
+
     const { allDayEvents, timedByDay } = useMemo(
-      () => bucketDayEvents(days, events),
-      [days, events],
+      () => bucketDayEvents(days, effectiveEvents),
+      [days, effectiveEvents],
     );
     const nowLayout = getNowIndicatorLayout(days, now);
 
@@ -225,6 +228,9 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
                 day={day}
                 events={timedByDay[i]}
                 snapAlign={(i - anchorIndex) % snapDays === 0}
+                gridRef={bodyRef}
+                beginDrag={beginDrag}
+                draggingId={draggingId}
               />
             ))}
             {nowLayout && <NowIndicator layout={nowLayout} />}

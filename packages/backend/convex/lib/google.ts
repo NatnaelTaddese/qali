@@ -237,6 +237,31 @@ export async function insertCalendarEvent(
   return mapGoogleEvent(data, calendarId);
 }
 
+/** Patch an existing event's fields (e.g. a rescheduled start/end) and return
+ * the re-mapped result. For a recurring series this targets a single expanded
+ * instance by its `googleEventId`, so Google records a per-occurrence exception. */
+export async function patchCalendarEvent(
+  accessToken: string,
+  calendarId: string,
+  googleEventId: string,
+  body: {
+    start?: RawCalendarDateTime;
+    end?: RawCalendarDateTime;
+    summary?: string;
+    description?: string;
+    location?: string;
+    colorId?: string;
+    visibility?: string;
+  },
+): Promise<MappedEvent> {
+  const data = (await googleFetch(
+    `${CALENDAR_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(googleEventId)}`,
+    accessToken,
+    { method: "PATCH", body: JSON.stringify(body) },
+  )) as RawEvent;
+  return mapGoogleEvent(data, calendarId);
+}
+
 // ---------------------------------------------------------------------------
 // Contacts (People API)
 // ---------------------------------------------------------------------------

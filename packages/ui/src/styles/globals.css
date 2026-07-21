@@ -201,3 +201,64 @@
     }
   }
 }
+
+/* Calendar month zoom transition: zoom in leaving month for detail, zoom out
+   returning to the month overview. Driven by [data-cal-zoom] on <html>. */
+.calendar-body-vt {
+  view-transition-name: calendar-body;
+}
+
+::view-transition-group(calendar-body) {
+  animation-duration: 320ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); /* EASE_OUT_EXPO */
+}
+::view-transition-old(calendar-body),
+::view-transition-new(calendar-body) {
+  transform-origin: center center;
+}
+
+:root[data-cal-zoom="in"]::view-transition-old(calendar-body) {
+  animation-name: cal-zoom-in-old;
+}
+:root[data-cal-zoom="in"]::view-transition-new(calendar-body) {
+  animation-name: cal-zoom-in-new;
+}
+:root[data-cal-zoom="out"]::view-transition-old(calendar-body) {
+  animation-name: cal-zoom-out-old;
+}
+:root[data-cal-zoom="out"]::view-transition-new(calendar-body) {
+  animation-name: cal-zoom-out-new;
+}
+
+@keyframes cal-zoom-in-old {
+  to {
+    opacity: 0;
+    transform: scale(1.12);
+  }
+}
+@keyframes cal-zoom-in-new {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+@keyframes cal-zoom-out-old {
+  to {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+@keyframes cal-zoom-out-new {
+  from {
+    opacity: 0;
+    transform: scale(1.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(calendar-body),
+  ::view-transition-old(calendar-body),
+  ::view-transition-new(calendar-body) {
+    animation: none !important;
+  }
+}

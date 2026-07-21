@@ -15,7 +15,9 @@ import {
 import { cn } from "@qali/ui/lib/utils";
 import { useMutation } from "convex/react";
 import { addDays, getISOWeek } from "date-fns";
+import { useReducedMotion } from "motion/react";
 import { useCallback, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import { CalendarPager, type CalendarPagerHandle } from "./calendar-pager";
 import { calendarColorVar } from "./colors";
@@ -45,6 +47,7 @@ export function CalendarWeekView() {
   const [anchor, setAnchor] = useState(() => pageStart("week", new Date()));
   const pagerRef = useRef<CalendarPagerHandle>(null);
   const stripRef = useRef<TimeStripHandle>(null);
+  const reduce = useReducedMotion();
 
   // Month pages by whole months; day/week slide a continuous day strip.
   const layout = useMemo(() => {
@@ -109,14 +112,45 @@ export function CalendarWeekView() {
     [view],
   );
 
+  // Zoom between month and week/day via the View Transitions API. `flushSync`
+  // commits the new tree (and its layout effects) synchronously so the browser
+  // snapshots the settled view. Falls back to a plain swap when reduced-motion
+  // is on or the browser lacks View Transitions (Firefox / older Safari).
+  const runZoom = useCallback(
+    (direction: "in" | "out", apply: () => void) => {
+      const el = document.documentElement;
+      if (reduce || typeof document.startViewTransition !== "function") {
+        apply();
+        return;
+      }
+      el.dataset.calZoom = direction;
+      const transition = document.startViewTransition(() => {
+        flushSync(apply);
+      });
+      transition.finished.finally(() => {
+        delete el.dataset.calZoom;
+      });
+    },
+    [reduce],
+  );
+
   const switchView = (next: CalendarView) => {
-    setAnchor(pageStart(next, anchor));
-    setView(next);
+    const apply = () => {
+      setAnchor(pageStart(next, anchor));
+      setView(next);
+    };
+    // Zoom out into the month overview, zoom in leaving it; day <-> week stays
+    // in strip mode (no subtree swap) so it swaps instantly.
+    if (next === "month" && view !== "month") runZoom("out", apply);
+    else if (view === "month" && next !== "month") runZoom("in", apply);
+    else apply();
   };
 
   const openDay = (day: Date) => {
-    setAnchor(pageStart("day", day));
-    setView("day");
+    runZoom("in", () => {
+      setAnchor(pageStart("day", day));
+      setView("day");
+    });
   };
 
   return (
@@ -181,34 +215,36 @@ export function CalendarWeekView() {
         </div>
       </header>
 
-      {layout.mode === "month" ? (
-        <CalendarPager
-          ref={pagerRef}
-          pageStarts={layout.pageStarts}
-          centerIndex={layout.centerIndex}
-          gutterWidth={0}
-          onSettleDelta={(delta) => setAnchor((a) => addPages("month", a, delta))}
-          renderPage={(start) => (
-            <MonthPanel
-              monthStart={start}
-              days={pageDays("month", start)}
-              events={events}
-              onSelectDay={openDay}
-            />
-          )}
-        />
-      ) : (
-        <TimeStrip
-          ref={stripRef}
-          days={layout.days}
-          anchorIndex={layout.anchorIndex}
-          columns={layout.columns}
-          snapDays={layout.snapDays}
-          events={events}
-          allDayHeight={allDayHeight}
-          onSettleDeltaDays={(delta) => setAnchor((a) => addDays(a, delta))}
-        />
-      )}
+      <div className="calendar-body-vt flex min-h-0 flex-1 flex-col">
+        {layout.mode === "month" ? (
+          <CalendarPager
+            ref={pagerRef}
+            pageStarts={layout.pageStarts}
+            centerIndex={layout.centerIndex}
+            gutterWidth={0}
+            onSettleDelta={(delta) => setAnchor((a) => addPages("month", a, delta))}
+            renderPage={(start) => (
+              <MonthPanel
+                monthStart={start}
+                days={pageDays("month", start)}
+                events={events}
+                onSelectDay={openDay}
+              />
+            )}
+          />
+        ) : (
+          <TimeStrip
+            ref={stripRef}
+            days={layout.days}
+            anchorIndex={layout.anchorIndex}
+            columns={layout.columns}
+            snapDays={layout.snapDays}
+            events={events}
+            allDayHeight={allDayHeight}
+            onSettleDeltaDays={(delta) => setAnchor((a) => addDays(a, delta))}
+          />
+        )}
+      </div>
     </div>
   );
 }

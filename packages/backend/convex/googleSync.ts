@@ -9,6 +9,7 @@ import {
   internalMutation,
   internalQuery,
   type ActionCtx,
+  type MutationCtx,
 } from "./_generated/server";
 import { authComponent, createAuth } from "./auth";
 import {
@@ -48,12 +49,33 @@ const contactValidator = v.object({
 const calendarValidator = v.object({
   googleCalendarId: v.string(),
   summary: v.optional(v.string()),
+  summaryOverride: v.optional(v.string()),
   backgroundColor: v.optional(v.string()),
   foregroundColor: v.optional(v.string()),
   primary: v.optional(v.boolean()),
   accessRole: v.optional(v.string()),
   timeZone: v.optional(v.string()),
+  googleSelected: v.optional(v.boolean()),
 });
+
+const EVENT_CLEANUP_BATCH_SIZE = 100;
+
+async function deleteCalendarEventsBatch(
+  ctx: MutationCtx,
+  userId: string,
+  googleCalendarId: string,
+): Promise<boolean> {
+  const rows = await ctx.db
+    .query("events")
+    .withIndex("by_user_and_calendar", (q) =>
+      q.eq("userId", userId).eq("calendarId", googleCalendarId),
+    )
+    .take(EVENT_CLEANUP_BATCH_SIZE);
+  for (const row of rows) {
+    await ctx.db.delete(row._id);
+  }
+  return rows.length === EVENT_CLEANUP_BATCH_SIZE;
+}
 
 // ---------------------------------------------------------------------------
 // Token helper — resolves a fresh (auto-refreshed) Google access token for a
@@ -97,17 +119,20 @@ async function syncCalendar(
     { userId },
   );
   if (preexisting.length === 0) {
-    await ctx.runMutation(internal.googleSync.clearEventsForUser, { userId });
+    let hasMoreLegacyEvents: boolean;
+    do {
+      hasMoreLegacyEvents = await ctx.runMutation(
+        internal.googleSync.clearCalendarEventsBatch,
+        { userId, googleCalendarId: "primary" },
+      );
+    } while (hasMoreLegacyEvents);
   }
 
-  await ctx.runMutation(internal.googleSync.upsertCalendars, {
-    userId,
-    calendars,
-  });
-
-  const stored = await ctx.runQuery(internal.googleSync.listCalendarsForUser, {
-    userId,
-  });
+  const stored: { googleCalendarId: string; syncToken?: string }[] =
+    await ctx.runMutation(internal.googleSync.reconcileCalendars, {
+      userId,
+      calendars,
+    });
   const timeMinMs = Date.now() - CALENDAR_HISTORY_MS;
   for (const cal of stored) {
     await syncOneCalendar(ctx, userId, accessToken, cal, timeMinMs);
@@ -123,10 +148,26 @@ export async function syncOneCalendar(
 ): Promise<void> {
   let syncToken = cal.syncToken;
   let fullResync = !syncToken;
+  let preparedForFullResync = false;
 
   // Retry once: if the sync token is expired (410) we restart as a full resync.
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
+      if (fullResync && !preparedForFullResync) {
+        await ctx.runMutation(internal.googleSync.resetCalendarSyncState, {
+          userId,
+          googleCalendarId: cal.googleCalendarId,
+        });
+        let hasMoreEvents: boolean;
+        do {
+          hasMoreEvents = await ctx.runMutation(
+            internal.googleSync.clearCalendarEventsBatch,
+            { userId, googleCalendarId: cal.googleCalendarId },
+          );
+        } while (hasMoreEvents);
+        preparedForFullResync = true;
+      }
+
       let pageToken: string | undefined;
       let newSyncToken: string | undefined;
       do {
@@ -156,8 +197,12 @@ export async function syncOneCalendar(
       return;
     } catch (err) {
       if (err instanceof SyncTokenExpiredError) {
+        if (attempt === 1) {
+          throw err;
+        }
         fullResync = true;
         syncToken = undefined;
+        preparedForFullResync = false;
         continue;
       }
       throw err;
@@ -325,20 +370,6 @@ export const setSyncStatus = internalMutation({
   },
 });
 
-export const clearEventsForUser = internalMutation({
-  args: { userId: v.string() },
-  handler: async (ctx, args): Promise<null> => {
-    const rows = await ctx.db
-      .query("events")
-      .withIndex("by_user_and_start", (q) => q.eq("userId", args.userId))
-      .collect();
-    for (const row of rows) {
-      await ctx.db.delete(row._id);
-    }
-    return null;
-  },
-});
-
 export const listCalendarsForUser = internalQuery({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
@@ -349,28 +380,143 @@ export const listCalendarsForUser = internalQuery({
   },
 });
 
-export const upsertCalendars = internalMutation({
+export const reconcileCalendars = internalMutation({
   args: { userId: v.string(), calendars: v.array(calendarValidator) },
-  handler: async (ctx, args): Promise<null> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ googleCalendarId: string; syncToken?: string }[]> => {
+    const existingCalendars = await ctx.db
+      .query("calendars")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+    const existingByGoogleId = new Map(
+      existingCalendars.map((calendar) => [
+        calendar.googleCalendarId,
+        calendar,
+      ]),
+    );
+    const currentGoogleIds = new Set(
+      args.calendars.map((calendar) => calendar.googleCalendarId),
+    );
+    const stored: { googleCalendarId: string; syncToken?: string }[] = [];
+
     for (const cal of args.calendars) {
-      const existing = await ctx.db
-        .query("calendars")
-        .withIndex("by_user_and_googleCalendarId", (q) =>
-          q
-            .eq("userId", args.userId)
-            .eq("googleCalendarId", cal.googleCalendarId),
-        )
-        .unique();
+      const existing = existingByGoogleId.get(cal.googleCalendarId);
       if (existing) {
-        // Preserve the user's `selected` choice and the stored sync token.
-        await ctx.db.patch(existing._id, cal);
+        // Patch every Google-owned field explicitly so removed optional
+        // metadata is removed locally too. Local selection and sync state stay
+        // untouched.
+        await ctx.db.patch(existing._id, {
+          summary: cal.summary,
+          summaryOverride: cal.summaryOverride,
+          backgroundColor: cal.backgroundColor,
+          foregroundColor: cal.foregroundColor,
+          primary: cal.primary,
+          accessRole: cal.accessRole,
+          timeZone: cal.timeZone,
+          googleSelected: cal.googleSelected,
+        });
+        stored.push({
+          googleCalendarId: cal.googleCalendarId,
+          syncToken: existing.syncToken,
+        });
       } else {
         await ctx.db.insert("calendars", {
           userId: args.userId,
-          selected: true,
+          selected: cal.googleSelected ?? false,
           ...cal,
         });
+        stored.push({ googleCalendarId: cal.googleCalendarId });
       }
+    }
+
+    for (const existing of existingCalendars) {
+      if (currentGoogleIds.has(existing.googleCalendarId)) {
+        continue;
+      }
+      // Removing the calendar row immediately hides its remaining events from
+      // authenticated queries. Event cleanup continues in bounded mutations.
+      await ctx.db.delete(existing._id);
+      await ctx.scheduler.runAfter(
+        0,
+        internal.googleSync.cleanupRemovedCalendarEvents,
+        {
+          userId: args.userId,
+          googleCalendarId: existing.googleCalendarId,
+        },
+      );
+    }
+
+    return stored;
+  },
+});
+
+/** Clear a calendar's events one bounded transaction at a time. Actions loop
+ * over this for a full resync; removed-calendar cleanup uses the scheduled
+ * wrapper below. */
+export const clearCalendarEventsBatch = internalMutation({
+  args: { userId: v.string(), googleCalendarId: v.string() },
+  handler: async (ctx, args): Promise<boolean> => {
+    return await deleteCalendarEventsBatch(
+      ctx,
+      args.userId,
+      args.googleCalendarId,
+    );
+  },
+});
+
+/** Continue deleting orphaned events unless the calendar was re-added before
+ * this scheduled batch ran. */
+export const cleanupRemovedCalendarEvents = internalMutation({
+  args: { userId: v.string(), googleCalendarId: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    const calendar = await ctx.db
+      .query("calendars")
+      .withIndex("by_user_and_googleCalendarId", (q) =>
+        q
+          .eq("userId", args.userId)
+          .eq("googleCalendarId", args.googleCalendarId),
+      )
+      .unique();
+    if (calendar) {
+      return null;
+    }
+
+    const hasMore = await deleteCalendarEventsBatch(
+      ctx,
+      args.userId,
+      args.googleCalendarId,
+    );
+    if (hasMore) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.googleSync.cleanupRemovedCalendarEvents,
+        args,
+      );
+    }
+    return null;
+  },
+});
+
+/** Drop an invalid/partial full-sync token before clearing and refetching that
+ * calendar. */
+export const resetCalendarSyncState = internalMutation({
+  args: { userId: v.string(), googleCalendarId: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db
+      .query("calendars")
+      .withIndex("by_user_and_googleCalendarId", (q) =>
+        q
+          .eq("userId", args.userId)
+          .eq("googleCalendarId", args.googleCalendarId),
+      )
+      .unique();
+    if (row) {
+      await ctx.db.patch(row._id, {
+        syncToken: undefined,
+        lastSyncAt: undefined,
+      });
     }
     return null;
   },

@@ -12,12 +12,15 @@ import {
 import { DayColumn } from "./day-column";
 import { GutterColumn } from "./gutter-column";
 import {
+  allDayBandHeight,
   bucketDayEvents,
   dayColsTemplate,
   GUTTER_TOTAL,
+  layoutAllDayEvents,
   MIN_DAY_HEIGHT,
   MS_PER_MINUTE,
   type CalendarEvent,
+  visibleAllDayMetrics,
 } from "./lib";
 import { getNowIndicatorLayout, NowIndicator } from "./now-indicator";
 import { PanelHeader } from "./panel-header";
@@ -39,7 +42,6 @@ interface TimeStripProps {
   snapDays: number;
   /** Events for the whole strip range; bucketed per day internally. */
   events: CalendarEvent[];
-  allDayHeight: number;
   /** Fired once scrolling settles `deltaDays` away from the anchor. */
   onSettleDeltaDays: (deltaDays: number) => void;
 }
@@ -56,7 +58,7 @@ interface TimeStripProps {
  */
 export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
   function TimeStrip(
-    { days, anchorIndex, columns, snapDays, events, allDayHeight, onSettleDeltaDays },
+    { days, anchorIndex, columns, snapDays, events, onSettleDeltaDays },
     ref,
   ) {
     const scrollerRef = useRef<HTMLDivElement>(null);
@@ -66,6 +68,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     const suppress = useRef(false);
     const didInitialNowScroll = useRef(false);
     const [now, setNow] = useState(() => Date.now());
+    const [visibleStartIdx, setVisibleStartIdx] = useState(anchorIndex);
 
     // Keep the clock aligned to minute boundaries, and recover immediately
     // when background-tab throttling or system sleep makes a timer stale.
@@ -117,6 +120,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
         const el = scrollerRef.current;
         if (!el) return;
         if (behavior === "auto") {
+          setVisibleStartIdx(index);
           suppress.current = true;
           clearTimeout(suppressTimer.current);
           suppressTimer.current = setTimeout(() => {
@@ -143,12 +147,17 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     }, [anchorIndex, scrollToIndex]);
 
     const onScroll = () => {
+      const el = scrollerRef.current;
+      if (!el) return;
+      const index = Math.max(
+        0,
+        Math.min(Math.round(el.scrollLeft / colWidth()), days.length - columns),
+      );
+      setVisibleStartIdx(index);
       if (suppress.current) return;
       clearTimeout(settleTimer.current);
       settleTimer.current = setTimeout(() => {
-        const el = scrollerRef.current;
-        if (!el || suppress.current) return;
-        const index = Math.round(el.scrollLeft / colWidth());
+        if (suppress.current) return;
         const delta = index - anchorIndex;
         if (delta !== 0) onSettleDeltaDays(delta);
       }, 120);
@@ -159,6 +168,36 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     const { allDayEvents, timedByDay } = useMemo(
       () => bucketDayEvents(days, effectiveEvents),
       [days, effectiveEvents],
+    );
+    const visibleEndIdx = Math.min(
+      visibleStartIdx + columns - 1,
+      days.length - 1,
+    );
+    const allDayLayout = useMemo(
+      () =>
+        layoutAllDayEvents(
+          days,
+          allDayEvents,
+          visibleStartIdx,
+          visibleEndIdx,
+        ),
+      [days, allDayEvents, visibleStartIdx, visibleEndIdx],
+    );
+    const visibleRangeKey = `${days[visibleStartIdx].getTime()}:${columns}`;
+    const [expandedAllDayRange, setExpandedAllDayRange] = useState<string>();
+    const allDayExpanded = expandedAllDayRange === visibleRangeKey;
+    const { laneCount: visibleAllDayLaneCount, hiddenEventCount } = useMemo(
+      () =>
+        visibleAllDayMetrics(
+          allDayLayout,
+          visibleStartIdx,
+          visibleEndIdx,
+        ),
+      [allDayLayout, visibleStartIdx, visibleEndIdx],
+    );
+    const allDayHeight = allDayBandHeight(
+      visibleAllDayLaneCount,
+      allDayExpanded,
     );
     const nowLayout = getNowIndicatorLayout(days, now);
 
@@ -194,7 +233,15 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
           className="sticky left-0 z-40 shrink-0 bg-background"
           style={{ flex: `0 0 ${GUTTER_TOTAL}px`, width: GUTTER_TOTAL }}
         >
-          <GutterColumn allDayHeight={allDayHeight} now={now} />
+          <GutterColumn
+            allDayHeight={allDayHeight}
+            allDayExpanded={allDayExpanded}
+            hiddenAllDayEventCount={hiddenEventCount}
+            onToggleAllDay={() =>
+              setExpandedAllDayRange(allDayExpanded ? undefined : visibleRangeKey)
+            }
+            now={now}
+          />
         </div>
         <div
           className="flex shrink-0 flex-col"
@@ -205,8 +252,9 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
           <div className="sticky top-0 z-30">
             <PanelHeader
               days={days}
-              allDayEvents={allDayEvents}
+              allDayEvents={allDayLayout}
               allDayHeight={allDayHeight}
+              allDayExpanded={allDayExpanded}
             />
           </div>
           <div

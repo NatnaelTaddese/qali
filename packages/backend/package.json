@@ -5,6 +5,7 @@
   "license": "ISC",
   "author": "",
   "scripts": {
+    "check-types": "tsc -p convex/tsconfig.json --noEmit",
     "dev": "convex dev",
     "dev:setup": "convex dev --configure --until-success"
   },

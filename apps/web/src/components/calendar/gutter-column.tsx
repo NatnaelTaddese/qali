@@ -1,4 +1,8 @@
-import { PlusSignIcon } from "@hugeicons/core-free-icons";
+import {
+  ArrowDown01Icon,
+  ArrowUp01Icon,
+  PlusSignIcon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { startOfDay } from "date-fns";
 
@@ -21,9 +25,15 @@ const nowFmt = new Intl.DateTimeFormat("en-US", {
  * Its header block matches the panel header height so the hour rows align. */
 export function GutterColumn({
   allDayHeight,
+  allDayExpanded,
+  hiddenAllDayEventCount,
+  onToggleAllDay,
   now,
 }: {
   allDayHeight: number;
+  allDayExpanded: boolean;
+  hiddenAllDayEventCount: number;
+  onToggleAllDay: () => void;
   now: number;
 }) {
   const dayStartMs = startOfDay(new Date()).getTime();
@@ -31,7 +41,7 @@ export function GutterColumn({
   return (
     <div className="flex h-full flex-col bg-background">
       <div
-        className="sticky top-0 z-10 flex items-start gap-1 border-b border-border bg-background px-1.5 py-2"
+        className="sticky top-0 z-10 flex shrink-0 items-start gap-1 border-b border-border bg-background px-1.5 py-2 transition-[height] duration-200 motion-reduce:transition-none"
         style={{ height: HEADER_DATE_HEIGHT + allDayHeight }}
       >
         <button
@@ -49,6 +59,27 @@ export function GutterColumn({
             {tz.label}
           </span>
         ))}
+        {hiddenAllDayEventCount > 0 && (
+          <button
+            type="button"
+            aria-controls="calendar-all-day-rail"
+            aria-expanded={allDayExpanded}
+            aria-label={
+              allDayExpanded
+                ? "Collapse all-day events"
+                : `Show ${hiddenAllDayEventCount} more all-day ${hiddenAllDayEventCount === 1 ? "event" : "events"}`
+            }
+            onClick={onToggleAllDay}
+            className="absolute right-1 bottom-1 flex h-5 items-center gap-0.5 rounded-md bg-accent px-1 text-[10px] font-medium text-muted-foreground ring-1 ring-border/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {!allDayExpanded && <span>+{hiddenAllDayEventCount}</span>}
+            <HugeiconsIcon
+              icon={allDayExpanded ? ArrowUp01Icon : ArrowDown01Icon}
+              strokeWidth={2}
+              className="size-3"
+            />
+          </button>
+        )}
       </div>
       <div className="relative flex flex-1" style={{ minHeight: MIN_DAY_HEIGHT }}>
         {TIMEZONES.map((tz) => (

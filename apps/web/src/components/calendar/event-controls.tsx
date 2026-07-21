@@ -19,6 +19,7 @@ import {
 import { cn } from "@qali/ui/lib/utils";
 
 import { calendarColorVar, EVENT_COLOR_CHOICES } from "./colors";
+import { calendarDisplayName } from "./lib";
 
 /** Access roles that let us create events on a calendar. */
 const WRITABLE = new Set(["owner", "writer"]);
@@ -27,7 +28,7 @@ const WRITABLE = new Set(["owner", "writer"]);
 function sortCalendars(calendars: Doc<"calendars">[]): Doc<"calendars">[] {
   return [...calendars].sort((a, b) => {
     if (a.primary !== b.primary) return (a.primary ? -1 : 1);
-    return (a.summary ?? "").localeCompare(b.summary ?? "");
+    return calendarDisplayName(a).localeCompare(calendarDisplayName(b));
   });
 }
 
@@ -108,7 +109,7 @@ export function EventControls({
             <HugeiconsIcon icon={Calendar03Icon} strokeWidth={2} className="size-4.5" />
           </TooltipTrigger>
           <TooltipContent side="top">
-            {selected?.summary ?? selected?.googleCalendarId ?? "Calendar"}
+            {selected ? calendarDisplayName(selected) : "Calendar"}
           </TooltipContent>
         </Tooltip>
         <PopoverContent side="top" align="start" className="w-64 p-2">
@@ -125,7 +126,7 @@ export function EventControls({
                   style={{ backgroundColor: `var(${calendarColorVar(cal)})` }}
                 />
                 <span className="min-w-0 flex-1 truncate text-sm">
-                  {cal.summary ?? cal.googleCalendarId}
+                  {calendarDisplayName(cal)}
                 </span>
                 {cal.googleCalendarId === calendarId && (
                   <HugeiconsIcon icon={Tick02Icon} strokeWidth={2.5} className="size-4" />

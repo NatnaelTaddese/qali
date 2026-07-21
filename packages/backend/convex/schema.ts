@@ -22,11 +22,15 @@ export default defineSchema({
     userId: v.string(),
     googleCalendarId: v.string(),
     summary: v.optional(v.string()),
+    summaryOverride: v.optional(v.string()),
     backgroundColor: v.optional(v.string()),
     foregroundColor: v.optional(v.string()),
     primary: v.optional(v.boolean()),
     accessRole: v.optional(v.string()),
     timeZone: v.optional(v.string()),
+    // Google's own Calendar UI visibility. This only seeds the local choice
+    // when a calendar is first discovered; later local toggles are preserved.
+    googleSelected: v.optional(v.boolean()),
     selected: v.boolean(),
     syncToken: v.optional(v.string()),
     lastSyncAt: v.optional(v.number()),

@@ -23,7 +23,7 @@ import { CalendarPager, type CalendarPagerHandle } from "./calendar-pager";
 import { calendarColorVar } from "./colors";
 import {
   addPages,
-  ALLDAY_ROW_HEIGHT,
+  calendarDisplayName,
   type CalendarView,
   MS_PER_DAY,
   pageDays,
@@ -88,10 +88,6 @@ export function CalendarWeekView() {
     }) ?? [];
 
   const calendars = useStableQuery(api.calendar.listCalendars) ?? [];
-  // Always reserve the all-day band so the hour grid doesn't jump as events
-  // load or as the user pages between days with and without all-day events.
-  const allDayHeight = ALLDAY_ROW_HEIGHT;
-
   // Prev/next: step one page (month) or one snap (day/week), animating the scroll.
   const step = (dir: number) => {
     if (layout.mode === "month") {
@@ -240,7 +236,6 @@ export function CalendarWeekView() {
             columns={layout.columns}
             snapDays={layout.snapDays}
             events={events}
-            allDayHeight={allDayHeight}
             onSettleDeltaDays={(delta) => setAnchor((a) => addDays(a, delta))}
           />
         )}
@@ -255,7 +250,7 @@ function CalendarPicker({ calendars }: { calendars: Doc<"calendars">[] }) {
   // Primary first, then alphabetical by display name.
   const sorted = [...calendars].sort((a, b) => {
     if (a.primary !== b.primary) return a.primary ? -1 : 1;
-    return (a.summary ?? "").localeCompare(b.summary ?? "");
+    return calendarDisplayName(a).localeCompare(calendarDisplayName(b));
   });
 
   return (
@@ -312,7 +307,7 @@ function CalendarPicker({ calendars }: { calendars: Doc<"calendars">[] }) {
                 }}
               />
               <span className="min-w-0 flex-1 truncate text-sm">
-                {cal.summary ?? cal.googleCalendarId}
+                {calendarDisplayName(cal)}
               </span>
             </label>
           ))}

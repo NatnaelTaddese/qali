@@ -13,6 +13,18 @@ import {
 
 export type CalendarEvent = Doc<"events">;
 
+/** User-facing Google calendar name, including a per-user override when one
+ * exists. */
+export function calendarDisplayName(calendar: {
+  googleCalendarId: string;
+  summary?: string;
+  summaryOverride?: string;
+}): string {
+  return (
+    calendar.summaryOverride ?? calendar.summary ?? calendar.googleCalendarId
+  );
+}
+
 export const SNAP_MINUTES = 15;
 export const WEEK_STARTS_ON = 1; // Monday
 
@@ -115,8 +127,23 @@ export function dayColsTemplate(n: number): string {
 /** Fixed height of the weekday/date header row, so the pinned gutter and every
  * page panel line their hour bodies up regardless of which week is visible. */
 export const HEADER_DATE_HEIGHT = 44;
-/** Reserved height of the all-day band when any all-day event is in view. */
-export const ALLDAY_ROW_HEIGHT = 30;
+/** Geometry for the all-day rail. The compact rail shows at most two lanes. */
+export const ALLDAY_COLLAPSED_LANES = 2;
+export const ALLDAY_MAX_EXPANDED_LANES = 8;
+export const ALLDAY_EVENT_HEIGHT = 20;
+export const ALLDAY_EVENT_GAP = 4;
+export const ALLDAY_BAND_PADDING = 4;
+
+export function allDayBandHeight(laneCount: number, expanded: boolean): number {
+  const visibleLanes = expanded
+    ? Math.min(Math.max(laneCount, 1), ALLDAY_MAX_EXPANDED_LANES)
+    : Math.max(Math.min(laneCount, ALLDAY_COLLAPSED_LANES), 1);
+  return (
+    ALLDAY_BAND_PADDING * 2 +
+    visibleLanes * ALLDAY_EVENT_HEIGHT +
+    (visibleLanes - 1) * ALLDAY_EVENT_GAP
+  );
+}
 
 /** Split a page's events into its all-day band and per-day timed columns.
  * Events from the wider buffered window are filtered down to `days` here. */
@@ -166,6 +193,65 @@ export function allDayColumnSpan(
     startIdx: Math.max(startIdx, 0),
     endIdx: Math.min(Math.max(endIdx, startIdx), lastIdx),
   };
+}
+
+export interface AllDayEventLayout {
+  event: CalendarEvent;
+  startIdx: number;
+  endIdx: number;
+  lane: number;
+}
+
+/** Pack spanning all-day events into the first available non-overlapping lane. */
+export function layoutAllDayEvents(
+  days: Date[],
+  events: CalendarEvent[],
+  visibleStartIdx = 0,
+  visibleEndIdx = days.length - 1,
+): AllDayEventLayout[] {
+  const spans = events
+    .map((event) => ({ event, ...allDayColumnSpan(event, days) }))
+    .filter(
+      ({ startIdx, endIdx }) =>
+        endIdx >= visibleStartIdx && startIdx <= visibleEndIdx,
+    )
+    .map((span) => ({
+      ...span,
+      startIdx: Math.max(span.startIdx, visibleStartIdx),
+      endIdx: Math.min(span.endIdx, visibleEndIdx),
+    }))
+    .sort(
+      (a, b) =>
+        a.startIdx - b.startIdx ||
+        b.endIdx - a.endIdx ||
+        a.event.startMs - b.event.startMs ||
+        String(a.event._id).localeCompare(String(b.event._id)),
+    );
+  const laneEnds: number[] = [];
+
+  return spans.map((span) => {
+    let lane = laneEnds.findIndex((endIdx) => endIdx < span.startIdx);
+    if (lane === -1) lane = laneEnds.length;
+    laneEnds[lane] = span.endIdx;
+    return { ...span, lane };
+  });
+}
+
+export function visibleAllDayMetrics(
+  events: AllDayEventLayout[],
+  visibleStartIdx: number,
+  visibleEndIdx: number,
+): { laneCount: number; hiddenEventCount: number } {
+  let laneCount = 0;
+  let hiddenEventCount = 0;
+
+  for (const event of events) {
+    if (event.endIdx < visibleStartIdx || event.startIdx > visibleEndIdx) continue;
+    laneCount = Math.max(laneCount, event.lane + 1);
+    if (event.lane >= ALLDAY_COLLAPSED_LANES) hiddenEventCount += 1;
+  }
+
+  return { laneCount, hiddenEventCount };
 }
 
 /** Vertical position of an instant as a percentage (0–100) of the day height. */

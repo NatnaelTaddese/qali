@@ -95,21 +95,26 @@ export type CalendarPage = {
 export type MappedCalendar = {
   googleCalendarId: string;
   summary?: string;
+  summaryOverride?: string;
   backgroundColor?: string;
   foregroundColor?: string;
   primary?: boolean;
   accessRole?: string;
   timeZone?: string;
+  googleSelected?: boolean;
 };
 
 type RawCalendarListEntry = {
   id: string;
   summary?: string;
+  summaryOverride?: string;
   backgroundColor?: string;
   foregroundColor?: string;
   primary?: boolean;
   accessRole?: string;
   timeZone?: string;
+  selected?: boolean;
+  hidden?: boolean;
   deleted?: boolean;
 };
 
@@ -120,7 +125,11 @@ export async function fetchCalendarList(
   const calendars: MappedCalendar[] = [];
   let pageToken: string | undefined;
   do {
-    const params = new URLSearchParams({ maxResults: "250" });
+    const params = new URLSearchParams({
+      maxResults: "250",
+      showDeleted: "false",
+      showHidden: "false",
+    });
     if (pageToken) {
       params.set("pageToken", pageToken);
     }
@@ -130,17 +139,19 @@ export async function fetchCalendarList(
     )) as { items?: RawCalendarListEntry[]; nextPageToken?: string };
 
     for (const item of data.items ?? []) {
-      if (item.deleted) {
+      if (item.deleted || item.hidden) {
         continue;
       }
       calendars.push({
         googleCalendarId: item.id,
         summary: item.summary,
+        summaryOverride: item.summaryOverride,
         backgroundColor: item.backgroundColor,
         foregroundColor: item.foregroundColor,
         primary: item.primary,
         accessRole: item.accessRole,
         timeZone: item.timeZone,
+        googleSelected: item.selected,
       });
     }
     pageToken = data.nextPageToken;

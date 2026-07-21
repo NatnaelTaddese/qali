@@ -10,6 +10,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { authComponent, createAuth } from "./auth";
+import { CALENDAR_HISTORY_MS, syncOneCalendar } from "./googleSync";
 import { insertCalendarEvent, type MappedEvent } from "./lib/google";
 
 /** The set of `googleCalendarId`s the user has toggled visible. */
@@ -125,6 +126,10 @@ export const createEvent = action({
     /** Google event colour override ("1".."11"); absent inherits the calendar. */
     colorId: v.optional(v.string()),
     visibility: v.optional(v.string()),
+    /** RFC5545 recurrence lines (RRULE), e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO"]. */
+    recurrence: v.optional(v.array(v.string())),
+    /** Client IANA time zone; Google requires it for recurring timed events. */
+    timeZone: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<MappedEvent> => {
     const user = await authComponent.safeGetAuthUser(ctx);
@@ -153,7 +158,7 @@ export const createEvent = action({
     const toGoogleTime = (ms: number) =>
       args.allDay
         ? { date: new Date(ms).toISOString().slice(0, 10) }
-        : { dateTime: new Date(ms).toISOString() };
+        : { dateTime: new Date(ms).toISOString(), timeZone: args.timeZone };
 
     const event = await insertCalendarEvent(accessToken, targetCalendarId, {
       summary: args.summary,
@@ -163,7 +168,27 @@ export const createEvent = action({
       end: toGoogleTime(args.endMs),
       colorId: args.colorId,
       visibility: args.visibility,
+      recurrence: args.recurrence,
     });
+
+    if (args.recurrence && args.recurrence.length > 0) {
+      // A recurring event is stored by Google as a hidden "master"; our sync
+      // reads with singleEvents=true, so it only ever sees the *expanded*
+      // instances (each a distinct googleEventId), never the master. Mirroring
+      // `event` (the master) would leave an orphan row that no later sync
+      // touches. Instead pull the freshly expanded instances in now.
+      const calendars = await ctx.runQuery(
+        internal.googleSync.listCalendarsForUser,
+        { userId: user._id },
+      );
+      const cal = calendars.find(
+        (c) => c.googleCalendarId === targetCalendarId,
+      );
+      if (cal) {
+        await syncOneCalendar(ctx, user._id, accessToken, cal, Date.now() - CALENDAR_HISTORY_MS);
+      }
+      return event;
+    }
 
     await ctx.runMutation(internal.calendar.upsertEvent, {
       userId: user._id,

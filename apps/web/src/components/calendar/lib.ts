@@ -146,6 +146,28 @@ export function bucketDayEvents(
   return { allDayEvents, timedByDay };
 }
 
+/** Inclusive `[startIdx, endIdx]` day columns an all-day event covers within
+ * `days`, clamped to the visible range. All-day boundaries are stored as
+ * UTC-midnight instants (Google date-only), so indices are derived in UTC —
+ * comparing them with a local calendar-day diff shifts events by the UTC
+ * offset and can spill a single-day event into the next column. */
+export function allDayColumnSpan(
+  event: CalendarEvent,
+  days: Date[],
+): { startIdx: number; endIdx: number } {
+  const first = days[0];
+  const base = Date.UTC(first.getFullYear(), first.getMonth(), first.getDate());
+  const lastIdx = days.length - 1;
+  const startIdx = Math.round((event.startMs - base) / MS_PER_DAY);
+  // endMs is the exclusive UTC midnight after the last day; step back to the
+  // last day the event actually occupies.
+  const endIdx = Math.round((event.endMs - MS_PER_DAY - base) / MS_PER_DAY);
+  return {
+    startIdx: Math.max(startIdx, 0),
+    endIdx: Math.min(Math.max(endIdx, startIdx), lastIdx),
+  };
+}
+
 /** Vertical position of an instant as a percentage (0–100) of the day height. */
 export function msToPct(ms: number, dayStartMs: number): number {
   return ((ms - dayStartMs) / MS_PER_DAY) * 100;
@@ -168,15 +190,34 @@ export interface PositionedEvent {
   topPct: number;
   /** 0–100, share of the day height. */
   heightPct: number;
-  /** 0–100, left edge within the day column. */
-  leftPct: number;
-  /** 0–100, column width share. */
-  widthPct: number;
+  /** Depth within its overlap stack: 0 is the bottom (leftmost) card, and each
+   * later-starting overlapping event increments it. Drives the cascade indent
+   * and paint order — deeper cards sit further right and on top. */
+  stackIndex: number;
+  /** Number of cards in this event's overlap cluster (1 when it stands alone). */
+  stackCount: number;
+}
+
+/** Horizontal shift, in pixels, applied per stack level in the overlap cascade. */
+export const STACK_INDENT_PX = 14;
+/** Stack levels that get the full indent before it stops growing. */
+const STACK_MAX_LEVELS = 3;
+/** Thin residual indent per level past the cap, so deep cards still peek out. */
+const STACK_DEEP_STEP_PX = 4;
+
+/** Left indent (px) for a card at `stackIndex`, capped so the front cards stay
+ * wide in deep overlaps while every card behind still exposes a clickable left
+ * sliver (the residual keeps the indent monotonic past the cap). */
+export function stackIndentPx(stackIndex: number): number {
+  const capped = Math.min(stackIndex, STACK_MAX_LEVELS);
+  const overflow = Math.max(0, stackIndex - STACK_MAX_LEVELS);
+  return capped * STACK_INDENT_PX + overflow * STACK_DEEP_STEP_PX;
 }
 
 /**
- * Position a day's timed events: clamp to the day, then pack transitively
- * overlapping events into side-by-side columns.
+ * Position a day's timed events: clamp to the day, then assign transitively
+ * overlapping events a cascade stack depth (later-starting events sit further
+ * right and on top) via the same lane-packing used for side-by-side columns.
  */
 export function layoutDayEvents(
   events: CalendarEvent[],
@@ -216,8 +257,8 @@ export function layoutDayEvents(
     event,
     topPct: msToPct(start, dayStartMs),
     heightPct: msToPct(end, dayStartMs) - msToPct(start, dayStartMs),
-    leftPct: (col / cols) * 100,
-    widthPct: 100 / cols,
+    stackIndex: col,
+    stackCount: cols,
   }));
 }
 

@@ -85,10 +85,9 @@ export function CalendarWeekView() {
     }) ?? [];
 
   const calendars = useStableQuery(api.calendar.listCalendars) ?? [];
-  const allDayHeight = useMemo(
-    () => (events.some((e) => e.allDay) ? ALLDAY_ROW_HEIGHT : 0),
-    [events],
-  );
+  // Always reserve the all-day band so the hour grid doesn't jump as events
+  // load or as the user pages between days with and without all-day events.
+  const allDayHeight = ALLDAY_ROW_HEIGHT;
 
   // Prev/next: step one page (month) or one snap (day/week), animating the scroll.
   const step = (dir: number) => {

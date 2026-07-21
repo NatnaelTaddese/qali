@@ -1,19 +1,28 @@
-import { ArrowLeft01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import {
+  ArrowLeft01Icon,
+  Calendar03Icon,
+  RepeatIcon,
+  Sun03Icon,
+  Tick02Icon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import { Button } from "@qali/ui/components/button";
 import { WheelPicker } from "@qali/ui/components/motion/wheel-picker";
 import { Textarea } from "@qali/ui/components/textarea";
 import { cn } from "@qali/ui/lib/utils";
 import { useAction, useQuery } from "convex/react";
-import { format } from "date-fns";
+import { format, startOfDay } from "date-fns";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { DayPicker } from "./day-picker";
 import { EventControls } from "./event-controls";
-import { SNAP_MS } from "./lib";
+import { MS_PER_DAY, SNAP_MS } from "./lib";
 import { dockVariants, dockVariantsReduced, press } from "./motion";
+import { RepeatControl } from "./repeat-control";
+import { type Recurrence, toRRule } from "./rrule";
 
 /** Wheel rows. Module-level so their identity is stable across renders — the
  * picker re-derives its geometry and index whenever `options` changes. */
@@ -54,6 +63,22 @@ function withParts(baseMs: number, parts: TimeParts): number {
   return d.getTime();
 }
 
+/** Move `baseMs` onto `dayMs`'s calendar day, keeping its time of day. */
+function withDay(baseMs: number, dayMs: number): number {
+  const day = new Date(dayMs);
+  const d = new Date(baseMs);
+  d.setFullYear(day.getFullYear(), day.getMonth(), day.getDate());
+  return d.getTime();
+}
+
+/** UTC midnight of a timestamp's local calendar day — the instant Google's
+ * all-day date strings map to (see mapGoogleEvent / toGoogleTime on the
+ * backend). All-day events are stored and sent as these UTC-midnight instants. */
+function toUtcMidnight(ms: number): number {
+  const d = new Date(ms);
+  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
 export function EventCreate({
   startMs,
   endMs,
@@ -73,6 +98,12 @@ export function EventCreate({
   const reduce = useReducedMotion();
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
+  // All-day is kept local: `startMs`/`endMs` stay timed working values (so the
+  // date/time editors and the grid ghost keep working), and are converted to
+  // UTC-midnight instants only at submit.
+  const [allDay, setAllDay] = useState(false);
+  // null = does not repeat. Emitted as an RRULE on submit.
+  const [recurrence, setRecurrence] = useState<Recurrence | null>(null);
   // Marks the entry as a task rather than a plain event. Local for now — the
   // backend has no task field yet, so nothing is sent.
   const [task, setTask] = useState(false);
@@ -112,18 +143,37 @@ export function EventCreate({
     }
   };
 
+  // Move the active side onto a chosen day, keeping its time of day. The end can
+  // never land before the start; the start drags the end along to hold duration.
+  const setDay = (dayMs: number) => {
+    const next = withDay(activeMs, dayMs);
+    if (editing === "start") {
+      onChangeRange(next, Math.max(endMs, next + SNAP_MS));
+    } else {
+      onChangeRange(startMs, Math.max(next, startMs + SNAP_MS));
+    }
+  };
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!valid || submitting) return;
     setSubmitting(true);
+    // All-day events are date-only: send UTC midnight of the start day and the
+    // exclusive UTC midnight after the last day (Google's all-day end is
+    // exclusive), which the backend's toGoogleTime renders as YYYY-MM-DD.
+    const payloadStart = allDay ? toUtcMidnight(startMs) : startMs;
+    const payloadEnd = allDay ? toUtcMidnight(endMs) + MS_PER_DAY : endMs;
     createEvent({
       summary: summary.trim() || "New event",
-      startMs,
-      endMs,
+      startMs: payloadStart,
+      endMs: payloadEnd,
+      allDay,
       description: description.trim() || undefined,
       calendarId: activeCalendarId,
       colorId,
       visibility: isPrivate ? "private" : undefined,
+      recurrence: recurrence ? toRRule(recurrence) : undefined,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     })
       .then(onCreated)
       .catch((error: unknown) => {
@@ -233,50 +283,85 @@ export function EventCreate({
             <TimeTab
               label="Starts"
               ms={startMs}
+              allDay={allDay}
               active={editing === "start"}
               onSelect={() => setEditing("start")}
             />
             <TimeTab
               label="Ends"
               ms={endMs}
+              allDay={allDay}
               active={editing === "end"}
               onSelect={() => setEditing("end")}
             />
           </div>
 
-          <div className="flex gap-2">
-            <WheelPicker
-              options={HOURS}
-              value={parts.hour}
-              onValueChange={(v) => setPart("hour", v)}
-              visibleCount={5}
-              itemHeight={32}
-              sound
-              className="flex-1"
-              aria-label="Hour"
-            />
-            <WheelPicker
-              options={MINUTES}
-              value={parts.minute}
-              onValueChange={(v) => setPart("minute", v)}
-              visibleCount={5}
-              itemHeight={32}
-              sound
-              className="flex-1"
-              aria-label="Minute"
-            />
-            <WheelPicker
-              options={MERIDIEM}
-              value={parts.meridiem}
-              onValueChange={(v) => setPart("meridiem", v)}
-              visibleCount={5}
-              itemHeight={32}
-              sound
-              className="flex-1"
-              aria-label="AM or PM"
-            />
-          </div>
+          <SettingRow
+            icon={Calendar03Icon}
+            label={editing === "start" ? "Starts on" : "Ends on"}
+          >
+            <DayPicker
+              selectedMs={activeMs}
+              onSelect={setDay}
+              side="top"
+              minMs={editing === "end" ? startOfDay(startMs).getTime() : undefined}
+            >
+              <button
+                type="button"
+                className="rounded-lg px-2 py-1 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {format(activeMs, "EEE, MMM d, yyyy")}
+              </button>
+            </DayPicker>
+          </SettingRow>
+
+          {!allDay && (
+            <div className="flex gap-2">
+              <WheelPicker
+                options={HOURS}
+                value={parts.hour}
+                onValueChange={(v) => setPart("hour", v)}
+                visibleCount={5}
+                itemHeight={32}
+                sound
+                className="flex-1"
+                aria-label="Hour"
+              />
+              <WheelPicker
+                options={MINUTES}
+                value={parts.minute}
+                onValueChange={(v) => setPart("minute", v)}
+                visibleCount={5}
+                itemHeight={32}
+                sound
+                className="flex-1"
+                aria-label="Minute"
+              />
+              <WheelPicker
+                options={MERIDIEM}
+                value={parts.meridiem}
+                onValueChange={(v) => setPart("meridiem", v)}
+                visibleCount={5}
+                itemHeight={32}
+                sound
+                className="flex-1"
+                aria-label="AM or PM"
+              />
+            </div>
+          )}
         </div>
+
+        <SettingRow icon={Sun03Icon} label="All day">
+          <ToggleSwitch checked={allDay} onChange={setAllDay} label="All day" />
+        </SettingRow>
+
+        <SettingRow icon={RepeatIcon} label="Repeat">
+          <RepeatControl
+            startMs={startMs}
+            value={recurrence}
+            onChange={setRecurrence}
+          />
+        </SettingRow>
 
         {!valid && (
           <p className="text-xs text-destructive">End time must be after the start.</p>
@@ -312,11 +397,13 @@ export function EventCreate({
 function TimeTab({
   label,
   ms,
+  allDay,
   active,
   onSelect,
 }: {
   label: string;
   ms: number;
+  allDay: boolean;
   active: boolean;
   onSelect: () => void;
 }) {
@@ -337,8 +424,63 @@ function TimeTab({
         {label} · {format(ms, "EEE d")}
       </span>
       <span className={cn("text-sm font-semibold", active && "text-foreground")}>
-        {format(ms, "h:mm a")}
+        {allDay ? "All day" : format(ms, "h:mm a")}
       </span>
     </motion.button>
+  );
+}
+
+/** A labeled settings row: leading icon, label, and a right-aligned control. */
+function SettingRow({
+  icon,
+  label,
+  children,
+}: {
+  icon: IconSvgElement;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <HugeiconsIcon
+        icon={icon}
+        strokeWidth={2}
+        className="size-4.5 shrink-0 text-muted-foreground"
+      />
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <div className="ml-auto flex min-w-0 items-center">{children}</div>
+    </div>
+  );
+}
+
+/** A pill switch — there is no Switch primitive in @qali/ui yet. */
+function ToggleSwitch({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        "relative h-6 w-10 shrink-0 rounded-full outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+        checked ? "bg-primary" : "bg-muted-foreground/30",
+      )}
+    >
+      <span
+        className={cn(
+          "absolute top-0.5 left-0.5 size-5 rounded-full bg-background shadow-sm transition-transform",
+          checked && "translate-x-4",
+        )}
+      />
+    </button>
   );
 }

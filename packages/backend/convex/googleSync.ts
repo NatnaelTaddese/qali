@@ -78,7 +78,7 @@ async function getGoogleAccessToken(
 // ---------------------------------------------------------------------------
 // How far back a full (first-time) resync reaches. Events older than this at
 // sync time are never fetched; incremental syncs afterwards are unbounded.
-const CALENDAR_HISTORY_MS = 365 * 24 * 60 * 60 * 1000;
+export const CALENDAR_HISTORY_MS = 365 * 24 * 60 * 60 * 1000;
 
 async function syncCalendar(
   ctx: ActionCtx,
@@ -114,7 +114,7 @@ async function syncCalendar(
   }
 }
 
-async function syncOneCalendar(
+export async function syncOneCalendar(
   ctx: ActionCtx,
   userId: string,
   accessToken: string,

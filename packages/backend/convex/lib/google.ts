@@ -66,7 +66,12 @@ export type MappedEvent = {
   googleUpdatedMs: number;
 };
 
-type RawCalendarDateTime = { dateTime?: string; date?: string };
+type RawCalendarDateTime = {
+  dateTime?: string;
+  date?: string;
+  /** IANA zone; required by Google for recurring timed events. */
+  timeZone?: string;
+};
 type RawEvent = {
   id: string;
   status?: string;
@@ -220,6 +225,8 @@ export async function insertCalendarEvent(
     end: RawCalendarDateTime;
     colorId?: string;
     visibility?: string;
+    /** RFC5545 recurrence lines, e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO,WE"]. */
+    recurrence?: string[];
   },
 ): Promise<MappedEvent> {
   const data = (await googleFetch(

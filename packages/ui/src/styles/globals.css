@@ -152,3 +152,34 @@
     font-size: 14px;
   }
 }
+
+@layer components {
+  /* Calendar event cards adapt to their rendered height: a size-query
+   * container lets short events drop the time line and tighten the title so
+   * the name stays visible instead of being clipped. */
+  .event-card {
+    container-type: size;
+  }
+  /* Too short for a second line: drop the time and switch the title to a
+   * small, vertically centered single line so it stays legible, not clipped. */
+  @container (max-height: 38px) {
+    .event-card-time {
+      display: none;
+    }
+    .event-card-body {
+      justify-content: center;
+      padding-top: 0;
+      padding-bottom: 0;
+    }
+    .event-card-title {
+      font-size: 0.75rem; /* 12px */
+      line-height: 1.1;
+      -webkit-line-clamp: 1; /* short cards get one tightened line */
+    }
+  }
+  @container (max-height: 22px) {
+    .event-card-title {
+      font-size: 0.6875rem; /* 11px */
+    }
+  }
+}

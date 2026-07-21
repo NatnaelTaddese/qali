@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/lexend";
+@import "@fontsource-variable/fraunces/full.css";
 @source "../../../apps/**/*.{ts,tsx}";
 @source "../**/*.{ts,tsx}";
 
@@ -22,6 +23,7 @@
   --muted-foreground: oklch(47% 0 0);
   --accent: oklch(94% 0 0);
   --accent-foreground: oklch(13% 0 0);
+  --calendar-header: oklch(98.2% 0 0);
   --destructive: oklch(62% 0.22 25);
   --border: oklch(13% 0 0 / 0.06);
   --input: oklch(13% 0 0 / 0.06);
@@ -69,6 +71,7 @@
   --muted-foreground: oklch(62% 0 0);
   --accent: oklch(28% 0 0);
   --accent-foreground: oklch(96% 0 0);
+  --calendar-header: #0e0e0e;
   --destructive: oklch(62% 0.22 25);
   --border: rgb(255 255 255 / 0.05);
   --input: rgb(255 255 255 / 0.05);
@@ -99,6 +102,8 @@
 
 @theme inline {
   --font-sans: 'Lexend Variable', sans-serif;
+  --font-display: 'Fraunces Variable', serif;
+  --font-display--font-variation-settings: "WONK" 1, "SOFT" 100;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -118,6 +123,7 @@
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
+  --color-calendar-header: var(--calendar-header);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
   --color-secondary-foreground: var(--secondary-foreground);

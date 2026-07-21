@@ -41,7 +41,7 @@ export function GutterColumn({
   return (
     <div className="flex h-full flex-col bg-background">
       <div
-        className="sticky top-0 z-10 flex shrink-0 items-start gap-1 border-b border-border bg-muted/40 px-1.5 py-2 backdrop-blur-xs transition-[height] duration-200 motion-reduce:transition-none dark:bg-black/20"
+        className="sticky top-0 z-10 flex shrink-0 items-start gap-1 border-b border-border bg-calendar-header px-1.5 py-2 backdrop-blur-xs transition-[height] duration-200 motion-reduce:transition-none"
         style={{ height: HEADER_DATE_HEIGHT + allDayHeight }}
       >
         <button

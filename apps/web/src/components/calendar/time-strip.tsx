@@ -226,7 +226,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
         data-time-strip-scroller
         ref={scrollerRef}
         onScroll={onScroll}
-        className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain bg-muted/40 [scrollbar-width:none] dark:bg-black/20 [&::-webkit-scrollbar]:hidden"
+        className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain bg-calendar-header [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{ scrollSnapType: "x mandatory", scrollPaddingLeft: GUTTER_TOTAL }}
       >
         <div
@@ -244,7 +244,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
           />
         </div>
         <div
-          className="flex shrink-0 flex-col bg-background"
+          className="flex shrink-0 flex-col"
           style={{
             flex: `0 0 calc(${days.length} * (100% - ${GUTTER_TOTAL}px) / ${columns})`,
           }}
@@ -260,7 +260,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
           <div
             data-time-grid
             ref={bodyRef}
-            className="relative grid flex-1"
+            className="relative grid flex-1 bg-background"
             style={{
               gridTemplateColumns: dayColsTemplate(days.length),
               gridTemplateRows: "minmax(0, 1fr)",
@@ -289,7 +289,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
               continues the day dividers into the empty space. */}
           <div
             aria-hidden
-            className="grid h-24 shrink-0"
+            className="grid h-24 shrink-0 bg-background"
             style={{ gridTemplateColumns: dayColsTemplate(days.length) }}
           >
             {days.map((day) => (

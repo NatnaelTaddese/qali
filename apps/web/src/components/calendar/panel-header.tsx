@@ -34,7 +34,7 @@ export function PanelHeader({
   const template = dayColsTemplate(days.length);
   return (
     <div
-      className="relative flex flex-col border-b border-border bg-muted/40 backdrop-blur-xs transition-[height] duration-200 motion-reduce:transition-none dark:bg-black/20"
+      className="relative flex flex-col border-b border-border bg-calendar-header backdrop-blur-xs transition-[height] duration-200 motion-reduce:transition-none"
       style={{ height: HEADER_DATE_HEIGHT + allDayHeight }}
     >
       {/* Column dividers as one continuous overlay so the lines run the full
@@ -78,7 +78,7 @@ export function PanelHeader({
               </span>
               <span
                 className={cn(
-                  "text-base font-semibold",
+                  "text-lg font-semibold",
                   today &&
                     "flex size-7 items-center justify-center self-center rounded-full bg-primary text-primary-foreground",
                 )}

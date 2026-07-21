@@ -40,7 +40,7 @@ export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanel
 
   return (
     <div className="flex h-full flex-col">
-      <div className="sticky top-0 z-30 grid grid-cols-7 border-b border-border bg-background">
+      <div className="sticky top-0 z-30 grid grid-cols-7 border-b border-border bg-calendar-header backdrop-blur-xs">
         {WEEKDAY_LABELS.map((label) => (
           <div
             key={label}

@@ -16,6 +16,7 @@ import { useEffect, useRef } from "react";
 
 import { EventCreate } from "@/components/calendar/event-create";
 import { EventDetail } from "@/components/calendar/event-detail";
+import { EventEdit } from "@/components/calendar/event-edit";
 import {
   dockVariants,
   dockVariantsReduced,
@@ -30,7 +31,7 @@ import { UserAvatar } from "./user-avatar";
 function widthClass(view: DockView | null): string {
   if (!view) return "";
   if (view.kind === "account") return "w-[min(19rem,100%)]";
-  if (view.kind === "create") return "w-[min(27rem,100%)]";
+  if (view.kind === "create" || view.kind === "edit") return "w-[min(27rem,100%)]";
   return "w-[min(26rem,100%)]";
 }
 
@@ -61,9 +62,9 @@ export function BottomIsland() {
       close();
     };
     window.addEventListener("keydown", onKey);
-    // A half-filled create form is real work; only Escape or Cancel discards it.
+    // A half-filled create/edit form is real work; only Escape or Cancel discards it.
     const frame =
-      view?.kind === "create"
+      view?.kind === "create" || view?.kind === "edit"
         ? null
         : // Next frame: the click that opened the dock must not immediately close it.
           requestAnimationFrame(() => {
@@ -104,7 +105,17 @@ export function BottomIsland() {
               exit="exit"
             >
               {view?.kind === "event" ? (
-                <EventDetail event={view.event} onClose={close} />
+                <EventDetail
+                  event={view.event}
+                  onClose={close}
+                  onEdit={() => open({ kind: "edit", event: view.event })}
+                />
+              ) : view?.kind === "edit" ? (
+                <EventEdit
+                  event={view.event}
+                  onCancel={() => open({ kind: "event", event: view.event })}
+                  onSaved={() => open({ kind: "event", event: view.event })}
+                />
               ) : view?.kind === "create" ? (
                 <EventCreate
                   startMs={view.startMs}

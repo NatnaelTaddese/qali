@@ -5,6 +5,7 @@ import type { CalendarEvent } from "@/components/calendar/lib";
 /** What the dock is currently showing. `null` means the plain nav bar. */
 export type DockView =
   | { kind: "event"; event: CalendarEvent }
+  | { kind: "edit"; event: CalendarEvent }
   | { kind: "create"; startMs: number; endMs: number }
   | { kind: "account" };
 
@@ -12,7 +13,9 @@ export type DockView =
  * A create view keys on its kind alone, so editing its times re-renders the form
  * in place (and moves the ghost on the grid) instead of replaying the swap. */
 export function dockViewId(view: DockView): string {
-  return view.kind === "event" ? `event:${view.event._id}` : view.kind;
+  if (view.kind === "event") return `event:${view.event._id}`;
+  if (view.kind === "edit") return `edit:${view.event._id}`;
+  return view.kind;
 }
 
 /** Which way the content travels. Stepping between two events moves along time:

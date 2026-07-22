@@ -261,6 +261,52 @@ export const updateEventTime = action({
   },
 });
 
+/** Edit an existing event's content (summary / description): patch Google, then
+ * mirror the result locally. Modeled on updateEventTime — same ownership check,
+ * token fetch, and optimistic upsert — but touches content fields rather than
+ * times. The description is stored as the HTML subset Google keeps. */
+export const updateEvent = action({
+  args: {
+    eventId: v.id("events"),
+    summary: v.optional(v.string()),
+    /** HTML description (bold/italic/underline/links/lists). Empty string clears it. */
+    description: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<MappedEvent> => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    if (!user) {
+      throw new Error("Not authenticated");
+    }
+
+    const row = await ctx.runQuery(internal.calendar.getEvent, {
+      eventId: args.eventId,
+    });
+    if (!row || row.userId !== user._id) {
+      throw new Error("Event not found");
+    }
+
+    const { accessToken } = await createAuth(ctx).api.getAccessToken({
+      body: { providerId: "google", userId: user._id },
+    });
+    if (!accessToken) {
+      throw new Error("No Google access token available for user");
+    }
+
+    const event = await patchCalendarEvent(
+      accessToken,
+      row.calendarId,
+      row.googleEventId,
+      { summary: args.summary, description: args.description },
+    );
+
+    await ctx.runMutation(internal.calendar.upsertEvent, {
+      userId: user._id,
+      event,
+    });
+    return event;
+  },
+});
+
 /** Resolve the user's primary calendar id (the email), if it has synced. */
 export const getPrimaryCalendarId = internalQuery({
   args: { userId: v.string() },

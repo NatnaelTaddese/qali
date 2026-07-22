@@ -28,6 +28,9 @@
   --border: oklch(13% 0 0 / 0.06);
   --input: oklch(13% 0 0 / 0.06);
   --ring: oklch(13% 0 0 / 0.12);
+  /* Link accent — the one hue in an otherwise monochrome palette, so links read
+   * as distinct from plain underlined text. */
+  --link: oklch(0.52 0.17 255);
   --chart-1: oklch(0.7 0.14 250);
   --chart-2: oklch(0.75 0.15 155);
   --chart-3: oklch(0.68 0.16 300);
@@ -76,6 +79,7 @@
   --border: rgb(255 255 255 / 0.05);
   --input: rgb(255 255 255 / 0.05);
   --ring: rgb(255 255 255 / 0.1);
+  --link: oklch(0.72 0.15 255);
   --chart-1: oklch(0.7 0.14 250);
   --chart-2: oklch(0.75 0.15 155);
   --chart-3: oklch(0.68 0.16 300);
@@ -118,6 +122,7 @@
   --color-chart-2: var(--chart-2);
   --color-chart-1: var(--chart-1);
   --color-ring: var(--ring);
+  --color-link: var(--link);
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);

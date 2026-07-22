@@ -9,7 +9,6 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import { Button } from "@qali/ui/components/button";
 import { WheelPicker } from "@qali/ui/components/motion/wheel-picker";
-import { Textarea } from "@qali/ui/components/textarea";
 import { cn } from "@qali/ui/lib/utils";
 import { useAction, useQuery } from "convex/react";
 import { format, startOfDay } from "date-fns";
@@ -22,6 +21,8 @@ import { EventControls } from "./event-controls";
 import { MS_PER_DAY, SNAP_MS } from "./lib";
 import { dockVariants, dockVariantsReduced, press } from "./motion";
 import { RepeatControl } from "./repeat-control";
+import { RichTextEditor } from "./rich-text/rich-text-editor";
+import { htmlToPreviewText } from "./rich-text/text";
 import { type Recurrence, toRRule } from "./rrule";
 
 /** Wheel rows. Module-level so their identity is stable across renders — the
@@ -168,7 +169,7 @@ export function EventCreate({
       startMs: payloadStart,
       endMs: payloadEnd,
       allDay,
-      description: description.trim() || undefined,
+      description: description || undefined,
       calendarId: activeCalendarId,
       colorId,
       visibility: isPrivate ? "private" : undefined,
@@ -218,13 +219,12 @@ export function EventCreate({
             {summary.trim() || "New event"}
           </button>
 
-          <Textarea
+          <RichTextEditor
             autoFocus
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={setDescription}
             placeholder="Add description"
-            aria-label="Description"
-            className="min-h-0 flex-1 border-transparent bg-transparent px-0 text-base focus-visible:border-transparent focus-visible:ring-0"
+            className="min-h-0 flex-1"
           />
         </motion.div>
       ) : (
@@ -273,7 +273,7 @@ export function EventCreate({
               }}
               className="-mx-1 truncate rounded px-1 text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             >
-              {description.trim() || "Add description"}
+              {htmlToPreviewText(description) || "Add description"}
             </button>
           </div>
         </div>

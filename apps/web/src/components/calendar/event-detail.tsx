@@ -3,6 +3,7 @@ import {
   Clock01Icon,
   LinkSquare02Icon,
   Location01Icon,
+  PencilEdit02Icon,
   TextAlignLeft01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
@@ -11,6 +12,7 @@ import type { ReactNode } from "react";
 
 import { useEventColor } from "./colors";
 import type { CalendarEvent } from "./lib";
+import { RichTextView } from "./rich-text/rich-text-view";
 
 function timeText(event: CalendarEvent): string {
   if (event.allDay) {
@@ -39,9 +41,11 @@ function DetailRow({ icon, children }: { icon: IconSvgElement; children: ReactNo
 export function EventDetail({
   event,
   onClose,
+  onEdit,
 }: {
   event: CalendarEvent;
   onClose: () => void;
+  onEdit: () => void;
 }) {
   const colorVar = useEventColor()(event);
   return (
@@ -56,6 +60,14 @@ export function EventDetail({
         </p>
         <button
           type="button"
+          onClick={onEdit}
+          aria-label="Edit"
+          className="-mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} className="size-4" />
+        </button>
+        <button
+          type="button"
           onClick={onClose}
           aria-label="Close"
           className="-mt-0.5 -mr-0.5 flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
@@ -67,7 +79,7 @@ export function EventDetail({
       {event.location && <DetailRow icon={Location01Icon}>{event.location}</DetailRow>}
       {event.description && (
         <DetailRow icon={TextAlignLeft01Icon}>
-          <span className="line-clamp-4 whitespace-pre-wrap">{event.description}</span>
+          <RichTextView html={event.description} className="line-clamp-6" />
         </DetailRow>
       )}
       {event.htmlLink && (

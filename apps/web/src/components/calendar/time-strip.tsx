@@ -19,6 +19,7 @@ import {
   layoutAllDayEvents,
   MIN_DAY_HEIGHT,
   MS_PER_MINUTE,
+  TIME_GRID_BOTTOM_SPACER_HEIGHT,
   type CalendarEvent,
   visibleAllDayMetrics,
 } from "./lib";
@@ -247,7 +248,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
             flex: `0 0 calc(${days.length} * (100% - ${GUTTER_TOTAL}px) / ${columns})`,
           }}
         >
-          <div className="sticky top-0 z-30">
+          <div className="sticky top-0 z-30 shrink-0">
             <PanelHeader
               days={days}
               allDayEvents={allDayLayout}
@@ -286,8 +287,11 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
               continues the day dividers into the empty space. */}
           <div
             aria-hidden
-            className="grid h-24 shrink-0 bg-background"
-            style={{ gridTemplateColumns: dayColsTemplate(days.length) }}
+            className="grid shrink-0 bg-background"
+            style={{
+              gridTemplateColumns: dayColsTemplate(days.length),
+              height: TIME_GRID_BOTTOM_SPACER_HEIGHT,
+            }}
           >
             {days.map((day) => (
               <div key={day.getTime()} className="border-l border-border" />

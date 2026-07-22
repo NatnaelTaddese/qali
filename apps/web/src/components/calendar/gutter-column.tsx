@@ -11,6 +11,7 @@ import {
   HEADER_DATE_HEIGHT,
   MIN_DAY_HEIGHT,
   msToPct,
+  TIME_GRID_BOTTOM_SPACER_HEIGHT,
   TIMEZONES,
 } from "./lib";
 import { TimeGutter } from "./time-gutter";
@@ -107,6 +108,11 @@ export function GutterColumn({
           />
         </span>
       </div>
+      <div
+        aria-hidden
+        className="shrink-0"
+        style={{ height: TIME_GRID_BOTTOM_SPACER_HEIGHT }}
+      />
     </div>
   );
 }

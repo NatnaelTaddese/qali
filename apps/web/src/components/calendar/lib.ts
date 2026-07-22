@@ -99,6 +99,8 @@ export function viewTitle(view: CalendarView, start: Date): string {
 /** Smallest per-hour height before the grid stops compressing and scrolls instead. */
 export const MIN_HOUR_HEIGHT = 40;
 export const MIN_DAY_HEIGHT = 24 * MIN_HOUR_HEIGHT;
+/** Scroll room below the 24-hour scale, mirrored by the gutter for alignment. */
+export const TIME_GRID_BOTTOM_SPACER_HEIGHT = 96;
 
 export const MS_PER_MINUTE = 60_000;
 export const MS_PER_HOUR = 60 * MS_PER_MINUTE;

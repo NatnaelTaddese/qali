@@ -42,20 +42,18 @@ export function NowIndicator({ layout }: { layout: NowIndicatorLayout }) {
   return (
     <div
       data-now-indicator
-      className="pointer-events-none absolute inset-x-0 z-50"
+      className="pointer-events-none absolute inset-x-0 z-20"
       style={{ top: `${layout.topPct}%` }}
     >
       <div className="absolute inset-x-0 h-px -translate-y-1/2 bg-red-500/25" />
       {layout.today && (
         <div
-          className="absolute h-px -translate-y-1/2 bg-red-500"
+          className="absolute h-0.5 -translate-y-1/2 bg-red-500"
           style={{
             left: `${layout.today.leftPct}%`,
             width: `${layout.today.widthPct}%`,
           }}
-        >
-          <div className="absolute left-0 top-0 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-red-500" />
-        </div>
+        />
       )}
     </div>
   );

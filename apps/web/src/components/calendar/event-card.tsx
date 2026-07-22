@@ -66,7 +66,7 @@ export function EventCard({ positioned, isDragging, onDragStart }: EventCardProp
           {event.summary ?? "(No title)"}
         </p>
         <p className="event-card-time truncate text-xs leading-tight text-muted-foreground">
-          {format(event.startMs, "h:mm a")}
+          {`${format(event.startMs, "h:mm")} – ${format(event.endMs, "h:mm a")}`}
         </p>
       </div>
       {/* Edge handles for resizing start/end. Invisible until hover so they

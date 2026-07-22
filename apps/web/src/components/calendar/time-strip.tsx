@@ -230,7 +230,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
         style={{ scrollSnapType: "x mandatory", scrollPaddingLeft: GUTTER_TOTAL }}
       >
         <div
-          className="sticky left-0 z-40 shrink-0 bg-background"
+          className="sticky left-0 z-[60] shrink-0 overflow-x-clip bg-background"
           style={{ flex: `0 0 ${GUTTER_TOTAL}px`, width: GUTTER_TOTAL }}
         >
           <GutterColumn

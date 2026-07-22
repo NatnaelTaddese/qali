@@ -21,6 +21,15 @@ const nowFmt = new Intl.DateTimeFormat("en-US", {
   timeZone: TIMEZONES[0].id,
 });
 
+function formatNow(now: number): string {
+  return nowFmt
+    .formatToParts(now)
+    .filter(({ type }) => type !== "dayPeriod")
+    .map(({ value }) => value)
+    .join("")
+    .trim();
+}
+
 /** The hour-labels column, pinned to the left of the paging day/week panels.
  * Its header block matches the panel header height so the hour rows align. */
 export function GutterColumn({
@@ -88,10 +97,14 @@ export function GutterColumn({
           </div>
         ))}
         <span
-          className="pointer-events-none absolute right-1.5 z-10 -translate-y-1/2 rounded bg-background px-1 text-[10px] font-medium tabular-nums text-red-500 shadow-sm"
+          className="pointer-events-none absolute right-1.5 z-0 -translate-y-1/2 rounded-full bg-red-500 px-1.5 py-0.5 text-xs font-semibold leading-none tabular-nums text-white shadow-sm"
           style={{ top: `${nowTopPct}%` }}
         >
-          {nowFmt.format(now).toLowerCase()}
+          {formatNow(now)}
+          <span
+            aria-hidden
+            className="absolute top-1/2 left-full h-0.5 w-1.5 -translate-y-1/2 bg-red-500"
+          />
         </span>
       </div>
     </div>

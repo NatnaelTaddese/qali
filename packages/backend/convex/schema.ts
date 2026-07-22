@@ -1,6 +1,18 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+/** A guest on an event. Mirrors the subset of Google's attendee object we keep;
+ * `responseStatus` is "needsAction" | "declined" | "tentative" | "accepted".
+ * Shared by the `events` table and the mutation validators that write to it. */
+export const attendeeValidator = v.object({
+  email: v.string(),
+  displayName: v.optional(v.string()),
+  responseStatus: v.optional(v.string()),
+  organizer: v.optional(v.boolean()),
+  self: v.optional(v.boolean()),
+  optional: v.optional(v.boolean()),
+});
+
 export default defineSchema({
   // One row per user tracking incremental-sync state for Google data.
   // Per-calendar sync tokens live on the `calendars` table.
@@ -56,6 +68,8 @@ export default defineSchema({
     colorId: v.optional(v.string()),
     // Google's `visibility`: "default" | "public" | "private" | "confidential".
     visibility: v.optional(v.string()),
+    // Guests invited to the event, refreshed by every sync. See attendeeValidator.
+    attendees: v.optional(v.array(attendeeValidator)),
     googleUpdatedMs: v.number(),
   })
     .index("by_user_and_start", ["userId", "startMs"])

@@ -50,6 +50,15 @@ async function googleFetch(
 // Calendar
 // ---------------------------------------------------------------------------
 
+export type MappedAttendee = {
+  email: string;
+  displayName?: string;
+  responseStatus?: string;
+  organizer?: boolean;
+  self?: boolean;
+  optional?: boolean;
+};
+
 export type MappedEvent = {
   googleEventId: string;
   calendarId: string;
@@ -63,6 +72,7 @@ export type MappedEvent = {
   htmlLink?: string;
   colorId?: string;
   visibility?: string;
+  attendees?: MappedAttendee[];
   googleUpdatedMs: number;
 };
 
@@ -84,6 +94,14 @@ type RawEvent = {
   updated?: string;
   start?: RawCalendarDateTime;
   end?: RawCalendarDateTime;
+  attendees?: {
+    email?: string;
+    displayName?: string;
+    responseStatus?: string;
+    organizer?: boolean;
+    self?: boolean;
+    optional?: boolean;
+  }[];
 };
 
 export type CalendarPage = {
@@ -166,6 +184,18 @@ export function mapGoogleEvent(raw: RawEvent, calendarId: string): MappedEvent {
   const endIso = raw.end?.dateTime ?? raw.end?.date;
   const startMs = startIso ? new Date(startIso).getTime() : 0;
   const endMs = endIso ? new Date(endIso).getTime() : startMs;
+  // Keep only attendees Google gave an email for (it omits email on some
+  // resource rows); drop the field entirely when there are none.
+  const attendees = raw.attendees
+    ?.filter((a): a is typeof a & { email: string } => Boolean(a.email))
+    .map((a) => ({
+      email: a.email,
+      displayName: a.displayName,
+      responseStatus: a.responseStatus,
+      organizer: a.organizer,
+      self: a.self,
+      optional: a.optional,
+    }));
   return {
     googleEventId: raw.id,
     calendarId,
@@ -179,6 +209,7 @@ export function mapGoogleEvent(raw: RawEvent, calendarId: string): MappedEvent {
     htmlLink: raw.htmlLink,
     colorId: raw.colorId,
     visibility: raw.visibility,
+    attendees: attendees && attendees.length > 0 ? attendees : undefined,
     googleUpdatedMs: raw.updated ? new Date(raw.updated).getTime() : Date.now(),
   };
 }
@@ -236,12 +267,17 @@ export async function insertCalendarEvent(
     end: RawCalendarDateTime;
     colorId?: string;
     visibility?: string;
+    /** Guests to invite. Google emails them when `sendUpdates` is set. */
+    attendees?: { email: string; displayName?: string; optional?: boolean }[];
     /** RFC5545 recurrence lines, e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO,WE"]. */
     recurrence?: string[];
   },
+  /** When set, Google emails the affected guests (e.g. "all" for invitations). */
+  sendUpdates?: "all" | "externalOnly" | "none",
 ): Promise<MappedEvent> {
+  const query = sendUpdates ? `?sendUpdates=${sendUpdates}` : "";
   const data = (await googleFetch(
-    `${CALENDAR_BASE}/calendars/${encodeURIComponent(calendarId)}/events`,
+    `${CALENDAR_BASE}/calendars/${encodeURIComponent(calendarId)}/events${query}`,
     accessToken,
     { method: "POST", body: JSON.stringify(body) },
   )) as RawEvent;
@@ -263,10 +299,14 @@ export async function patchCalendarEvent(
     location?: string;
     colorId?: string;
     visibility?: string;
+    attendees?: { email: string; displayName?: string; optional?: boolean }[];
   },
+  /** When set, Google emails the affected guests (e.g. "all" for invitations). */
+  sendUpdates?: "all" | "externalOnly" | "none",
 ): Promise<MappedEvent> {
+  const query = sendUpdates ? `?sendUpdates=${sendUpdates}` : "";
   const data = (await googleFetch(
-    `${CALENDAR_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(googleEventId)}`,
+    `${CALENDAR_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(googleEventId)}${query}`,
     accessToken,
     { method: "PATCH", body: JSON.stringify(body) },
   )) as RawEvent;

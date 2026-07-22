@@ -11,6 +11,7 @@ import {
 } from "./_generated/server";
 import { authComponent, createAuth } from "./auth";
 import { CALENDAR_HISTORY_MS, syncOneCalendar } from "./googleSync";
+import { attendeeValidator } from "./schema";
 import {
   insertCalendarEvent,
   type MappedEvent,
@@ -132,6 +133,15 @@ export const createEvent = action({
     visibility: v.optional(v.string()),
     /** RFC5545 recurrence lines (RRULE), e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO"]. */
     recurrence: v.optional(v.array(v.string())),
+    /** Guests to invite. Google emails each one an invitation on create. */
+    attendees: v.optional(
+      v.array(
+        v.object({
+          email: v.string(),
+          displayName: v.optional(v.string()),
+        }),
+      ),
+    ),
     /** Client IANA time zone; Google requires it for recurring timed events. */
     timeZone: v.optional(v.string()),
   },
@@ -164,16 +174,24 @@ export const createEvent = action({
         ? { date: new Date(ms).toISOString().slice(0, 10) }
         : { dateTime: new Date(ms).toISOString(), timeZone: args.timeZone };
 
-    const event = await insertCalendarEvent(accessToken, targetCalendarId, {
-      summary: args.summary,
-      description: args.description,
-      location: args.location,
-      start: toGoogleTime(args.startMs),
-      end: toGoogleTime(args.endMs),
-      colorId: args.colorId,
-      visibility: args.visibility,
-      recurrence: args.recurrence,
-    });
+    const hasGuests = Boolean(args.attendees && args.attendees.length > 0);
+    const event = await insertCalendarEvent(
+      accessToken,
+      targetCalendarId,
+      {
+        summary: args.summary,
+        description: args.description,
+        location: args.location,
+        start: toGoogleTime(args.startMs),
+        end: toGoogleTime(args.endMs),
+        colorId: args.colorId,
+        visibility: args.visibility,
+        attendees: args.attendees,
+        recurrence: args.recurrence,
+      },
+      // Only ask Google to email invitations when there are actually guests.
+      hasGuests ? "all" : undefined,
+    );
 
     if (args.recurrence && args.recurrence.length > 0) {
       // A recurring event is stored by Google as a hidden "master"; our sync
@@ -336,6 +354,7 @@ export const upsertEvent = internalMutation({
       htmlLink: v.optional(v.string()),
       colorId: v.optional(v.string()),
       visibility: v.optional(v.string()),
+      attendees: v.optional(v.array(attendeeValidator)),
       googleUpdatedMs: v.number(),
     }),
   },

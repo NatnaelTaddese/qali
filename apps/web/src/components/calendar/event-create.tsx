@@ -2,8 +2,9 @@ import {
   ArrowLeft01Icon,
   Calendar03Icon,
   RepeatIcon,
+  SquareLock01Icon,
+  SquareUnlock01Icon,
   Sun03Icon,
-  Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
@@ -18,6 +19,7 @@ import { toast } from "sonner";
 
 import { DayPicker } from "./day-picker";
 import { EventControls } from "./event-controls";
+import { GuestPicker, type Guest } from "./guest-picker";
 import { MS_PER_DAY, SNAP_MS } from "./lib";
 import { dockVariants, dockVariantsReduced, press } from "./motion";
 import { RepeatControl } from "./repeat-control";
@@ -105,15 +107,14 @@ export function EventCreate({
   const [allDay, setAllDay] = useState(false);
   // null = does not repeat. Emitted as an RRULE on submit.
   const [recurrence, setRecurrence] = useState<Recurrence | null>(null);
-  // Marks the entry as a task rather than a plain event. Local for now — the
-  // backend has no task field yet, so nothing is sent.
-  const [task, setTask] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // All three default to "whatever the calendar says": no colour override, the
   // primary calendar (resolved server-side when unset), and inherited visibility.
   const [colorId, setColorId] = useState<string>();
   const [calendarId, setCalendarId] = useState<string>();
   const [isPrivate, setIsPrivate] = useState(false);
+  // Guests to invite; Google emails them on create. Empty = a solo event.
+  const [guests, setGuests] = useState<Guest[]>([]);
   // The description gets the whole panel rather than a field crammed under the
   // wheels: `main` is the time/title screen, `description` the drill-down.
   const [screen, setScreen] = useState<"main" | "description">("main");
@@ -174,6 +175,9 @@ export function EventCreate({
       colorId,
       visibility: isPrivate ? "private" : undefined,
       recurrence: recurrence ? toRRule(recurrence) : undefined,
+      attendees: guests.length
+        ? guests.map((g) => ({ email: g.email, displayName: g.displayName }))
+        : undefined,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     })
       .then(onCreated)
@@ -242,18 +246,22 @@ export function EventCreate({
         <div className="flex items-start gap-3">
           <button
             type="button"
-            role="checkbox"
-            aria-checked={task}
-            aria-label="Mark as task"
-            onClick={() => setTask((t) => !t)}
+            role="switch"
+            aria-checked={isPrivate}
+            aria-label={isPrivate ? "Private" : "Visible to others"}
+            onClick={() => setIsPrivate((p) => !p)}
             className={cn(
-              "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border-2 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
-              task
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-muted-foreground/50 text-transparent hover:border-muted-foreground",
+              "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+              isPrivate
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
           >
-            <HugeiconsIcon icon={Tick02Icon} strokeWidth={3} className="size-3" />
+            <HugeiconsIcon
+              icon={isPrivate ? SquareLock01Icon : SquareUnlock01Icon}
+              strokeWidth={2}
+              className="size-4.5"
+            />
           </button>
 
           <div className="flex min-w-0 flex-1 flex-col">
@@ -363,6 +371,8 @@ export function EventCreate({
           />
         </SettingRow>
 
+        <GuestPicker value={guests} onChange={setGuests} />
+
         {!valid && (
           <p className="text-xs text-destructive">End time must be after the start.</p>
         )}
@@ -374,8 +384,6 @@ export function EventCreate({
             onColorChange={setColorId}
             calendarId={activeCalendarId}
             onCalendarChange={setCalendarId}
-            isPrivate={isPrivate}
-            onPrivateChange={setIsPrivate}
           />
           <div className="flex gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={onCancel}>

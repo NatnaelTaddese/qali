@@ -5,14 +5,88 @@ import {
   Location01Icon,
   PencilEdit02Icon,
   TextAlignLeft01Icon,
+  UserMultiple02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { api } from "@qali/backend/convex/_generated/api";
+import { useQuery } from "convex/react";
 import { format, isSameDay } from "date-fns";
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 
+import { Avatar } from "./avatar";
 import { useEventColor } from "./colors";
 import type { CalendarEvent } from "./lib";
 import { RichTextView } from "./rich-text/rich-text-view";
+
+type Attendee = NonNullable<CalendarEvent["attendees"]>[number];
+
+/** How many avatars to show before collapsing the rest into a "+N" bubble. */
+const MAX_AVATARS = 6;
+
+/** A one-line RSVP tally, e.g. "5 going, 2 not going, 3 awaiting". Zero buckets
+ * are omitted; order matches Google's own summary. */
+function rsvpSummary(attendees: Attendee[]): string {
+  const counts = { accepted: 0, declined: 0, tentative: 0, awaiting: 0 };
+  for (const a of attendees) {
+    if (a.responseStatus === "accepted") counts.accepted++;
+    else if (a.responseStatus === "declined") counts.declined++;
+    else if (a.responseStatus === "tentative") counts.tentative++;
+    else counts.awaiting++;
+  }
+  return (
+    [
+      [counts.accepted, "going"],
+      [counts.declined, "not going"],
+      [counts.tentative, "maybe"],
+      [counts.awaiting, "awaiting"],
+    ] as const
+  )
+    .filter(([n]) => n > 0)
+    .map(([n, label]) => `${n} ${label}`)
+    .join(", ");
+}
+
+/** Overlapping guest avatars plus an RSVP tally, enriched with contact photos
+ * where the attendee's email matches a synced contact. */
+function GuestList({ attendees }: { attendees: Attendee[] }) {
+  const contacts = useQuery(api.contacts.listContacts) ?? [];
+  const photoByEmail = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of contacts) {
+      if (!c.photoUrl) continue;
+      for (const email of c.emails) map.set(email.toLowerCase(), c.photoUrl);
+    }
+    return map;
+  }, [contacts]);
+
+  const shown = attendees.slice(0, MAX_AVATARS);
+  const overflow = attendees.length - shown.length;
+
+  return (
+    <DetailRow icon={UserMultiple02Icon}>
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center">
+          {shown.map((a) => (
+            <span key={a.email} className="-ml-1.5 first:ml-0 rounded-full ring-2 ring-popover">
+              <Avatar
+                email={a.email}
+                name={a.displayName}
+                photoUrl={photoByEmail.get(a.email.toLowerCase())}
+                className="size-6"
+              />
+            </span>
+          ))}
+          {overflow > 0 && (
+            <span className="-ml-1.5 flex size-6 items-center justify-center rounded-full bg-muted text-[0.625rem] font-semibold text-muted-foreground ring-2 ring-popover">
+              +{overflow}
+            </span>
+          )}
+        </div>
+        <span>{rsvpSummary(attendees)}</span>
+      </div>
+    </DetailRow>
+  );
+}
 
 function timeText(event: CalendarEvent): string {
   if (event.allDay) {
@@ -81,6 +155,9 @@ export function EventDetail({
         <DetailRow icon={TextAlignLeft01Icon}>
           <RichTextView html={event.description} className="line-clamp-6" />
         </DetailRow>
+      )}
+      {event.attendees && event.attendees.length > 0 && (
+        <GuestList attendees={event.attendees} />
       )}
       {event.htmlLink && (
         <a

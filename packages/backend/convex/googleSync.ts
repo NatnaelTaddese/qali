@@ -18,6 +18,7 @@ import {
   fetchContactsPage,
   SyncTokenExpiredError,
 } from "./lib/google";
+import { attendeeValidator } from "./schema";
 
 // Validators for data pushed from actions into mutations (mapped Google shapes).
 const eventValidator = v.object({
@@ -33,6 +34,7 @@ const eventValidator = v.object({
   htmlLink: v.optional(v.string()),
   colorId: v.optional(v.string()),
   visibility: v.optional(v.string()),
+  attendees: v.optional(v.array(attendeeValidator)),
   googleUpdatedMs: v.number(),
 });
 

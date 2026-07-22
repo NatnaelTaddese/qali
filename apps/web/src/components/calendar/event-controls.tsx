@@ -1,10 +1,5 @@
-import {
-  Calendar03Icon,
-  SquareLock01Icon,
-  SquareUnlock01Icon,
-  Tick02Icon,
-} from "@hugeicons/core-free-icons";
-import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { Calendar03Icon, Tick02Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import type { Doc } from "@qali/backend/convex/_generated/dataModel";
 import {
   Popover,
@@ -42,19 +37,15 @@ export interface EventControlsProps {
   onColorChange: (colorId?: string) => void;
   calendarId?: string;
   onCalendarChange: (calendarId: string) => void;
-  isPrivate: boolean;
-  onPrivateChange: (isPrivate: boolean) => void;
 }
 
-/** Colour, calendar and visibility for the event being created. */
+/** Colour and calendar for the event being created. */
 export function EventControls({
   calendars,
   colorId,
   onColorChange,
   calendarId,
   onCalendarChange,
-  isPrivate,
-  onPrivateChange,
 }: EventControlsProps) {
   const writable = sortCalendars(calendars.filter((c) => WRITABLE.has(c.accessRole ?? "")));
   const selected = writable.find((c) => c.googleCalendarId === calendarId);
@@ -141,13 +132,6 @@ export function EventControls({
           </div>
         </PopoverContent>
       </Popover>
-
-      <IconToggle
-        icon={isPrivate ? SquareLock01Icon : SquareUnlock01Icon}
-        label={isPrivate ? "Private" : "Visible to others"}
-        pressed={isPrivate}
-        onToggle={() => onPrivateChange(!isPrivate)}
-      />
     </div>
   );
 }
@@ -175,31 +159,5 @@ function Swatch({
       )}
       style={{ backgroundColor: `var(${colorVar})` }}
     />
-  );
-}
-
-function IconToggle({
-  icon,
-  label,
-  pressed,
-  onToggle,
-}: {
-  icon: IconSvgElement;
-  label: string;
-  pressed: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        aria-label={label}
-        aria-pressed={pressed}
-        onClick={onToggle}
-        className={cn(buttonClass, pressed && "bg-accent text-foreground")}
-      >
-        <HugeiconsIcon icon={icon} strokeWidth={2} className="size-4.5" />
-      </TooltipTrigger>
-      <TooltipContent side="top">{label}</TooltipContent>
-    </Tooltip>
   );
 }

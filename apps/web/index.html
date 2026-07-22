@@ -4,6 +4,34 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>qali</title>
+    <!-- Apply the theme class before first paint so a reload doesn't flash the
+         default (light) background before next-themes mounts. Mirrors the
+         ThemeProvider config in __root.tsx (attribute=class, defaultTheme=dark,
+         storageKey=vite-ui-theme). -->
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem("vite-ui-theme") || "dark";
+          if (theme === "system") {
+            theme = window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+          }
+          document.documentElement.classList.add(theme);
+          document.documentElement.style.colorScheme = theme;
+        } catch (e) {}
+      })();
+    </script>
+    <style>
+      /* Base page background per theme, so the paint before the app's CSS
+         loads matches --background (dark #111111 / light near-white). */
+      html.dark {
+        background-color: #111111;
+      }
+      html.light {
+        background-color: #ffffff;
+      }
+    </style>
   </head>
 
   <body>

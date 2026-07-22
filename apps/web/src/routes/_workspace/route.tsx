@@ -3,6 +3,7 @@ import { Authenticated, AuthLoading, Unauthenticated } from "convex/react";
 
 import { BottomIsland } from "@/components/workspace/bottom-island";
 import { DockProvider } from "@/components/workspace/dock-context";
+import { WorkspaceSkeleton } from "@/components/workspace/workspace-skeleton";
 
 export const Route = createFileRoute("/_workspace")({
   component: WorkspaceLayout,
@@ -25,7 +26,7 @@ function WorkspaceLayout() {
         <Navigate to="/login" />
       </Unauthenticated>
       <AuthLoading>
-        <div>Loading...</div>
+        <WorkspaceSkeleton />
       </AuthLoading>
     </>
   );

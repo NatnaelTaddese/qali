@@ -10,6 +10,11 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import { Button } from "@qali/ui/components/button";
 import { WheelPicker } from "@qali/ui/components/motion/wheel-picker";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@qali/ui/components/tooltip";
 import { cn } from "@qali/ui/lib/utils";
 import { useAction, useQuery } from "convex/react";
 import { format, startOfDay } from "date-fns";
@@ -244,25 +249,34 @@ export function EventCreate({
           className="flex flex-col gap-3"
         >
         <div className="flex items-start gap-3">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={isPrivate}
-            aria-label={isPrivate ? "Private" : "Visible to others"}
-            onClick={() => setIsPrivate((p) => !p)}
-            className={cn(
-              "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
-              isPrivate
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-          >
-            <HugeiconsIcon
-              icon={isPrivate ? SquareLock01Icon : SquareUnlock01Icon}
-              strokeWidth={2}
-              className="size-4.5"
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isPrivate}
+                  aria-label={isPrivate ? "Private" : "Visible to others"}
+                  onClick={() => setIsPrivate((p) => !p)}
+                  className={cn(
+                    "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+                    isPrivate
+                      ? "bg-accent text-foreground"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                  )}
+                >
+                  <HugeiconsIcon
+                    icon={isPrivate ? SquareLock01Icon : SquareUnlock01Icon}
+                    strokeWidth={2}
+                    className="size-4.5"
+                  />
+                </button>
+              }
             />
-          </button>
+            <TooltipContent side="top">
+              {isPrivate ? "Private" : "Visible to others"}
+            </TooltipContent>
+          </Tooltip>
 
           <div className="flex min-w-0 flex-1 flex-col">
             <input

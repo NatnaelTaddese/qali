@@ -40,10 +40,10 @@ export const VIEW_BUFFER: Record<CalendarView, number> = {
 };
 
 /** Time-grid views render a continuous strip of day columns. `columns` is how
- * many are visible at once; `snapDays` is how far a horizontal scroll steps. */
+ * many are visible at once; navigation buttons move by `VIEW_NAV_DAYS`. */
 export type StripView = Exclude<CalendarView, "month">;
 export const VIEW_COLUMNS: Record<StripView, number> = { day: 1, week: 7 };
-export const VIEW_SNAP_DAYS: Record<StripView, number> = { day: 1, week: 3 };
+export const VIEW_NAV_DAYS: Record<StripView, number> = { day: 1, week: 3 };
 /** Extra day columns rendered off-screen on each side of the visible window. */
 export const STRIP_SIDE_DAYS: Record<StripView, number> = { day: 6, week: 12 };
 

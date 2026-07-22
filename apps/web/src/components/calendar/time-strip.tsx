@@ -38,8 +38,6 @@ interface TimeStripProps {
   anchorIndex: number;
   /** Visible columns (1 for day view, 7 for week). */
   columns: number;
-  /** Horizontal scroll step, in days (1 for day view, 3 for week). */
-  snapDays: number;
   /** Events for the whole strip range; bucketed per day internally. */
   events: CalendarEvent[];
   /** Fired once scrolling settles `deltaDays` away from the anchor. */
@@ -48,9 +46,9 @@ interface TimeStripProps {
 
 /**
  * A continuous horizontal strip of day columns with a pinned time gutter.
- * Scrolling snaps every `snapDays` columns, so the visible window slides in
- * multi-day steps rather than jumping a whole page. On settle it reports how
- * many days moved; the parent re-anchors and the strip silently recenters.
+ * Scrolling snaps to each day column, so gentle gestures can move one day while
+ * stronger gestures retain native momentum. On settle it reports how many days
+ * moved; the parent re-anchors and the strip silently recenters.
  *
  * Column width is expressed purely in CSS (no measured state / ResizeObserver);
  * JS reads `clientWidth` only on demand to translate a day index into a scroll
@@ -58,7 +56,7 @@ interface TimeStripProps {
  */
 export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
   function TimeStrip(
-    { days, anchorIndex, columns, snapDays, events, onSettleDeltaDays },
+    { days, anchorIndex, columns, events, onSettleDeltaDays },
     ref,
   ) {
     const scrollerRef = useRef<HTMLDivElement>(null);
@@ -275,7 +273,6 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
                 key={day.getTime()}
                 day={day}
                 events={timedByDay[i]}
-                snapAlign={(i - anchorIndex) % snapDays === 0}
                 gridRef={bodyRef}
                 beginDrag={beginDrag}
                 draggingId={draggingId}

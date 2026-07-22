@@ -32,7 +32,7 @@ import {
   stripDays,
   VIEW_BUFFER,
   VIEW_COLUMNS,
-  VIEW_SNAP_DAYS,
+  VIEW_NAV_DAYS,
   viewTitle,
 } from "./lib";
 import { MonthPanel } from "./month-panel";
@@ -67,13 +67,13 @@ export function CalendarWeekView() {
       };
     }
     const columns = VIEW_COLUMNS[view];
-    const snapDays = VIEW_SNAP_DAYS[view];
+    const navDays = VIEW_NAV_DAYS[view];
     const side = STRIP_SIDE_DAYS[view];
     const days = stripDays(anchor, columns, side);
     return {
       mode: "strip" as const,
       columns,
-      snapDays,
+      navDays,
       anchorIndex: side,
       days,
       rangeStartMs: days[0].getTime(),
@@ -88,13 +88,13 @@ export function CalendarWeekView() {
     }) ?? [];
 
   const calendars = useStableQuery(api.calendar.listCalendars) ?? [];
-  // Prev/next: step one page (month) or one snap (day/week), animating the scroll.
+  // Prev/next: step one page (month) or the configured day count, animating the scroll.
   const step = (dir: number) => {
     if (layout.mode === "month") {
       pagerRef.current?.scrollToIndex(layout.centerIndex + dir, "smooth");
     } else {
       stripRef.current?.scrollToIndex(
-        layout.anchorIndex + dir * layout.snapDays,
+        layout.anchorIndex + dir * layout.navDays,
         "smooth",
       );
     }
@@ -234,7 +234,6 @@ export function CalendarWeekView() {
             days={layout.days}
             anchorIndex={layout.anchorIndex}
             columns={layout.columns}
-            snapDays={layout.snapDays}
             events={events}
             onSettleDeltaDays={(delta) => setAnchor((a) => addDays(a, delta))}
           />

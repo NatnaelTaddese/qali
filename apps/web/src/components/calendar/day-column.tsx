@@ -26,8 +26,6 @@ const DRAG_THRESHOLD_PX = 4;
 interface DayColumnProps {
   day: Date;
   events: CalendarEvent[];
-  /** Mark this column as a horizontal scroll-snap target. */
-  snapAlign?: boolean;
   /** The shared `data-time-grid` element, read by card drags for geometry. */
   gridRef: RefObject<HTMLDivElement | null>;
   /** Start a move/resize gesture from a card. */
@@ -44,7 +42,6 @@ interface DayColumnProps {
 export function DayColumn({
   day,
   events,
-  snapAlign,
   gridRef,
   beginDrag,
   draggingId,
@@ -135,7 +132,7 @@ export function DayColumn({
         "relative border-l border-border",
         draft && "touch-none select-none",
       )}
-      style={snapAlign ? { scrollSnapAlign: "start" } : undefined}
+      style={{ scrollSnapAlign: "start" }}
     >
       {positioned.map((p) => (
         <EventCard

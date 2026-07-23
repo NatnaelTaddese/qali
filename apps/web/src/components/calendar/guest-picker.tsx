@@ -210,7 +210,7 @@ export function GuestPicker({
                 onKeyDown={onKeyDown}
                 placeholder="Search or type an email"
                 aria-label="Search people"
-                className="mb-1 w-full rounded-lg bg-muted px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                className="mb-1 w-full rounded-xl bg-muted px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-ring"
               />
               {rowCount > 0 ? (
                 <ul className="max-h-56 overflow-y-auto">

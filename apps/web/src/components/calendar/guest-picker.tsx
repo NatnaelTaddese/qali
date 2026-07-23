@@ -8,11 +8,13 @@ import {
 } from "@qali/ui/components/popover";
 import { cn } from "@qali/ui/lib/utils";
 import { useQuery } from "convex/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useMemo, useRef, useState } from "react";
 
 import { authClient } from "@/lib/auth-client";
 
 import { Avatar } from "./avatar";
+import { SPRING_DOCK } from "./motion";
 
 export interface Guest {
   email: string;
@@ -48,6 +50,7 @@ export function GuestPicker({
   const contacts = useQuery(api.contacts.listContacts) ?? [];
   const { data: session } = authClient.useSession();
   const organizer = session?.user;
+  const reduce = useReducedMotion();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -151,7 +154,7 @@ export function GuestPicker({
       <HugeiconsIcon
         icon={UserMultiple02Icon}
         strokeWidth={2}
-        className="mt-2 size-4.5 shrink-0 text-muted-foreground"
+        className="mt-0.5 size-4.5 shrink-0 text-muted-foreground"
       />
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <Popover
@@ -164,33 +167,51 @@ export function GuestPicker({
             }
           }}
         >
-          <PopoverTrigger className="flex w-full flex-col gap-1.5 rounded-xl bg-muted px-3 py-2 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
-            <span className="text-sm text-muted-foreground">Add guests</span>
-            {value.length > 0 && (
-              <span className="flex items-center gap-2">
-                <span className="flex items-center">
-                  {stackShown.map((p) => (
-                    <span
-                      key={p.email}
-                      className="-ml-1.5 rounded-full ring-2 ring-muted first:ml-0"
-                    >
-                      <Avatar
-                        email={p.email}
-                        name={p.name}
-                        photoUrl={p.photoUrl}
-                        className="size-6"
-                      />
-                    </span>
-                  ))}
-                  {stackOverflow > 0 && (
-                    <span className="-ml-1.5 flex size-6 items-center justify-center rounded-full bg-background text-[0.625rem] font-semibold text-muted-foreground ring-2 ring-muted">
-                      +{stackOverflow}
-                    </span>
-                  )}
-                </span>
-                <span className="text-xs text-muted-foreground">{summary}</span>
-              </span>
-            )}
+          <PopoverTrigger className="group flex w-full flex-col items-start gap-1.5 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <span className="text-sm text-muted-foreground transition-colors group-hover:text-foreground">
+              Add guests
+            </span>
+            <AnimatePresence initial={false}>
+              {value.length > 0 && (
+                <motion.span
+                  key="summary"
+                  initial={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                  transition={SPRING_DOCK}
+                  className="flex items-center gap-2 overflow-hidden"
+                >
+                  <span className="flex items-center">
+                    <AnimatePresence initial={false}>
+                      {stackShown.map((p) => (
+                        <motion.span
+                          key={p.email}
+                          layout={!reduce}
+                          initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0 }}
+                          transition={SPRING_DOCK}
+                          className="-ml-1.5 rounded-full ring-2 ring-muted first:ml-0"
+                        >
+                          <Avatar
+                            email={p.email}
+                            name={p.name}
+                            photoUrl={p.photoUrl}
+                            className="size-6"
+                          />
+                        </motion.span>
+                      ))}
+                    </AnimatePresence>
+                    {stackOverflow > 0 && (
+                      <span className="-ml-1.5 flex size-6 items-center justify-center rounded-full bg-background text-[0.625rem] font-semibold text-muted-foreground ring-2 ring-muted">
+                        +{stackOverflow}
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-xs text-muted-foreground">{summary}</span>
+                </motion.span>
+              )}
+            </AnimatePresence>
           </PopoverTrigger>
           <PopoverContent
             side="top"
@@ -273,8 +294,17 @@ export function GuestPicker({
             </div>
 
             {/* Right column: the invited-members list, grouped by RSVP. */}
-            {value.length > 0 && (
-              <div className="flex max-h-80 w-72 flex-col gap-3 overflow-y-auto border-l border-foreground/10 p-2">
+            <AnimatePresence initial={false}>
+              {value.length > 0 && (
+                <motion.div
+                  key="members"
+                  initial={reduce ? { opacity: 0 } : { opacity: 0, width: 0 }}
+                  animate={reduce ? { opacity: 1 } : { opacity: 1, width: "18rem" }}
+                  exit={reduce ? { opacity: 0 } : { opacity: 0, width: 0 }}
+                  transition={SPRING_DOCK}
+                  className="overflow-hidden border-l border-foreground/10"
+                >
+                  <div className="flex max-h-80 w-72 flex-col gap-3 overflow-y-auto p-2">
                 {organizer && (
                   <div className="flex flex-col gap-0.5">
                     <p className="px-1 text-xs font-medium text-muted-foreground">
@@ -312,40 +342,50 @@ export function GuestPicker({
                   <p className="px-1 text-xs font-medium text-muted-foreground">
                     {value.length} Awaiting
                   </p>
-                  {value.map((g) => (
-                    <div
-                      key={g.email}
-                      className="flex items-center gap-2 rounded-lg px-1 py-1"
-                    >
-                      <Avatar
-                        email={g.email}
-                        name={g.displayName}
-                        photoUrl={g.photoUrl}
-                        className="size-7"
-                      />
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="truncate text-sm">
-                          {g.displayName ?? g.email}
-                        </span>
-                        {g.displayName && (
-                          <span className="truncate text-xs text-muted-foreground">
-                            {g.email}
-                          </span>
-                        )}
-                      </span>
-                      <button
-                        type="button"
-                        aria-label={`Remove ${g.displayName ?? g.email}`}
-                        onClick={() => removeGuest(g.email)}
-                        className="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  <AnimatePresence initial={false}>
+                    {value.map((g) => (
+                      <motion.div
+                        key={g.email}
+                        initial={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                        transition={SPRING_DOCK}
+                        className="overflow-hidden"
                       >
-                        <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2.5} className="size-3.5" />
-                      </button>
-                    </div>
-                  ))}
+                        <div className="flex items-center gap-2 rounded-lg px-1 py-1">
+                          <Avatar
+                            email={g.email}
+                            name={g.displayName}
+                            photoUrl={g.photoUrl}
+                            className="size-7"
+                          />
+                          <span className="flex min-w-0 flex-1 flex-col">
+                            <span className="truncate text-sm">
+                              {g.displayName ?? g.email}
+                            </span>
+                            {g.displayName && (
+                              <span className="truncate text-xs text-muted-foreground">
+                                {g.email}
+                              </span>
+                            )}
+                          </span>
+                          <button
+                            type="button"
+                            aria-label={`Remove ${g.displayName ?? g.email}`}
+                            onClick={() => removeGuest(g.email)}
+                            className="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2.5} className="size-3.5" />
+                          </button>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
                 </div>
-              </div>
+                </div>
+              </motion.div>
             )}
+            </AnimatePresence>
           </PopoverContent>
         </Popover>
       </div>

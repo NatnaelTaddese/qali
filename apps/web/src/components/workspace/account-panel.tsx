@@ -54,7 +54,7 @@ export function AccountPanel({ onClose }: { onClose: () => void }) {
               variant="ghost"
               size="sm"
               aria-pressed={theme === option.value}
-              className="rounded-xl px-2 text-muted-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm hover:bg-background/60"
+              className="rounded-xl px-2 text-muted-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm hover:bg-background/60 dark:hover:bg-background/40 aria-pressed:dark:border-white/5"
               onClick={() => setTheme(option.value)}
             >
               <HugeiconsIcon icon={option.icon} strokeWidth={2} className="size-4" />

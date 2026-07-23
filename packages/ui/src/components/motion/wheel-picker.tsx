@@ -541,7 +541,7 @@ export function WheelPicker({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       className={cn(
-        "relative touch-none select-none overflow-hidden rounded-2xl border border-border bg-card outline-none focus-visible:ring-2 focus-visible:ring-foreground/20",
+        "relative touch-none select-none overflow-hidden rounded-xs border border-border bg-card outline-none focus-visible:ring-2 focus-visible:ring-foreground/20",
         grabbing ? "cursor-grabbing" : "cursor-grab",
         disabled && "pointer-events-none opacity-50",
         maskFade,

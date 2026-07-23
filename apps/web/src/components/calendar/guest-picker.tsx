@@ -198,20 +198,10 @@ export function GuestPicker({
             initialFocus={inputRef}
             className="flex w-auto max-w-[calc(100vw-2rem)] overflow-hidden p-0"
           >
-            {/* Left column: search + contact suggestions. */}
-            <div className="flex w-72 flex-col p-2">
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setActive(0);
-                }}
-                onKeyDown={onKeyDown}
-                placeholder="Search or type an email"
-                aria-label="Search people"
-                className="mb-1 w-full rounded-xl bg-muted px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-ring"
-              />
+            {/* Left column: contact suggestions above, search box at the bottom.
+                Sink content to the bottom so the search aligns with the popover's
+                lower edge even when the members list makes it taller. */}
+            <div className="flex w-72 flex-col justify-end p-2">
               {rowCount > 0 ? (
                 <ul className="max-h-56 overflow-y-auto">
                   {suggestions.map((s, i) => (
@@ -268,6 +258,18 @@ export function GuestPicker({
                     : "Search contacts or type an email"}
                 </p>
               )}
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setActive(0);
+                }}
+                onKeyDown={onKeyDown}
+                placeholder="Search or type an email"
+                aria-label="Search people"
+                className="mt-1 w-full rounded-xl bg-muted px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-ring"
+              />
             </div>
 
             {/* Right column: the invited-members list, grouped by RSVP. */}

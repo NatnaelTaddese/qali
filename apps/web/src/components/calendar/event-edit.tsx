@@ -6,6 +6,7 @@ import { useAction } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { FreeBusyToggle } from "./free-busy-toggle";
 import type { CalendarEvent } from "./lib";
 import { RichTextEditor } from "./rich-text/rich-text-editor";
 
@@ -24,6 +25,8 @@ export function EventEdit({
   const updateEvent = useAction(api.calendar.updateEvent);
   const [summary, setSummary] = useState(event.summary ?? "");
   const [description, setDescription] = useState(event.description ?? "");
+  // Google defaults an unset transparency to busy, so only "transparent" is free.
+  const [busy, setBusy] = useState(event.transparency !== "transparent");
   const [saving, setSaving] = useState(false);
 
   const save = (e: React.FormEvent) => {
@@ -35,6 +38,9 @@ export function EventEdit({
       summary: summary.trim() || "(No title)",
       // Empty string clears the description on Google's side.
       description,
+      // Explicit value: a patch only sends fields present, so send both states
+      // so switching back to Busy actually patches Google.
+      transparency: busy ? "opaque" : "transparent",
     })
       .then(onSaved)
       .catch((error: unknown) => {
@@ -60,14 +66,19 @@ export function EventEdit({
         Edit event
       </button>
 
-      <input
-        autoFocus
-        value={summary}
-        onChange={(e) => setSummary(e.target.value)}
-        placeholder="Title"
-        aria-label="Title"
-        className="w-full bg-transparent text-base font-semibold outline-none placeholder:text-muted-foreground"
-      />
+      <div className="flex items-center gap-3">
+        <input
+          autoFocus
+          value={summary}
+          onChange={(e) => setSummary(e.target.value)}
+          placeholder="Title"
+          aria-label="Title"
+          className="min-w-0 flex-1 bg-transparent text-base font-semibold outline-none placeholder:text-muted-foreground"
+        />
+        <div className="shrink-0">
+          <FreeBusyToggle busy={busy} onChange={setBusy} />
+        </div>
+      </div>
 
       <RichTextEditor
         value={description}

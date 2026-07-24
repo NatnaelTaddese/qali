@@ -68,6 +68,8 @@ export default defineSchema({
     colorId: v.optional(v.string()),
     // Google's `visibility`: "default" | "public" | "private" | "confidential".
     visibility: v.optional(v.string()),
+    // Google's `transparency`: "opaque" (busy) | "transparent" (free).
+    transparency: v.optional(v.string()),
     // Guests invited to the event, refreshed by every sync. See attendeeValidator.
     attendees: v.optional(v.array(attendeeValidator)),
     googleUpdatedMs: v.number(),

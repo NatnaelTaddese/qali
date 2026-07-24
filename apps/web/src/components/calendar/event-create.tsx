@@ -24,6 +24,7 @@ import { toast } from "sonner";
 
 import { DayPicker } from "./day-picker";
 import { EventControls } from "./event-controls";
+import { FreeBusyToggle } from "./free-busy-toggle";
 import { GuestPicker, type Guest } from "./guest-picker";
 import { MS_PER_DAY, SNAP_MS } from "./lib";
 import { dockVariants, dockVariantsReduced, press } from "./motion";
@@ -118,6 +119,9 @@ export function EventCreate({
   const [colorId, setColorId] = useState<string>();
   const [calendarId, setCalendarId] = useState<string>();
   const [isPrivate, setIsPrivate] = useState(false);
+  // Whether the event blocks the user's time (Google's `transparency`). Busy is
+  // Google's default, so the toggle starts on Busy. Distinct from `isPrivate`.
+  const [busy, setBusy] = useState(true);
   // Guests to invite; Google emails them on create. Empty = a solo event.
   const [guests, setGuests] = useState<Guest[]>([]);
   // The description gets the whole panel rather than a field crammed under the
@@ -179,6 +183,8 @@ export function EventCreate({
       calendarId: activeCalendarId,
       colorId,
       visibility: isPrivate ? "private" : undefined,
+      // Busy is Google's default; only send the override when Free.
+      transparency: busy ? undefined : "transparent",
       recurrence: recurrence ? toRRule(recurrence) : undefined,
       attendees: guests.length
         ? guests.map((g) => ({ email: g.email, displayName: g.displayName }))
@@ -392,13 +398,16 @@ export function EventCreate({
         )}
 
         <div className="flex items-center justify-between gap-2">
-          <EventControls
-            calendars={calendars}
-            colorId={colorId}
-            onColorChange={setColorId}
-            calendarId={activeCalendarId}
-            onCalendarChange={setCalendarId}
-          />
+          <div className="flex items-center gap-1">
+            <EventControls
+              calendars={calendars}
+              colorId={colorId}
+              onColorChange={setColorId}
+              calendarId={activeCalendarId}
+              onCalendarChange={setCalendarId}
+            />
+            <FreeBusyToggle busy={busy} onChange={setBusy} />
+          </div>
           <div className="flex gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
               Cancel

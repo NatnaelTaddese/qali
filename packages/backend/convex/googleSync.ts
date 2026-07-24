@@ -34,6 +34,7 @@ const eventValidator = v.object({
   htmlLink: v.optional(v.string()),
   colorId: v.optional(v.string()),
   visibility: v.optional(v.string()),
+  transparency: v.optional(v.string()),
   attendees: v.optional(v.array(attendeeValidator)),
   googleUpdatedMs: v.number(),
 });

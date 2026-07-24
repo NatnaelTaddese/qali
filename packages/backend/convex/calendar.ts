@@ -131,6 +131,8 @@ export const createEvent = action({
     /** Google event colour override ("1".."11"); absent inherits the calendar. */
     colorId: v.optional(v.string()),
     visibility: v.optional(v.string()),
+    /** Google's `transparency`: "transparent" (free); absent = busy (the default). */
+    transparency: v.optional(v.string()),
     /** RFC5545 recurrence lines (RRULE), e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO"]. */
     recurrence: v.optional(v.array(v.string())),
     /** Guests to invite. Google emails each one an invitation on create. */
@@ -186,6 +188,7 @@ export const createEvent = action({
         end: toGoogleTime(args.endMs),
         colorId: args.colorId,
         visibility: args.visibility,
+        transparency: args.transparency,
         attendees: args.attendees,
         recurrence: args.recurrence,
       },
@@ -289,6 +292,8 @@ export const updateEvent = action({
     summary: v.optional(v.string()),
     /** HTML description (bold/italic/underline/links/lists). Empty string clears it. */
     description: v.optional(v.string()),
+    /** Google's `transparency`: "opaque" (busy) | "transparent" (free). */
+    transparency: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<MappedEvent> => {
     const user = await authComponent.safeGetAuthUser(ctx);
@@ -314,7 +319,11 @@ export const updateEvent = action({
       accessToken,
       row.calendarId,
       row.googleEventId,
-      { summary: args.summary, description: args.description },
+      {
+        summary: args.summary,
+        description: args.description,
+        transparency: args.transparency,
+      },
     );
 
     await ctx.runMutation(internal.calendar.upsertEvent, {
@@ -354,6 +363,7 @@ export const upsertEvent = internalMutation({
       htmlLink: v.optional(v.string()),
       colorId: v.optional(v.string()),
       visibility: v.optional(v.string()),
+      transparency: v.optional(v.string()),
       attendees: v.optional(v.array(attendeeValidator)),
       googleUpdatedMs: v.number(),
     }),

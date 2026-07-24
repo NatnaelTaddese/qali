@@ -72,6 +72,8 @@ export type MappedEvent = {
   htmlLink?: string;
   colorId?: string;
   visibility?: string;
+  /** Google's `transparency`: "opaque" (busy) | "transparent" (free). */
+  transparency?: string;
   attendees?: MappedAttendee[];
   googleUpdatedMs: number;
 };
@@ -91,6 +93,7 @@ type RawEvent = {
   htmlLink?: string;
   colorId?: string;
   visibility?: string;
+  transparency?: string;
   updated?: string;
   start?: RawCalendarDateTime;
   end?: RawCalendarDateTime;
@@ -209,6 +212,7 @@ export function mapGoogleEvent(raw: RawEvent, calendarId: string): MappedEvent {
     htmlLink: raw.htmlLink,
     colorId: raw.colorId,
     visibility: raw.visibility,
+    transparency: raw.transparency,
     attendees: attendees && attendees.length > 0 ? attendees : undefined,
     googleUpdatedMs: raw.updated ? new Date(raw.updated).getTime() : Date.now(),
   };
@@ -267,6 +271,8 @@ export async function insertCalendarEvent(
     end: RawCalendarDateTime;
     colorId?: string;
     visibility?: string;
+    /** "opaque" (busy) | "transparent" (free). Omitted = Google's default (busy). */
+    transparency?: string;
     /** Guests to invite. Google emails them when `sendUpdates` is set. */
     attendees?: { email: string; displayName?: string; optional?: boolean }[];
     /** RFC5545 recurrence lines, e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO,WE"]. */
@@ -299,6 +305,8 @@ export async function patchCalendarEvent(
     location?: string;
     colorId?: string;
     visibility?: string;
+    /** "opaque" (busy) | "transparent" (free). */
+    transparency?: string;
     attendees?: { email: string; displayName?: string; optional?: boolean }[];
   },
   /** When set, Google emails the affected guests (e.g. "all" for invitations). */

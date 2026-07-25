@@ -468,8 +468,11 @@ export function EventDetail({
           className="flex flex-col gap-3"
         >
           <div className="flex items-start gap-3">
+            {/* A color strip on the left, matching the event cards on the grid
+                (event-card.tsx) rather than a lone dot. */}
             <span
-              className="mt-1.5 size-2.5 shrink-0 rounded-full"
+              aria-hidden
+              className="w-[3px] shrink-0 self-stretch rounded-full"
               style={{ backgroundColor: `var(${colorVar})` }}
             />
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -632,7 +635,7 @@ export function EventDetail({
                   onConfirm={remove}
                 />
               )}
-              {capabilities.canEdit ? (
+              {capabilities.canEdit && (
                 <Button type="button" size="sm" onClick={onEdit}>
                   <HugeiconsIcon
                     icon={PencilEdit02Icon}
@@ -641,19 +644,6 @@ export function EventDetail({
                   />
                   Edit
                 </Button>
-              ) : (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground" />
-                    }
-                  >
-                    View only
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    {capabilities.readOnlyReason}
-                  </TooltipContent>
-                </Tooltip>
               )}
             </div>
           </div>

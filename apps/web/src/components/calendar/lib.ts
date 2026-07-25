@@ -139,7 +139,7 @@ export const TIMEZONES: { id: string; label: string }[] = [
 ];
 
 /** Width of each timezone gutter column, in pixels. */
-export const GUTTER_WIDTH = 56;
+export const GUTTER_WIDTH = 64;
 /** Total width of all gutter columns — where the day columns begin. */
 export const GUTTER_TOTAL = GUTTER_WIDTH * TIMEZONES.length;
 

@@ -309,6 +309,13 @@ export interface PositionedEvent {
   /** Paint order within the cluster (0 = earliest start). Higher sits on top, so
    * a later-starting event is never buried under an earlier, longer one. */
   elevation: number;
+  /** Column (lane) this event occupies in side-by-side layout. 0 is leftmost. */
+  columnIndex: number;
+  /** Number of columns the event's cluster splits into (1 when it stands alone). */
+  columnCount: number;
+  /** How many columns the card fills once it expands right into free space
+   * (>= 1). `columnIndex + columnSpan <= columnCount`. */
+  columnSpan: number;
 }
 
 /** Horizontal shift, in pixels, applied per stack level in the overlap cascade. */
@@ -327,6 +334,30 @@ export function stackIndentPx(stackIndex: number): number {
   return capped * STACK_INDENT_PX + overflow * STACK_DEEP_STEP_PX;
 }
 
+/** How far the next overlapping card advances past the previous one, as a
+ * fraction of a card's width. Below 1 so side-by-side cards overlap enough to
+ * read as a stack rather than splitting into clean, disconnected halves. */
+export const LANE_ADVANCE_RATIO = 0.62;
+
+/** Horizontal box (`left`/`width` as 0–1 fractions of the column) for an event
+ * laid out in side-by-side lanes. Cards fan left-to-right and overlap by
+ * `1 - LANE_ADVANCE_RATIO` of their width, so each exposes its own left edge
+ * while the later card (painted on top) still overlaps it. A card widens across
+ * `columnSpan` lanes when it can expand right into free space; a card that
+ * reaches the last lane extends to the column's right edge. */
+export function laneBox(
+  columnIndex: number,
+  columnCount: number,
+  columnSpan: number,
+): { left: number; width: number } {
+  if (columnCount <= 1) return { left: 0, width: 1 };
+  // Width W and step S solve (columnCount-1)·S + W = 1 with S = ratio·W, so the
+  // fan exactly spans the column and the rightmost card ends flush.
+  const width = 1 / (1 + (columnCount - 1) * LANE_ADVANCE_RATIO);
+  const step = LANE_ADVANCE_RATIO * width;
+  return { left: columnIndex * step, width: width + (columnSpan - 1) * step };
+}
+
 /**
  * Position a day's timed events: clamp to the day, then cascade transitively
  * overlapping events. Each event indents past the earlier events still running
@@ -343,17 +374,55 @@ export function layoutDayEvents(
     .map((event) => {
       const start = Math.max(event.startMs, dayStartMs);
       const end = Math.min(Math.max(event.endMs, start + SNAP_MS), dayEndMs);
-      return { event, start, end, stackIndex: 0, stackCount: 1, elevation: 0 };
+      return {
+        event,
+        start,
+        end,
+        stackIndex: 0,
+        stackCount: 1,
+        elevation: 0,
+        columnIndex: 0,
+        columnCount: 1,
+        columnSpan: 1,
+      };
     })
     .sort((a, b) => a.start - b.start || b.end - b.start - (a.end - a.start));
 
   // Walk events in start order, grouping transitively overlapping ones into
-  // clusters. `cluster` holds the earlier members still relevant to the run.
+  // clusters (a run of events chained by overlap). Each cluster is laid out
+  // independently for both the cascade (week) and the columns (day).
   let cluster: typeof items = [];
   let clusterEnd = -Infinity;
 
   const closeCluster = () => {
+    if (cluster.length === 0) return;
     for (const item of cluster) item.stackCount = cluster.length;
+
+    // Column packing: greedy first-fit into lanes (mirrors layoutAllDayEvents,
+    // but on ms ends). Each event reuses the first lane free at its start, or
+    // opens a new one.
+    const laneEnds: number[] = [];
+    for (const item of cluster) {
+      let lane = laneEnds.findIndex((end) => end <= item.start);
+      if (lane === -1) lane = laneEnds.length;
+      laneEnds[lane] = item.end;
+      item.columnIndex = lane;
+    }
+    const columnCount = laneEnds.length;
+    // Expand each card right into free columns: stop at the first later-lane
+    // event it overlaps in time.
+    for (const item of cluster) {
+      item.columnCount = columnCount;
+      let span = columnCount - item.columnIndex;
+      for (const other of cluster) {
+        if (other === item || other.columnIndex <= item.columnIndex) continue;
+        if (other.start < item.end && other.end > item.start) {
+          span = Math.min(span, other.columnIndex - item.columnIndex);
+        }
+      }
+      item.columnSpan = Math.max(span, 1);
+    }
+
     cluster = [];
   };
 
@@ -368,14 +437,29 @@ export function layoutDayEvents(
   }
   closeCluster();
 
-  return items.map(({ event, start, end, stackIndex, stackCount, elevation }) => ({
-    event,
-    topPct: msToPct(start, dayStartMs),
-    heightPct: msToPct(end, dayStartMs) - msToPct(start, dayStartMs),
-    stackIndex,
-    stackCount,
-    elevation,
-  }));
+  return items.map(
+    ({
+      event,
+      start,
+      end,
+      stackIndex,
+      stackCount,
+      elevation,
+      columnIndex,
+      columnCount,
+      columnSpan,
+    }) => ({
+      event,
+      topPct: msToPct(start, dayStartMs),
+      heightPct: msToPct(end, dayStartMs) - msToPct(start, dayStartMs),
+      stackIndex,
+      stackCount,
+      elevation,
+      columnIndex,
+      columnCount,
+      columnSpan,
+    }),
+  );
 }
 
 // Event/calendar colors live in ./colors.ts — they resolve against Google's

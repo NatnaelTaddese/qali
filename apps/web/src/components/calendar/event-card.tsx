@@ -3,7 +3,7 @@ import { format } from "date-fns";
 import { motion } from "motion/react";
 
 import { useEventColor } from "./colors";
-import { type PositionedEvent, stackIndentPx } from "./lib";
+import { laneBox, type PositionedEvent, stackIndentPx } from "./lib";
 import { pressTransition } from "./motion";
 import { useEventCapabilities } from "./permissions";
 import type { DragMode } from "./use-event-drag";
@@ -12,6 +12,9 @@ interface EventCardProps {
   positioned: PositionedEvent;
   /** True while this card is the one being moved/resized. */
   isDragging: boolean;
+  /** Lay overlaps out as side-by-side columns (day view) instead of the cascade
+   * (week view), where the column is too narrow to subdivide. */
+  laneLayout: boolean;
   /** Begin a gesture; the mode is derived from where the press landed. */
   onDragStart: (mode: DragMode, e: React.PointerEvent) => void;
 }
@@ -25,17 +28,35 @@ function modeForTarget(target: EventTarget | null): DragMode {
   return "move";
 }
 
-export function EventCard({ positioned, isDragging, onDragStart }: EventCardProps) {
-  const { event, topPct, heightPct, stackIndex, elevation } = positioned;
+export function EventCard({
+  positioned,
+  isDragging,
+  laneLayout,
+  onDragStart,
+}: EventCardProps) {
+  const { event, topPct, heightPct, stackIndex, elevation, columnIndex, columnCount, columnSpan } =
+    positioned;
   const colorFor = useEventColor();
   const colorVar = colorFor(event);
   // An event the user can't reschedule still opens on tap, but it shouldn't
   // offer a grab cursor or resize edges for a drag that will never happen.
   const draggable = useEventCapabilities()(event).canEdit;
-  // Overlapping events cascade: each deeper card is indented right and its right
-  // edge stays pinned to the column, so cards behind peek out on the left and a
-  // later event paints on top of the ones it overlaps.
+  // Two overlap modes. Lanes (day view): each cluster fans into side-by-side
+  // lanes that partially overlap, so a card exposes its own left edge while the
+  // later card paints on top — spread out, but still visibly stacked. Cascade
+  // (week view): each deeper card is indented right with its right edge pinned,
+  // so cards behind peek out on the left — the column is too narrow to fan.
   const indent = stackIndentPx(stackIndex);
+  const box = laneBox(columnIndex, columnCount, columnSpan);
+  const horizontal = laneLayout
+    ? {
+        left: `calc(${box.left * 100}% + 2px)`,
+        width: `calc(${box.width * 100}% - 4px)`,
+      }
+    : {
+        left: `calc(${indent}px + 2px)`,
+        width: `calc(100% - ${indent}px - 4px)`,
+      };
   // The card is a size-query container (see `.event-card` in globals.css): the
   // start time and title shrink out as the rendered height gets small, so short
   // events stay legible instead of clipping the title. This tracks actual
@@ -55,8 +76,8 @@ export function EventCard({ positioned, isDragging, onDragStart }: EventCardProp
       style={{
         top: `${topPct}%`,
         height: `${heightPct}%`,
-        left: `calc(${indent}px + 2px)`,
-        width: `calc(100% - ${indent}px - 4px)`,
+        left: horizontal.left,
+        width: horizontal.width,
         zIndex: isDragging ? 50 : 10 + elevation,
         backgroundColor: `color-mix(in oklab, var(${colorVar}) 22%, var(--card))`,
       }}

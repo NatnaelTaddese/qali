@@ -277,6 +277,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
                 gridRef={bodyRef}
                 beginDrag={beginDrag}
                 draggingId={draggingId}
+                laneLayout={columns === 1}
               />
             ))}
             {nowLayout && <NowIndicator layout={nowLayout} />}

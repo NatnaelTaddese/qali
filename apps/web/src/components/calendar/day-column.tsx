@@ -37,6 +37,8 @@ interface DayColumnProps {
   ) => void;
   /** Id of the card currently being dragged, or null. */
   draggingId: string | null;
+  /** Split overlaps into side-by-side columns (day view) vs. cascade (week). */
+  laneLayout: boolean;
 }
 
 export function DayColumn({
@@ -45,6 +47,7 @@ export function DayColumn({
   gridRef,
   beginDrag,
   draggingId,
+  laneLayout,
 }: DayColumnProps) {
   const dayStartMs = day.getTime();
   const dayEndMs = dayStartMs + MS_PER_DAY;
@@ -139,6 +142,7 @@ export function DayColumn({
           key={p.event._id}
           positioned={p}
           isDragging={draggingId === p.event._id}
+          laneLayout={laneLayout}
           onDragStart={(mode, e) =>
             beginDrag(p.event, mode, e, gridRef.current)
           }

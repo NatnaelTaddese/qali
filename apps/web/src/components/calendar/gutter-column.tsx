@@ -1,7 +1,6 @@
 import {
   ArrowDown01Icon,
   ArrowUp01Icon,
-  PlusSignIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { startOfDay } from "date-fns";
@@ -54,13 +53,6 @@ export function GutterColumn({
         className="sticky top-0 z-10 flex shrink-0 items-start gap-1 border-b border-border bg-calendar-header px-1.5 py-2 backdrop-blur-xs transition-[height] duration-200 motion-reduce:transition-none"
         style={{ height: HEADER_DATE_HEIGHT + allDayHeight }}
       >
-        <button
-          type="button"
-          aria-label="Add timezone"
-          className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} className="size-3" />
-        </button>
         {TIMEZONES.map((tz) => (
           <span
             key={tz.id}

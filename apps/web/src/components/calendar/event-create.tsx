@@ -1,6 +1,7 @@
 import { api } from "@qali/backend/convex/_generated/api";
 import type { EventCapabilities } from "@qali/backend/convex/lib/permissions";
 import { Button } from "@qali/ui/components/button";
+import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useQuery } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -140,6 +141,7 @@ export function EventCreate({
             Cancel
           </Button>
           <Button type="submit" size="sm" disabled={!valid || submitting}>
+            {submitting && <Spinner />}
             {submitting ? "Creating…" : "Create"}
           </Button>
         </>

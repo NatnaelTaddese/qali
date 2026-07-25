@@ -2,6 +2,7 @@ import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import { Button } from "@qali/ui/components/button";
+import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useQuery } from "convex/react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
@@ -194,6 +195,7 @@ export function EventEdit({
             </Button>
             {capabilities.canEdit && (
               <Button type="submit" size="sm" disabled={!valid || saving}>
+                {saving && <Spinner />}
                 {saving ? "Saving…" : "Save"}
               </Button>
             )}
@@ -273,6 +275,7 @@ function RecurringSaveControl({
         disabled={!valid || saving}
         onClick={open}
       >
+        {saving && <Spinner />}
         {saving ? "Saving…" : "Save"}
       </Button>
 

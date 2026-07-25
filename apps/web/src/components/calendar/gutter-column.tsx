@@ -91,7 +91,15 @@ export function GutterColumn({
           </button>
         )}
       </div>
-      <div className="relative flex flex-1" style={{ minHeight: MIN_DAY_HEIGHT }}>
+      {/* The sticky gutter wrapper is stretched only to the scroller's client
+          height, but the day strip's content runs taller (MIN_DAY_HEIGHT grid +
+          spacer). These children carry their own bg so the gutter stays opaque
+          through that overflow — otherwise the off-screen buffer day bleeds
+          through at the bottom. */}
+      <div
+        className="relative flex flex-1 bg-background"
+        style={{ minHeight: MIN_DAY_HEIGHT }}
+      >
         {TIMEZONES.map((tz) => (
           <div key={tz.id} className="h-full" style={{ width: GUTTER_WIDTH }}>
             <TimeGutter timeZone={tz.id} dayStartMs={dayStartMs} />
@@ -110,7 +118,7 @@ export function GutterColumn({
       </div>
       <div
         aria-hidden
-        className="shrink-0"
+        className="shrink-0 bg-background"
         style={{ height: TIME_GRID_BOTTOM_SPACER_HEIGHT }}
       />
     </div>

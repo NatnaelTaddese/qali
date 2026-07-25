@@ -213,8 +213,9 @@
   }
 }
 
-/* Calendar granularity transition: zoom in for more detail, zoom out for a
-   broader overview. Driven by [data-cal-zoom] on <html>. */
+/* Calendar granularity transition. Zoom (scale crossfade) for changes touching
+   the month overview; width (the day column stretching/shrinking from the gutter)
+   for week↔day. Driven by [data-cal-transition] on <html>. */
 .calendar-body-vt {
   view-transition-name: calendar-body;
 }
@@ -227,18 +228,36 @@
 ::view-transition-new(calendar-body) {
   transform-origin: center center;
 }
+/* Width variants anchor on the gutter edge so the day unfurls/collapses there. */
+:root[data-cal-transition^="width"]::view-transition-old(calendar-body),
+:root[data-cal-transition^="width"]::view-transition-new(calendar-body) {
+  transform-origin: left center;
+}
 
-:root[data-cal-zoom="in"]::view-transition-old(calendar-body) {
+:root[data-cal-transition="zoom-in"]::view-transition-old(calendar-body) {
   animation-name: cal-zoom-in-old;
 }
-:root[data-cal-zoom="in"]::view-transition-new(calendar-body) {
+:root[data-cal-transition="zoom-in"]::view-transition-new(calendar-body) {
   animation-name: cal-zoom-in-new;
 }
-:root[data-cal-zoom="out"]::view-transition-old(calendar-body) {
+:root[data-cal-transition="zoom-out"]::view-transition-old(calendar-body) {
   animation-name: cal-zoom-out-old;
 }
-:root[data-cal-zoom="out"]::view-transition-new(calendar-body) {
+:root[data-cal-transition="zoom-out"]::view-transition-new(calendar-body) {
   animation-name: cal-zoom-out-new;
+}
+
+:root[data-cal-transition="width-in"]::view-transition-old(calendar-body) {
+  animation-name: cal-width-in-old;
+}
+:root[data-cal-transition="width-in"]::view-transition-new(calendar-body) {
+  animation-name: cal-width-in-new;
+}
+:root[data-cal-transition="width-out"]::view-transition-old(calendar-body) {
+  animation-name: cal-width-out-old;
+}
+:root[data-cal-transition="width-out"]::view-transition-new(calendar-body) {
+  animation-name: cal-width-out-new;
 }
 
 @keyframes cal-zoom-in-old {
@@ -263,6 +282,31 @@
   from {
     opacity: 0;
     transform: scale(1.12);
+  }
+}
+
+/* week→day: the day snapshot unfurls from ~one column's width (1/7) to full. */
+@keyframes cal-width-in-old {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes cal-width-in-new {
+  from {
+    opacity: 0;
+    transform: scaleX(0.14);
+  }
+}
+/* day→week: the day snapshot compresses toward ~one column's width as it fades. */
+@keyframes cal-width-out-old {
+  to {
+    opacity: 0;
+    transform: scaleX(0.14);
+  }
+}
+@keyframes cal-width-out-new {
+  from {
+    opacity: 0;
   }
 }
 

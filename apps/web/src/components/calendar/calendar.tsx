@@ -108,23 +108,26 @@ export function CalendarWeekView() {
     [view],
   );
 
-  // Zoom between calendar granularities via the View Transitions API. `flushSync`
-  // commits the new tree (and its layout effects) synchronously so the browser
-  // snapshots the settled view. Falls back to a plain swap when reduced-motion
-  // is on or the browser lacks View Transitions (Firefox / older Safari).
-  const runZoom = useCallback(
-    (direction: "in" | "out", apply: () => void) => {
+  // Animate between calendar granularities via the View Transitions API.
+  // `flushSync` commits the new tree (and its layout effects) synchronously so
+  // the browser snapshots the settled view. `style` picks the animation: "zoom"
+  // (scale crossfade) for anything touching the month overview, "width" (the day
+  // column stretching/shrinking from the gutter) for week↔day. Falls back to a
+  // plain swap when reduced-motion is on or the browser lacks View Transitions
+  // (Firefox / older Safari).
+  const runTransition = useCallback(
+    (style: "zoom" | "width", direction: "in" | "out", apply: () => void) => {
       const el = document.documentElement;
       if (reduce || typeof document.startViewTransition !== "function") {
         apply();
         return;
       }
-      el.dataset.calZoom = direction;
+      el.dataset.calTransition = `${style}-${direction}`;
       const transition = document.startViewTransition(() => {
         flushSync(apply);
       });
       transition.finished.finally(() => {
-        delete el.dataset.calZoom;
+        delete el.dataset.calTransition;
       });
     },
     [reduce],
@@ -136,13 +139,22 @@ export function CalendarWeekView() {
       setView(next);
     };
     const granularityDelta = VIEWS.indexOf(next) - VIEWS.indexOf(view);
-    if (granularityDelta > 0) runZoom("out", apply);
-    else if (granularityDelta < 0) runZoom("in", apply);
-    else apply();
+    if (granularityDelta === 0) {
+      apply();
+      return;
+    }
+    const isWeekDay =
+      (view === "week" && next === "day") ||
+      (view === "day" && next === "week");
+    runTransition(
+      isWeekDay ? "width" : "zoom",
+      granularityDelta > 0 ? "out" : "in",
+      apply,
+    );
   };
 
   const openDay = (day: Date) => {
-    runZoom("in", () => {
+    runTransition("zoom", "in", () => {
       setAnchor(pageStart("day", day));
       setView("day");
     });

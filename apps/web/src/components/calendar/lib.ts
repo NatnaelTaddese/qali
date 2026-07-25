@@ -107,6 +107,28 @@ export const MS_PER_HOUR = 60 * MS_PER_MINUTE;
 export const MS_PER_DAY = 24 * MS_PER_HOUR;
 export const SNAP_MS = SNAP_MINUTES * MS_PER_MINUTE;
 
+export const MONTH_EVENT_ROW_HEIGHT = 18;
+export const MONTH_EVENT_ROW_GAP = 2;
+
+/** Determine how many month-view events fit, reserving the final row for the
+ * overflow count when every event cannot be shown. */
+export function visibleMonthEventMetrics(
+  eventCount: number,
+  availableHeight: number,
+): { visibleCount: number; hiddenCount: number } {
+  const availableRows = Math.max(
+    Math.floor(
+      (availableHeight + MONTH_EVENT_ROW_GAP) /
+        (MONTH_EVENT_ROW_HEIGHT + MONTH_EVENT_ROW_GAP),
+    ),
+    0,
+  );
+  const visibleCount =
+    eventCount <= availableRows ? eventCount : Math.max(availableRows - 1, 0);
+
+  return { visibleCount, hiddenCount: eventCount - visibleCount };
+}
+
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 /** Timezones shown as time gutters, left to right. First is the primary day

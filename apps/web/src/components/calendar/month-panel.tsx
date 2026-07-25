@@ -1,13 +1,18 @@
 import { cn } from "@qali/ui/lib/utils";
 import { addDays, format, isSameMonth, isToday, startOfWeek } from "date-fns";
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useDock } from "@/components/workspace/dock-context";
 
 import { useEventColor } from "./colors";
-import { MS_PER_DAY, WEEK_STARTS_ON, type CalendarEvent } from "./lib";
+import {
+  MONTH_EVENT_ROW_HEIGHT,
+  MS_PER_DAY,
+  visibleMonthEventMetrics,
+  WEEK_STARTS_ON,
+  type CalendarEvent,
+} from "./lib";
 
-const MAX_CHIPS = 3;
 const WEEK_REF = startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_ON });
 const WEEKDAY_LABELS = Array.from({ length: 7 }, (_, i) =>
   format(addDays(WEEK_REF, i), "EEE"),
@@ -28,6 +33,8 @@ interface MonthPanelProps {
 export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanelProps) {
   const { open } = useDock();
   const colorFor = useEventColor();
+  const eventAreaRef = useRef<HTMLDivElement>(null);
+  const [eventAreaHeight, setEventAreaHeight] = useState(0);
   const eventsByDay = useMemo(() => {
     return days.map((day) => {
       const dayStartMs = day.getTime();
@@ -38,8 +45,23 @@ export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanel
     });
   }, [days, events]);
 
+  useLayoutEffect(() => {
+    const eventArea = eventAreaRef.current;
+    if (!eventArea) return;
+
+    const updateHeight = () => {
+      const height = eventArea.getBoundingClientRect().height;
+      setEventAreaHeight((current) => (current === height ? current : height));
+    };
+
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(eventArea);
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="sticky top-0 z-30 grid grid-cols-7 border-b border-border bg-calendar-header backdrop-blur-xs">
         {WEEKDAY_LABELS.map((label) => (
           <div
@@ -50,11 +72,15 @@ export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanel
           </div>
         ))}
       </div>
-      <div className="grid flex-1 grid-cols-7 grid-rows-6">
+      <div className="grid min-h-0 flex-1 grid-cols-7 grid-rows-6">
         {days.map((day, i) => {
           const inMonth = isSameMonth(day, monthStart);
           const today = isToday(day);
           const dayEvents = eventsByDay[i];
+          const { visibleCount, hiddenCount } = visibleMonthEventMetrics(
+            dayEvents.length,
+            eventAreaHeight,
+          );
           return (
             <button
               type="button"
@@ -73,34 +99,41 @@ export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanel
               >
                 {format(day, "d")}
               </span>
-              <div className="flex min-h-0 flex-col gap-0.5 overflow-hidden">
-                {dayEvents.slice(0, MAX_CHIPS).map((event) => {
+              <div
+                ref={i === 0 ? eventAreaRef : undefined}
+                className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-hidden"
+              >
+                {dayEvents.slice(0, visibleCount).map((event) => {
                   const colorVar = colorFor(event);
                   return (
                     <span
-                        key={event._id}
-                        data-event
-                        onClick={(e) => {
-                          // Don't let the day cell's onSelectDay fire too.
-                          e.stopPropagation();
-                          open({ kind: "event", event });
-                        }}
-                        className="flex items-center gap-1 truncate rounded px-1 py-0.5 text-[11px] leading-tight"
-                        style={{
-                          backgroundColor: `color-mix(in oklab, var(${colorVar}) 18%, var(--card))`,
-                        }}
-                      >
-                        <span
-                          className="size-1.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: `var(${colorVar})` }}
-                        />
-                        <span className="truncate">{event.summary ?? "(No title)"}</span>
-                      </span>
+                      key={event._id}
+                      data-event
+                      onClick={(e) => {
+                        // Don't let the day cell's onSelectDay fire too.
+                        e.stopPropagation();
+                        open({ kind: "event", event });
+                      }}
+                      className="flex shrink-0 items-center gap-1 truncate rounded px-1 text-[11px] leading-tight"
+                      style={{
+                        height: MONTH_EVENT_ROW_HEIGHT,
+                        backgroundColor: `color-mix(in oklab, var(${colorVar}) 18%, var(--card))`,
+                      }}
+                    >
+                      <span
+                        className="size-1.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: `var(${colorVar})` }}
+                      />
+                      <span className="truncate">{event.summary ?? "(No title)"}</span>
+                    </span>
                   );
                 })}
-                {dayEvents.length > MAX_CHIPS && (
-                  <span className="px-1 text-[10px] text-muted-foreground">
-                    +{dayEvents.length - MAX_CHIPS} more
+                {hiddenCount > 0 && (
+                  <span
+                    className="flex shrink-0 items-center px-1 text-[10px] text-muted-foreground"
+                    style={{ height: MONTH_EVENT_ROW_HEIGHT }}
+                  >
+                    +{hiddenCount} more
                   </span>
                 )}
               </div>

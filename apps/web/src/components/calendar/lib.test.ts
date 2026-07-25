@@ -7,6 +7,7 @@ import {
   type CalendarEvent,
   layoutAllDayEvents,
   visibleAllDayMetrics,
+  visibleMonthEventMetrics,
 } from "./lib";
 
 const days = Array.from({ length: 5 }, (_, i) => new Date(2026, 0, 5 + i));
@@ -42,6 +43,36 @@ describe("calendarDisplayName", () => {
     expect(
       calendarDisplayName({ googleCalendarId: "fallback@example.com" }),
     ).toBe("fallback@example.com");
+  });
+});
+
+describe("visibleMonthEventMetrics", () => {
+  test("uses all available rows when every event fits", () => {
+    expect(visibleMonthEventMetrics(5, 98)).toEqual({
+      visibleCount: 5,
+      hiddenCount: 0,
+    });
+  });
+
+  test("reserves the final available row for the overflow count", () => {
+    expect(visibleMonthEventMetrics(6, 98)).toEqual({
+      visibleCount: 4,
+      hiddenCount: 2,
+    });
+  });
+
+  test("shows only the overflow count when one row is available", () => {
+    expect(visibleMonthEventMetrics(3, 18)).toEqual({
+      visibleCount: 0,
+      hiddenCount: 3,
+    });
+  });
+
+  test("never returns a negative visible count for a constrained cell", () => {
+    expect(visibleMonthEventMetrics(3, 0)).toEqual({
+      visibleCount: 0,
+      hiddenCount: 3,
+    });
   });
 });
 

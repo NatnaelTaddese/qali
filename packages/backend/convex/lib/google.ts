@@ -99,6 +99,10 @@ export type MappedEvent = {
   eventType?: string;
   recurringEventId?: string;
   hangoutLink?: string;
+  /** The primary video entry point Google exposes for any conference provider. */
+  conferenceUrl?: string;
+  conferenceName?: string;
+  conferenceType?: string;
 };
 
 export type RawCalendarDateTime = {
@@ -142,6 +146,17 @@ export type RawAttendee = {
   resource?: boolean;
 };
 
+type RawConferenceData = {
+  entryPoints?: {
+    entryPointType?: string;
+    uri?: string;
+  }[];
+  conferenceSolution?: {
+    key?: { type?: string };
+    name?: string;
+  };
+};
+
 export type RawEvent = {
   id: string;
   status?: string;
@@ -168,6 +183,7 @@ export type RawEvent = {
   recurrence?: string[];
   recurringEventId?: string;
   hangoutLink?: string;
+  conferenceData?: RawConferenceData;
 };
 
 /** Drop a person Google sent as an empty object, so "absent" stays absent
@@ -274,6 +290,10 @@ export function mapGoogleEvent(raw: RawEvent, calendarId: string): MappedEvent {
       self: a.self,
       optional: a.optional,
     }));
+  const conferenceVideo = raw.conferenceData?.entryPoints?.find(
+    (entryPoint) => entryPoint.entryPointType === "video" && entryPoint.uri,
+  );
+  const conferenceUrl = conferenceVideo?.uri ?? raw.hangoutLink;
   return {
     googleEventId: raw.id,
     calendarId,
@@ -303,6 +323,17 @@ export function mapGoogleEvent(raw: RawEvent, calendarId: string): MappedEvent {
     eventType: raw.eventType,
     recurringEventId: raw.recurringEventId,
     hangoutLink: raw.hangoutLink,
+    conferenceUrl,
+    conferenceName:
+      raw.conferenceData?.conferenceSolution?.name ??
+      (raw.hangoutLink
+        ? "Google Meet"
+        : conferenceUrl
+          ? "Video call"
+          : undefined),
+    conferenceType:
+      raw.conferenceData?.conferenceSolution?.key?.type ??
+      (raw.hangoutLink ? "hangoutsMeet" : undefined),
   };
 }
 

@@ -74,6 +74,11 @@ export const googleEventValidator = v.object({
   recurringEventId: v.optional(v.string()),
   // The Google Meet URL, when the event has one.
   hangoutLink: v.optional(v.string()),
+  // Provider-neutral conference metadata. Google Meet also remains available
+  // through hangoutLink for existing create/edit behavior.
+  conferenceUrl: v.optional(v.string()),
+  conferenceName: v.optional(v.string()),
+  conferenceType: v.optional(v.string()),
 });
 
 /** The stored row: everything Google told us, plus the local user it belongs

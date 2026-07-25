@@ -134,8 +134,40 @@ describe("mapGoogleEvent", () => {
     });
     expect(mapped.creator?.self).toBe(true);
     expect(mapped.hangoutLink).toBe("https://meet.google.com/abc-defg-hij");
+    expect(mapped.conferenceUrl).toBe("https://meet.google.com/abc-defg-hij");
+    expect(mapped.conferenceName).toBe("Google Meet");
+    expect(mapped.conferenceType).toBe("hangoutsMeet");
     expect(mapped.recurringEventId).toBe("series-1");
     expect(mapped.attendees).toHaveLength(2);
+  });
+
+  test("maps an imported third-party video conference", () => {
+    const mapped = mapGoogleEvent(
+      {
+        id: "evt-zoom",
+        start: { dateTime: "2026-07-25T09:00:00.000Z" },
+        end: { dateTime: "2026-07-25T09:30:00.000Z" },
+        conferenceData: {
+          conferenceSolution: {
+            key: { type: "addOn" },
+            name: "Zoom Meeting",
+          },
+          entryPoints: [
+            { entryPointType: "phone", uri: "tel:+15551234567" },
+            {
+              entryPointType: "video",
+              uri: "https://zoom.us/j/123456789",
+            },
+          ],
+        },
+      },
+      "primary@example.com",
+    );
+
+    expect(mapped.conferenceUrl).toBe("https://zoom.us/j/123456789");
+    expect(mapped.conferenceName).toBe("Zoom Meeting");
+    expect(mapped.conferenceType).toBe("addOn");
+    expect(mapped.hangoutLink).toBeUndefined();
   });
 
   test("treats a date-only start as all-day", () => {

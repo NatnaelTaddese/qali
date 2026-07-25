@@ -598,7 +598,9 @@ export const upsertEventsPage = internalMutation({
         continue;
       }
       if (existing) {
-        await ctx.db.patch(existing._id, e);
+        // A mapped Google event is an authoritative snapshot. Replacing the row
+        // also clears optional fields that Google removed from the event.
+        await ctx.db.replace(existing._id, { userId: args.userId, ...e });
       } else {
         await ctx.db.insert("events", { userId: args.userId, ...e });
       }

@@ -884,7 +884,7 @@ export const upsertEvent = internalMutation({
       )
       .unique();
     if (existing) {
-      await ctx.db.patch(existing._id, args.event);
+      await ctx.db.replace(existing._id, { userId: args.userId, ...args.event });
     } else {
       await ctx.db.insert("events", { userId: args.userId, ...args.event });
     }

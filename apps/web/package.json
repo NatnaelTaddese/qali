@@ -35,6 +35,7 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "sonner": "catalog:",
+    "thesvg": "^3.2.13",
     "zod": "catalog:"
   },
   "devDependencies": {

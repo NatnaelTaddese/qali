@@ -6,7 +6,6 @@ import {
   SquareLock01Icon,
   SquareUnlock01Icon,
   Sun03Icon,
-  Video01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { Doc } from "@qali/backend/convex/_generated/dataModel";
@@ -26,6 +25,7 @@ import { DayPicker } from "./day-picker";
 import { EventControls } from "./event-controls";
 import { FreeBusyToggle } from "./free-busy-toggle";
 import { GuestPicker, type Guest } from "./guest-picker";
+import { GoogleMeetIcon } from "./google-meet-icon";
 import { type CalendarEvent, MS_PER_DAY, SNAP_MS } from "./lib";
 import {
   dockVariants,
@@ -664,16 +664,15 @@ function WhereRow({
 }) {
   return (
     <div className="flex items-center gap-3">
-      <HugeiconsIcon
-        icon={meet ? Video01Icon : Location01Icon}
-        strokeWidth={2}
-        className={cn(
-          "size-4.5 shrink-0",
-          meet
-            ? "text-emerald-600 dark:text-emerald-400"
-            : "text-muted-foreground",
-        )}
-      />
+      {meet ? (
+        <GoogleMeetIcon className="size-4.5 shrink-0" />
+      ) : (
+        <HugeiconsIcon
+          icon={Location01Icon}
+          strokeWidth={2}
+          className="size-4.5 shrink-0 text-muted-foreground"
+        />
+      )}
       {/* -ml-2 cancels the child's px-2 so its text lines up with the plain
           labels on the other rows, while the padding still gives the hover
           background breathing room. */}

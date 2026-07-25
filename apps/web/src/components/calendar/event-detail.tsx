@@ -33,6 +33,7 @@ import { Avatar } from "./avatar";
 import { calendarColorVar, useEventColor } from "./colors";
 import { buttonClass } from "./event-controls";
 import type { EventPrefill } from "./event-create";
+import { GoogleMeetIcon } from "./google-meet-icon";
 import {
   GuestRow,
   groupGuests,
@@ -452,11 +453,17 @@ export function EventDetail({
       .catch(() => toast.error("Couldn't copy the link"));
   };
 
-  const copyMeetLink = () => {
-    if (!event.hangoutLink) return;
+  const conferenceUrl = event.conferenceUrl ?? event.hangoutLink;
+  const conferenceName =
+    event.conferenceName ?? (event.hangoutLink ? "Google Meet" : "Video call");
+  const isGoogleMeet =
+    event.conferenceType === "hangoutsMeet" || Boolean(event.hangoutLink);
+
+  const copyConferenceLink = () => {
+    if (!conferenceUrl) return;
     navigator.clipboard
-      .writeText(event.hangoutLink)
-      .then(() => toast.success("Meet link copied"))
+      .writeText(conferenceUrl)
+      .then(() => toast.success("Video link copied"))
       .catch(() => toast.error("Couldn't copy the link"));
   };
 
@@ -577,31 +584,35 @@ export function EventDetail({
             </DetailRow>
           )}
 
-          {event.hangoutLink && (
+          {conferenceUrl && (
             <div className="flex items-center gap-3">
-              <HugeiconsIcon
-                icon={Video01Icon}
-                strokeWidth={2}
-                className="mt-0.5 size-4.5 shrink-0 self-start text-emerald-600 dark:text-emerald-400"
-              />
+              {isGoogleMeet ? (
+                <GoogleMeetIcon className="size-4.5 shrink-0" />
+              ) : (
+                <HugeiconsIcon
+                  icon={Video01Icon}
+                  strokeWidth={2}
+                  className="size-4.5 shrink-0 text-emerald-600 dark:text-emerald-400"
+                />
+              )}
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground">
-                  Google Meet
+                  {conferenceName}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {event.hangoutLink.replace(/^https?:\/\//, "")}
+                  {conferenceUrl.replace(/^https?:\/\//, "")}
                 </p>
               </div>
               <IconAction
                 icon={Copy01Icon}
-                label="Copy Meet link"
-                onClick={copyMeetLink}
+                label={`Copy ${conferenceName} link`}
+                onClick={copyConferenceLink}
               />
               <Button
                 size="sm"
                 render={
                   <a
-                    href={event.hangoutLink}
+                    href={conferenceUrl}
                     target="_blank"
                     rel="noreferrer"
                   />

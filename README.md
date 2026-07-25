@@ -2,46 +2,12 @@
 
 A fast, keyboard-friendly calendar client for Google Calendar. qali syncs your
 Google calendars and contacts, then gives you a focused day and month view for
-creating, editing, and rescheduling events — with recurring events, guests,
+creating, editing, and rescheduling events with recurring events, guests,
 free/busy, and Google Meet links handled the way Google does.
 
 Built as a TypeScript monorepo: a React + TanStack Router frontend, a reactive
 Convex backend, Better Auth for Google OAuth, and a shared shadcn/ui package.
 
-## Getting Started
-
-```bash
-bun install        # install workspace dependencies
-bun run dev:setup  # create/connect a Convex deployment (follow the prompts)
-bun run dev        # start the web app and Convex backend together
-```
-
-Then open [http://localhost:3001](http://localhost:3001).
-
-Sign-in needs Google OAuth credentials wired into your Convex deployment. See
-[Configure Google OAuth](#configure-google-oauth) below for the one-time setup.
-
-## Project Structure
-
-```
-qali/
-├── apps/
-│   └── web/         # React + TanStack Router frontend
-└── packages/
-    ├── ui/          # Shared shadcn/ui components and styles
-    └── backend/     # Convex functions, schema, and Google sync
-```
-
-## Scripts
-
-| Script | Description |
-| --- | --- |
-| `bun run dev` | Start the web app and Convex backend |
-| `bun run dev:web` | Start only the web app |
-| `bun run dev:server` | Start only the Convex backend |
-| `bun run dev:setup` | Set up and connect a Convex deployment |
-| `bun run build` | Build all applications |
-| `bun run check-types` | Type-check across all apps |
 
 ## UI Customization
 

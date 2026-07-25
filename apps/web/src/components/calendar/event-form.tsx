@@ -27,7 +27,12 @@ import { EventControls } from "./event-controls";
 import { FreeBusyToggle } from "./free-busy-toggle";
 import { GuestPicker, type Guest } from "./guest-picker";
 import { type CalendarEvent, MS_PER_DAY, SNAP_MS } from "./lib";
-import { dockVariants, dockVariantsReduced, press } from "./motion";
+import {
+  dockVariants,
+  dockVariantsReduced,
+  press,
+  SPRING_DOCK,
+} from "./motion";
 import { RepeatControl } from "./repeat-control";
 import { RichTextEditor } from "./rich-text/rich-text-editor";
 import { RichTextView } from "./rich-text/rich-text-view";
@@ -395,93 +400,106 @@ export function EventForm({
             </div>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <div className="flex gap-1 rounded-xl bg-muted p-1">
-              <TimeTab
-                label="Starts"
-                ms={value.startMs}
-                allDay={value.allDay}
-                active={editing === "start"}
-                onSelect={() => setEditing("start")}
-              />
-              <TimeTab
-                label="Ends"
-                ms={value.endMs}
-                allDay={value.allDay}
-                active={editing === "end"}
-                onSelect={() => setEditing("end")}
-              />
-            </div>
-
-            <SettingRow
-              icon={Calendar03Icon}
-              label={editing === "start" ? "Starts on" : "Ends on"}
-            >
-              {canEdit ? (
-                <DayPicker
-                  selectedMs={activeMs}
-                  onSelect={setDay}
-                  side="top"
-                  minMs={
-                    editing === "end"
-                      ? startOfDay(value.startMs).getTime()
-                      : undefined
-                  }
-                >
-                  <button
-                    type="button"
-                    className="rounded-lg px-2 py-1 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    {dayLabel}
-                  </button>
-                </DayPicker>
-              ) : (
-                // A plain span, not a disabled button: nothing should look
-                // pressable when there is nothing to press.
-                <span className="px-2 py-1 text-sm font-medium">{dayLabel}</span>
-              )}
-            </SettingRow>
-
-            {!value.allDay && (
-              <div className="flex gap-2">
-                <WheelPicker
-                  options={HOURS}
-                  value={parts.hour}
-                  onValueChange={(v) => setPart("hour", v)}
-                  visibleCount={5}
-                  itemHeight={32}
-                  sound
-                  disabled={!canEdit}
-                  className="flex-1"
-                  aria-label="Hour"
+          <div className="flex flex-col">
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-1 rounded-xl bg-muted p-1">
+                <TimeTab
+                  label="Starts"
+                  ms={value.startMs}
+                  allDay={value.allDay}
+                  active={editing === "start"}
+                  onSelect={() => setEditing("start")}
                 />
-                <WheelPicker
-                  options={MINUTES}
-                  value={parts.minute}
-                  onValueChange={(v) => setPart("minute", v)}
-                  visibleCount={5}
-                  itemHeight={32}
-                  sound
-                  disabled={!canEdit}
-                  className="flex-1"
-                  aria-label="Minute"
-                />
-                <WheelPicker
-                  options={MERIDIEM}
-                  value={parts.meridiem}
-                  onValueChange={(v) => setPart("meridiem", v)}
-                  visibleCount={5}
-                  itemHeight={32}
-                  sound
-                  disabled={!canEdit}
-                  className="flex-1"
-                  aria-label="AM or PM"
+                <TimeTab
+                  label="Ends"
+                  ms={value.endMs}
+                  allDay={value.allDay}
+                  active={editing === "end"}
+                  onSelect={() => setEditing("end")}
                 />
               </div>
-            )}
+
+              <SettingRow
+                icon={Calendar03Icon}
+                label={editing === "start" ? "Starts on" : "Ends on"}
+              >
+                {canEdit ? (
+                  <DayPicker
+                    selectedMs={activeMs}
+                    onSelect={setDay}
+                    side="top"
+                    minMs={
+                      editing === "end"
+                        ? startOfDay(value.startMs).getTime()
+                        : undefined
+                    }
+                  >
+                    <button
+                      type="button"
+                      className="rounded-lg px-2 py-1 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {dayLabel}
+                    </button>
+                  </DayPicker>
+                ) : (
+                  // A plain span, not a disabled button: nothing should look
+                  // pressable when there is nothing to press.
+                  <span className="px-2 py-1 text-sm font-medium">
+                    {dayLabel}
+                  </span>
+                )}
+              </SettingRow>
             </div>
 
-
+            <AnimatePresence initial={false}>
+              {!value.allDay && (
+                <motion.div
+                  key="time-picker"
+                  initial={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                  transition={SPRING_DOCK}
+                  className="overflow-hidden"
+                >
+                  <div className="flex gap-2 pt-2">
+                    <WheelPicker
+                      options={HOURS}
+                      value={parts.hour}
+                      onValueChange={(v) => setPart("hour", v)}
+                      visibleCount={5}
+                      itemHeight={32}
+                      sound
+                      disabled={!canEdit}
+                      className="flex-1"
+                      aria-label="Hour"
+                    />
+                    <WheelPicker
+                      options={MINUTES}
+                      value={parts.minute}
+                      onValueChange={(v) => setPart("minute", v)}
+                      visibleCount={5}
+                      itemHeight={32}
+                      sound
+                      disabled={!canEdit}
+                      className="flex-1"
+                      aria-label="Minute"
+                    />
+                    <WheelPicker
+                      options={MERIDIEM}
+                      value={parts.meridiem}
+                      onValueChange={(v) => setPart("meridiem", v)}
+                      visibleCount={5}
+                      itemHeight={32}
+                      sound
+                      disabled={!canEdit}
+                      className="flex-1"
+                      aria-label="AM or PM"
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
 
           <SettingRow icon={Sun03Icon} label="All day">
             <ToggleSwitch

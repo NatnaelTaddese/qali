@@ -649,7 +649,12 @@ function WhereRow({
       <HugeiconsIcon
         icon={meet ? Video01Icon : Location01Icon}
         strokeWidth={2}
-        className="size-4.5 shrink-0 text-muted-foreground"
+        className={cn(
+          "size-4.5 shrink-0",
+          meet
+            ? "text-emerald-600 dark:text-emerald-400"
+            : "text-muted-foreground",
+        )}
       />
       {/* -ml-2 cancels the child's px-2 so its text lines up with the plain
           labels on the other rows, while the padding still gives the hover
@@ -661,12 +666,12 @@ function WhereRow({
               href={hangoutLink}
               target="_blank"
               rel="noreferrer"
-              className="truncate rounded-lg px-2 py-1 text-sm font-medium hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+              className="truncate rounded-lg px-2 py-1 text-sm font-medium text-emerald-600 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring dark:text-emerald-400"
             >
               Google Meet
             </a>
           ) : (
-            <span className="px-2 py-1 text-sm font-medium text-muted-foreground">
+            <span className="px-2 py-1 text-sm font-medium text-emerald-600 dark:text-emerald-400">
               Google Meet
             </span>
           )
@@ -691,6 +696,7 @@ function WhereRow({
           <WhereTab
             label="Video"
             active={meet}
+            accent
             onSelect={() => onMeetChange(true)}
           />
         </div>
@@ -704,10 +710,13 @@ function WhereRow({
 function WhereTab({
   label,
   active,
+  accent,
   onSelect,
 }: {
   label: string;
   active: boolean;
+  /** Tint the label green while active — used for the "Video" segment. */
+  accent?: boolean;
   onSelect: () => void;
 }) {
   return (
@@ -719,7 +728,9 @@ function WhereTab({
       className={cn(
         "rounded-md px-3 py-0.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
         active
-          ? "bg-background text-foreground shadow-sm"
+          ? accent
+            ? "bg-background text-emerald-600 shadow-sm dark:text-emerald-400"
+            : "bg-background text-foreground shadow-sm"
           : "text-muted-foreground hover:text-foreground",
       )}
     >

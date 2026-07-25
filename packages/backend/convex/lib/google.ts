@@ -375,7 +375,11 @@ export async function insertCalendarEvent(
   // A `createRequest` only takes effect when this is set — without it Google
   // silently ignores the conference data and no Meet link is created.
   if (addConference) params.set("conferenceDataVersion", "1");
-  const query = params.size > 0 ? `?${params.toString()}` : "";
+  // Avoid URLSearchParams.size — it's not available in every runtime, and a
+  // wrong falsy read here would drop conferenceDataVersion and quietly skip
+  // the Meet. toString() is empty when nothing was set.
+  const qs = params.toString();
+  const query = qs ? `?${qs}` : "";
   const requestBody = addConference
     ? { ...body, conferenceData: newMeetRequest() }
     : body;
@@ -463,7 +467,9 @@ export async function patchCalendarEvent(
   const params = new URLSearchParams();
   if (sendUpdates) params.set("sendUpdates", sendUpdates);
   if (conference) params.set("conferenceDataVersion", "1");
-  const query = params.size > 0 ? `?${params.toString()}` : "";
+  // See insertCalendarEvent: don't rely on URLSearchParams.size.
+  const qs = params.toString();
+  const query = qs ? `?${qs}` : "";
   const requestBody =
     conference === "add"
       ? { ...body, conferenceData: newMeetRequest() }

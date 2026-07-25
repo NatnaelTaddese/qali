@@ -413,6 +413,14 @@ export function EventDetail({
       .catch(() => toast.error("Couldn't copy the link"));
   };
 
+  const copyMeetLink = () => {
+    if (!event.hangoutLink) return;
+    navigator.clipboard
+      .writeText(event.hangoutLink)
+      .then(() => toast.success("Meet link copied"))
+      .catch(() => toast.error("Couldn't copy the link"));
+  };
+
   const variants = reduce ? dockVariantsReduced : dockVariants;
 
   return (
@@ -506,10 +514,12 @@ export function EventDetail({
           </div>
 
           <DetailRow icon={Clock01Icon}>
-            <span className="text-foreground">{timeText(event)}</span>
-            <span className="ml-1.5">
+            <p className="text-sm font-medium text-foreground">
+              {timeText(event)}
+            </p>
+            <p className="text-xs text-muted-foreground">
               {formatDistanceToNowStrict(event.startMs, { addSuffix: true })}
-            </span>
+            </p>
           </DetailRow>
 
           {event.recurringEventId && (
@@ -517,19 +527,44 @@ export function EventDetail({
           )}
 
           {event.hangoutLink && (
-            <Button
-              size="sm"
-              render={
-                <a href={event.hangoutLink} target="_blank" rel="noreferrer" />
-              }
-            >
+            <div className="flex items-center gap-3">
               <HugeiconsIcon
                 icon={Video01Icon}
                 strokeWidth={2}
-                className="size-4"
+                className="mt-0.5 size-4.5 shrink-0 self-start text-emerald-600 dark:text-emerald-400"
               />
-              Join with Google Meet
-            </Button>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-foreground">
+                  Google Meet
+                </p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {event.hangoutLink.replace(/^https?:\/\//, "")}
+                </p>
+              </div>
+              <IconAction
+                icon={Copy01Icon}
+                label="Copy Meet link"
+                onClick={copyMeetLink}
+              />
+              <Button
+                size="sm"
+                render={
+                  <a
+                    href={event.hangoutLink}
+                    target="_blank"
+                    rel="noreferrer"
+                  />
+                }
+                className="bg-emerald-600 text-white hover:bg-emerald-600/90 dark:bg-emerald-500 dark:hover:bg-emerald-500/90"
+              >
+                <HugeiconsIcon
+                  icon={Video01Icon}
+                  strokeWidth={2}
+                  className="size-4"
+                />
+                Join
+              </Button>
+            </div>
           )}
 
           {event.location && (

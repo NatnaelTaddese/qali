@@ -1,3 +1,5 @@
+import { api } from "@qali/backend/convex/_generated/api";
+import { useQuery } from "convex/react";
 import {
   forwardRef,
   useCallback,
@@ -68,6 +70,17 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     const didInitialNowScroll = useRef(false);
     const [now, setNow] = useState(() => Date.now());
     const [visibleStartIdx, setVisibleStartIdx] = useState(anchorIndex);
+    const contacts = useQuery(api.contacts.listContacts) ?? [];
+    const contactPhotos = useMemo(() => {
+      const photos = new Map<string, string>();
+      for (const contact of contacts) {
+        if (!contact.photoUrl) continue;
+        for (const email of contact.emails) {
+          photos.set(email.toLowerCase(), contact.photoUrl);
+        }
+      }
+      return photos;
+    }, [contacts]);
 
     // Keep the clock aligned to minute boundaries, and recover immediately
     // when background-tab throttling or system sleep makes a timer stale.
@@ -276,9 +289,10 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
                 events={timedByDay[i]}
                 gridRef={bodyRef}
                 beginDrag={beginDrag}
-                draggingId={draggingId}
-                laneLayout={columns === 1}
-              />
+                 draggingId={draggingId}
+                 laneLayout={columns === 1}
+                 contactPhotos={contactPhotos}
+               />
             ))}
             {nowLayout && <NowIndicator layout={nowLayout} />}
           </div>

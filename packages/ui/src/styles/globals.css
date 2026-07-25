@@ -181,6 +181,22 @@
     -webkit-line-clamp: 2;
     overflow: hidden;
   }
+  /* Attendees and conferencing sit at the bottom only when the rendered card
+   * has room for the existing title/time treatment plus a compact avatar row. */
+  .event-card-meta {
+    display: none;
+  }
+  @container (min-height: 80px) and (min-width: 72px) {
+    .event-card-meta {
+      display: flex;
+    }
+  }
+  /* Two avatars still form a useful stack in narrow week-view columns. */
+  @container (max-width: 91px) {
+    .event-card-attendee:nth-child(n + 3) {
+      display: none;
+    }
+  }
   /* ...but a second line only earns its place when the card is tall enough for
    * two title lines plus the time line. Below that, collapse to one line so the
    * title never wraps into a clipped second row. */

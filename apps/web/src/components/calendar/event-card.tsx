@@ -1,7 +1,10 @@
+import { Video01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "@qali/ui/lib/utils";
 import { format } from "date-fns";
 import { motion } from "motion/react";
 
+import { Avatar } from "./avatar";
 import { useEventColor } from "./colors";
 import { laneBox, type PositionedEvent, stackIndentPx } from "./lib";
 import { pressTransition } from "./motion";
@@ -15,6 +18,8 @@ interface EventCardProps {
   /** Lay overlaps out as side-by-side columns (day view) instead of the cascade
    * (week view), where the column is too narrow to subdivide. */
   laneLayout: boolean;
+  /** Synced contact photos keyed by lower-cased email. */
+  contactPhotos: ReadonlyMap<string, string>;
   /** Begin a gesture; the mode is derived from where the press landed. */
   onDragStart: (mode: DragMode, e: React.PointerEvent) => void;
 }
@@ -32,6 +37,7 @@ export function EventCard({
   positioned,
   isDragging,
   laneLayout,
+  contactPhotos,
   onDragStart,
 }: EventCardProps) {
   const { event, topPct, heightPct, stackIndex, elevation, columnIndex, columnCount, columnSpan } =
@@ -40,7 +46,8 @@ export function EventCard({
   const colorVar = colorFor(event);
   // An event the user can't reschedule still opens on tap, but it shouldn't
   // offer a grab cursor or resize edges for a drag that will never happen.
-  const draggable = useEventCapabilities()(event).canEdit;
+  const { canEdit: draggable, canSeeGuests } = useEventCapabilities()(event);
+  const attendees = canSeeGuests ? (event.attendees ?? []).slice(0, 3) : [];
   // Two overlap modes. Lanes (day view): each cluster fans into side-by-side
   // lanes that partially overlap, so a card exposes its own left edge while the
   // later card paints on top — spread out, but still visibly stacked. Cascade
@@ -94,6 +101,36 @@ export function EventCard({
         <p className="event-card-time truncate text-xs leading-tight text-muted-foreground">
           {`${format(event.startMs, "h:mm")} – ${format(event.endMs, "h:mm a")}`}
         </p>
+        {(attendees.length > 0 || event.hangoutLink) && (
+          <div className="event-card-meta mt-auto min-w-0 items-center justify-between gap-1 pt-1">
+            {attendees.length > 0 && (
+              <span className="event-card-attendees flex min-w-0 items-center">
+                {attendees.map((attendee) => (
+                  <span
+                    key={attendee.email}
+                    className="event-card-attendee relative -ml-1.5 shrink-0 rounded-full ring-1 ring-background/80 first:ml-0"
+                  >
+                    <Avatar
+                      email={attendee.email}
+                      name={attendee.displayName}
+                      photoUrl={contactPhotos.get(attendee.email.toLowerCase())}
+                      className="size-5 text-[0.625rem]"
+                    />
+                  </span>
+                ))}
+              </span>
+            )}
+            {event.hangoutLink && (
+              <span
+                role="img"
+                aria-label="Google Meet attached"
+                className="event-card-meeting ml-auto shrink-0 text-muted-foreground/45"
+              >
+                <HugeiconsIcon icon={Video01Icon} size={15} strokeWidth={1.8} />
+              </span>
+            )}
+          </div>
+        )}
       </div>
       {/* Edge handles for resizing start/end. Invisible until hover so they
           don't clutter the card, but always hit-testable. */}

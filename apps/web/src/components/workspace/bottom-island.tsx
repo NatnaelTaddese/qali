@@ -5,14 +5,18 @@ import {
   Search01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { api } from "@qali/backend/convex/_generated/api";
+import { Spinner } from "@qali/ui/components/spinner";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@qali/ui/components/tooltip";
 import { cn } from "@qali/ui/lib/utils";
+import { useAction } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { EventCreate } from "@/components/calendar/event-create";
 import { EventDetail } from "@/components/calendar/event-detail";
@@ -149,9 +153,32 @@ export function BottomIsland() {
 }
 
 function NavRow({ onOpenAccount }: { onOpenAccount: () => void }) {
+  const syncNow = useAction(api.googleSync.syncNow);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const sync = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await syncNow();
+    } catch (error: unknown) {
+      toast.error("Couldn't sync calendar", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   return (
     <div className="flex items-center gap-1">
-      <NavButton icon={Calendar03Icon} label="Calendar" active />
+      <NavButton
+        icon={Calendar03Icon}
+        label={isSyncing ? "Syncing calendar" : "Sync calendar"}
+        active
+        busy={isSyncing}
+        onClick={sync}
+      />
       <NavButton icon={Menu01Icon} label="Agenda" />
       <NavButton icon={Search01Icon} label="Search" />
       <NavButton icon={PlusSignIcon} label="Create" />
@@ -174,22 +201,33 @@ function NavButton({
   icon,
   label,
   active,
+  busy,
+  onClick,
 }: {
   icon: IconSvgElement;
   label: string;
   active?: boolean;
+  busy?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <Tooltip>
       <TooltipTrigger
         aria-label={label}
         aria-current={active ? "page" : undefined}
+        aria-busy={busy || undefined}
+        disabled={busy}
+        onClick={onClick}
         className={cn(
           "flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground",
-          active && "bg-accent text-foreground",
+          active && "rounded-l-2xl rounded-r-lg bg-accent text-foreground",
         )}
       >
-        <HugeiconsIcon icon={icon} strokeWidth={2} className="size-5" />
+        {busy ? (
+          <Spinner className="size-5" />
+        ) : (
+          <HugeiconsIcon icon={icon} strokeWidth={2} className="size-5" />
+        )}
       </TooltipTrigger>
       <TooltipContent side="top">{label}</TooltipContent>
     </Tooltip>

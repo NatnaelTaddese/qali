@@ -567,9 +567,9 @@ export function EventDetail({
           {event.recurringEventId && (
             <DetailRow icon={RepeatIcon}>
               {recurrenceSummary === undefined ? (
-                <span
+                <Spinner
                   aria-label="Loading recurrence"
-                  className="block h-4 w-40 max-w-full rounded bg-muted"
+                  className="text-muted-foreground"
                 />
               ) : (
                 recurrenceSummary ?? "Part of a repeating series"

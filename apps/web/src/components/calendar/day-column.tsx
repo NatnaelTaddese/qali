@@ -39,6 +39,8 @@ interface DayColumnProps {
   draggingId: string | null;
   /** Split overlaps into side-by-side columns (day view) vs. cascade (week). */
   laneLayout: boolean;
+  /** Synced contact photos keyed by lower-cased email. */
+  contactPhotos: ReadonlyMap<string, string>;
 }
 
 export function DayColumn({
@@ -48,6 +50,7 @@ export function DayColumn({
   beginDrag,
   draggingId,
   laneLayout,
+  contactPhotos,
 }: DayColumnProps) {
   const dayStartMs = day.getTime();
   const dayEndMs = dayStartMs + MS_PER_DAY;
@@ -143,6 +146,7 @@ export function DayColumn({
           positioned={p}
           isDragging={draggingId === p.event._id}
           laneLayout={laneLayout}
+          contactPhotos={contactPhotos}
           onDragStart={(mode, e) =>
             beginDrag(p.event, mode, e, gridRef.current)
           }

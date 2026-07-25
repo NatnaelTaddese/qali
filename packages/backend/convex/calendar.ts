@@ -1,22 +1,31 @@
 import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   action,
   internalMutation,
   internalQuery,
   mutation,
   query,
+  type ActionCtx,
   type QueryCtx,
 } from "./_generated/server";
 import { authComponent, createAuth } from "./auth";
 import { CALENDAR_HISTORY_MS, syncOneCalendar } from "./googleSync";
-import { attendeeValidator } from "./schema";
+import { googleEventValidator } from "./schema";
 import {
+  deleteCalendarEvent,
+  getCalendarEvent,
   insertCalendarEvent,
   type MappedEvent,
   patchCalendarEvent,
+  toGoogleTime,
 } from "./lib/google";
+import {
+  eventCapabilities,
+  type EventCapabilities,
+} from "./lib/permissions";
 
 /** The set of `googleCalendarId`s the user has toggled visible. */
 async function selectedCalendarIds(
@@ -117,6 +126,23 @@ export const listEventsInRange = query({
   },
 });
 
+/** One event, live.
+ *
+ * The detail panel opens from a snapshot held in dock state, which is stale the
+ * moment anything mutates the event. Subscribing here means an edit or an RSVP
+ * shows up in the open panel instead of only after closing and reopening it. */
+export const getEventById = query({
+  args: { eventId: v.id("events") },
+  handler: async (ctx, { eventId }) => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    if (!user) {
+      return null;
+    }
+    const row = await ctx.db.get(eventId);
+    return row && row.userId === user._id ? row : null;
+  },
+});
+
 /** Create a calendar event in Google, then mirror it into the synced table. */
 export const createEvent = action({
   args: {
@@ -171,11 +197,7 @@ export const createEvent = action({
       })) ??
       "primary";
 
-    const toGoogleTime = (ms: number) =>
-      args.allDay
-        ? { date: new Date(ms).toISOString().slice(0, 10) }
-        : { dateTime: new Date(ms).toISOString(), timeZone: args.timeZone };
-
+    const allDay = args.allDay ?? false;
     const hasGuests = Boolean(args.attendees && args.attendees.length > 0);
     const event = await insertCalendarEvent(
       accessToken,
@@ -184,8 +206,8 @@ export const createEvent = action({
         summary: args.summary,
         description: args.description,
         location: args.location,
-        start: toGoogleTime(args.startMs),
-        end: toGoogleTime(args.endMs),
+        start: toGoogleTime(args.startMs, allDay, args.timeZone),
+        end: toGoogleTime(args.endMs, allDay, args.timeZone),
         colorId: args.colorId,
         visibility: args.visibility,
         transparency: args.transparency,
@@ -223,13 +245,95 @@ export const createEvent = action({
   },
 });
 
-/** The synced row for an event, used by actions (which can't read the db). */
-export const getEvent = internalQuery({
-  args: { eventId: v.id("events") },
-  handler: async (ctx, { eventId }) => {
-    return await ctx.db.get(eventId);
+/** An event plus the calendar it lives on — everything `eventCapabilities`
+ * needs, in one round trip. The join is on the Google id, since `events` stores
+ * its calendar as that string rather than as a document reference. */
+export const getEventContext = internalQuery({
+  args: { eventId: v.id("events"), userId: v.string() },
+  handler: async (ctx, args) => {
+    const event = await ctx.db.get(args.eventId);
+    if (!event || event.userId !== args.userId) {
+      return null;
+    }
+    const calendar = await ctx.db
+      .query("calendars")
+      .withIndex("by_user_and_googleCalendarId", (q) =>
+        q.eq("userId", args.userId).eq("googleCalendarId", event.calendarId),
+      )
+      .unique();
+    return { event, calendar };
   },
 });
+
+type EventCapabilityName =
+  | "canEdit"
+  | "canRespond"
+  | "canDelete"
+  | "canRemoveSelf";
+
+const CAPABILITY_DENIAL: Record<EventCapabilityName, string> = {
+  canEdit: "You can't edit this event",
+  canRespond: "You're not a guest on this event",
+  canDelete: "You can't delete this event",
+  canRemoveSelf: "You can't remove this event",
+};
+
+/**
+ * The opening move of every action that writes to an event: resolve the user,
+ * load the event with its calendar, check that at least one of `allowed` holds,
+ * and fetch a Google token.
+ *
+ * Owning the row is not the same as being allowed to change it — sync copies
+ * every calendar the user can *see*, holidays and read-only shares included —
+ * so the capability check is the real gate here and Google's 403 is only a
+ * backstop. Without it a refusal arrives after the optimistic UI has moved.
+ */
+async function authorizeEventAction(
+  ctx: ActionCtx,
+  eventId: Id<"events">,
+  allowed: EventCapabilityName[],
+): Promise<{
+  userId: string;
+  row: Doc<"events">;
+  capabilities: EventCapabilities;
+  accessToken: string;
+}> {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+
+  const context = await ctx.runQuery(internal.calendar.getEventContext, {
+    eventId,
+    userId: user._id,
+  });
+  if (!context) {
+    throw new Error("Event not found");
+  }
+
+  const capabilities = eventCapabilities(
+    context.event,
+    context.calendar ?? undefined,
+  );
+  if (!allowed.some((name) => capabilities[name])) {
+    // `readOnlyReason` explains why the event can't be *edited*, so it is only
+    // the right answer when editing is what was refused.
+    throw new Error(
+      allowed[0] === "canEdit" && capabilities.readOnlyReason
+        ? capabilities.readOnlyReason
+        : CAPABILITY_DENIAL[allowed[0]],
+    );
+  }
+
+  const { accessToken } = await createAuth(ctx).api.getAccessToken({
+    body: { providerId: "google", userId: user._id },
+  });
+  if (!accessToken) {
+    throw new Error("No Google access token available for user");
+  }
+
+  return { userId: user._id, row: context.event, capabilities, accessToken };
+}
 
 /** Reschedule an existing event: patch Google, then mirror the new times
  * locally. The frontend calls this on drag/resize; it holds an optimistic
@@ -243,94 +347,200 @@ export const updateEventTime = action({
     timeZone: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<MappedEvent> => {
-    const user = await authComponent.safeGetAuthUser(ctx);
-    if (!user) {
-      throw new Error("Not authenticated");
-    }
-
-    const row = await ctx.runQuery(internal.calendar.getEvent, {
-      eventId: args.eventId,
-    });
-    if (!row || row.userId !== user._id) {
-      throw new Error("Event not found");
-    }
-
-    const { accessToken } = await createAuth(ctx).api.getAccessToken({
-      body: { providerId: "google", userId: user._id },
-    });
-    if (!accessToken) {
-      throw new Error("No Google access token available for user");
-    }
-
-    const toGoogleTime = (ms: number) =>
-      row.allDay
-        ? { date: new Date(ms).toISOString().slice(0, 10) }
-        : { dateTime: new Date(ms).toISOString(), timeZone: args.timeZone };
-
-    const event = await patchCalendarEvent(
-      accessToken,
-      row.calendarId,
-      row.googleEventId,
-      { start: toGoogleTime(args.startMs), end: toGoogleTime(args.endMs) },
+    const { userId, row, accessToken } = await authorizeEventAction(
+      ctx,
+      args.eventId,
+      ["canEdit"],
     );
-
-    await ctx.runMutation(internal.calendar.upsertEvent, {
-      userId: user._id,
-      event,
-    });
-    return event;
-  },
-});
-
-/** Edit an existing event's content (summary / description): patch Google, then
- * mirror the result locally. Modeled on updateEventTime — same ownership check,
- * token fetch, and optimistic upsert — but touches content fields rather than
- * times. The description is stored as the HTML subset Google keeps. */
-export const updateEvent = action({
-  args: {
-    eventId: v.id("events"),
-    summary: v.optional(v.string()),
-    /** HTML description (bold/italic/underline/links/lists). Empty string clears it. */
-    description: v.optional(v.string()),
-    /** Google's `transparency`: "opaque" (busy) | "transparent" (free). */
-    transparency: v.optional(v.string()),
-  },
-  handler: async (ctx, args): Promise<MappedEvent> => {
-    const user = await authComponent.safeGetAuthUser(ctx);
-    if (!user) {
-      throw new Error("Not authenticated");
-    }
-
-    const row = await ctx.runQuery(internal.calendar.getEvent, {
-      eventId: args.eventId,
-    });
-    if (!row || row.userId !== user._id) {
-      throw new Error("Event not found");
-    }
-
-    const { accessToken } = await createAuth(ctx).api.getAccessToken({
-      body: { providerId: "google", userId: user._id },
-    });
-    if (!accessToken) {
-      throw new Error("No Google access token available for user");
-    }
 
     const event = await patchCalendarEvent(
       accessToken,
       row.calendarId,
       row.googleEventId,
       {
-        summary: args.summary,
-        description: args.description,
-        transparency: args.transparency,
+        start: toGoogleTime(args.startMs, row.allDay, args.timeZone),
+        end: toGoogleTime(args.endMs, row.allDay, args.timeZone),
       },
     );
 
-    await ctx.runMutation(internal.calendar.upsertEvent, {
-      userId: user._id,
-      event,
-    });
+    await ctx.runMutation(internal.calendar.upsertEvent, { userId, event });
     return event;
+  },
+});
+
+/**
+ * Edit an existing event: patch Google, then mirror the result locally.
+ *
+ * Every field is optional and only the ones present are sent, so a caller can
+ * patch exactly what the user touched. Fields that can be *emptied* take an
+ * explicit `null` for that, because Google reads an omitted field as "leave
+ * alone" — sending `""` would store an empty string rather than clear it.
+ */
+export const updateEvent = action({
+  args: {
+    eventId: v.id("events"),
+    summary: v.optional(v.string()),
+    /** HTML description (bold/italic/underline/links/lists). `null` clears it. */
+    description: v.optional(v.union(v.string(), v.null())),
+    location: v.optional(v.union(v.string(), v.null())),
+    /** Google event colour ("1".."11"); `null` reverts to the calendar's. */
+    colorId: v.optional(v.union(v.string(), v.null())),
+    visibility: v.optional(v.union(v.string(), v.null())),
+    /** Google's `transparency`: "opaque" (busy) | "transparent" (free). */
+    transparency: v.optional(v.string()),
+    /** Send both ends together, or neither. All-day values are UTC-midnight
+     * instants with an exclusive end, as `createEvent` expects them. */
+    startMs: v.optional(v.number()),
+    endMs: v.optional(v.number()),
+    allDay: v.optional(v.boolean()),
+    /** Replaces the guest list wholesale — anyone omitted is uninvited. Carry
+     * each existing guest's `responseStatus` through or their RSVP is reset. */
+    attendees: v.optional(
+      v.array(
+        v.object({
+          email: v.string(),
+          displayName: v.optional(v.string()),
+          responseStatus: v.optional(v.string()),
+          optional: v.optional(v.boolean()),
+        }),
+      ),
+    ),
+    /** Client IANA time zone; Google needs it to anchor a timed instant. */
+    timeZone: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<MappedEvent> => {
+    const { userId, row, accessToken } = await authorizeEventAction(
+      ctx,
+      args.eventId,
+      ["canEdit"],
+    );
+
+    // Falling back to the stored value keeps a times-only patch rendering the
+    // same kind of event it already was.
+    const allDay = args.allDay ?? row.allDay;
+    const times =
+      args.startMs !== undefined && args.endMs !== undefined
+        ? {
+            start: toGoogleTime(args.startMs, allDay, args.timeZone),
+            end: toGoogleTime(args.endMs, allDay, args.timeZone),
+          }
+        : {};
+
+    const event = await patchCalendarEvent(
+      accessToken,
+      row.calendarId,
+      row.googleEventId,
+      {
+        ...times,
+        summary: args.summary,
+        description: args.description,
+        location: args.location,
+        colorId: args.colorId,
+        visibility: args.visibility,
+        transparency: args.transparency,
+        attendees: args.attendees,
+      },
+      // Only bother the guests when the guest list itself changed.
+      args.attendees ? "all" : undefined,
+    );
+
+    await ctx.runMutation(internal.calendar.upsertEvent, { userId, event });
+    return event;
+  },
+});
+
+/**
+ * Answer an invitation.
+ *
+ * Google has no RSVP endpoint — you patch the event's `attendees`, and a patch
+ * *replaces* that array wholesale. So this reads Google's own copy first rather
+ * than rebuilding the list from our rows: we store a subset of each attendee,
+ * and sending that subset back would strip comments, extra guests and room
+ * resources from the event for everyone on it.
+ */
+export const respondToEvent = action({
+  args: {
+    eventId: v.id("events"),
+    responseStatus: v.union(
+      v.literal("accepted"),
+      v.literal("tentative"),
+      v.literal("declined"),
+    ),
+  },
+  handler: async (ctx, args): Promise<MappedEvent> => {
+    const { userId, row, capabilities, accessToken } =
+      await authorizeEventAction(ctx, args.eventId, ["canRespond"]);
+
+    const live = await getCalendarEvent(
+      accessToken,
+      row.calendarId,
+      row.googleEventId,
+    );
+    const attendees = (live.attendees ?? []).map((a) =>
+      a.self ? { ...a, responseStatus: args.responseStatus } : a,
+    );
+
+    const event = await patchCalendarEvent(
+      accessToken,
+      row.calendarId,
+      row.googleEventId,
+      { attendees },
+      // Tell the organiser you answered — unless the organiser is you.
+      capabilities.isOrganizer ? "none" : "all",
+    );
+
+    await ctx.runMutation(internal.calendar.upsertEvent, { userId, event });
+    return event;
+  },
+});
+
+/**
+ * Delete an event, meaning one of two different things.
+ *
+ * As its organizer, this cancels the event for everyone and mails them about
+ * it. As a mere guest, the copy on your calendar is yours alone: deleting it
+ * removes it from your view, leaves the organizer's copy untouched, and tells
+ * nobody. The frontend labels the button accordingly ("Delete event" vs.
+ * "Remove from my calendar") — the two are not the same act and shouldn't read
+ * as though they were. Declining, if that's what the user means, is the RSVP
+ * control; this deliberately doesn't decline on their behalf.
+ */
+export const deleteEvent = action({
+  args: { eventId: v.id("events") },
+  handler: async (ctx, args): Promise<null> => {
+    const { userId, row, capabilities, accessToken } =
+      await authorizeEventAction(ctx, args.eventId, [
+        "canDelete",
+        "canRemoveSelf",
+      ]);
+
+    const hasGuests = (row.attendees?.length ?? 0) > 0;
+    await deleteCalendarEvent(
+      accessToken,
+      row.calendarId,
+      row.googleEventId,
+      // Only the organizer's delete is a cancellation worth emailing about.
+      capabilities.isOrganizer && hasGuests ? "all" : "none",
+    );
+
+    await ctx.runMutation(internal.calendar.deleteEventRow, {
+      eventId: args.eventId,
+      userId,
+    });
+    return null;
+  },
+});
+
+/** Drop the local row as soon as Google accepts the delete, so the card leaves
+ * the grid now rather than whenever the next sync happens to run. */
+export const deleteEventRow = internalMutation({
+  args: { eventId: v.id("events"), userId: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db.get(args.eventId);
+    if (row && row.userId === args.userId) {
+      await ctx.db.delete(args.eventId);
+    }
+    return null;
   },
 });
 
@@ -348,26 +558,7 @@ export const getPrimaryCalendarId = internalQuery({
 
 /** Mirror a single event into the synced table (optimistic update after create). */
 export const upsertEvent = internalMutation({
-  args: {
-    userId: v.string(),
-    event: v.object({
-      googleEventId: v.string(),
-      calendarId: v.string(),
-      summary: v.optional(v.string()),
-      description: v.optional(v.string()),
-      location: v.optional(v.string()),
-      startMs: v.number(),
-      endMs: v.number(),
-      allDay: v.boolean(),
-      status: v.string(),
-      htmlLink: v.optional(v.string()),
-      colorId: v.optional(v.string()),
-      visibility: v.optional(v.string()),
-      transparency: v.optional(v.string()),
-      attendees: v.optional(v.array(attendeeValidator)),
-      googleUpdatedMs: v.number(),
-    }),
-  },
+  args: { userId: v.string(), event: googleEventValidator },
   handler: async (ctx, args): Promise<null> => {
     const existing = await ctx.db
       .query("events")

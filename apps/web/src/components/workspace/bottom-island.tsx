@@ -27,12 +27,14 @@ import { useDock, type DockView } from "./dock-context";
 import { UserAvatar } from "./user-avatar";
 
 /** Each view gets its own width so the shell visibly adapts to what it holds.
- * Padding is deliberately not part of this — every panel shares one inset. */
+ * Padding is deliberately not part of this — every panel shares one inset.
+ *
+ * The three event panels share one width on purpose: stepping detail → edit →
+ * detail then animates height alone, and the shell never twitches sideways. */
 function widthClass(view: DockView | null): string {
   if (!view) return "";
   if (view.kind === "account") return "w-[min(19rem,100%)]";
-  if (view.kind === "create" || view.kind === "edit") return "w-[min(27rem,100%)]";
-  return "w-[min(26rem,100%)]";
+  return "w-[min(27rem,100%)]";
 }
 
 /** The collapsed nav is a pill; the panels are cards, so they round less. */
@@ -109,6 +111,9 @@ export function BottomIsland() {
                   event={view.event}
                   onClose={close}
                   onEdit={() => open({ kind: "edit", event: view.event })}
+                  onDuplicate={(prefill, startMs, endMs) =>
+                    open({ kind: "create", startMs, endMs, prefill })
+                  }
                 />
               ) : view?.kind === "edit" ? (
                 <EventEdit
@@ -120,8 +125,12 @@ export function BottomIsland() {
                 <EventCreate
                   startMs={view.startMs}
                   endMs={view.endMs}
+                  prefill={view.prefill}
+                  // Spread the view rather than rebuilding it: reconstructing
+                  // the kind would drop a duplicate's prefill on the first
+                  // wheel turn.
                   onChangeRange={(startMs, endMs) =>
-                    open({ kind: "create", startMs, endMs })
+                    open({ ...view, startMs, endMs })
                   }
                   onCancel={close}
                   onCreated={close}

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { useDock } from "@/components/workspace/dock-context";
 
 import { type CalendarEvent, MS_PER_DAY, SNAP_MS } from "./lib";
+import { useEventCapabilities } from "./permissions";
 
 /** How a card is being manipulated: relocated whole, or one edge dragged. */
 export type DragMode = "move" | "resize-start" | "resize-end";
@@ -37,6 +38,9 @@ interface DragSession {
   grabOffsetMs: number;
   durationMs: number;
   moved: boolean;
+  /** Set when the event can't be rescheduled. The session still runs so a tap
+   * opens the event; only the movement is suppressed. */
+  readOnly: boolean;
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
@@ -67,6 +71,10 @@ interface UseEventDrag {
  * on drop persists via `updateEventTime`. Both the live preview and the
  * post-save hold are expressed as overrides on the events array, so the real
  * card re-lays-out and physically relocates with no bespoke positioning.
+ *
+ * Events the user may not reschedule still start a session — a tap has to keep
+ * opening them — but never move. Refusing at pointerdown instead would make a
+ * holiday feel dead to the touch.
  */
 export function useEventDrag(
   events: CalendarEvent[],
@@ -74,6 +82,7 @@ export function useEventDrag(
 ): UseEventDrag {
   const { open } = useDock();
   const updateEventTime = useAction(api.calendar.updateEventTime);
+  const capabilitiesOf = useEventCapabilities();
 
   const [overrides, setOverrides] = useState<Record<string, OverrideTimes>>({});
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -257,6 +266,9 @@ export function useEventDrag(
     (e: PointerEvent) => {
       const s = sessionRef.current;
       if (!s || e.pointerId !== s.pointerId) return;
+      // Never promote the press to a drag: pointerup then always takes the
+      // tap path below and opens the event.
+      if (s.readOnly) return;
       if (!s.moved) {
         if (
           Math.abs(e.clientX - s.startClientX) < DRAG_THRESHOLD_PX &&
@@ -347,13 +359,14 @@ export function useEventDrag(
         grabOffsetMs: (e.clientY - cardRect.top) * msPerPx,
         durationMs: Math.max(event.endMs - event.startMs, SNAP_MS),
         moved: false,
+        readOnly: !capabilitiesOf(event).canEdit,
       };
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
       window.addEventListener("pointercancel", onPointerCancel);
       window.addEventListener("keydown", onKeyDown);
     },
-    [onPointerMove, onPointerUp, onPointerCancel, onKeyDown],
+    [onPointerMove, onPointerUp, onPointerCancel, onKeyDown, capabilitiesOf],
   );
 
   return { effectiveEvents, beginDrag, draggingId };

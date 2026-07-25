@@ -9,7 +9,7 @@ import {
 import { cn } from "@qali/ui/lib/utils";
 import { useQuery } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import { authClient } from "@/lib/auth-client";
 
@@ -21,6 +21,10 @@ export interface Guest {
   displayName?: string;
   /** Local only (for the chip avatar); not sent to the backend. */
   photoUrl?: string;
+  /** "needsAction" | "declined" | "tentative" | "accepted". Absent while
+   * creating — nobody has been asked yet. */
+  responseStatus?: string;
+  organizer?: boolean;
 }
 
 /** A contact flattened to one suggestion per email address. */
@@ -36,6 +40,95 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const MAX_SUGGESTIONS = 6;
 
+/** RSVP buckets, in the order Google itself lists them. Each carries the
+ * palette variable its status dot uses, so a guest reads the same in the
+ * picker's list and on the detail view's avatar stack. */
+const RSVP_GROUPS = [
+  { key: "accepted", label: "Going", colorVar: "--event-4" },
+  { key: "tentative", label: "Maybe", colorVar: "--event-3" },
+  { key: "declined", label: "Not going", colorVar: "--destructive" },
+  { key: "needsAction", label: "Awaiting", colorVar: "--muted-foreground" },
+] as const;
+
+/** Anything unset or unrecognised counts as not having answered yet. */
+function bucketOf(guest: Guest): string {
+  return guest.responseStatus === "accepted" ||
+    guest.responseStatus === "tentative" ||
+    guest.responseStatus === "declined"
+    ? guest.responseStatus
+    : "needsAction";
+}
+
+export interface GuestGroup {
+  label: string;
+  colorVar: string;
+  guests: Guest[];
+}
+
+/** Split guests into their RSVP buckets, dropping the empty ones. */
+export function groupGuests(guests: Guest[]): GuestGroup[] {
+  return RSVP_GROUPS.map(({ key, label, colorVar }) => ({
+    label,
+    colorVar,
+    guests: guests.filter((g) => bucketOf(g) === key),
+  })).filter((group) => group.guests.length > 0);
+}
+
+/** The palette variable for one guest's answer. */
+export function rsvpColorVar(guest: Guest): string {
+  const bucket = bucketOf(guest);
+  return (
+    RSVP_GROUPS.find((g) => g.key === bucket)?.colorVar ?? "--muted-foreground"
+  );
+}
+
+/** A one-line tally, e.g. "5 going, 2 not going, 3 awaiting". */
+export function rsvpSummary(guests: Guest[]): string {
+  return groupGuests(guests)
+    .map((g) => `${g.guests.length} ${g.label.toLowerCase()}`)
+    .join(", ");
+}
+
+/** One person in a guest list: avatar, name over email, a crown if they own the
+ * event, and whatever the caller wants on the right — the picker puts a remove
+ * button there, the detail view puts their answer. */
+export function GuestRow({
+  guest,
+  trailing,
+}: {
+  guest: Guest;
+  trailing?: ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg px-1 py-1">
+      <Avatar
+        email={guest.email}
+        name={guest.displayName}
+        photoUrl={guest.photoUrl}
+        className="size-7"
+      />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="flex items-center gap-1 truncate text-sm">
+          {guest.organizer && (
+            <HugeiconsIcon
+              icon={Crown02Icon}
+              strokeWidth={2}
+              className="size-3.5 shrink-0 text-amber-500"
+            />
+          )}
+          <span className="truncate">{guest.displayName || guest.email}</span>
+        </span>
+        {guest.displayName && (
+          <span className="truncate text-xs text-muted-foreground">
+            {guest.email}
+          </span>
+        )}
+      </span>
+      {trailing}
+    </div>
+  );
+}
+
 /** The "Add guests" affordance: a button that opens a "Select person" popover to
  * search synced contacts or invite any typed email. Added guests are listed below,
  * grouped by RSVP — the signed-in organizer under "Going", invitees under
@@ -43,9 +136,18 @@ const MAX_SUGGESTIONS = 6;
 export function GuestPicker({
   value,
   onChange,
+  readOnly = false,
+  readOnlyReason,
+  hidden = false,
 }: {
   value: Guest[];
   onChange: (guests: Guest[]) => void;
+  /** The list still shows; only adding and removing are off. */
+  readOnly?: boolean;
+  /** Explains the above, in a tooltip on the trigger. */
+  readOnlyReason?: string;
+  /** The organiser hid the guest list from other guests. */
+  hidden?: boolean;
 }) {
   const contacts = useQuery(api.contacts.listContacts) ?? [];
   const { data: session } = authClient.useSession();
@@ -131,23 +233,50 @@ export function GuestPicker({
     }
   };
 
-  // The button's summary row: the organizer plus every invitee as an overlapping
-  // avatar stack, and a "1 going, N awaiting" tally (nobody has responded yet).
-  const stack = [
-    ...(organizer
-      ? [{ email: organizer.email, name: organizer.name, photoUrl: organizer.image ?? undefined }]
-      : []),
-    ...value.map((g) => ({ email: g.email, name: g.displayName, photoUrl: g.photoUrl })),
-  ];
+  // An existing event's guest list carries everyone's RSVP, the organizer
+  // included; a list being built carries nobody's. Synthesising the signed-in
+  // user as an accepted organizer in the second case lets one grouped render
+  // serve both — "1 Going / N Awaiting" falls out of the same code that shows
+  // a real tally.
+  const hasResponses = value.some((g) => g.responseStatus !== undefined);
+  const party: Guest[] = hasResponses
+    ? value
+    : [
+        ...(organizer
+          ? [
+              {
+                email: organizer.email,
+                displayName: organizer.name,
+                photoUrl: organizer.image ?? undefined,
+                organizer: true,
+                responseStatus: "accepted",
+              },
+            ]
+          : []),
+        ...value,
+      ];
+
+  const groups = groupGuests(party);
+
   const STACK_MAX = 5;
-  const stackShown = stack.slice(0, STACK_MAX);
-  const stackOverflow = stack.length - stackShown.length;
-  const summary = [
-    organizer && "1 going",
-    `${value.length} awaiting`,
-  ]
-    .filter(Boolean)
-    .join(", ");
+  const stackShown = party.slice(0, STACK_MAX);
+  const stackOverflow = party.length - stackShown.length;
+  const summary = rsvpSummary(party);
+
+  if (hidden) {
+    return (
+      <div className="flex items-start gap-3">
+        <HugeiconsIcon
+          icon={UserMultiple02Icon}
+          strokeWidth={2}
+          className="mt-0.5 size-4.5 shrink-0 text-muted-foreground"
+        />
+        <p className="text-sm text-muted-foreground">
+          Guest list hidden by the organiser
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-start gap-3">
@@ -167,9 +296,18 @@ export function GuestPicker({
             }
           }}
         >
-          <PopoverTrigger className="group flex w-full flex-col items-start gap-1.5 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <span className="text-sm text-muted-foreground transition-colors group-hover:text-foreground">
-              Add guests
+          <PopoverTrigger
+            disabled={readOnly}
+            title={readOnly ? readOnlyReason : undefined}
+            className="group flex w-full flex-col items-start gap-1.5 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span
+              className={cn(
+                "text-sm text-muted-foreground transition-colors",
+                !readOnly && "group-hover:text-foreground",
+              )}
+            >
+              {readOnly ? (value.length > 0 ? "Guests" : "No guests") : "Add guests"}
             </span>
             <AnimatePresence initial={false}>
               {value.length > 0 && (
@@ -195,7 +333,7 @@ export function GuestPicker({
                         >
                           <Avatar
                             email={p.email}
-                            name={p.name}
+                            name={p.displayName}
                             photoUrl={p.photoUrl}
                             className="size-6"
                           />
@@ -305,83 +443,43 @@ export function GuestPicker({
                   className="overflow-hidden border-l border-foreground/10"
                 >
                   <div className="flex max-h-80 w-72 flex-col gap-3 overflow-y-auto p-2">
-                {organizer && (
-                  <div className="flex flex-col gap-0.5">
+                {groups.map((group) => (
+                  <div key={group.label} className="flex flex-col gap-0.5">
                     <p className="px-1 text-xs font-medium text-muted-foreground">
-                      1 Going
+                      {group.guests.length} {group.label}
                     </p>
-                    <div className="flex items-center gap-2 rounded-lg px-1 py-1">
-                      <Avatar
-                        email={organizer.email}
-                        name={organizer.name}
-                        photoUrl={organizer.image ?? undefined}
-                        className="size-7"
-                      />
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="flex items-center gap-1 truncate text-sm">
-                          <HugeiconsIcon
-                            icon={Crown02Icon}
-                            strokeWidth={2}
-                            className="size-3.5 shrink-0 text-amber-500"
+                    <AnimatePresence initial={false}>
+                      {group.guests.map((g) => (
+                        <motion.div
+                          key={g.email}
+                          initial={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                          transition={SPRING_DOCK}
+                          className="overflow-hidden"
+                        >
+                          <GuestRow
+                            guest={g}
+                            trailing={
+                              // The organiser can't be uninvited from their own
+                              // event, and nobody can when read-only.
+                              !readOnly && !g.organizer ? (
+                                <button
+                                  type="button"
+                                  aria-label={`Remove ${g.displayName ?? g.email}`}
+                                  onClick={() => removeGuest(g.email)}
+                                  className="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                  <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2.5} className="size-3.5" />
+                                </button>
+                              ) : undefined
+                            }
                           />
-                          <span className="truncate">
-                            {organizer.name || organizer.email}
-                          </span>
-                        </span>
-                        {organizer.name && (
-                          <span className="truncate text-xs text-muted-foreground">
-                            {organizer.email}
-                          </span>
-                        )}
-                      </span>
-                    </div>
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
                   </div>
-                )}
-
-                <div className="flex flex-col gap-0.5">
-                  <p className="px-1 text-xs font-medium text-muted-foreground">
-                    {value.length} Awaiting
-                  </p>
-                  <AnimatePresence initial={false}>
-                    {value.map((g) => (
-                      <motion.div
-                        key={g.email}
-                        initial={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
-                        transition={SPRING_DOCK}
-                        className="overflow-hidden"
-                      >
-                        <div className="flex items-center gap-2 rounded-lg px-1 py-1">
-                          <Avatar
-                            email={g.email}
-                            name={g.displayName}
-                            photoUrl={g.photoUrl}
-                            className="size-7"
-                          />
-                          <span className="flex min-w-0 flex-1 flex-col">
-                            <span className="truncate text-sm">
-                              {g.displayName ?? g.email}
-                            </span>
-                            {g.displayName && (
-                              <span className="truncate text-xs text-muted-foreground">
-                                {g.email}
-                              </span>
-                            )}
-                          </span>
-                          <button
-                            type="button"
-                            aria-label={`Remove ${g.displayName ?? g.email}`}
-                            onClick={() => removeGuest(g.email)}
-                            className="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                          >
-                            <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2.5} className="size-3.5" />
-                          </button>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </div>
+                ))}
                 </div>
               </motion.div>
             )}

@@ -18,27 +18,9 @@ import {
   fetchContactsPage,
   SyncTokenExpiredError,
 } from "./lib/google";
-import { attendeeValidator } from "./schema";
+import { googleEventValidator } from "./schema";
 
 // Validators for data pushed from actions into mutations (mapped Google shapes).
-const eventValidator = v.object({
-  googleEventId: v.string(),
-  calendarId: v.string(),
-  summary: v.optional(v.string()),
-  description: v.optional(v.string()),
-  location: v.optional(v.string()),
-  startMs: v.number(),
-  endMs: v.number(),
-  allDay: v.boolean(),
-  status: v.string(),
-  htmlLink: v.optional(v.string()),
-  colorId: v.optional(v.string()),
-  visibility: v.optional(v.string()),
-  transparency: v.optional(v.string()),
-  attendees: v.optional(v.array(attendeeValidator)),
-  googleUpdatedMs: v.number(),
-});
-
 const contactValidator = v.object({
   resourceName: v.string(),
   deleted: v.boolean(),
@@ -310,6 +292,37 @@ export const syncUser = internalAction({
   },
 });
 
+/** Re-fetch every calendar from scratch, discarding the stored sync tokens.
+ *
+ * Incremental sync only returns events Google considers *changed*, so adding a
+ * field to the event schema never reaches a row that nobody has touched — it
+ * would sit there missing the new field forever, and the cron would not fix it.
+ * Dropping the token is the only way to backfill. Run this by hand from the
+ * dashboard after adding event fields; passing no `syncToken` puts
+ * `syncOneCalendar` on its full-resync path, which clears each calendar's rows
+ * before refetching (so the grid blanks briefly). */
+export const forceFullResync = internalAction({
+  args: { userId: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    const accessToken = await getGoogleAccessToken(ctx, args.userId);
+    const calendars = await ctx.runQuery(
+      internal.googleSync.listCalendarsForUser,
+      { userId: args.userId },
+    );
+    const timeMinMs = Date.now() - CALENDAR_HISTORY_MS;
+    for (const cal of calendars) {
+      await syncOneCalendar(
+        ctx,
+        args.userId,
+        accessToken,
+        { googleCalendarId: cal.googleCalendarId },
+        timeMinMs,
+      );
+    }
+    return null;
+  },
+});
+
 /** Fan out a sync for every registered user (called by the cron). */
 export const enqueueSyncs = internalMutation({
   args: {},
@@ -566,7 +579,7 @@ export const setContactsSync = internalMutation({
 });
 
 export const upsertEventsPage = internalMutation({
-  args: { userId: v.string(), events: v.array(eventValidator) },
+  args: { userId: v.string(), events: v.array(googleEventValidator) },
   handler: async (ctx, args): Promise<null> => {
     for (const e of args.events) {
       const existing = await ctx.db

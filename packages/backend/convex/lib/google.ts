@@ -43,6 +43,10 @@ async function googleFetch(
     }
     throw new Error(`Google API ${res.status} ${res.statusText}: ${body}`);
   }
+  // DELETE answers 204 with an empty body, which res.json() would choke on.
+  if (res.status === 204) {
+    return null;
+  }
   return res.json();
 }
 
@@ -57,6 +61,14 @@ export type MappedAttendee = {
   organizer?: boolean;
   self?: boolean;
   optional?: boolean;
+};
+
+/** The organizer or creator of an event. `self` is Google's own marker for
+ * "this is the calendar the copy lives on" — authoritative, unlike an email. */
+export type MappedPerson = {
+  email?: string;
+  displayName?: string;
+  self?: boolean;
 };
 
 export type MappedEvent = {
@@ -75,16 +87,62 @@ export type MappedEvent = {
   /** Google's `transparency`: "opaque" (busy) | "transparent" (free). */
   transparency?: string;
   attendees?: MappedAttendee[];
+  attendeesOmitted?: boolean;
   googleUpdatedMs: number;
+  organizer?: MappedPerson;
+  creator?: MappedPerson;
+  /** Tri-state by design — see the note on the schema's googleEventValidator. */
+  guestsCanModify?: boolean;
+  guestsCanInviteOthers?: boolean;
+  guestsCanSeeOtherGuests?: boolean;
+  locked?: boolean;
+  eventType?: string;
+  recurringEventId?: string;
+  hangoutLink?: string;
 };
 
-type RawCalendarDateTime = {
+export type RawCalendarDateTime = {
   dateTime?: string;
   date?: string;
   /** IANA zone; required by Google for recurring timed events. */
   timeZone?: string;
 };
-type RawEvent = {
+
+/** Render an instant the way Google wants it for this kind of event. An all-day
+ * event is date-only, and the caller is expected to have passed a UTC-midnight
+ * instant (with an exclusive end); a timed one is an ISO instant plus the zone
+ * that anchors it. Shared by every action that writes times. */
+export function toGoogleTime(
+  ms: number,
+  allDay: boolean,
+  timeZone?: string,
+): RawCalendarDateTime {
+  return allDay
+    ? { date: new Date(ms).toISOString().slice(0, 10) }
+    : { dateTime: new Date(ms).toISOString(), timeZone };
+}
+type RawPersonRef = {
+  email?: string;
+  displayName?: string;
+  self?: boolean;
+};
+
+/** One attendee exactly as Google sends it. Kept structural (rather than
+ * reusing MappedAttendee) because RSVP round-trips this shape back unchanged,
+ * including the fields we don't store. */
+export type RawAttendee = {
+  email?: string;
+  displayName?: string;
+  responseStatus?: string;
+  organizer?: boolean;
+  self?: boolean;
+  optional?: boolean;
+  comment?: string;
+  additionalGuests?: number;
+  resource?: boolean;
+};
+
+export type RawEvent = {
   id: string;
   status?: string;
   summary?: string;
@@ -97,15 +155,30 @@ type RawEvent = {
   updated?: string;
   start?: RawCalendarDateTime;
   end?: RawCalendarDateTime;
-  attendees?: {
-    email?: string;
-    displayName?: string;
-    responseStatus?: string;
-    organizer?: boolean;
-    self?: boolean;
-    optional?: boolean;
-  }[];
+  attendees?: RawAttendee[];
+  attendeesOmitted?: boolean;
+  organizer?: RawPersonRef;
+  creator?: RawPersonRef;
+  guestsCanModify?: boolean;
+  guestsCanInviteOthers?: boolean;
+  guestsCanSeeOtherGuests?: boolean;
+  locked?: boolean;
+  eventType?: string;
+  recurringEventId?: string;
+  hangoutLink?: string;
 };
+
+/** Drop a person Google sent as an empty object, so "absent" stays absent
+ * rather than becoming a row of undefineds. */
+function mapPerson(raw: RawPersonRef | undefined): MappedPerson | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  if (raw.email === undefined && raw.displayName === undefined && raw.self === undefined) {
+    return undefined;
+  }
+  return { email: raw.email, displayName: raw.displayName, self: raw.self };
+}
 
 export type CalendarPage = {
   events: MappedEvent[];
@@ -214,7 +287,20 @@ export function mapGoogleEvent(raw: RawEvent, calendarId: string): MappedEvent {
     visibility: raw.visibility,
     transparency: raw.transparency,
     attendees: attendees && attendees.length > 0 ? attendees : undefined,
+    attendeesOmitted: raw.attendeesOmitted,
     googleUpdatedMs: raw.updated ? new Date(raw.updated).getTime() : Date.now(),
+    organizer: mapPerson(raw.organizer),
+    creator: mapPerson(raw.creator),
+    // Passed through untouched: an absent guest permission means Google's
+    // default for that field, and the defaults differ. Coercing here would
+    // erase the distinction. See lib/permissions.ts.
+    guestsCanModify: raw.guestsCanModify,
+    guestsCanInviteOthers: raw.guestsCanInviteOthers,
+    guestsCanSeeOtherGuests: raw.guestsCanSeeOtherGuests,
+    locked: raw.locked,
+    eventType: raw.eventType,
+    recurringEventId: raw.recurringEventId,
+    hangoutLink: raw.hangoutLink,
   };
 }
 
@@ -290,9 +376,44 @@ export async function insertCalendarEvent(
   return mapGoogleEvent(data, calendarId);
 }
 
+/** Read one event back from Google. RSVP needs this: patching `attendees`
+ * replaces the array wholesale, so we must start from Google's own copy rather
+ * than from the subset we store. */
+export async function getCalendarEvent(
+  accessToken: string,
+  calendarId: string,
+  googleEventId: string,
+): Promise<RawEvent> {
+  return (await googleFetch(
+    `${CALENDAR_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(googleEventId)}`,
+    accessToken,
+  )) as RawEvent;
+}
+
+/** Delete an event. As its organizer this cancels it for every guest; as a mere
+ * guest it removes only your copy and the organizer is not notified. On an
+ * expanded instance id it removes just that occurrence. */
+export async function deleteCalendarEvent(
+  accessToken: string,
+  calendarId: string,
+  googleEventId: string,
+  sendUpdates?: "all" | "externalOnly" | "none",
+): Promise<void> {
+  const query = sendUpdates ? `?sendUpdates=${sendUpdates}` : "";
+  await googleFetch(
+    `${CALENDAR_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(googleEventId)}${query}`,
+    accessToken,
+    { method: "DELETE" },
+  );
+}
+
 /** Patch an existing event's fields (e.g. a rescheduled start/end) and return
  * the re-mapped result. For a recurring series this targets a single expanded
- * instance by its `googleEventId`, so Google records a per-occurrence exception. */
+ * instance by its `googleEventId`, so Google records a per-occurrence exception.
+ *
+ * A patch only touches the fields present in `body`. To *clear* a field you
+ * must send an explicit `null` — omitting it means "leave alone", which is why
+ * the clearable fields are typed `string | null` rather than optional strings. */
 export async function patchCalendarEvent(
   accessToken: string,
   calendarId: string,
@@ -301,13 +422,14 @@ export async function patchCalendarEvent(
     start?: RawCalendarDateTime;
     end?: RawCalendarDateTime;
     summary?: string;
-    description?: string;
-    location?: string;
-    colorId?: string;
-    visibility?: string;
+    description?: string | null;
+    location?: string | null;
+    colorId?: string | null;
+    visibility?: string | null;
     /** "opaque" (busy) | "transparent" (free). */
     transparency?: string;
-    attendees?: { email: string; displayName?: string; optional?: boolean }[];
+    /** Replaces the guest list wholesale — omitted guests are removed. */
+    attendees?: RawAttendee[];
   },
   /** When set, Google emails the affected guests (e.g. "all" for invitations). */
   sendUpdates?: "all" | "externalOnly" | "none",

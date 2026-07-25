@@ -1,12 +1,16 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
+import type { EventPrefill } from "@/components/calendar/event-create";
 import type { CalendarEvent } from "@/components/calendar/lib";
 
-/** What the dock is currently showing. `null` means the plain nav bar. */
+/** What the dock is currently showing. `null` means the plain nav bar.
+ *
+ * A create view keeps its range at the top level rather than inside `prefill`,
+ * because the ghost on the grid reads those two fields directly. */
 export type DockView =
   | { kind: "event"; event: CalendarEvent }
   | { kind: "edit"; event: CalendarEvent }
-  | { kind: "create"; startMs: number; endMs: number }
+  | { kind: "create"; startMs: number; endMs: number; prefill?: EventPrefill }
   | { kind: "account" };
 
 /** Stable key for the content swap — changing it cross-fades the dock's contents.

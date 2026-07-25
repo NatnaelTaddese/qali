@@ -5,6 +5,7 @@ import { motion } from "motion/react";
 import { useEventColor } from "./colors";
 import { type PositionedEvent, stackIndentPx } from "./lib";
 import { pressTransition } from "./motion";
+import { useEventCapabilities } from "./permissions";
 import type { DragMode } from "./use-event-drag";
 
 interface EventCardProps {
@@ -28,6 +29,9 @@ export function EventCard({ positioned, isDragging, onDragStart }: EventCardProp
   const { event, topPct, heightPct, stackIndex, elevation } = positioned;
   const colorFor = useEventColor();
   const colorVar = colorFor(event);
+  // An event the user can't reschedule still opens on tap, but it shouldn't
+  // offer a grab cursor or resize edges for a drag that will never happen.
+  const draggable = useEventCapabilities()(event).canEdit;
   // Overlapping events cascade: each deeper card is indented right and its right
   // edge stays pinned to the column, so cards behind peek out on the left and a
   // later event paints on top of the ones it overlaps.
@@ -43,7 +47,8 @@ export function EventCard({ positioned, isDragging, onDragStart }: EventCardProp
       whileTap={isDragging ? undefined : { scale: 0.97 }}
       transition={{ scale: pressTransition }}
       className={cn(
-        "event-card group absolute min-h-[13px] cursor-grab overflow-hidden rounded-lg shadow-sm ring-1 ring-border/60 inset-ring inset-ring-black/10 select-none dark:inset-ring-white/10",
+        "event-card group absolute min-h-[13px] overflow-hidden rounded-lg shadow-sm ring-1 ring-border/60 inset-ring inset-ring-black/10 select-none dark:inset-ring-white/10",
+        draggable ? "cursor-grab" : "cursor-pointer",
         isDragging &&
           "cursor-grabbing touch-none shadow-lg ring-2 ring-primary/60",
       )}
@@ -71,16 +76,20 @@ export function EventCard({ positioned, isDragging, onDragStart }: EventCardProp
       </div>
       {/* Edge handles for resizing start/end. Invisible until hover so they
           don't clutter the card, but always hit-testable. */}
-      <span
-        data-resize-top
-        aria-hidden
-        className="absolute inset-x-0 top-0 h-2 cursor-ns-resize touch-none"
-      />
-      <span
-        data-resize-bottom
-        aria-hidden
-        className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize touch-none"
-      />
+      {draggable && (
+        <>
+          <span
+            data-resize-top
+            aria-hidden
+            className="absolute inset-x-0 top-0 h-2 cursor-ns-resize touch-none"
+          />
+          <span
+            data-resize-bottom
+            aria-hidden
+            className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize touch-none"
+          />
+        </>
+      )}
     </motion.div>
   );
 }

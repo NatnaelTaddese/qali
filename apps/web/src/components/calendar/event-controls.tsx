@@ -27,8 +27,12 @@ function sortCalendars(calendars: Doc<"calendars">[]): Doc<"calendars">[] {
   });
 }
 
-const buttonClass =
+export const buttonClass =
   "flex size-8 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring";
+
+/** Inert but still legible: the swatch and the calendar name are worth reading
+ * even when neither can be changed. */
+const disabledClass = "opacity-50 hover:bg-transparent hover:text-muted-foreground";
 
 export interface EventControlsProps {
   calendars: Doc<"calendars">[];
@@ -37,18 +41,29 @@ export interface EventControlsProps {
   onColorChange: (colorId?: string) => void;
   calendarId?: string;
   onCalendarChange: (calendarId: string) => void;
+  /** The whole cluster is inert — the event can't be edited at all. */
+  disabled?: boolean;
+  /** Whether the calendar may be *changed*, as opposed to merely shown. Moving
+   * an existing event to another calendar needs Google's `move` endpoint, which
+   * we don't implement, so only the create panel passes this. */
+  canChangeCalendar?: boolean;
 }
 
-/** Colour and calendar for the event being created. */
+/** Colour and calendar for the event being created or edited. */
 export function EventControls({
   calendars,
   colorId,
   onColorChange,
   calendarId,
   onCalendarChange,
+  disabled = false,
+  canChangeCalendar = false,
 }: EventControlsProps) {
   const writable = sortCalendars(calendars.filter((c) => WRITABLE.has(c.accessRole ?? "")));
-  const selected = writable.find((c) => c.googleCalendarId === calendarId);
+  // An event can sit on a calendar we can't write to; still name it.
+  const selected =
+    writable.find((c) => c.googleCalendarId === calendarId) ??
+    calendars.find((c) => c.googleCalendarId === calendarId);
   // With no colour of its own the event inherits its calendar's, so the swatch
   // previews what the grid will actually draw.
   const swatchVar =
@@ -60,7 +75,13 @@ export function EventControls({
       <Popover>
         <Tooltip>
           <TooltipTrigger
-            render={<PopoverTrigger aria-label="Event colour" className={buttonClass} />}
+            render={
+              <PopoverTrigger
+                aria-label="Event colour"
+                disabled={disabled}
+                className={cn(buttonClass, disabled && disabledClass)}
+              />
+            }
           >
             <span
               className="size-4 rounded-full"
@@ -95,7 +116,18 @@ export function EventControls({
       <Popover>
         <Tooltip>
           <TooltipTrigger
-            render={<PopoverTrigger aria-label="Calendar" className={buttonClass} />}
+            render={
+              <PopoverTrigger
+                aria-label="Calendar"
+                // Showing which calendar an event is on is still useful when it
+                // can't be moved, so the trigger stays but stops opening.
+                disabled={disabled || !canChangeCalendar}
+                className={cn(
+                  buttonClass,
+                  (disabled || !canChangeCalendar) && disabledClass,
+                )}
+              />
+            }
           >
             <HugeiconsIcon icon={Calendar03Icon} strokeWidth={2} className="size-4.5" />
           </TooltipTrigger>

@@ -15,9 +15,11 @@ import { cn } from "@qali/ui/lib/utils";
 export function FreeBusyToggle({
   busy,
   onChange,
+  disabled,
 }: {
   busy: boolean;
   onChange: (busy: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <Tooltip>
@@ -28,10 +30,12 @@ export function FreeBusyToggle({
             role="switch"
             aria-checked={busy}
             aria-label={busy ? "Busy" : "Free"}
+            disabled={disabled}
             onClick={() => onChange(!busy)}
             className={cn(
               "flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm font-medium outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
               busy ? "text-foreground" : "text-muted-foreground",
+              disabled && "opacity-50 hover:bg-transparent",
             )}
           >
             <HugeiconsIcon
@@ -44,7 +48,13 @@ export function FreeBusyToggle({
         }
       />
       <TooltipContent side="top">
-        {busy ? "Busy · change to free" : "Free · change to busy"}
+        {disabled
+          ? busy
+            ? "Busy"
+            : "Free"
+          : busy
+            ? "Busy · change to free"
+            : "Free · change to busy"}
       </TooltipContent>
     </Tooltip>
   );

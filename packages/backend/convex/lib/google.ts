@@ -459,6 +459,10 @@ export async function patchCalendarEvent(
     transparency?: string;
     /** Replaces the guest list wholesale — omitted guests are removed. */
     attendees?: RawAttendee[];
+    /** RFC5545 recurrence lines. Only meaningful on a recurring *master* id —
+     * e.g. truncating a series by replacing its rule with one that ends on an
+     * `UNTIL`. Omitted leaves the rule alone. */
+    recurrence?: string[];
   },
   /** When set, Google emails the affected guests (e.g. "all" for invitations). */
   sendUpdates?: "all" | "externalOnly" | "none",

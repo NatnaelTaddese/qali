@@ -18,6 +18,7 @@ import {
   deleteCalendarEvent,
   getCalendarEvent,
   insertCalendarEvent,
+  mapGoogleEvent,
   type MappedEvent,
   patchCalendarEvent,
   toGoogleTime,
@@ -264,16 +265,7 @@ export const createEvent = action({
       // instances (each a distinct googleEventId), never the master. Mirroring
       // `event` (the master) would leave an orphan row that no later sync
       // touches. Instead pull the freshly expanded instances in now.
-      const calendars = await ctx.runQuery(
-        internal.googleSync.listCalendarsForUser,
-        { userId: user._id },
-      );
-      const cal = calendars.find(
-        (c) => c.googleCalendarId === targetCalendarId,
-      );
-      if (cal) {
-        await syncOneCalendar(ctx, user._id, accessToken, cal, Date.now() - CALENDAR_HISTORY_MS);
-      }
+      await resyncCalendar(ctx, user._id, accessToken, targetCalendarId);
       return event;
     }
 
@@ -418,6 +410,71 @@ async function authorizeEventAction(
   return { userId: user._id, row: context.event, capabilities, accessToken };
 }
 
+/**
+ * Pull a calendar's events in again after a change Google stores on a hidden
+ * recurring master (create/split/series-edit). We sync with singleEvents=true,
+ * so the master is never a row of ours — only its *expanded* instances are, and
+ * the way to reflect a master change is to re-expand. Reused by `createEvent`
+ * and the series-wide branches of `updateEvent`; a no-op if the calendar hasn't
+ * synced yet.
+ */
+async function resyncCalendar(
+  ctx: ActionCtx,
+  userId: string,
+  accessToken: string,
+  calendarId: string,
+): Promise<void> {
+  const calendars = await ctx.runQuery(
+    internal.googleSync.listCalendarsForUser,
+    { userId },
+  );
+  const cal = calendars.find((c) => c.googleCalendarId === calendarId);
+  if (cal) {
+    await syncOneCalendar(
+      ctx,
+      userId,
+      accessToken,
+      cal,
+      Date.now() - CALENDAR_HISTORY_MS,
+    );
+  }
+}
+
+/** Format a UTC instant as an RFC5545 UNTIL value. A timed series uses the
+ * date-time form; an all-day series uses the bare date form, matching the value
+ * type of its DTSTART (mixing the two makes Google reject the rule). */
+function toRRuleUntil(ms: number, allDay: boolean): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  const day = `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}`;
+  return allDay
+    ? day
+    : `${day}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
+}
+
+/**
+ * Truncate a recurring master's rule so its last occurrence falls before
+ * `untilMs`. Rewrites each `RRULE:` line to end on a fresh `UNTIL`, dropping any
+ * `COUNT` or existing `UNTIL`; other recurrence lines (EXDATE/RDATE) pass
+ * through untouched. This is how "this and following" ends the original series.
+ */
+function truncateRecurrence(
+  recurrence: string[],
+  untilMs: number,
+  allDay: boolean,
+): string[] {
+  const until = toRRuleUntil(untilMs, allDay);
+  return recurrence.map((line) => {
+    if (!line.startsWith("RRULE:")) return line;
+    const parts = line
+      .slice("RRULE:".length)
+      .split(";")
+      .filter((part) => part && !/^(COUNT|UNTIL)=/.test(part));
+    parts.push(`UNTIL=${until}`);
+    return `RRULE:${parts.join(";")}`;
+  });
+}
+
 /** Reschedule an existing event: patch Google, then mirror the new times
  * locally. The frontend calls this on drag/resize; it holds an optimistic
  * override until this returns and the next sync reflects the change. */
@@ -458,6 +515,20 @@ export const updateEventTime = action({
  * patch exactly what the user touched. Fields that can be *emptied* take an
  * explicit `null` for that, because Google reads an omitted field as "leave
  * alone" — sending `""` would store an empty string rather than clear it.
+ *
+ * For a recurring event, `scope` chooses how far the edit reaches. We sync with
+ * singleEvents=true, so the row is always one expanded instance and each scope
+ * maps to a different Google operation:
+ *   - `thisEvent` — patch the instance id (a per-occurrence exception). The
+ *     default, and the only path a non-recurring event can take.
+ *   - `allEvents` — patch the recurring master (`recurringEventId`). A time
+ *     change shifts the master by the same delta so every occurrence moves
+ *     together rather than the series re-anchoring onto this date.
+ *   - `thisAndFollowing` — Google has no endpoint for this. Split the series:
+ *     end the original master on an `UNTIL` just before this occurrence, then
+ *     create a fresh series from here carrying the edited + inherited fields.
+ * The series-wide scopes re-expand by re-syncing the calendar, since the master
+ * itself is never a row of ours.
  */
 export const updateEvent = action({
   args: {
@@ -493,6 +564,15 @@ export const updateEvent = action({
     /** `"meet"` mints a Google Meet link, `null` clears the existing one, and
      * absent leaves conferencing untouched. */
     conference: v.optional(v.union(v.literal("meet"), v.null())),
+    /** How far the edit reaches on a recurring event. Absent = `"thisEvent"`.
+     * Ignored (forced to `"thisEvent"`) for a non-recurring event. */
+    scope: v.optional(
+      v.union(
+        v.literal("thisEvent"),
+        v.literal("thisAndFollowing"),
+        v.literal("allEvents"),
+      ),
+    ),
   },
   handler: async (ctx, args): Promise<MappedEvent> => {
     const { userId, row, accessToken } = await authorizeEventAction(
@@ -501,43 +581,185 @@ export const updateEvent = action({
       ["canEdit"],
     );
 
+    // A non-recurring event has no series, so any scope collapses to the one
+    // event; only a recurring instance can reach the master.
+    const scope = row.recurringEventId ? (args.scope ?? "thisEvent") : "thisEvent";
+
     // Falling back to the stored value keeps a times-only patch rendering the
     // same kind of event it already was.
     const allDay = args.allDay ?? row.allDay;
-    const times =
-      args.startMs !== undefined && args.endMs !== undefined
-        ? {
-            start: toGoogleTime(args.startMs, allDay, args.timeZone),
-            end: toGoogleTime(args.endMs, allDay, args.timeZone),
-          }
-        : {};
+    const hasTimeChange =
+      args.startMs !== undefined && args.endMs !== undefined;
 
-    const event = await patchCalendarEvent(
-      accessToken,
-      row.calendarId,
-      row.googleEventId,
-      {
-        ...times,
-        summary: args.summary,
-        description: args.description,
-        location: args.location,
-        colorId: args.colorId,
-        visibility: args.visibility,
-        transparency: args.transparency,
-        attendees: args.attendees,
-      },
-      // Only bother the guests when the guest list itself changed.
-      args.attendees ? "all" : undefined,
-      // undefined = leave conferencing alone; "meet" adds, null removes.
+    // The field patch shared by the instance and master paths. Times are added
+    // per-path: the instance takes the edited instant directly, the master
+    // takes the same *delta* so the whole series shifts together.
+    const fields = {
+      summary: args.summary,
+      description: args.description,
+      location: args.location,
+      colorId: args.colorId,
+      visibility: args.visibility,
+      transparency: args.transparency,
+      attendees: args.attendees,
+    };
+    // Only bother the guests when the guest list itself changed.
+    const sendUpdates = args.attendees ? ("all" as const) : undefined;
+    // undefined = leave conferencing alone; "meet" adds, null removes.
+    const conference =
       args.conference === undefined
         ? undefined
         : args.conference === null
           ? "remove"
-          : "add",
-    );
+          : "add";
 
-    await ctx.runMutation(internal.calendar.upsertEvent, { userId, event });
-    return event;
+    if (scope === "thisEvent") {
+      const times =
+        hasTimeChange && args.startMs !== undefined && args.endMs !== undefined
+          ? {
+              start: toGoogleTime(args.startMs, allDay, args.timeZone),
+              end: toGoogleTime(args.endMs, allDay, args.timeZone),
+            }
+          : {};
+      const event = await patchCalendarEvent(
+        accessToken,
+        row.calendarId,
+        row.googleEventId,
+        { ...times, ...fields },
+        sendUpdates,
+        conference,
+      );
+      await ctx.runMutation(internal.calendar.upsertEvent, { userId, event });
+      return event;
+    }
+
+    // Series-wide scopes need the master, both for its recurrence rule and (for
+    // a time change) for the absolute times we shift by the instance's delta.
+    const masterId = row.recurringEventId;
+    if (!masterId) {
+      throw new Error("Event is not part of a recurring series");
+    }
+    const rawMaster = await getCalendarEvent(
+      accessToken,
+      row.calendarId,
+      masterId,
+    );
+    const master = mapGoogleEvent(rawMaster, row.calendarId);
+
+    // Shift the master's own start/end by the delta the user applied to this
+    // instance, so every occurrence moves by the same amount.
+    const shiftedTimes =
+      hasTimeChange && args.startMs !== undefined && args.endMs !== undefined
+        ? {
+            start: toGoogleTime(
+              master.startMs + (args.startMs - row.startMs),
+              allDay,
+              args.timeZone,
+            ),
+            end: toGoogleTime(
+              master.endMs + (args.endMs - row.endMs),
+              allDay,
+              args.timeZone,
+            ),
+          }
+        : {};
+
+    // "This and following" from the very first occurrence has nothing before it
+    // to keep, so it is just "all events" — patch the master rather than split
+    // the series into an empty original.
+    const isSeriesHead = row.startMs === master.startMs;
+
+    if (scope === "allEvents" || isSeriesHead) {
+      const updatedMaster = await patchCalendarEvent(
+        accessToken,
+        row.calendarId,
+        masterId,
+        { ...shiftedTimes, ...fields },
+        sendUpdates,
+        conference,
+      );
+      await resyncCalendar(ctx, userId, accessToken, row.calendarId);
+      return updatedMaster;
+    }
+
+    // scope === "thisAndFollowing", on a mid-series occurrence: split.
+    //
+    // 1. End the original series just before this occurrence. NOTE: a COUNT=N
+    //    rule is reset to an UNTIL here and copied whole onto the new series
+    //    below, so the tail keeps its own COUNT rather than N-minus-elapsed —
+    //    an over-count only counting expanded occurrences could fix. UNTIL and
+    //    open-ended rules (the common cases) split exactly.
+    const truncated = truncateRecurrence(
+      rawMaster.recurrence ?? [],
+      row.startMs - 1000,
+      row.allDay,
+    );
+    const truncatedMaster = await patchCalendarEvent(
+      accessToken,
+      row.calendarId,
+      masterId,
+      { recurrence: truncated },
+    );
+    await ctx.runMutation(internal.calendar.upsertRecurringSeries, {
+      userId,
+      calendarId: row.calendarId,
+      googleEventId: masterId,
+      recurrence: truncated,
+      sourceUpdatedMs: truncatedMaster.googleUpdatedMs,
+    });
+
+    // 2. Create a fresh series from this occurrence. Each field is the edit if
+    //    the user touched it, else the instance's current value carried across;
+    //    a field the user *cleared* (null) is dropped rather than carried.
+    const carried = <T>(edited: T | null | undefined, current: T | undefined) =>
+      edited === undefined ? current : (edited ?? undefined);
+    const newStartMs = hasTimeChange && args.startMs !== undefined ? args.startMs : row.startMs;
+    const newEndMs = hasTimeChange && args.endMs !== undefined ? args.endMs : row.endMs;
+    const attendees =
+      args.attendees ??
+      row.attendees?.map((a) => ({
+        email: a.email,
+        displayName: a.displayName,
+        optional: a.optional,
+      }));
+    // Keep an existing Meet on the tail unless the edit removed it; mint one if
+    // the edit added it. The new series gets its own link, not the original's.
+    const addConference =
+      args.conference === null
+        ? false
+        : args.conference === "meet"
+          ? true
+          : Boolean(row.hangoutLink);
+
+    const newSeries = await insertCalendarEvent(
+      accessToken,
+      row.calendarId,
+      {
+        summary: args.summary ?? row.summary ?? "(No title)",
+        description: carried(args.description, row.description),
+        location: carried(args.location, row.location),
+        start: toGoogleTime(newStartMs, allDay, args.timeZone),
+        end: toGoogleTime(newEndMs, allDay, args.timeZone),
+        colorId: carried(args.colorId, row.colorId),
+        visibility: carried(args.visibility, row.visibility),
+        transparency: args.transparency ?? row.transparency,
+        attendees,
+        recurrence: rawMaster.recurrence ?? [],
+      },
+      attendees && attendees.length > 0 ? "all" : undefined,
+      addConference,
+    );
+    await ctx.runMutation(internal.calendar.upsertRecurringSeries, {
+      userId,
+      calendarId: row.calendarId,
+      googleEventId: newSeries.googleEventId,
+      recurrence: rawMaster.recurrence ?? [],
+      sourceUpdatedMs: newSeries.googleUpdatedMs,
+    });
+
+    // 3. Re-expand both the truncated original and the new series into rows.
+    await resyncCalendar(ctx, userId, accessToken, row.calendarId);
+    return newSeries;
   },
 });
 

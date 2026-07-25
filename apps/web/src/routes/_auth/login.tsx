@@ -1,4 +1,5 @@
 import { Button } from "@qali/ui/components/button";
+import { Spinner } from "@qali/ui/components/spinner";
 import { cn } from "@qali/ui/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
@@ -173,9 +174,10 @@ function LoginComponent() {
               size="lg"
               className="w-full rounded-xl"
               disabled={isLoading}
+              aria-busy={isLoading}
               onClick={handleGoogleSignIn}
             >
-              <GoogleIcon />
+              {isLoading ? <Spinner /> : <GoogleIcon />}
               {isLoading ? "Redirecting…" : "Continue with Google"}
             </Button>
           </div>

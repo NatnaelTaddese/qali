@@ -7,6 +7,9 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Button } from "@qali/ui/components/button";
+import { Spinner } from "@qali/ui/components/spinner";
+import { useState } from "react";
+import { toast } from "sonner";
 
 import { useTheme } from "@/components/theme-provider";
 import { authClient } from "@/lib/auth-client";
@@ -21,7 +24,26 @@ const themeOptions = [
 export function AccountPanel({ onClose }: { onClose: () => void }) {
   const { data: session } = authClient.useSession();
   const { theme, setTheme } = useTheme();
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const user = session?.user;
+
+  const signOut = async () => {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+
+    try {
+      const { error } = await authClient.signOut();
+      if (!error) return;
+
+      setIsSigningOut(false);
+      toast.error("Couldn't sign out", { description: error.message });
+    } catch (error: unknown) {
+      setIsSigningOut(false);
+      toast.error("Couldn't sign out", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -67,10 +89,16 @@ export function AccountPanel({ onClose }: { onClose: () => void }) {
         variant="ghost"
         size="sm"
         className="justify-start"
-        onClick={() => void authClient.signOut()}
+        disabled={isSigningOut}
+        aria-busy={isSigningOut}
+        onClick={signOut}
       >
-        <HugeiconsIcon icon={Logout01Icon} strokeWidth={2} className="size-4" />
-        Sign out
+        {isSigningOut ? (
+          <Spinner />
+        ) : (
+          <HugeiconsIcon icon={Logout01Icon} strokeWidth={2} className="size-4" />
+        )}
+        {isSigningOut ? "Signing out…" : "Sign out"}
       </Button>
     </div>
   );

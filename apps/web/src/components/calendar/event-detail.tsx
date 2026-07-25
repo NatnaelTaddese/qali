@@ -16,6 +16,7 @@ import {
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import { Button } from "@qali/ui/components/button";
+import { Spinner } from "@qali/ui/components/spinner";
 import {
   Tooltip,
   TooltipContent,
@@ -318,6 +319,7 @@ function DeleteButton({
       size="sm"
       variant={armed && destructive ? "destructive" : "ghost"}
       disabled={busy}
+      aria-busy={busy}
       onClick={() => {
         if (!armed) {
           setArmed(true);
@@ -331,7 +333,14 @@ function DeleteButton({
         });
       }}
     >
-      {armed ? "Confirm?" : label}
+      {busy && <Spinner />}
+      {busy
+        ? destructive
+          ? "Deleting…"
+          : "Removing…"
+        : armed
+          ? "Confirm?"
+          : label}
     </Button>
   );
 }

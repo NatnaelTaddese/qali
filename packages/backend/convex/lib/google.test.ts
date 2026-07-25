@@ -2,7 +2,24 @@
 // TypeScript project intentionally does not include Bun's ambient types.
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { fetchCalendarList, mapGoogleEvent } from "./google";
+import {
+  fetchCalendarList,
+  insertCalendarEvent,
+  mapGoogleEvent,
+  patchCalendarEvent,
+} from "./google";
+
+/** Capture the URL and parsed JSON body of the single request a write helper
+ * makes, and answer it with `response`. */
+function captureRequest(response: unknown) {
+  const captured: { url: string; body: unknown } = { url: "", body: null };
+  globalThis.fetch = (async (input, init) => {
+    captured.url = String(input);
+    captured.body = init?.body ? JSON.parse(String(init.body)) : null;
+    return Response.json(response);
+  }) as typeof fetch;
+  return captured;
+}
 
 const originalFetch = globalThis.fetch;
 
@@ -166,5 +183,91 @@ describe("mapGoogleEvent", () => {
     expect(mapped.organizer).toBeUndefined();
     expect(mapped.attendees).toBeUndefined();
     expect(mapped.eventType).toBe("birthday");
+  });
+});
+
+const START = { dateTime: "2026-07-25T09:00:00.000Z" };
+const END = { dateTime: "2026-07-25T09:30:00.000Z" };
+
+describe("insertCalendarEvent conferencing", () => {
+  test("requests a Meet link and bumps conferenceDataVersion", async () => {
+    const captured = captureRequest({ id: "evt", start: START, end: END });
+
+    await insertCalendarEvent(
+      "token",
+      "primary@example.com",
+      { summary: "Sync", start: START, end: END },
+      undefined,
+      true,
+    );
+
+    expect(new URL(captured.url).searchParams.get("conferenceDataVersion")).toBe(
+      "1",
+    );
+    const body = captured.body as {
+      conferenceData?: { createRequest?: { conferenceSolutionKey?: unknown } };
+    };
+    expect(body.conferenceData?.createRequest?.conferenceSolutionKey).toEqual({
+      type: "hangoutsMeet",
+    });
+  });
+
+  test("omits conference data when not requested", async () => {
+    const captured = captureRequest({ id: "evt", start: START, end: END });
+
+    await insertCalendarEvent("token", "primary@example.com", {
+      summary: "Sync",
+      start: START,
+      end: END,
+    });
+
+    expect(new URL(captured.url).searchParams.has("conferenceDataVersion")).toBe(
+      false,
+    );
+    expect((captured.body as { conferenceData?: unknown }).conferenceData).toBe(
+      undefined,
+    );
+  });
+});
+
+describe("patchCalendarEvent conferencing", () => {
+  test("adds a Meet link on request", async () => {
+    const captured = captureRequest({ id: "evt", start: START, end: END });
+
+    await patchCalendarEvent(
+      "token",
+      "primary@example.com",
+      "evt",
+      { summary: "Sync" },
+      undefined,
+      "add",
+    );
+
+    expect(new URL(captured.url).searchParams.get("conferenceDataVersion")).toBe(
+      "1",
+    );
+    expect(
+      (captured.body as { conferenceData?: unknown }).conferenceData,
+    ).toBeDefined();
+  });
+
+  test("clears the conference by sending null", async () => {
+    const captured = captureRequest({ id: "evt", start: START, end: END });
+
+    await patchCalendarEvent(
+      "token",
+      "primary@example.com",
+      "evt",
+      { summary: "Sync" },
+      undefined,
+      "remove",
+    );
+
+    expect(new URL(captured.url).searchParams.get("conferenceDataVersion")).toBe(
+      "1",
+    );
+    expect(
+      (captured.body as { conferenceData?: unknown }).conferenceData,
+    ).toBeNull();
   });
 });

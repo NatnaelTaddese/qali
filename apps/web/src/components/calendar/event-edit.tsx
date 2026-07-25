@@ -56,6 +56,10 @@ function diffEvent(
   if (next.busy !== initial.busy) {
     patch.transparency = next.busy ? "opaque" : "transparent";
   }
+  if (next.meet !== initial.meet) {
+    // "meet" asks Google to mint a link; null clears the existing one.
+    patch.conference = next.meet ? "meet" : null;
+  }
 
   // Times travel together: the backend needs both ends to render either, and
   // all-day changes how both are written.

@@ -366,14 +366,37 @@ export async function insertCalendarEvent(
   },
   /** When set, Google emails the affected guests (e.g. "all" for invitations). */
   sendUpdates?: "all" | "externalOnly" | "none",
+  /** Ask Google to mint a Google Meet link for the event. The generated URL
+   * comes back on the response as `hangoutLink`. */
+  addConference?: boolean,
 ): Promise<MappedEvent> {
-  const query = sendUpdates ? `?sendUpdates=${sendUpdates}` : "";
+  const params = new URLSearchParams();
+  if (sendUpdates) params.set("sendUpdates", sendUpdates);
+  // A `createRequest` only takes effect when this is set — without it Google
+  // silently ignores the conference data and no Meet link is created.
+  if (addConference) params.set("conferenceDataVersion", "1");
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  const requestBody = addConference
+    ? { ...body, conferenceData: newMeetRequest() }
+    : body;
   const data = (await googleFetch(
     `${CALENDAR_BASE}/calendars/${encodeURIComponent(calendarId)}/events${query}`,
     accessToken,
-    { method: "POST", body: JSON.stringify(body) },
+    { method: "POST", body: JSON.stringify(requestBody) },
   )) as RawEvent;
   return mapGoogleEvent(data, calendarId);
+}
+
+/** The `conferenceData` payload that asks Google to create a Google Meet. The
+ * `requestId` dedupes retries — a repeated request with the same id returns the
+ * existing conference rather than making a second one. */
+function newMeetRequest() {
+  return {
+    createRequest: {
+      requestId: crypto.randomUUID(),
+      conferenceSolutionKey: { type: "hangoutsMeet" },
+    },
+  };
 }
 
 /** Read one event back from Google. RSVP needs this: patching `attendees`
@@ -433,12 +456,24 @@ export async function patchCalendarEvent(
   },
   /** When set, Google emails the affected guests (e.g. "all" for invitations). */
   sendUpdates?: "all" | "externalOnly" | "none",
+  /** `"add"` mints a Google Meet link, `"remove"` clears any existing one, and
+   * `undefined` leaves the event's conferencing untouched. */
+  conference?: "add" | "remove",
 ): Promise<MappedEvent> {
-  const query = sendUpdates ? `?sendUpdates=${sendUpdates}` : "";
+  const params = new URLSearchParams();
+  if (sendUpdates) params.set("sendUpdates", sendUpdates);
+  if (conference) params.set("conferenceDataVersion", "1");
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  const requestBody =
+    conference === "add"
+      ? { ...body, conferenceData: newMeetRequest() }
+      : conference === "remove"
+        ? { ...body, conferenceData: null }
+        : body;
   const data = (await googleFetch(
     `${CALENDAR_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(googleEventId)}${query}`,
     accessToken,
-    { method: "PATCH", body: JSON.stringify(body) },
+    { method: "PATCH", body: JSON.stringify(requestBody) },
   )) as RawEvent;
   return mapGoogleEvent(data, calendarId);
 }

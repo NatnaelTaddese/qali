@@ -172,6 +172,8 @@ export const createEvent = action({
     ),
     /** Client IANA time zone; Google requires it for recurring timed events. */
     timeZone: v.optional(v.string()),
+    /** Ask Google to mint a Google Meet link; the URL comes back as `hangoutLink`. */
+    addConference: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<MappedEvent> => {
     const user = await authComponent.safeGetAuthUser(ctx);
@@ -216,6 +218,7 @@ export const createEvent = action({
       },
       // Only ask Google to email invitations when there are actually guests.
       hasGuests ? "all" : undefined,
+      args.addConference,
     );
 
     if (args.recurrence && args.recurrence.length > 0) {
@@ -407,6 +410,9 @@ export const updateEvent = action({
     ),
     /** Client IANA time zone; Google needs it to anchor a timed instant. */
     timeZone: v.optional(v.string()),
+    /** `"meet"` mints a Google Meet link, `null` clears the existing one, and
+     * absent leaves conferencing untouched. */
+    conference: v.optional(v.union(v.literal("meet"), v.null())),
   },
   handler: async (ctx, args): Promise<MappedEvent> => {
     const { userId, row, accessToken } = await authorizeEventAction(
@@ -442,6 +448,12 @@ export const updateEvent = action({
       },
       // Only bother the guests when the guest list itself changed.
       args.attendees ? "all" : undefined,
+      // undefined = leave conferencing alone; "meet" adds, null removes.
+      args.conference === undefined
+        ? undefined
+        : args.conference === null
+          ? "remove"
+          : "add",
     );
 
     await ctx.runMutation(internal.calendar.upsertEvent, { userId, event });

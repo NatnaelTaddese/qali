@@ -58,6 +58,7 @@ export function EventCreate({
     summary: "",
     description: "",
     location: "",
+    meet: false,
     allDay: false,
     isPrivate: false,
     // Busy is Google's default, so the toggle starts there.
@@ -96,7 +97,10 @@ export function EventCreate({
       endMs: times.endMs,
       allDay: value.allDay,
       description: value.description || undefined,
-      location: value.location.trim() || undefined,
+      // A video call and a physical location are mutually exclusive modes of
+      // the "Where" row, so a Meet event carries no location.
+      location: value.meet ? undefined : value.location.trim() || undefined,
+      addConference: value.meet || undefined,
       calendarId: activeCalendarId,
       colorId: value.colorId,
       visibility: value.isPrivate ? "private" : undefined,

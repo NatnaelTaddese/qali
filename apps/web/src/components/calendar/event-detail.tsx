@@ -572,8 +572,8 @@ export function EventDetail({
             <RsvpControl event={event} current={capabilities.selfResponse} />
           )}
 
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1">
+          <div className="flex items-center justify-between gap-2 -mb-2">
+            <div className="flex items-center gap-1 border-2 rounded-xl -ml-2">
               {event.htmlLink && (
                 <IconAction icon={Link01Icon} label="Copy link" onClick={copyLink} />
               )}
@@ -587,7 +587,7 @@ export function EventDetail({
               )}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 -mr-2">
               {(capabilities.canDelete || capabilities.canRemoveSelf) && (
                 <DeleteButton
                   label={

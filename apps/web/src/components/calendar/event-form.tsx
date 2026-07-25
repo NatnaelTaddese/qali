@@ -6,6 +6,7 @@ import {
   SquareLock01Icon,
   SquareUnlock01Icon,
   Sun03Icon,
+  Video01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { Doc } from "@qali/backend/convex/_generated/dataModel";
@@ -109,6 +110,12 @@ export interface EventFormValue {
   /** HTML, in the subset Google keeps. */
   description: string;
   location: string;
+  /** Whether the event has (or should get) a Google Meet. The "Where" row is a
+   * switch: `false` shows the location input, `true` swaps it for the Meet chip.
+   * On create this is the intent to mint a link; on edit it toggles one on/off. */
+  meet: boolean;
+  /** An already-minted Meet URL, for display. Only set on an existing event. */
+  hangoutLink?: string;
   startMs: number;
   endMs: number;
   allDay: boolean;
@@ -149,6 +156,8 @@ export function formValueFromEvent(event: CalendarEvent): EventFormValue {
     summary: event.summary ?? "",
     description: event.description ?? "",
     location: event.location ?? "",
+    meet: Boolean(event.hangoutLink),
+    hangoutLink: event.hangoutLink,
     startMs: event.allDay ? fromUtcMidnight(event.startMs) : event.startMs,
     endMs: event.allDay
       ? fromUtcMidnight(event.endMs - MS_PER_DAY)
@@ -503,16 +512,14 @@ export function EventForm({
             )}
             </SettingRow>
 
-            <SettingRow icon={Location01Icon} label="Location">
-              <input
-                value={value.location}
-                readOnly={!canEdit}
-                onChange={(e) => onChange({ location: e.target.value })}
-                placeholder={canEdit ? "Add location" : "None"}
-                aria-label="Location"
-                className="w-full min-w-0 rounded-lg bg-transparent px-2 py-1 text-right text-sm font-medium outline-none placeholder:font-normal placeholder:text-muted-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring read-only:hover:bg-transparent"
-              />
-            </SettingRow>
+            <WhereRow
+              location={value.location}
+              meet={value.meet}
+              hangoutLink={value.hangoutLink}
+              canEdit={canEdit}
+              onLocationChange={(location) => onChange({ location })}
+              onMeetChange={(meet) => onChange({ meet })}
+            />
 
           <GuestPicker
             value={value.guests}
@@ -614,6 +621,110 @@ function SettingRow({
       <span className="shrink-0 text-sm text-muted-foreground">{label}</span>
       <div className="ml-auto flex min-w-0 items-center">{children}</div>
     </div>
+  );
+}
+
+/** The "where" of the event: a physical location *or* a video call, on one line
+ * instead of two rows. A caller adding a Meet isn't usually also typing an
+ * address, so the two are mutually exclusive modes of the same row — the switch
+ * follows the leading icon and flips the trailing control between the location
+ * input and the Google Meet chip. */
+function WhereRow({
+  location,
+  meet,
+  hangoutLink,
+  canEdit,
+  onLocationChange,
+  onMeetChange,
+}: {
+  location: string;
+  meet: boolean;
+  hangoutLink?: string;
+  canEdit: boolean;
+  onLocationChange: (location: string) => void;
+  onMeetChange: (meet: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <HugeiconsIcon
+        icon={meet ? Video01Icon : Location01Icon}
+        strokeWidth={2}
+        className="size-4.5 shrink-0 text-muted-foreground"
+      />
+      {/* -ml-2 cancels the child's px-2 so its text lines up with the plain
+          labels on the other rows, while the padding still gives the hover
+          background breathing room. */}
+      <div className="-ml-2 flex min-w-0 flex-1 items-center">
+        {meet ? (
+          hangoutLink ? (
+            <a
+              href={hangoutLink}
+              target="_blank"
+              rel="noreferrer"
+              className="truncate rounded-lg px-2 py-1 text-sm font-medium hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Google Meet
+            </a>
+          ) : (
+            <span className="px-2 py-1 text-sm font-medium text-muted-foreground">
+              Google Meet
+            </span>
+          )
+        ) : (
+          <input
+            value={location}
+            readOnly={!canEdit}
+            onChange={(e) => onLocationChange(e.target.value)}
+            placeholder={canEdit ? "Add location" : "None"}
+            aria-label="Location"
+            className="w-full min-w-0 rounded-lg bg-transparent px-2 py-1 text-sm font-medium outline-none placeholder:font-normal placeholder:text-muted-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring read-only:hover:bg-transparent"
+          />
+        )}
+      </div>
+      {canEdit && (
+        <div className="flex shrink-0 gap-1 rounded-lg bg-muted p-0.5">
+          <WhereTab
+            label="In person"
+            active={!meet}
+            onSelect={() => onMeetChange(false)}
+          />
+          <WhereTab
+            label="Video"
+            active={meet}
+            onSelect={() => onMeetChange(true)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One segment of the "Where" switch. Mirrors the Starts/Ends time tabs so the
+ * two segmented controls in the form read as the same kind of thing. */
+function WhereTab({
+  label,
+  active,
+  onSelect,
+}: {
+  label: string;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <motion.button
+      type="button"
+      aria-pressed={active}
+      onClick={onSelect}
+      {...press}
+      className={cn(
+        "rounded-md px-3 py-0.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        active
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {label}
+    </motion.button>
   );
 }
 

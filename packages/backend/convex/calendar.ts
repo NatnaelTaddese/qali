@@ -143,6 +143,36 @@ export const getEventById = query({
   },
 });
 
+/** The cached rule for an expanded recurring instance. `null` is a cache miss
+ * (or stale cache); the client can ask refreshEventRecurrence to fill it. */
+export const getEventRecurrence = query({
+  args: { eventId: v.id("events") },
+  handler: async (ctx, { eventId }): Promise<string[] | null> => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    if (!user) {
+      return null;
+    }
+    const event = await ctx.db.get(eventId);
+    if (!event || event.userId !== user._id || !event.recurringEventId) {
+      return null;
+    }
+    const recurringEventId = event.recurringEventId;
+
+    const series = await ctx.db
+      .query("recurringSeries")
+      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+        q
+          .eq("userId", user._id)
+          .eq("calendarId", event.calendarId)
+          .eq("googleEventId", recurringEventId),
+      )
+      .unique();
+    return series && series.sourceUpdatedMs >= event.googleUpdatedMs
+      ? series.recurrence
+      : null;
+  },
+});
+
 /** Create a calendar event in Google, then mirror it into the synced table. */
 export const createEvent = action({
   args: {
@@ -222,6 +252,13 @@ export const createEvent = action({
     );
 
     if (args.recurrence && args.recurrence.length > 0) {
+      await ctx.runMutation(internal.calendar.upsertRecurringSeries, {
+        userId: user._id,
+        calendarId: targetCalendarId,
+        googleEventId: event.googleEventId,
+        recurrence: args.recurrence,
+        sourceUpdatedMs: event.googleUpdatedMs,
+      });
       // A recurring event is stored by Google as a hidden "master"; our sync
       // reads with singleEvents=true, so it only ever sees the *expanded*
       // instances (each a distinct googleEventId), never the master. Mirroring
@@ -265,6 +302,49 @@ export const getEventContext = internalQuery({
       )
       .unique();
     return { event, calendar };
+  },
+});
+
+/** Fill or refresh the Convex series cache from Google's recurring master. */
+export const refreshEventRecurrence = action({
+  args: { eventId: v.id("events") },
+  handler: async (ctx, { eventId }): Promise<null> => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    if (!user) {
+      throw new Error("Not authenticated");
+    }
+
+    const context = await ctx.runQuery(internal.calendar.getEventContext, {
+      eventId,
+      userId: user._id,
+    });
+    if (!context) {
+      throw new Error("Event not found");
+    }
+    if (!context.event.recurringEventId) {
+      return null;
+    }
+
+    const { accessToken } = await createAuth(ctx).api.getAccessToken({
+      body: { providerId: "google", userId: user._id },
+    });
+    if (!accessToken) {
+      throw new Error("No Google access token available for user");
+    }
+
+    const master = await getCalendarEvent(
+      accessToken,
+      context.event.calendarId,
+      context.event.recurringEventId,
+    );
+    await ctx.runMutation(internal.calendar.upsertRecurringSeries, {
+      userId: user._id,
+      calendarId: context.event.calendarId,
+      googleEventId: context.event.recurringEventId,
+      recurrence: master.recurrence ?? [],
+      sourceUpdatedMs: context.event.googleUpdatedMs,
+    });
+    return null;
   },
 });
 
@@ -585,6 +665,43 @@ export const upsertEvent = internalMutation({
       await ctx.db.patch(existing._id, args.event);
     } else {
       await ctx.db.insert("events", { userId: args.userId, ...args.event });
+    }
+    return null;
+  },
+});
+
+/** Cache one recurring master's rule for all of its expanded instances. */
+export const upsertRecurringSeries = internalMutation({
+  args: {
+    userId: v.string(),
+    calendarId: v.string(),
+    googleEventId: v.string(),
+    recurrence: v.array(v.string()),
+    sourceUpdatedMs: v.number(),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const existing = await ctx.db
+      .query("recurringSeries")
+      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+        q
+          .eq("userId", args.userId)
+          .eq("calendarId", args.calendarId)
+          .eq("googleEventId", args.googleEventId),
+      )
+      .unique();
+    const value = {
+      recurrence: args.recurrence,
+      sourceUpdatedMs: args.sourceUpdatedMs,
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, value);
+    } else {
+      await ctx.db.insert("recurringSeries", {
+        userId: args.userId,
+        calendarId: args.calendarId,
+        googleEventId: args.googleEventId,
+        ...value,
+      });
     }
     return null;
   },

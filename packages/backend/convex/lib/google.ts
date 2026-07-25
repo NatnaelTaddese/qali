@@ -164,6 +164,8 @@ export type RawEvent = {
   guestsCanSeeOtherGuests?: boolean;
   locked?: boolean;
   eventType?: string;
+  /** Present on recurring masters; expanded instances only carry recurringEventId. */
+  recurrence?: string[];
   recurringEventId?: string;
   hangoutLink?: string;
 };

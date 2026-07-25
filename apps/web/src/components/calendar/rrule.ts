@@ -45,6 +45,59 @@ export interface Recurrence {
   end: RecurrenceEnd;
 }
 
+/** Parse the subset of an RFC5545 RRULE that this UI can create and describe.
+ * Other recurrence lines (such as EXDATE) do not change the broad summary. */
+export function parseRRule(lines: string[]): Recurrence | null {
+  const line = lines.find((candidate) => candidate.startsWith("RRULE:"));
+  if (!line) return null;
+
+  const fields = new Map<string, string>();
+  for (const part of line.slice("RRULE:".length).split(";")) {
+    const separator = part.indexOf("=");
+    if (separator <= 0) return null;
+    const key = part.slice(0, separator);
+    const value = part.slice(separator + 1);
+    if (!value || fields.has(key)) return null;
+    fields.set(key, value);
+  }
+
+  const supported = new Set(["FREQ", "INTERVAL", "BYDAY", "COUNT", "UNTIL", "WKST"]);
+  if ([...fields.keys()].some((key) => !supported.has(key))) return null;
+
+  const freq = fields.get("FREQ");
+  if (!isFreq(freq)) return null;
+
+  const intervalText = fields.get("INTERVAL");
+  const interval = intervalText === undefined ? 1 : positiveInteger(intervalText);
+  if (interval === null) return null;
+
+  const byDayText = fields.get("BYDAY");
+  let byWeekday: Weekday[] | undefined;
+  if (byDayText !== undefined) {
+    if (freq !== "WEEKLY") return null;
+    const days = byDayText.split(",");
+    if (days.length === 0 || days.some((day) => !isWeekday(day))) return null;
+    byWeekday = [...new Set(days)] as Weekday[];
+  }
+
+  const countText = fields.get("COUNT");
+  const untilText = fields.get("UNTIL");
+  if (countText !== undefined && untilText !== undefined) return null;
+
+  let end: RecurrenceEnd = { kind: "never" };
+  if (countText !== undefined) {
+    const count = positiveInteger(countText);
+    if (count === null) return null;
+    end = { kind: "count", count };
+  } else if (untilText !== undefined) {
+    const dateMs = parseUntilDate(untilText);
+    if (dateMs === null) return null;
+    end = { kind: "onDate", dateMs };
+  }
+
+  return { freq, interval, byWeekday, end };
+}
+
 /** The RRULE weekday code for a timestamp's calendar day. */
 export function weekdayOf(ms: number): Weekday {
   return DAY_CODES[new Date(ms).getDay()];
@@ -116,4 +169,42 @@ export function summarize(r: Recurrence): string {
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
+}
+
+function isFreq(value: string | undefined): value is Freq {
+  return (
+    value === "DAILY" ||
+    value === "WEEKLY" ||
+    value === "MONTHLY" ||
+    value === "YEARLY"
+  );
+}
+
+function isWeekday(value: string): value is Weekday {
+  return WEEKDAYS.includes(value as Weekday);
+}
+
+function positiveInteger(value: string): number | null {
+  if (!/^[1-9]\d*$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+/** UNTIL may be a date or UTC date-time. The control selects a calendar date,
+ * so preserve its YYYYMMDD portion rather than shifting it through a timezone. */
+function parseUntilDate(value: string): number | null {
+  const match = /^(\d{4})(\d{2})(\d{2})(?:T\d{6}Z)?$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date.getTime();
 }

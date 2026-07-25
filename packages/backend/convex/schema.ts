@@ -129,6 +129,22 @@ export default defineSchema({
       "googleEventId",
     ]),
 
+  // One row per recurring master. Expanded event instances share this rule;
+  // keeping it separately avoids duplicating it across every occurrence.
+  recurringSeries: defineTable({
+    userId: v.string(),
+    calendarId: v.string(),
+    googleEventId: v.string(),
+    recurrence: v.array(v.string()),
+    // The instance update time that this rule was fetched against. A newer
+    // synced instance invalidates the cache and triggers one master refresh.
+    sourceUpdatedMs: v.number(),
+  }).index("by_user_and_calendar_and_googleEventId", [
+    "userId",
+    "calendarId",
+    "googleEventId",
+  ]),
+
   // One row per synced Google contact (People API connection).
   contacts: defineTable({
     userId: v.string(),

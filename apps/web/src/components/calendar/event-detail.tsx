@@ -44,6 +44,7 @@ import { dockVariants, dockVariantsReduced, press, SPRING_DOCK } from "./motion"
 import { useEventCapabilities } from "./permissions";
 import { RichTextView } from "./rich-text/rich-text-view";
 import { htmlToPreviewText } from "./rich-text/text";
+import { parseRRule, summarize } from "./rrule";
 
 /** How many avatars to show before collapsing the rest into a "+N" bubble. */
 const MAX_AVATARS = 6;
@@ -348,12 +349,17 @@ export function EventDetail({
 }) {
   const reduce = useReducedMotion();
   const deleteEvent = useAction(api.calendar.deleteEvent);
+  const refreshEventRecurrence = useAction(api.calendar.refreshEventRecurrence);
   const calendars = useQuery(api.calendar.listCalendars) ?? [];
   // The dock hands us the row as it was when the event was opened. Subscribing
   // to it means an edit or an RSVP lands in the open panel; the snapshot only
   // covers the first frame, before the query resolves.
   const live = useQuery(api.calendar.getEventById, { eventId: snapshot._id });
   const event = live ?? snapshot;
+  const recurrenceLines = useQuery(
+    api.calendar.getEventRecurrence,
+    event.recurringEventId ? { eventId: event._id } : "skip",
+  );
 
   const colorVar = useEventColor()(event);
   const capabilities = useEventCapabilities()(event);
@@ -364,6 +370,30 @@ export function EventDetail({
   const [screen, setScreen] = useState<"main" | "description">("main");
   const mainRef = useRef<HTMLDivElement>(null);
   const [mainHeight, setMainHeight] = useState<number>();
+  const [recurrenceRefreshFailedFor, setRecurrenceRefreshFailedFor] =
+    useState<CalendarEvent["_id"]>();
+
+  useEffect(() => {
+    if (!event.recurringEventId || recurrenceLines !== null) return;
+
+    let active = true;
+    setRecurrenceRefreshFailedFor(undefined);
+    refreshEventRecurrence({ eventId: event._id })
+      .catch(() => {
+        if (active) setRecurrenceRefreshFailedFor(event._id);
+      });
+    return () => {
+      active = false;
+    };
+  }, [event._id, event.recurringEventId, recurrenceLines, refreshEventRecurrence]);
+
+  const recurrence = recurrenceLines ? parseRRule(recurrenceLines) : null;
+  const recurrenceSummary = recurrence
+    ? summarize(recurrence)
+    : recurrenceLines === undefined ||
+        (recurrenceLines === null && recurrenceRefreshFailedFor !== event._id)
+      ? undefined
+      : null;
 
   const guests: Guest[] = (event.attendees ?? []).map((a) => ({
     email: a.email,
@@ -526,7 +556,16 @@ export function EventDetail({
           </DetailRow>
 
           {event.recurringEventId && (
-            <DetailRow icon={RepeatIcon}>Part of a repeating series</DetailRow>
+            <DetailRow icon={RepeatIcon}>
+              {recurrenceSummary === undefined ? (
+                <span
+                  aria-label="Loading recurrence"
+                  className="block h-4 w-40 max-w-full rounded bg-muted"
+                />
+              ) : (
+                recurrenceSummary ?? "Part of a repeating series"
+              )}
+            </DetailRow>
           )}
 
           {event.hangoutLink && (

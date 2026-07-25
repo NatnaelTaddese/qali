@@ -108,7 +108,7 @@ export function CalendarWeekView() {
     [view],
   );
 
-  // Zoom between month and week/day via the View Transitions API. `flushSync`
+  // Zoom between calendar granularities via the View Transitions API. `flushSync`
   // commits the new tree (and its layout effects) synchronously so the browser
   // snapshots the settled view. Falls back to a plain swap when reduced-motion
   // is on or the browser lacks View Transitions (Firefox / older Safari).
@@ -135,10 +135,9 @@ export function CalendarWeekView() {
       setAnchor(pageStart(next, anchor));
       setView(next);
     };
-    // Zoom out into the month overview, zoom in leaving it; day <-> week stays
-    // in strip mode (no subtree swap) so it swaps instantly.
-    if (next === "month" && view !== "month") runZoom("out", apply);
-    else if (view === "month" && next !== "month") runZoom("in", apply);
+    const granularityDelta = VIEWS.indexOf(next) - VIEWS.indexOf(view);
+    if (granularityDelta > 0) runZoom("out", apply);
+    else if (granularityDelta < 0) runZoom("in", apply);
     else apply();
   };
 

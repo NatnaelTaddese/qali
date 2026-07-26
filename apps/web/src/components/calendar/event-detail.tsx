@@ -587,7 +587,7 @@ export function EventDetail({
           {conferenceUrl && (
             <div className="flex items-center gap-3">
               {isGoogleMeet ? (
-                <GoogleMeetIcon className="size-4.5 shrink-0" />
+                <GoogleMeetIcon className="mt-0.5 size-4.5 shrink-0 self-start" />
               ) : (
                 <HugeiconsIcon
                   icon={Video01Icon}

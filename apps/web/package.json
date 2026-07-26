@@ -49,6 +49,7 @@
     "postcss": "^8.5.16",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
-    "vite": "^8.1.3"
+    "vite": "^8.1.3",
+    "wrangler": "^4.114.0"
   }
 }

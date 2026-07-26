@@ -136,7 +136,18 @@ export function EventEdit({
       return;
     }
     setSaving(true);
-    updateEvent({ eventId: event._id, ...patch, scope })
+    // A series-wide scope may re-create the series server-side, and Google
+    // requires a time zone on a recurring event. `diffEvent` only sets one when
+    // the times change, so guarantee a zone here; an explicitly-diffed one still
+    // wins since `patch` is spread last.
+    const finalPatch =
+      scope !== "thisEvent"
+        ? {
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            ...patch,
+          }
+        : patch;
+    updateEvent({ eventId: event._id, ...finalPatch, scope })
       .then(onSaved)
       .catch((error: unknown) => {
         setSaving(false);

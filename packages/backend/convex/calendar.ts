@@ -646,6 +646,11 @@ export const updateEvent = action({
     );
     const master = mapGoogleEvent(rawMaster, row.calendarId);
 
+    // Google requires a time zone on a recurring event's start/end. The client
+    // only sends one when the times change, so fall back to the master series'
+    // own stored zone — the correct anchor for any occurrence of the series.
+    const effectiveTimeZone = args.timeZone ?? rawMaster.start?.timeZone;
+
     // Shift the master's own start/end by the delta the user applied to this
     // instance, so every occurrence moves by the same amount.
     const shiftedTimes =
@@ -654,12 +659,12 @@ export const updateEvent = action({
             start: toGoogleTime(
               master.startMs + (args.startMs - row.startMs),
               allDay,
-              args.timeZone,
+              effectiveTimeZone,
             ),
             end: toGoogleTime(
               master.endMs + (args.endMs - row.endMs),
               allDay,
-              args.timeZone,
+              effectiveTimeZone,
             ),
           }
         : {};
@@ -738,8 +743,8 @@ export const updateEvent = action({
         summary: args.summary ?? row.summary ?? "(No title)",
         description: carried(args.description, row.description),
         location: carried(args.location, row.location),
-        start: toGoogleTime(newStartMs, allDay, args.timeZone),
-        end: toGoogleTime(newEndMs, allDay, args.timeZone),
+        start: toGoogleTime(newStartMs, allDay, effectiveTimeZone),
+        end: toGoogleTime(newEndMs, allDay, effectiveTimeZone),
         colorId: carried(args.colorId, row.colorId),
         visibility: carried(args.visibility, row.visibility),
         transparency: args.transparency ?? row.transparency,

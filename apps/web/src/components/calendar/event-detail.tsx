@@ -138,6 +138,8 @@ function GuestSection({
 }) {
   const reduce = useReducedMotion();
   const [expanded, setExpanded] = useState(false);
+  const guestListRef = useRef<HTMLDivElement>(null);
+  const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
   const contacts = useQuery(api.contacts.listContacts) ?? [];
 
   // Attendees carry no photo, so fill them in from synced contacts by email.
@@ -152,6 +154,27 @@ function GuestSection({
       photoUrl: g.photoUrl ?? photos.get(g.email.toLowerCase()),
     }));
   }, [guests, contacts]);
+
+  const updateScrollFade = () => {
+    const list = guestListRef.current;
+    if (!list) return;
+    const next = {
+      top: list.scrollTop > 0,
+      bottom: list.scrollTop + list.clientHeight < list.scrollHeight - 1,
+    };
+    setScrollFade((current) =>
+      current.top === next.top && current.bottom === next.bottom ? current : next,
+    );
+  };
+
+  useEffect(() => {
+    const list = guestListRef.current;
+    if (!expanded || !list) return;
+    updateScrollFade();
+    const observer = new ResizeObserver(updateScrollFade);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [expanded, enriched]);
 
   if (hidden) {
     return (
@@ -210,17 +233,35 @@ function GuestSection({
               transition={SPRING_DOCK}
               className="overflow-hidden"
             >
-              <div className="flex max-h-56 flex-col gap-3 overflow-y-auto pt-1">
-                {groupGuests(enriched).map((group) => (
-                  <div key={group.label} className="flex flex-col gap-0.5">
-                    <p className="px-1 text-xs font-medium">
-                      {group.guests.length} {group.label}
-                    </p>
-                    {group.guests.map((g) => (
-                      <GuestRow key={g.email} guest={g} />
-                    ))}
-                  </div>
-                ))}
+              <div className="relative">
+                <div
+                  ref={guestListRef}
+                  onScroll={updateScrollFade}
+                  className="flex max-h-56 flex-col gap-3 scrollbar-gutter-stable overflow-y-auto pt-1"
+                >
+                  {groupGuests(enriched).map((group) => (
+                    <div key={group.label} className="flex flex-col gap-0.5">
+                      <p className="px-1 text-xs font-medium">
+                        {group.guests.length} {group.label}
+                      </p>
+                      {group.guests.map((g) => (
+                        <GuestRow key={g.email} guest={g} />
+                      ))}
+                    </div>
+                  ))}
+                </div>
+                {scrollFade.top && (
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute top-0 right-3 left-0 h-10 bg-linear-to-b from-popover to-transparent"
+                  />
+                )}
+                {scrollFade.bottom && (
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute right-3 bottom-0 left-0 h-10 bg-linear-to-t from-popover to-transparent"
+                  />
+                )}
               </div>
             </motion.div>
           )}

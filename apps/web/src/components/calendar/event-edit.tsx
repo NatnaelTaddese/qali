@@ -2,11 +2,10 @@ import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import { Button } from "@qali/ui/components/button";
+import { GooDropdown } from "@qali/ui/components/ui/goo-dropdown";
 import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useQuery } from "convex/react";
-import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -17,7 +16,6 @@ import {
   type EventFormValue,
 } from "./event-form";
 import type { CalendarEvent } from "./lib";
-import { SPRING_DOCK } from "./motion";
 import { useEventCapabilities } from "./permissions";
 
 /** Args for `updateEvent`, minus the id — built by diffing the form against
@@ -215,15 +213,7 @@ const SAVE_SCOPES: { scope: SaveScope; label: string }[] = [
   { scope: "allEvents", label: "All events" },
 ];
 
-/**
- * The recurring-event footer. Clicking Save doesn't save outright — a chooser of
- * how far the edit should reach floats out of the button, morphing in with the
- * dock's own spring (`SPRING_DOCK`) and blur so it reads like the dock opening a
- * panel. It's portalled to the body and positioned as an overlay rather than
- * placed in flow, so the dock keeps its height (its shell is `overflow-hidden`,
- * which would otherwise clip a panel and force the container to grow). Picking a
- * scope saves under it.
- */
+/** The recurring-event footer asks how far the edit should reach before saving. */
 function RecurringSaveControl({
   valid,
   saving,
@@ -235,93 +225,32 @@ function RecurringSaveControl({
   onCancel: () => void;
   onSelect: (scope: SaveScope) => void;
 }) {
-  const rowRef = useRef<HTMLDivElement>(null);
-  // Anchor the overlay to the button's edge, captured on open. `null` = closed.
-  const [anchor, setAnchor] = useState<{ right: number; bottom: number } | null>(
-    null,
-  );
-
-  const open = () => {
-    const rect = rowRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setAnchor({
-      right: window.innerWidth - rect.right,
-      bottom: window.innerHeight - rect.top + 8,
-    });
-  };
-
-  // Escape closes just the chooser. Capture-phase + stopImmediatePropagation so
-  // the dock's own Escape handler doesn't also tear the whole panel down.
-  useEffect(() => {
-    if (!anchor) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopImmediatePropagation();
-        setAnchor(null);
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [anchor]);
-
   return (
-    <div ref={rowRef} className="flex justify-end gap-2">
+    <div className="flex justify-end gap-2">
       <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
         Cancel
       </Button>
-      <Button
-        type="button"
-        size="sm"
+      <GooDropdown
+        trigger={
+          <>
+            {saving && <Spinner />}
+            {saving ? "Saving…" : "Save"}
+          </>
+        }
         disabled={!valid || saving}
-        onClick={open}
-      >
-        {saving && <Spinner />}
-        {saving ? "Saving…" : "Save"}
-      </Button>
-
-      {createPortal(
-        <AnimatePresence>
-          {anchor && (
-            <>
-              <button
-                type="button"
-                aria-hidden
-                tabIndex={-1}
-                onClick={() => setAnchor(null)}
-                className="fixed inset-0 z-50 cursor-default"
-              />
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 8, filter: "blur(4px)" }}
-                animate={{ opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
-                exit={{ opacity: 0, scale: 0.97, y: 6, filter: "blur(4px)" }}
-                transition={SPRING_DOCK}
-                style={{
-                  position: "fixed",
-                  right: anchor.right,
-                  bottom: anchor.bottom,
-                  transformOrigin: "bottom right",
-                }}
-                className="z-50 flex w-56 flex-col gap-0.5 rounded-3xl bg-popover p-1.5 text-popover-foreground shadow-lg ring-1 ring-foreground/5 dark:ring-foreground/10"
-              >
-                {SAVE_SCOPES.map((option) => (
-                  <button
-                    key={option.scope}
-                    type="button"
-                    onClick={() => {
-                      setAnchor(null);
-                      onSelect(option.scope);
-                    }}
-                    className="flex items-center rounded-2xl px-3 py-2 text-left text-sm font-medium text-popover-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground"
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>,
-        document.body,
-      )}
+        side="top"
+        gap={8}
+        width={224}
+        buttonRadius={16}
+        fill="var(--primary)"
+        foreground="var(--primary-foreground)"
+        hoverFill="color-mix(in oklch, var(--primary-foreground) 12%, transparent)"
+        menuLabel="Apply changes to recurring event"
+        items={SAVE_SCOPES.map((option) => ({
+          label: option.label,
+          onClick: () => onSelect(option.scope),
+        }))}
+      />
     </div>
   );
 }

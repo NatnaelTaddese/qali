@@ -97,13 +97,18 @@ export function BookingPage({
         note: note.trim() || undefined,
         timeZone: VISITOR_TIME_ZONE,
       });
+      // Stay in the submitting state through the hand-off to the confirmation.
+      // The booking just made this slot unavailable, and the token prop that
+      // swaps the form for the confirmation arrives a render later than the
+      // live availability update — resetting `submitting` here would briefly
+      // re-arm the stolen-slot guard against the slot we ourselves booked and
+      // fire a false "just taken" toast.
       onTokenChange(newToken);
     } catch (error: unknown) {
+      setSubmitting(false);
       toast.error("Couldn't send your request", {
         description: error instanceof Error ? error.message : undefined,
       });
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -168,6 +173,7 @@ export function BookingPage({
             onTokenChange(null);
             setSelectedSlot(null);
             setNote("");
+            setSubmitting(false);
           }}
         />
       ) : availability === undefined ? (

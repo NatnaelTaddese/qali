@@ -1,3 +1,4 @@
+import type { SlotOption } from "@qali/backend/convex/lib/availability";
 import { Button } from "@qali/ui/components/button";
 import { cn } from "@qali/ui/lib/utils";
 import { format } from "date-fns";
@@ -11,13 +12,15 @@ export function visitorZoneLabel(): string {
   return VISITOR_TIME_ZONE.split("/").pop()?.replace(/_/g, " ") ?? "local time";
 }
 
-/** Group slot instants by the calendar day they fall on for the visitor. Two
- * hosts' 09:00 can land on different days for the same visitor, so the grouping
- * has to happen after the instants arrive rather than on the server. */
-function groupByLocalDay(slots: number[]): { dateKey: string; slots: number[] }[] {
-  const days = new Map<string, number[]>();
+/** Group slots by the calendar day they fall on for the visitor. Two hosts'
+ * 09:00 can land on different days for the same visitor, so the grouping has to
+ * happen after the instants arrive rather than on the server. */
+function groupByLocalDay(
+  slots: SlotOption[],
+): { dateKey: string; slots: SlotOption[] }[] {
+  const days = new Map<string, SlotOption[]>();
   for (const slot of slots) {
-    const dateKey = format(slot, "yyyy-MM-dd");
+    const dateKey = format(slot.startMs, "yyyy-MM-dd");
     const existing = days.get(dateKey);
     if (existing) existing.push(slot);
     else days.set(dateKey, [slot]);
@@ -28,9 +31,12 @@ function groupByLocalDay(slots: number[]): { dateKey: string; slots: number[] }[
 }
 
 /**
- * Day strip plus the chosen day's times. Only days that actually have openings
- * appear, so a visitor never lands on an empty day and has to guess which way to
- * page.
+ * Day strip plus the chosen day's times. Only days with something still open
+ * appear, so a visitor never lands on a day they can't book anything on and has
+ * to guess which way to page — but inside a day every slot is listed, with the
+ * taken ones disabled rather than missing. A visible dead 10:00 tells the visitor
+ * why they can't have it; a closed-up gap just looks like the host doesn't work
+ * then, and invites them to hunt for the time they wanted.
  */
 export function SlotPicker({
   slots,
@@ -38,12 +44,15 @@ export function SlotPicker({
   selectedSlot,
   onSelect,
 }: {
-  slots: number[];
+  slots: SlotOption[];
   slotMinutes: number;
   selectedSlot: number | null;
   onSelect: (slot: number | null) => void;
 }) {
-  const days = useMemo(() => groupByLocalDay(slots), [slots]);
+  const days = useMemo(
+    () => groupByLocalDay(slots).filter((d) => d.slots.some((s) => s.available)),
+    [slots],
+  );
   const [activeDateKey, setActiveDateKey] = useState<string | null>(null);
   const stripRef = useRef<HTMLDivElement>(null);
 
@@ -97,12 +106,14 @@ export function SlotPicker({
               )}
             >
               <span className="text-[11px] uppercase">
-                {format(day.slots[0], "EEE")}
+                {format(day.slots[0].startMs, "EEE")}
               </span>
               <span className="text-lg leading-tight font-medium">
-                {format(day.slots[0], "d")}
+                {format(day.slots[0].startMs, "d")}
               </span>
-              <span className="text-[11px]">{format(day.slots[0], "MMM")}</span>
+              <span className="text-[11px]">
+                {format(day.slots[0].startMs, "MMM")}
+              </span>
             </button>
           );
         })}
@@ -111,22 +122,41 @@ export function SlotPicker({
       {active && (
         <div>
           <p className="pb-1.5 text-xs text-muted-foreground">
-            {format(active.slots[0], "EEEE, MMMM d")} · {slotMinutes} min ·
-            times in {visitorZoneLabel()}
+            {format(active.slots[0].startMs, "EEEE, MMMM d")} · {slotMinutes} min
+            · times in {visitorZoneLabel()}
           </p>
           <div className="grid max-h-64 grid-cols-3 gap-1.5 overflow-y-auto pr-0.5 sm:grid-cols-4">
-            {active.slots.map((slot) => (
-              <Button
-                key={slot}
-                type="button"
-                variant={selectedSlot === slot ? "default" : "outline"}
-                size="sm"
-                aria-pressed={selectedSlot === slot}
-                onClick={() => onSelect(selectedSlot === slot ? null : slot)}
-              >
-                {format(slot, "HH:mm")}
-              </Button>
-            ))}
+            {active.slots.map((slot) => {
+              const label = format(slot.startMs, "HH:mm");
+              const isSelected = selectedSlot === slot.startMs;
+              return (
+                <Button
+                  key={slot.startMs}
+                  type="button"
+                  variant={isSelected ? "default" : "outline"}
+                  size="sm"
+                  disabled={!slot.available}
+                  // A disabled button takes no pointer events, so the reason has
+                  // to be in the name rather than a hover title.
+                  aria-label={
+                    slot.available ? label : `${label} — already booked`
+                  }
+                  aria-pressed={isSelected}
+                  onClick={() => {
+                    if (!slot.available) return;
+                    onSelect(isSelected ? null : slot.startMs);
+                  }}
+                  // `disabled:opacity-50` comes from the button itself; the rule
+                  // re-enables pointer events only so the cursor can say why.
+                  className={cn(
+                    !slot.available &&
+                      "line-through disabled:pointer-events-auto disabled:cursor-not-allowed",
+                  )}
+                >
+                  {label}
+                </Button>
+              );
+            })}
           </div>
         </div>
       )}

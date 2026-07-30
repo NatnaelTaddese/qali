@@ -6,7 +6,7 @@ import { Textarea } from "@qali/ui/components/textarea";
 import { cn } from "@qali/ui/lib/utils";
 import { useMutation, useQuery } from "convex/react";
 import { format } from "date-fns";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Avatar } from "@/components/calendar/avatar";
@@ -40,7 +40,7 @@ export function BookingPage({
   // rather than a new millisecond each time.
   const fromMs = useMemo(() => Math.floor(Date.now() / MS_PER_HOUR) * MS_PER_HOUR, []);
   const availability = useQuery(
-    api.booking.listOpenSlots,
+    api.booking.listSlots,
     page ? { slug, fromMs, toMs: fromMs + WINDOW_DAYS * 24 * MS_PER_HOUR } : "skip",
   );
   const requestBooking = useMutation(api.booking.requestBooking);
@@ -50,6 +50,21 @@ export function BookingPage({
   const [email, setEmail] = useState("");
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  // The slot list is a live subscription, so a slot the visitor has already
+  // picked can be taken by someone else — or by the host's own calendar — while
+  // they are still typing their name. Drop the selection when that happens
+  // instead of letting them submit into a refusal.
+  useEffect(() => {
+    if (selectedSlot === null || submitting || token) return;
+    if (!availability) return;
+    const slot = availability.slots.find((s) => s.startMs === selectedSlot);
+    if (slot?.available) return;
+    setSelectedSlot(null);
+    toast.info("That time was just taken", {
+      description: "Please pick another one.",
+    });
+  }, [availability, selectedSlot, submitting, token]);
 
   const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const canSubmit =

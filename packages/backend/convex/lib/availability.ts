@@ -42,6 +42,18 @@ export interface Interval {
   endMs: number;
 }
 
+/**
+ * One slot on a day's grid, and whether a visitor may actually book it.
+ *
+ * Taken slots are kept rather than dropped so a picker can show them struck
+ * through: a visitor who can see that 10:00 is gone won't keep reaching for it,
+ * and won't hit "that time is no longer available" on submit.
+ */
+export interface SlotOption {
+  startMs: number;
+  available: boolean;
+}
+
 // --- Time zones -----------------------------------------------------------
 
 const formatterCache = new Map<string, Intl.DateTimeFormat>();
@@ -244,44 +256,6 @@ export function mergeIntervals(intervals: Interval[]): Interval[] {
   return merged;
 }
 
-/** `base` with every part of `cuts` removed. Both are merged first, so the
- * result is itself a sorted, non-overlapping cover. */
-export function subtractIntervals(
-  base: Interval[],
-  cuts: Interval[],
-): Interval[] {
-  const holes = mergeIntervals(cuts);
-  const result: Interval[] = [];
-  for (const span of mergeIntervals(base)) {
-    let startMs = span.startMs;
-    for (const hole of holes) {
-      if (hole.endMs <= startMs) continue;
-      if (hole.startMs >= span.endMs) break;
-      if (hole.startMs > startMs) {
-        result.push({ startMs, endMs: hole.startMs });
-      }
-      startMs = Math.max(startMs, hole.endMs);
-      if (startMs >= span.endMs) break;
-    }
-    if (startMs < span.endMs) result.push({ startMs, endMs: span.endMs });
-  }
-  return result;
-}
-
-/** Clamp intervals to `[startMs, endMs)`, dropping anything outside it. */
-export function clampIntervals(
-  intervals: Interval[],
-  startMs: number,
-  endMs: number,
-): Interval[] {
-  return intervals
-    .map((i) => ({
-      startMs: Math.max(i.startMs, startMs),
-      endMs: Math.min(i.endMs, endMs),
-    }))
-    .filter((i) => i.endMs > i.startMs);
-}
-
 // --- Slot generation ------------------------------------------------------
 
 export interface SlotConfig {
@@ -301,16 +275,24 @@ export interface SlotConfig {
 }
 
 /**
- * The bookable slot starts within `[fromMs, toMs)`, ascending.
+ * Every slot on the grid within `[fromMs, toMs)`, ascending, each flagged with
+ * whether it is bookable.
  *
  * Open windows come from the weekly rules (or a date's override, which replaces
- * them outright), then everything the host is already committed to is cut out —
- * each busy span widened by `bufferMinutes` on both sides so a booking can never
- * butt up against an existing meeting. Slots step from each surviving window's
- * own start, so a 09:00–17:00 rule with 30-minute slots offers 09:00, 09:30, …
- * and a window that a meeting cuts to 10:15–11:00 offers 10:15 alone.
+ * them outright). Slots step from each window's own start and keep that spacing
+ * for the whole window, so a 09:00–17:00 rule with 30-minute slots always offers
+ * 09:00, 09:30, … whatever the host's calendar looks like — a meeting marks the
+ * slots it covers taken rather than re-anchoring the ones after it.
+ *
+ * Two kinds of exclusion, treated differently on purpose:
+ *
+ * - Busy time makes a slot `available: false`. A slot counts as taken when it
+ *   overlaps anything the host is committed to, widened by `bufferMinutes` on
+ *   both sides so a booking can never butt up against an existing meeting.
+ * - Minimum notice and the booking horizon drop slots outright. There is nothing
+ *   for a visitor to learn from this morning's slots at 4pm.
  */
-export function generateSlots(config: SlotConfig): number[] {
+export function generateSlotGrid(config: SlotConfig): SlotOption[] {
   const {
     timeZone,
     rules,
@@ -355,22 +337,33 @@ export function generateSlots(config: SlotConfig): number[] {
   }
 
   const bufferMs = bufferMinutes * MS_PER_MINUTE;
-  const blocked = busy.map((b) => ({
-    startMs: b.startMs - bufferMs,
-    endMs: b.endMs + bufferMs,
-  }));
-
-  const free = clampIntervals(
-    subtractIntervals(windows, blocked),
-    earliestMs,
-    latestMs,
+  const blocked = mergeIntervals(
+    busy.map((b) => ({
+      startMs: b.startMs - bufferMs,
+      endMs: b.endMs + bufferMs,
+    })),
   );
 
-  const slots: number[] = [];
-  for (const span of free) {
-    for (let start = span.startMs; start + slotMs <= span.endMs; start += slotMs) {
-      slots.push(start);
+  const options: SlotOption[] = [];
+  // Overlapping rules would otherwise step two grids over the same hours and
+  // offer the same time twice.
+  for (const window of mergeIntervals(windows)) {
+    for (let start = window.startMs; start + slotMs <= window.endMs; start += slotMs) {
+      const endMs = start + slotMs;
+      if (start < earliestMs || endMs > latestMs) continue;
+      options.push({
+        startMs: start,
+        available: !blocked.some((b) => b.startMs < endMs && b.endMs > start),
+      });
     }
   }
-  return slots.sort((a, b) => a - b);
+  return options.sort((a, b) => a.startMs - b.startMs);
+}
+
+/** Just the slot starts a visitor may book. The write path checks against this,
+ * so a forged `startMs` has to match a slot the server itself would offer. */
+export function generateSlots(config: SlotConfig): number[] {
+  return generateSlotGrid(config)
+    .filter((slot) => slot.available)
+    .map((slot) => slot.startMs);
 }

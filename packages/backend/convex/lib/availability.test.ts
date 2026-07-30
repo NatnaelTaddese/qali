@@ -5,15 +5,16 @@ import { describe, expect, test } from "bun:test";
 import {
   addDaysToDateKey,
   allDayBusyInterval,
+  generateSlotGrid,
   generateSlots,
   mergeIntervals,
   MS_PER_MINUTE,
-  subtractIntervals,
   utcToZoned,
   weekdayOfDateKey,
   zonedToUtcMs,
   zoneOffsetMs,
   type SlotConfig,
+  type SlotOption,
 } from "./availability";
 
 const NY = "America/New_York";
@@ -149,54 +150,6 @@ describe("mergeIntervals", () => {
   });
 });
 
-describe("subtractIntervals", () => {
-  test("punches a hole in the middle", () => {
-    expect(
-      subtractIntervals([{ startMs: 0, endMs: 100 }], [{ startMs: 40, endMs: 60 }]),
-    ).toEqual([
-      { startMs: 0, endMs: 40 },
-      { startMs: 60, endMs: 100 },
-    ]);
-  });
-
-  test("a cut covering the base leaves nothing", () => {
-    expect(
-      subtractIntervals([{ startMs: 10, endMs: 20 }], [{ startMs: 0, endMs: 30 }]),
-    ).toEqual([]);
-  });
-
-  test("cuts outside the base are ignored", () => {
-    expect(
-      subtractIntervals(
-        [{ startMs: 10, endMs: 20 }],
-        [
-          { startMs: 0, endMs: 10 },
-          { startMs: 20, endMs: 30 },
-        ],
-      ),
-    ).toEqual([{ startMs: 10, endMs: 20 }]);
-  });
-
-  test("multiple cuts across multiple bases", () => {
-    expect(
-      subtractIntervals(
-        [
-          { startMs: 0, endMs: 50 },
-          { startMs: 100, endMs: 150 },
-        ],
-        [
-          { startMs: 20, endMs: 30 },
-          { startMs: 45, endMs: 110 },
-        ],
-      ),
-    ).toEqual([
-      { startMs: 0, endMs: 20 },
-      { startMs: 30, endMs: 45 },
-      { startMs: 110, endMs: 150 },
-    ]);
-  });
-});
-
 describe("allDayBusyInterval", () => {
   test("re-anchors UTC-midnight bounds to local midnight", () => {
     // Google's shape for all of 2026-08-03, exclusive end.
@@ -273,14 +226,15 @@ describe("generateSlots", () => {
         ],
       }),
     );
-    // 10:00 would end at 11:00, inside the leading buffer; the window reopens
-    // at 12:30, so the next hour slot starts there rather than on the hour.
+    // The buffer blocks 10:30–12:30, which takes 10:00, 11:00 and 12:00 with it.
+    // The slots after it stay on the host's grid rather than re-anchoring to
+    // 12:30 — a visitor reads the same times whatever the host's day looks like.
     expect(asLocalTimes(slots)).toEqual([
       "09:00",
-      "12:30",
-      "13:30",
-      "14:30",
-      "15:30",
+      "13:00",
+      "14:00",
+      "15:00",
+      "16:00",
     ]);
   });
 
@@ -443,5 +397,142 @@ describe("generateSlots", () => {
         config({ rules: [{ weekday: 1, startMin: 17 * 60, endMin: 9 * 60 }] }),
       ),
     ).toEqual([]);
+  });
+});
+
+describe("generateSlotGrid", () => {
+  /** Slot starts as "HH:MM", taken ones marked, so a whole day reads at a glance. */
+  function asGrid(slots: SlotOption[], timeZone = NY): string[] {
+    return slots.map((slot) => {
+      const [label] = asLocalTimes([slot.startMs], timeZone);
+      return slot.available ? label : `${label} (taken)`;
+    });
+  }
+
+  test("keeps a busy slot on the grid, marked taken", () => {
+    const grid = generateSlotGrid(
+      config({
+        slotMinutes: 60,
+        busy: [
+          {
+            startMs: zonedToUtcMs("2026-08-03", 11 * 60, NY),
+            endMs: zonedToUtcMs("2026-08-03", 13 * 60, NY),
+          },
+        ],
+      }),
+    );
+    expect(asGrid(grid)).toEqual([
+      "09:00",
+      "10:00",
+      "11:00 (taken)",
+      "12:00 (taken)",
+      "13:00",
+      "14:00",
+      "15:00",
+      "16:00",
+    ]);
+  });
+
+  test("a slot ending exactly when a busy span starts is still free", () => {
+    const grid = generateSlotGrid(
+      config({
+        slotMinutes: 60,
+        busy: [
+          {
+            startMs: zonedToUtcMs("2026-08-03", 11 * 60, NY),
+            endMs: zonedToUtcMs("2026-08-03", 12 * 60, NY),
+          },
+        ],
+      }),
+    );
+    expect(asGrid(grid).slice(0, 4)).toEqual([
+      "09:00",
+      "10:00",
+      "11:00 (taken)",
+      "12:00",
+    ]);
+  });
+
+  test("a busy span shorter than a slot still takes the slot it lands in", () => {
+    const grid = generateSlotGrid(
+      config({
+        slotMinutes: 60,
+        busy: [
+          {
+            startMs: zonedToUtcMs("2026-08-03", 10 * 60 + 15, NY),
+            endMs: zonedToUtcMs("2026-08-03", 10 * 60 + 30, NY),
+          },
+        ],
+      }),
+    );
+    expect(asGrid(grid).slice(0, 3)).toEqual(["09:00", "10:00 (taken)", "11:00"]);
+  });
+
+  test("the times a visitor is offered don't move when the host gets busy", () => {
+    const free = generateSlotGrid(config({ slotMinutes: 60 }));
+    const busy = generateSlotGrid(
+      config({
+        slotMinutes: 60,
+        busy: [
+          {
+            startMs: zonedToUtcMs("2026-08-03", 10 * 60 + 20, NY),
+            endMs: zonedToUtcMs("2026-08-03", 11 * 60 + 40, NY),
+          },
+        ],
+      }),
+    );
+    expect(busy.map((s) => s.startMs)).toEqual(free.map((s) => s.startMs));
+  });
+
+  test("minimum notice drops slots rather than marking them taken", () => {
+    const nowMs = zonedToUtcMs("2026-08-03", 12 * 60, NY);
+    const grid = generateSlotGrid(
+      config({
+        slotMinutes: 60,
+        minNoticeMinutes: 120,
+        nowMs,
+        fromMs: zonedToUtcMs("2026-08-03", 0, NY),
+        toMs: zonedToUtcMs("2026-08-04", 0, NY),
+      }),
+    );
+    expect(asGrid(grid)).toEqual(["14:00", "15:00", "16:00"]);
+  });
+
+  test("notice that lands mid-slot keeps the grid on the host's clock", () => {
+    const nowMs = zonedToUtcMs("2026-08-03", 12 * 60, NY);
+    const grid = generateSlotGrid(
+      config({
+        slotMinutes: 60,
+        minNoticeMinutes: 90, // earliest is 13:30, which is not on the grid
+        nowMs,
+        fromMs: zonedToUtcMs("2026-08-03", 0, NY),
+        toMs: zonedToUtcMs("2026-08-04", 0, NY),
+      }),
+    );
+    expect(asGrid(grid)).toEqual(["14:00", "15:00", "16:00"]);
+  });
+
+  test("overlapping rules offer each time once", () => {
+    const grid = generateSlotGrid(
+      config({
+        slotMinutes: 60,
+        rules: [
+          { weekday: 1, startMin: 9 * 60, endMin: 12 * 60 },
+          { weekday: 1, startMin: 11 * 60, endMin: 13 * 60 },
+        ],
+      }),
+    );
+    expect(asGrid(grid)).toEqual(["09:00", "10:00", "11:00", "12:00"]);
+  });
+
+  test("a fully booked day still returns its slots, all taken", () => {
+    const blocked = config({
+      busy: [allDayBusyInterval(Date.UTC(2026, 7, 3), Date.UTC(2026, 7, 4), NY)],
+    });
+    const grid = generateSlotGrid(blocked);
+    expect(grid.length).toBe(16);
+    expect(grid.every((slot) => !slot.available)).toBe(true);
+    // The picker drops the day on its own; the open-only view sees nothing.
+    expect(generateSlots(blocked)).toEqual([]);
   });
 });

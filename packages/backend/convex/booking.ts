@@ -4,10 +4,10 @@
  *
  * This is the app's only anonymous surface, so two rules run through the whole
  * file. First, nothing derived from the host's calendar leaves the server except
- * slot start times — a visitor learns when the host is free, never what they are
- * doing or with whom. Second, `requestBooking` re-derives the open slots itself:
- * the list the client holds is advisory, and a forged or stale `startMs` has to
- * fail against the server's own answer.
+ * slot start times and whether each one is taken — a visitor learns when the host
+ * is free, never what they are doing or with whom. Second, `requestBooking`
+ * re-derives the slot itself: the list the client holds is advisory, and a forged
+ * or stale `startMs` has to fail against the server's own answer.
  */
 
 import { v } from "convex/values";
@@ -27,9 +27,10 @@ import {
 import { authComponent, createAuth } from "./auth";
 import {
   allDayBusyInterval,
-  generateSlots,
+  generateSlotGrid,
   type Interval,
   MS_PER_DAY,
+  type SlotOption,
 } from "./lib/availability";
 import { insertCalendarEvent, toGoogleTime } from "./lib/google";
 import { normalizeSlug, slugError } from "./lib/slug";
@@ -159,20 +160,23 @@ async function collectBusy(
   return busy;
 }
 
-/** The slot starts a visitor may pick, derived entirely server-side. Both the
- * public listing and the write path go through this, so they cannot disagree. */
-async function openSlots(
+/**
+ * The page's slot grid, derived entirely server-side: every slot the host's
+ * schedule puts on offer, each flagged bookable or taken. Both the public
+ * listing and the write path go through this, so they cannot disagree.
+ */
+async function slotGrid(
   ctx: QueryCtx,
   page: Doc<"bookingPages">,
   fromMs: number,
   toMs: number,
-): Promise<number[]> {
+): Promise<SlotOption[]> {
   const overrides = await ctx.db
     .query("availabilityOverrides")
     .withIndex("by_user_and_date", (q) => q.eq("userId", page.userId))
     .collect();
 
-  return generateSlots({
+  return generateSlotGrid({
     timeZone: page.timeZone,
     rules: page.rules,
     overrides: overrides.map((o) => ({
@@ -460,15 +464,22 @@ export const getPublicPage = query({
   },
 });
 
-/** The bookable slot starts in `[fromMs, toMs)`. Slot starts and the slot
- * length are the entire payload: a visitor can tell that the host is free at
- * 10:00, and nothing more. */
-export const listOpenSlots = query({
+/**
+ * The slot grid in `[fromMs, toMs)`. Slot starts, a taken/free flag, and the
+ * slot length are the entire payload: a visitor can tell that the host is free
+ * at 10:00 and busy at 11:00, and nothing more — not what the 11:00 is, who it
+ * is with, or whether it is a meeting at all.
+ *
+ * Taken slots are sent rather than filtered out so the picker can disable them
+ * in place. The gaps in an open-only list already gave the same times away; this
+ * only stops a visitor from choosing one and being refused on submit.
+ */
+export const listSlots = query({
   args: { slug: v.string(), fromMs: v.number(), toMs: v.number() },
   handler: async (
     ctx,
     args,
-  ): Promise<{ slotMinutes: number; slots: number[] }> => {
+  ): Promise<{ slotMinutes: number; slots: SlotOption[] }> => {
     const page = await pageBySlug(ctx, normalizeSlug(args.slug));
     if (!page || !page.enabled) {
       return { slotMinutes: 0, slots: [] };
@@ -480,7 +491,7 @@ export const listOpenSlots = query({
     }
     return {
       slotMinutes: page.slotMinutes,
-      slots: await openSlots(ctx, page, fromMs, toMs),
+      slots: await slotGrid(ctx, page, fromMs, toMs),
     };
   },
 });
@@ -568,13 +579,14 @@ export const requestBooking = mutation({
     // Ask for a window just wide enough to contain the requested slot, so the
     // check is cheap but still runs the same rules as the listing.
     const endMs = args.startMs + page.slotMinutes * 60_000;
-    const slots = await openSlots(
+    const slots = await slotGrid(
       ctx,
       page,
       args.startMs - MS_PER_DAY,
       endMs + MS_PER_DAY,
     );
-    if (!slots.includes(args.startMs)) {
+    const slot = slots.find((s) => s.startMs === args.startMs);
+    if (!slot?.available) {
       throw new Error("That time is no longer available");
     }
 

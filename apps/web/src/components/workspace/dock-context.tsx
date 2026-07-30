@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 
 import type { EventPrefill } from "@/components/calendar/event-create";
 import type { CalendarEvent } from "@/components/calendar/lib";
+import type { Booking } from "@/components/workspace/booking-request-panel";
 
 /** What the dock is currently showing. `null` means the plain nav bar.
  *
@@ -11,7 +12,9 @@ export type DockView =
   | { kind: "event"; event: CalendarEvent }
   | { kind: "edit"; event: CalendarEvent }
   | { kind: "create"; startMs: number; endMs: number; prefill?: EventPrefill }
-  | { kind: "account" };
+  | { kind: "account" }
+  | { kind: "availability" }
+  | { kind: "booking"; booking: Booking };
 
 /** Stable key for the content swap — changing it cross-fades the dock's contents.
  * A create view keys on its kind alone, so editing its times re-renders the form
@@ -19,6 +22,7 @@ export type DockView =
 export function dockViewId(view: DockView): string {
   if (view.kind === "event") return `event:${view.event._id}`;
   if (view.kind === "edit") return `edit:${view.event._id}`;
+  if (view.kind === "booking") return `booking:${view.booking._id}`;
   return view.kind;
 }
 

@@ -29,7 +29,8 @@
     "check-types": "turbo run check-types",
     "dev:web": "turbo run dev -F web",
     "dev:server": "turbo run dev -F @qali/backend",
-    "dev:setup": "turbo run dev:setup -F @qali/backend"
+    "dev:setup": "turbo run dev:setup -F @qali/backend",
+    "build:cloudflare": "bun run build --filter=web && bun run --cwd packages/backend deploy:prod"
   },
   "dependencies": {
     "@qali/env": "workspace:*",

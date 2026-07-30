@@ -20,6 +20,7 @@ import {
   GUTTER_TOTAL,
   layoutAllDayEvents,
   MIN_DAY_HEIGHT,
+  MS_PER_DAY,
   MS_PER_MINUTE,
   TIME_GRID_BOTTOM_SPACER_HEIGHT,
   type CalendarEvent,
@@ -181,6 +182,32 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       () => bucketDayEvents(days, effectiveEvents),
       [days, effectiveEvents],
     );
+
+    // Pending booking requests get their own subscription here rather than
+    // riding along with the events query: they are a different table, and
+    // keeping them apart leaves the event rows referentially stable for the drag
+    // override and `useStableQuery`. Bucketed per column like the events are.
+    const bookings =
+      useQuery(api.booking.listMyBookings, {
+        startMs: days[0].getTime(),
+        endMs: days[days.length - 1].getTime() + MS_PER_DAY,
+      }) ?? [];
+    const bookingsByDay = useMemo(() => {
+      const buckets: (typeof bookings)[] = days.map(() => []);
+      for (const booking of bookings) {
+        if (booking.status !== "pending") continue;
+        days.forEach((day, i) => {
+          const dayStartMs = day.getTime();
+          if (
+            booking.startMs < dayStartMs + MS_PER_DAY &&
+            booking.endMs > dayStartMs
+          ) {
+            buckets[i].push(booking);
+          }
+        });
+      }
+      return buckets;
+    }, [days, bookings]);
     const visibleEndIdx = Math.min(
       visibleStartIdx + columns - 1,
       days.length - 1,
@@ -292,6 +319,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
                  draggingId={draggingId}
                  laneLayout={columns === 1}
                  contactPhotos={contactPhotos}
+                 bookings={bookingsByDay[i]}
                />
             ))}
             {nowLayout && <NowIndicator layout={nowLayout} />}

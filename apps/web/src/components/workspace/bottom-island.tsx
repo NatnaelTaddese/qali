@@ -1,5 +1,6 @@
 import {
   Calendar03Icon,
+  Link01Icon,
   Menu01Icon,
   PlusSignIcon,
   Search01Icon,
@@ -13,7 +14,7 @@ import {
   TooltipTrigger,
 } from "@qali/ui/components/tooltip";
 import { cn } from "@qali/ui/lib/utils";
-import { useAction } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -27,6 +28,8 @@ import {
   SPRING_DOCK,
 } from "@/components/calendar/motion";
 import { AccountPanel } from "./account-panel";
+import { AvailabilityPanel } from "./availability-panel";
+import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
 import { UserAvatar } from "./user-avatar";
 
@@ -38,6 +41,9 @@ import { UserAvatar } from "./user-avatar";
 function widthClass(view: DockView | null): string {
   if (!view) return "";
   if (view.kind === "account") return "w-[min(19rem,100%)]";
+  // The availability panel carries a seven-row weekly grid, so it needs more
+  // room than the event panels.
+  if (view.kind === "availability") return "w-[min(30rem,100%)]";
   return "w-[min(27rem,100%)]";
 }
 
@@ -141,8 +147,18 @@ export function BottomIsland() {
                 />
               ) : view?.kind === "account" ? (
                 <AccountPanel onClose={close} />
+              ) : view?.kind === "availability" ? (
+                <AvailabilityPanel
+                  onClose={close}
+                  onOpenRequest={(booking) => open({ kind: "booking", booking })}
+                />
+              ) : view?.kind === "booking" ? (
+                <BookingRequestPanel booking={view.booking} onClose={close} />
               ) : (
-                <NavRow onOpenAccount={() => open({ kind: "account" })} />
+                <NavRow
+                  onOpenAccount={() => open({ kind: "account" })}
+                  onOpenAvailability={() => open({ kind: "availability" })}
+                />
               )}
             </motion.div>
           </AnimatePresence>
@@ -152,8 +168,15 @@ export function BottomIsland() {
   );
 }
 
-function NavRow({ onOpenAccount }: { onOpenAccount: () => void }) {
+function NavRow({
+  onOpenAccount,
+  onOpenAvailability,
+}: {
+  onOpenAccount: () => void;
+  onOpenAvailability: () => void;
+}) {
   const syncNow = useAction(api.googleSync.syncNow);
+  const pendingCount = useQuery(api.booking.listPendingBookings)?.length ?? 0;
   const [isSyncing, setIsSyncing] = useState(false);
 
   const sync = async () => {
@@ -182,6 +205,16 @@ function NavRow({ onOpenAccount }: { onOpenAccount: () => void }) {
       <NavButton icon={Menu01Icon} label="Agenda" />
       <NavButton icon={Search01Icon} label="Search" />
       <NavButton icon={PlusSignIcon} label="Create" />
+      <NavButton
+        icon={Link01Icon}
+        label={
+          pendingCount > 0
+            ? `Booking link · ${pendingCount} pending`
+            : "Booking link"
+        }
+        badge={pendingCount}
+        onClick={onOpenAvailability}
+      />
 
       <div className="mx-1 h-6 w-px bg-border" />
 
@@ -202,12 +235,15 @@ function NavButton({
   label,
   active,
   busy,
+  badge,
   onClick,
 }: {
   icon: IconSvgElement;
   label: string;
   active?: boolean;
   busy?: boolean;
+  /** A count worth interrupting for, shown as a dot on the icon. 0 hides it. */
+  badge?: number;
   onClick?: () => void;
 }) {
   return (
@@ -219,7 +255,7 @@ function NavButton({
         disabled={busy}
         onClick={onClick}
         className={cn(
-          "flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground",
+          "relative flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground",
           active && "rounded-l-2xl rounded-r-lg bg-accent text-foreground",
         )}
       >
@@ -228,6 +264,11 @@ function NavButton({
         ) : (
           <HugeiconsIcon icon={icon} strokeWidth={2} className="size-5" />
         )}
+        {badge ? (
+          <span className="absolute top-1 right-1 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] leading-none font-medium text-primary-foreground">
+            {badge > 9 ? "9+" : badge}
+          </span>
+        ) : null}
       </TooltipTrigger>
       <TooltipContent side="top">{label}</TooltipContent>
     </Tooltip>

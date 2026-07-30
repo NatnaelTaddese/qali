@@ -75,7 +75,11 @@ export function EventCard({
       whileTap={isDragging ? undefined : { scale: 0.97 }}
       transition={{ scale: pressTransition }}
       className={cn(
-        "event-card group absolute min-h-[13px] overflow-hidden rounded-lg shadow-sm ring-1 ring-border/60 inset-ring inset-ring-black/10 select-none dark:inset-ring-white/10",
+        // A 15-minute event is only ~10px tall at the grid's floor of 40px an
+        // hour, which cannot hold a legible line. `min-h` draws short events
+        // slightly taller than their true duration so the title still reads —
+        // the same trade every calendar makes for sub-hour events.
+        "event-card group absolute min-h-[20px] overflow-hidden rounded-lg shadow-sm ring-1 ring-border/60 inset-ring inset-ring-black/10 select-none dark:inset-ring-white/10",
         draggable ? "cursor-grab" : "cursor-pointer",
         isDragging &&
           "cursor-grabbing touch-none shadow-lg ring-2 ring-primary/60",
@@ -95,10 +99,13 @@ export function EventCard({
         style={{ backgroundColor: `var(${colorVar})` }}
       />
       <div className="event-card-body flex h-full flex-col justify-start py-1 pr-2 pl-3">
-        <p className="event-card-title text-sm font-medium leading-tight">
+        {/* No `text-*`/`leading-*` utilities on these two: the size steps live in
+            `.event-card-title` / `.event-card-time` (globals.css), and a utility
+            here sits in a later layer and would silently outrank them. */}
+        <p className="event-card-title font-medium">
           {event.summary ?? "(No title)"}
         </p>
-        <p className="event-card-time truncate text-xs leading-tight text-muted-foreground">
+        <p className="event-card-time truncate text-muted-foreground">
           {`${format(event.startMs, "h:mm")} – ${format(event.endMs, "h:mm a")}`}
         </p>
         {(attendees.length > 0 || event.hangoutLink) && (

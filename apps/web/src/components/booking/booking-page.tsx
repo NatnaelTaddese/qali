@@ -1,0 +1,210 @@
+import { api } from "@qali/backend/convex/_generated/api";
+import { Button } from "@qali/ui/components/button";
+import { Input } from "@qali/ui/components/input";
+import { Spinner } from "@qali/ui/components/spinner";
+import { Textarea } from "@qali/ui/components/textarea";
+import { cn } from "@qali/ui/lib/utils";
+import { useMutation, useQuery } from "convex/react";
+import { format } from "date-fns";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
+
+import { Avatar } from "@/components/calendar/avatar";
+
+import { BookingConfirmation } from "./booking-confirmation";
+import { SlotPicker, VISITOR_TIME_ZONE } from "./slot-picker";
+
+const MS_PER_HOUR = 60 * 60 * 1000;
+/** How far ahead the picker asks for. The server clamps at 35 days and applies
+ * the host's own horizon, so this is only how much we render at once. */
+const WINDOW_DAYS = 28;
+
+/**
+ * The public booking page at `/<slug>`. Reachable with no account: the two
+ * queries behind it are anonymous, and they hand back the host's display name
+ * and a list of open instants — never anything about what fills the rest of
+ * their calendar.
+ */
+export function BookingPage({
+  slug,
+  token,
+  onTokenChange,
+}: {
+  slug: string;
+  /** Set once a request exists, so a refresh returns to the confirmation. */
+  token: string | null;
+  onTokenChange: (token: string | null) => void;
+}) {
+  const page = useQuery(api.booking.getPublicPage, { slug });
+  // Floored to the hour so the subscription argument is stable across renders
+  // rather than a new millisecond each time.
+  const fromMs = useMemo(() => Math.floor(Date.now() / MS_PER_HOUR) * MS_PER_HOUR, []);
+  const availability = useQuery(
+    api.booking.listOpenSlots,
+    page ? { slug, fromMs, toMs: fromMs + WINDOW_DAYS * 24 * MS_PER_HOUR } : "skip",
+  );
+  const requestBooking = useMutation(api.booking.requestBooking);
+
+  const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const canSubmit =
+    selectedSlot !== null && name.trim().length > 0 && emailLooksValid && !submitting;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSubmit || selectedSlot === null) return;
+    setSubmitting(true);
+    try {
+      const { token: newToken } = await requestBooking({
+        slug,
+        startMs: selectedSlot,
+        name: name.trim(),
+        email: email.trim(),
+        note: note.trim() || undefined,
+        timeZone: VISITOR_TIME_ZONE,
+      });
+      onTokenChange(newToken);
+    } catch (error: unknown) {
+      toast.error("Couldn't send your request", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (page === undefined) {
+    return (
+      <Shell>
+        <div className="flex justify-center py-12">
+          <Spinner />
+        </div>
+      </Shell>
+    );
+  }
+
+  if (page === null) {
+    return (
+      <Shell>
+        <div className="space-y-1 py-10 text-center">
+          <p className="font-display text-xl font-bold">Nothing here</p>
+          <p className="text-sm text-muted-foreground">
+            This booking link doesn't exist, or it isn't taking requests.
+          </p>
+        </div>
+      </Shell>
+    );
+  }
+
+  return (
+    <Shell>
+      <div className="flex items-center gap-3">
+        <Avatar
+          // The public page never sees the host's email; their display name is
+          // the stable key the palette hashes on.
+          email={page.displayName}
+          name={page.displayName}
+          photoUrl={page.imageUrl}
+          className="size-11"
+        />
+        <div className="min-w-0">
+          <p className="truncate text-sm text-muted-foreground">
+            {page.displayName}
+          </p>
+          <p className="font-display truncate text-xl leading-tight font-bold">
+            {page.title?.trim() || `${page.slotMinutes} minute meeting`}
+          </p>
+        </div>
+      </div>
+
+      {page.description && (
+        <p className="text-sm text-muted-foreground">{page.description}</p>
+      )}
+
+      {token ? (
+        <BookingConfirmation
+          token={token}
+          onStartOver={() => {
+            onTokenChange(null);
+            setSelectedSlot(null);
+            setNote("");
+          }}
+        />
+      ) : availability === undefined ? (
+        <div className="flex justify-center py-10">
+          <Spinner />
+        </div>
+      ) : (
+        <form onSubmit={submit} className="space-y-4">
+          <SlotPicker
+            slots={availability.slots}
+            slotMinutes={availability.slotMinutes}
+            selectedSlot={selectedSlot}
+            onSelect={setSelectedSlot}
+          />
+
+          {selectedSlot !== null && (
+            <div className="space-y-2 border-t border-border pt-4">
+              <p className="text-sm font-medium">
+                {format(selectedSlot, "EEEE, MMMM d")} at{" "}
+                {format(selectedSlot, "HH:mm")}
+              </p>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Your name"
+                aria-label="Your name"
+                autoComplete="name"
+                required
+              />
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                aria-label="Your email"
+                autoComplete="email"
+                required
+              />
+              <Textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="What's it about? (optional)"
+                aria-label="Message"
+                rows={3}
+              />
+              <Button
+                type="submit"
+                size="lg"
+                className={cn("w-full", submitting && "opacity-80")}
+                disabled={!canSubmit}
+              >
+                {submitting && <Spinner />}
+                {submitting ? "Sending…" : "Request this time"}
+              </Button>
+              <p className="text-center text-xs text-muted-foreground">
+                {page.displayName} confirms each request. You'll get the
+                invitation by email once they do.
+              </p>
+            </div>
+          )}
+        </form>
+      )}
+    </Shell>
+  );
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-svh overflow-y-auto bg-background px-4 py-10">
+      <div className="mx-auto w-full max-w-md space-y-4 rounded-xl border border-border bg-card p-5 shadow-lg">
+        {children}
+      </div>
+    </div>
+  );
+}

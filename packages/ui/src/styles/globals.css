@@ -174,12 +174,26 @@
   /* Own the title clamp here rather than via a Tailwind `line-clamp-*` utility:
    * the utilities layer outranks the components layer, so a utility would beat
    * the container-query overrides below and the title could never step down to
-   * one line. Default to two lines... */
+   * one line. Default to two lines...
+   *
+   * The type scale is owned here for the same reason, and it has to be: a
+   * `text-sm`/`leading-tight` utility on the element silently beat the
+   * font-size steps below, so short cards kept full-size text in a box far too
+   * small for it and clipped the glyphs. Keep font sizing for the title and time
+   * in this file — never as a utility on the element. */
   .event-card-title {
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     overflow: hidden;
+    font-size: 0.875rem;
+    /* Lexend's glyph box is ~1.25× its font size, so anything tighter than this
+     * shaves the ascenders and descenders off a clamped line. */
+    line-height: 1.25;
+  }
+  .event-card-time {
+    font-size: 0.75rem;
+    line-height: 1.25;
   }
   /* Attendees and conferencing sit at the bottom only when the rendered card
    * has room for the existing title/time treatment plus a compact avatar row. */
@@ -206,7 +220,12 @@
     }
   }
   /* Too short for a second line: drop the time and switch the title to a
-   * small, vertically centered single line so it stays legible, not clipped. */
+   * small, vertically centered single line so it stays legible, not clipped.
+   *
+   * This band runs all the way down to the card's `min-h` floor. There used to be
+   * a second, smaller step below 22px, but a 15-minute card only has ~10px of its
+   * own and is floored to that min-height anyway — shrinking the type further just
+   * made it unreadable without buying any room, so one step covers the range. */
   @container (max-height: 38px) {
     .event-card-time {
       display: none;
@@ -217,14 +236,8 @@
       padding-bottom: 0;
     }
     .event-card-title {
-      font-size: 0.75rem; /* 12px */
-      line-height: 1.1;
+      font-size: 0.75rem;
       -webkit-line-clamp: 1; /* short cards get one tightened line */
-    }
-  }
-  @container (max-height: 22px) {
-    .event-card-title {
-      font-size: 0.6875rem; /* 11px */
     }
   }
 }

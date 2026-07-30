@@ -1,8 +1,10 @@
 import { cn } from "@qali/ui/lib/utils";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 
+import type { Booking } from "@/components/workspace/booking-request-panel";
 import { useDock } from "@/components/workspace/dock-context";
 
+import { BookingBlock } from "./booking-block";
 import { EventCard } from "./event-card";
 import { GhostEvent } from "./ghost-event";
 import {
@@ -41,6 +43,8 @@ interface DayColumnProps {
   laneLayout: boolean;
   /** Synced contact photos keyed by lower-cased email. */
   contactPhotos: ReadonlyMap<string, string>;
+  /** Pending booking requests overlapping this day, in their own lane. */
+  bookings: Booking[];
 }
 
 export function DayColumn({
@@ -51,6 +55,7 @@ export function DayColumn({
   draggingId,
   laneLayout,
   contactPhotos,
+  bookings,
 }: DayColumnProps) {
   const dayStartMs = day.getTime();
   const dayEndMs = dayStartMs + MS_PER_DAY;
@@ -150,6 +155,14 @@ export function DayColumn({
           onDragStart={(mode, e) =>
             beginDrag(p.event, mode, e, gridRef.current)
           }
+        />
+      ))}
+      {bookings.map((booking) => (
+        <BookingBlock
+          key={booking._id}
+          booking={booking}
+          dayStartMs={dayStartMs}
+          onOpen={() => open({ kind: "booking", booking })}
         />
       ))}
       {draft && draft.status === "dragging" && (

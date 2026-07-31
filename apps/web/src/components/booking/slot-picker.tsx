@@ -214,7 +214,7 @@ export function SlotPicker({
           aria-label="Available days"
           onScroll={measureScroll}
           style={{ maskImage: fadeMask, WebkitMaskImage: fadeMask }}
-          className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="-mx-1 flex gap-1.5 overflow-x-auto px-1 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {days.map((day) => {
           const isActive = day.dateKey === activeDateKey;

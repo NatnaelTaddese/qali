@@ -9,11 +9,11 @@ import { cn } from "@qali/ui/lib/utils";
 import { useMutation, useQuery } from "convex/react";
 import { format } from "date-fns";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Avatar } from "@/components/calendar/avatar";
-import { EASE_OUT_EXPO } from "@/components/calendar/motion";
+import { EASE_OUT_EXPO, SPRING_DOCK } from "@/components/calendar/motion";
 
 import { BookingConfirmation } from "./booking-confirmation";
 import { CalendarBackdrop } from "./calendar-backdrop";
@@ -292,13 +292,41 @@ function MetaChip({
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
+  const reduceMotion = useReducedMotion();
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+
+    const updateHeight = () => {
+      const nextHeight = content.getBoundingClientRect().height;
+      setHeight((current) => (current === nextHeight ? current : nextHeight));
+    };
+
+    if (typeof ResizeObserver === "undefined") return;
+
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <div className="relative min-h-svh overflow-x-hidden overflow-y-auto bg-background">
       <CalendarBackdrop ghosts={false} />
       <div className="relative z-10 flex min-h-svh flex-col items-center justify-center gap-3 px-4 py-10">
-        <div className="w-full max-w-md space-y-4 rounded-4xl bg-card p-6 shadow-lg ring-1 ring-foreground/5 dark:ring-foreground/10">
-          {children}
-        </div>
+        <motion.div
+          initial={false}
+          animate={height === null ? undefined : { height }}
+          transition={reduceMotion ? { duration: 0 } : SPRING_DOCK}
+          className="w-full max-w-md overflow-hidden rounded-4xl bg-card shadow-lg ring-1 ring-foreground/5 dark:ring-foreground/10"
+        >
+          <div ref={contentRef} className="space-y-4 p-6">
+            {children}
+          </div>
+        </motion.div>
         <a
           href="https://calendar.myqali.com"
           target="_blank"

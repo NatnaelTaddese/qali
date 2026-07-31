@@ -60,8 +60,12 @@ export function BottomIsland() {
   const { view, viewId, direction, open, close } = useDock();
   const reduce = useReducedMotion();
   const availabilityOpen = view?.kind === "availability";
-  const [availabilityIntent, setAvailabilityIntent] = useState(false);
-  const availabilityDataActive = availabilityOpen || availabilityIntent;
+  const [availabilityIntentVersion, setAvailabilityIntentVersion] = useState(0);
+  const [availabilityRequested, setAvailabilityRequested] = useState(false);
+  const availabilityDataActive =
+    availabilityOpen ||
+    availabilityRequested ||
+    availabilityIntentVersion > 0;
   // This stays live for the dock badge and incoming-request calendar blocks.
   const pendingBookings = useQuery(api.booking.listPendingBookings);
   // Warm settings on interaction intent so the dock knows its final content
@@ -75,6 +79,9 @@ export function BottomIsland() {
     api.booking.bookingPageDefaults,
     availabilityDataActive ? {} : "skip",
   );
+  const availabilityReady =
+    bookingPage !== undefined &&
+    (bookingPage !== null || bookingDefaults !== undefined);
   const [now, setNow] = useState(() => Date.now());
   const availabilityInstance = useRef(0);
   const activePendingBookings = pendingBookings?.filter(
@@ -84,13 +91,39 @@ export function BottomIsland() {
   const expanded = view !== null;
 
   useEffect(() => {
-    if (availabilityOpen || !availabilityIntent) return;
+    if (
+      availabilityOpen ||
+      availabilityRequested ||
+      availabilityIntentVersion === 0
+    )
+      return;
     const timeout = setTimeout(
-      () => setAvailabilityIntent(false),
+      () => setAvailabilityIntentVersion(0),
       AVAILABILITY_PREFETCH_GRACE_MS,
     );
     return () => clearTimeout(timeout);
-  }, [availabilityOpen, availabilityIntent]);
+  }, [availabilityOpen, availabilityRequested, availabilityIntentVersion]);
+
+  useEffect(() => {
+    if (!availabilityRequested || !availabilityReady) return;
+    setAvailabilityRequested(false);
+    availabilityInstance.current += 1;
+    open({ kind: "availability" });
+  }, [availabilityRequested, availabilityReady, open]);
+
+  const prepareAvailability = () => {
+    setAvailabilityIntentVersion((version) => version + 1);
+  };
+
+  const requestAvailability = () => {
+    prepareAvailability();
+    if (availabilityReady) {
+      availabilityInstance.current += 1;
+      open({ kind: "availability" });
+      return;
+    }
+    setAvailabilityRequested(true);
+  };
 
   // Convex scheduled mutations remove new requests exactly at their deadline;
   // this timer gives pre-migration rows the same immediate UI behavior.
@@ -227,11 +260,9 @@ export function BottomIsland() {
                 <NavRow
                   pendingCount={activePendingBookings?.length ?? 0}
                   onOpenAccount={() => open({ kind: "account" })}
-                  onPrepareAvailability={() => setAvailabilityIntent(true)}
-                  onOpenAvailability={() => {
-                    availabilityInstance.current += 1;
-                    open({ kind: "availability" });
-                  }}
+                  availabilityLoading={availabilityRequested}
+                  onPrepareAvailability={prepareAvailability}
+                  onOpenAvailability={requestAvailability}
                 />
               )}
             </motion.div>
@@ -244,11 +275,13 @@ export function BottomIsland() {
 
 function NavRow({
   pendingCount,
+  availabilityLoading,
   onOpenAccount,
   onPrepareAvailability,
   onOpenAvailability,
 }: {
   pendingCount: number;
+  availabilityLoading: boolean;
   onOpenAccount: () => void;
   onPrepareAvailability: () => void;
   onOpenAvailability: () => void;
@@ -290,6 +323,7 @@ function NavRow({
             : "Booking link"
         }
         badge={pendingCount}
+        busy={availabilityLoading}
         onIntent={onPrepareAvailability}
         onClick={onOpenAvailability}
       />

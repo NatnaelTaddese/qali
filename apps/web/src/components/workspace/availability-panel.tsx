@@ -3,6 +3,8 @@ import {
   ArrowRight01Icon,
   Cancel01Icon,
   Copy01Icon,
+  MinusSignIcon,
+  PlusSignIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -82,6 +84,71 @@ function rowsFromRules(
       : { ...DEFAULT_ROW };
   }
   return rows;
+}
+
+function NumberStepper({
+  id,
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+}) {
+  const setValue = (next: number) =>
+    onChange(Math.min(max, Math.max(min, next)));
+
+  return (
+    <div className="flex h-8 items-center rounded-3xl bg-input/50 px-1 focus-within:ring-3 focus-within:ring-ring/30">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        disabled={value <= min}
+        aria-label={`Decrease ${label}`}
+        onClick={() => setValue(value - 1)}
+      >
+        <HugeiconsIcon
+          icon={MinusSignIcon}
+          strokeWidth={2}
+          className="size-3.5"
+        />
+      </Button>
+      <Input
+        id={id}
+        type="number"
+        min={min}
+        max={max}
+        value={value}
+        aria-label={label}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (Number.isFinite(next)) setValue(next);
+        }}
+        className="h-8 flex-1 rounded-none border-0 bg-transparent px-1 text-center [appearance:textfield] focus-visible:border-transparent focus-visible:ring-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        disabled={value >= max}
+        aria-label={`Increase ${label}`}
+        onClick={() => setValue(value + 1)}
+      >
+        <HugeiconsIcon
+          icon={PlusSignIcon}
+          strokeWidth={2}
+          className="size-3.5"
+        />
+      </Button>
+    </div>
+  );
 }
 
 /**
@@ -602,40 +669,44 @@ function AvailabilityForm({
             </div>
 
             <div className="flex gap-2">
-              <label className="flex-1 space-y-1">
-                <span className="px-2 text-xs font-medium text-muted-foreground">
+              <div className="flex-1 space-y-1">
+                <label
+                  htmlFor="booking-notice-hours"
+                  className="block px-2 text-xs font-medium text-muted-foreground"
+                >
                   Notice (hours)
-                </span>
-                <Input
-                  type="number"
+                </label>
+                <NumberStepper
+                  id="booking-notice-hours"
+                  label="Notice in hours"
                   min={0}
                   max={720}
                   value={noticeHours}
-                  onChange={(e) => {
+                  onChange={(value) => {
                     markDirty();
-                    setNoticeHours(Math.max(0, Number(e.target.value)));
+                    setNoticeHours(value);
                   }}
-                  className="h-8 text-center"
                 />
-              </label>
-              <label className="flex-1 space-y-1">
-                <span className="px-2 text-xs font-medium text-muted-foreground">
+              </div>
+              <div className="flex-1 space-y-1">
+                <label
+                  htmlFor="booking-horizon-days"
+                  className="block px-2 text-xs font-medium text-muted-foreground"
+                >
                   Days ahead
-                </span>
-                <Input
-                  type="number"
+                </label>
+                <NumberStepper
+                  id="booking-horizon-days"
+                  label="Days ahead"
                   min={1}
                   max={365}
                   value={horizonDays}
-                  onChange={(e) => {
+                  onChange={(value) => {
                     markDirty();
-                    setHorizonDays(
-                      Math.min(365, Math.max(1, Number(e.target.value))),
-                    );
+                    setHorizonDays(value);
                   }}
-                  className="h-8 text-center"
                 />
-              </label>
+              </div>
             </div>
 
             <div className="flex items-center gap-2">

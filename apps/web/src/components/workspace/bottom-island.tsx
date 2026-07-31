@@ -58,7 +58,10 @@ export function BottomIsland() {
   const { view, viewId, direction, open, close } = useDock();
   const reduce = useReducedMotion();
   const pendingBookings = useQuery(api.booking.listPendingBookings);
+  const bookingPage = useQuery(api.booking.getMyBookingPage);
+  const bookingDefaults = useQuery(api.booking.bookingPageDefaults);
   const [now, setNow] = useState(() => Date.now());
+  const availabilityInstance = useRef(0);
   const activePendingBookings = pendingBookings?.filter(
     (booking) => booking.endMs > now,
   );
@@ -182,7 +185,10 @@ export function BottomIsland() {
                 <AccountPanel onClose={close} />
               ) : view?.kind === "availability" ? (
                 <AvailabilityPanel
+                  key={availabilityInstance.current}
                   pendingBookings={activePendingBookings}
+                  page={bookingPage}
+                  defaults={bookingDefaults}
                   onClose={close}
                   onOpenRequest={(booking) => open({ kind: "booking", booking })}
                 />
@@ -192,7 +198,10 @@ export function BottomIsland() {
                 <NavRow
                   pendingCount={activePendingBookings?.length ?? 0}
                   onOpenAccount={() => open({ kind: "account" })}
-                  onOpenAvailability={() => open({ kind: "availability" })}
+                  onOpenAvailability={() => {
+                    availabilityInstance.current += 1;
+                    open({ kind: "availability" });
+                  }}
                 />
               )}
             </motion.div>

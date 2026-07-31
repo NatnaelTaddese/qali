@@ -16,9 +16,10 @@ import {
   TooltipTrigger,
 } from "@qali/ui/components/tooltip";
 import { cn } from "@qali/ui/lib/utils";
+import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { SPRING_DOCK } from "@/components/calendar/motion";
@@ -49,6 +50,19 @@ interface DayRow {
   endMin: number;
 }
 
+type BookingPage = FunctionReturnType<typeof api.booking.getMyBookingPage>;
+type BookingDefaults = FunctionReturnType<
+  typeof api.booking.bookingPageDefaults
+>;
+
+interface AvailabilityPanelProps {
+  pendingBookings: Booking[] | undefined;
+  page: BookingPage | undefined;
+  defaults: BookingDefaults | undefined;
+  onClose: () => void;
+  onOpenRequest: (booking: Booking) => void;
+}
+
 const DEFAULT_ROW: DayRow = { enabled: false, startMin: 9 * 60, endMin: 17 * 60 };
 
 function rowsFromRules(
@@ -73,92 +87,142 @@ function rowsFromRules(
  */
 export function AvailabilityPanel({
   pendingBookings,
+  page,
+  defaults,
   onClose,
   onOpenRequest,
-}: {
-  pendingBookings: Booking[] | undefined;
-  onClose: () => void;
-  onOpenRequest: (booking: Booking) => void;
-}) {
-  const page = useQuery(api.booking.getMyBookingPage);
-  const defaults = useQuery(api.booking.bookingPageDefaults);
-  const upsert = useMutation(api.booking.upsertBookingPage);
+}: AvailabilityPanelProps) {
   const reduce = useReducedMotion();
 
-  const [slug, setSlug] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
-  const [rows, setRows] = useState<Record<number, DayRow> | null>(null);
-  const [slotMinutes, setSlotMinutes] = useState(30);
-  const [noticeHours, setNoticeHours] = useState(2);
-  const [horizonDays, setHorizonDays] = useState(60);
-  const [enabled, setEnabled] = useState(true);
+  if (
+    page === undefined ||
+    (page === null && defaults === undefined) ||
+    pendingBookings === undefined
+  ) {
+    return (
+      <motion.div
+        initial={false}
+        animate={{ height: 160 }}
+        transition={reduce ? { duration: 0 } : SPRING_DOCK}
+        className="flex items-center justify-center overflow-hidden"
+      >
+        <Spinner />
+      </motion.div>
+    );
+  }
+
+  return (
+    <AvailabilityForm
+      pendingBookings={pendingBookings}
+      page={page}
+      defaults={defaults}
+      onClose={onClose}
+      onOpenRequest={onOpenRequest}
+    />
+  );
+}
+
+function AvailabilityForm({
+  pendingBookings,
+  page,
+  defaults,
+  onClose,
+  onOpenRequest,
+}: Omit<AvailabilityPanelProps, "pendingBookings" | "page"> & {
+  pendingBookings: Booking[];
+  page: BookingPage;
+}) {
+  const upsert = useMutation(api.booking.upsertBookingPage);
+  const reduce = useReducedMotion();
+  const initial = page ?? defaults;
+  const lastInitial = useRef(initial);
+  const dirty = useRef(false);
+  const editVersion = useRef(0);
+
+  const [slug, setSlug] = useState(
+    () => page?.slug ?? defaults?.suggestedSlug ?? "",
+  );
+  const [title, setTitle] = useState(() => page?.title ?? "");
+  const [rows, setRows] = useState<Record<number, DayRow>>(() =>
+    rowsFromRules(initial?.rules ?? []),
+  );
+  const [slotMinutes, setSlotMinutes] = useState(
+    () => initial?.slotMinutes ?? 30,
+  );
+  const [noticeHours, setNoticeHours] = useState(() =>
+    Math.round((initial?.minNoticeMinutes ?? 120) / 60),
+  );
+  const [horizonDays, setHorizonDays] = useState(
+    () => initial?.horizonDays ?? 60,
+  );
+  const [enabled, setEnabled] = useState(() => page?.enabled ?? true);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Seed the draft once the server answers. `slug === null` is the "not seeded
-  // yet" marker, so a saved page reopening the panel doesn't reset edits.
+  // A save may finish after the panel was closed and reopened. Reconcile that
+  // late live result only while this fresh draft is still untouched.
   useEffect(() => {
-    if (slug !== null) return;
-    if (page) {
-      setSlug(page.slug);
-      setTitle(page.title ?? "");
-      setRows(rowsFromRules(page.rules));
-      setSlotMinutes(page.slotMinutes);
-      setNoticeHours(Math.round(page.minNoticeMinutes / 60));
-      setHorizonDays(page.horizonDays);
-      setEnabled(page.enabled);
-      return;
-    }
-    // `page === null` means the host has no page yet; wait for the defaults.
-    if (page === null && defaults) {
-      setSlug(defaults.suggestedSlug);
-      setRows(rowsFromRules(defaults.rules));
-      setSlotMinutes(defaults.slotMinutes);
-      setNoticeHours(Math.round(defaults.minNoticeMinutes / 60));
-      setHorizonDays(defaults.horizonDays);
-    }
-  }, [page, defaults, slug]);
+    if (initial === lastInitial.current) return;
+    lastInitial.current = initial;
+    if (!initial || dirty.current) return;
+    setSlug(page?.slug ?? defaults?.suggestedSlug ?? "");
+    setTitle(page?.title ?? "");
+    setRows(rowsFromRules(initial.rules));
+    setSlotMinutes(initial.slotMinutes);
+    setNoticeHours(Math.round(initial.minNoticeMinutes / 60));
+    setHorizonDays(initial.horizonDays);
+    setEnabled(page?.enabled ?? true);
+  }, [initial, page, defaults]);
 
-  const normalized = slug === null ? "" : normalizeSlug(slug);
+  const markDirty = () => {
+    dirty.current = true;
+    editVersion.current += 1;
+  };
+
+  const normalized = normalizeSlug(slug);
+  const persistedSlug = page?.slug;
+  const slugUnchanged =
+    persistedSlug !== undefined && normalized === persistedSlug;
   // Skip the round trip until there is something worth checking.
   const check = useQuery(
     api.booking.checkSlugAvailable,
-    normalized.length >= 3 ? { slug: normalized } : "skip",
+    normalized.length >= 3 && !slugUnchanged ? { slug: normalized } : "skip",
   );
 
   const rules = useMemo(
     () =>
-      rows
-        ? WEEKDAYS.filter(({ weekday }) => rows[weekday]?.enabled)
-            .map(({ weekday }) => ({
-              weekday,
-              startMin: rows[weekday].startMin,
-              endMin: rows[weekday].endMin,
-            }))
-            .filter((rule) => rule.endMin > rule.startMin)
-        : [],
+      WEEKDAYS.filter(({ weekday }) => rows[weekday]?.enabled)
+        .map(({ weekday }) => ({
+          weekday,
+          startMin: rows[weekday].startMin,
+          endMin: rows[weekday].endMin,
+        }))
+        .filter((rule) => rule.endMin > rule.startMin),
     [rows],
   );
 
-  const openDayCount = rows
-    ? WEEKDAYS.filter(({ weekday }) => rows[weekday]?.enabled).length
-    : 0;
-  const slugReady = normalized.length >= 3 && check?.available === true;
+  const openDayCount = WEEKDAYS.filter(
+    ({ weekday }) => rows[weekday]?.enabled,
+  ).length;
+  const slugReady =
+    normalized.length >= 3 && (slugUnchanged || check?.available === true);
   const canSave = slugReady && rules.length > 0 && !saving;
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const publicUrl = `${origin}/${normalized}`;
 
   const patchRow = (weekday: number, patch: Partial<DayRow>) => {
-    setRows((prev) =>
-      prev ? { ...prev, [weekday]: { ...prev[weekday], ...patch } } : prev,
-    );
+    markDirty();
+    setRows((prev) => ({
+      ...prev,
+      [weekday]: { ...prev[weekday], ...patch },
+    }));
   };
 
   // Copy one day's hours onto every other open day, so setting hours once is
   // enough for a typical week.
   const copyRowToAll = (weekday: number) => {
+    markDirty();
     setRows((prev) => {
-      if (!prev) return prev;
       const { startMin, endMin } = prev[weekday];
       const next: Record<number, DayRow> = { ...prev };
       for (const { weekday: wd } of WEEKDAYS) {
@@ -183,6 +247,7 @@ export function AvailabilityPanel({
 
   const save = async () => {
     if (!canSave) return;
+    const savedVersion = editVersion.current;
     setSaving(true);
     try {
       await upsert({
@@ -196,6 +261,9 @@ export function AvailabilityPanel({
         horizonDays,
         enabled,
       });
+      if (editVersion.current === savedVersion) {
+        dirty.current = false;
+      }
       toast.success(enabled ? "Booking link is live" : "Booking link saved");
     } catch (error: unknown) {
       toast.error("Couldn't save your booking link", {
@@ -205,19 +273,6 @@ export function AvailabilityPanel({
       setSaving(false);
     }
   };
-
-  if (!rows || slug === null || pendingBookings === undefined) {
-    return (
-      <motion.div
-        initial={false}
-        animate={{ height: 160 }}
-        transition={reduce ? { duration: 0 } : SPRING_DOCK}
-        className="flex items-center justify-center overflow-hidden"
-      >
-        <Spinner />
-      </motion.div>
-    );
-  }
 
   return (
     <motion.div
@@ -253,7 +308,10 @@ export function AvailabilityPanel({
             </span>
             <Input
               value={slug}
-              onChange={(e) => setSlug(e.target.value)}
+              onChange={(e) => {
+                markDirty();
+                setSlug(e.target.value);
+              }}
               placeholder="your-name"
               aria-label="Booking link name"
               spellCheck={false}
@@ -283,7 +341,10 @@ export function AvailabilityPanel({
 
       <Input
         value={title}
-        onChange={(e) => setTitle(e.target.value)}
+        onChange={(e) => {
+          markDirty();
+          setTitle(e.target.value);
+        }}
         placeholder="What the meeting is called"
         aria-label="Meeting title"
       />
@@ -373,7 +434,7 @@ export function AvailabilityPanel({
             );
           })}
         </div>
-        {rows && rules.length === 0 && (
+        {rules.length === 0 && (
           <p className="px-2 text-xs text-destructive">
             Open at least one day
           </p>
@@ -397,7 +458,10 @@ export function AvailabilityPanel({
               size="sm"
               aria-pressed={slotMinutes === minutes}
               className="rounded-xl px-2 text-muted-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm hover:bg-background/60 dark:hover:bg-background/40 aria-pressed:dark:border-white/5"
-              onClick={() => setSlotMinutes(minutes)}
+              onClick={() => {
+                markDirty();
+                setSlotMinutes(minutes);
+              }}
             >
               {minutes}m
             </Button>
@@ -415,7 +479,10 @@ export function AvailabilityPanel({
             min={0}
             max={720}
             value={noticeHours}
-            onChange={(e) => setNoticeHours(Math.max(0, Number(e.target.value)))}
+            onChange={(e) => {
+              markDirty();
+              setNoticeHours(Math.max(0, Number(e.target.value)));
+            }}
             className="h-8 text-center"
           />
         </label>
@@ -428,9 +495,12 @@ export function AvailabilityPanel({
             min={1}
             max={365}
             value={horizonDays}
-            onChange={(e) =>
-              setHorizonDays(Math.min(365, Math.max(1, Number(e.target.value))))
-            }
+            onChange={(e) => {
+              markDirty();
+              setHorizonDays(
+                Math.min(365, Math.max(1, Number(e.target.value))),
+              );
+            }}
             className="h-8 text-center"
           />
         </label>
@@ -440,7 +510,10 @@ export function AvailabilityPanel({
         <label className="flex min-w-0 flex-1 items-center gap-2.5">
           <Switch
             checked={enabled}
-            onCheckedChange={setEnabled}
+            onCheckedChange={(checked) => {
+              markDirty();
+              setEnabled(checked);
+            }}
             aria-label={
               enabled ? "Booking link is live" : "Booking link is paused"
             }

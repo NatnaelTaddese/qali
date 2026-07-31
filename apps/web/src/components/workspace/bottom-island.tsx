@@ -80,6 +80,7 @@ export function BottomIsland() {
     availabilityDataActive ? {} : "skip",
   );
   const availabilityReady =
+    pendingBookings !== undefined &&
     bookingPage !== undefined &&
     (bookingPage !== null || bookingDefaults !== undefined);
   const [now, setNow] = useState(() => Date.now());
@@ -105,11 +106,16 @@ export function BottomIsland() {
   }, [availabilityOpen, availabilityRequested, availabilityIntentVersion]);
 
   useEffect(() => {
-    if (!availabilityRequested || !availabilityReady) return;
+    if (!availabilityRequested) return;
+    if (view !== null) {
+      setAvailabilityRequested(false);
+      return;
+    }
+    if (!availabilityReady) return;
     setAvailabilityRequested(false);
     availabilityInstance.current += 1;
     open({ kind: "availability" });
-  }, [availabilityRequested, availabilityReady, open]);
+  }, [availabilityRequested, availabilityReady, view, open]);
 
   const prepareAvailability = () => {
     setAvailabilityIntentVersion((version) => version + 1);

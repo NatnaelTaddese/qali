@@ -300,21 +300,27 @@ export function GooDropdown({
     }
   }, [geometry, open, progress, shouldReduceMotion, spring])
 
+  // Clamp so an out-of-range `selectedIndex` can't leave the menu with nothing
+  // focusable or send the scroll position off into space.
+  const targetIndex =
+    selectedIndex == null
+      ? 0
+      : Math.min(Math.max(selectedIndex, 0), Math.max(items.length - 1, 0))
+
   useEffect(() => {
     if (!open || !geometry || panelContent) return
-    const index = selectedIndex ?? 0
     const frame = requestAnimationFrame(() => {
-      const el = itemRefs.current[index]
+      const el = itemRefs.current[targetIndex]
       // Position the list before focusing so a long menu opens on the current
       // value; preventScroll keeps focus from yanking the page instead.
-      if (index > 0 && menuRef.current) {
+      if (targetIndex > 0 && menuRef.current) {
         menuRef.current.scrollTop =
-          index * itemHeight - geometry.panelHeight / 2 + itemHeight / 2
+          targetIndex * itemHeight - geometry.panelHeight / 2 + itemHeight / 2
       }
       el?.focus({ preventScroll: true })
     })
     return () => cancelAnimationFrame(frame)
-  }, [geometry, open, selectedIndex, itemHeight, panelContent])
+  }, [geometry, open, targetIndex, itemHeight, panelContent])
 
   const closeMenu = (restoreFocus = true) => {
     setOpen(false)
@@ -362,7 +368,7 @@ export function GooDropdown({
       ? (contentHeight ?? 0)
       : items.length * itemHeight
     progress.set(0)
-    setActiveIndex(selectedIndex ?? 0)
+    setActiveIndex(targetIndex)
     setGeometry(
       menuGeometry(
         rect,
@@ -422,7 +428,7 @@ export function GooDropdown({
         aria-label={triggerLabel}
         aria-controls={menuId}
         aria-expanded={open}
-        aria-haspopup="menu"
+        aria-haspopup={panelContent ? 'dialog' : 'menu'}
         className={cn(
           "relative flex h-8 items-center justify-center gap-1 px-3 text-sm font-medium whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:translate-y-px disabled:pointer-events-none disabled:opacity-50",
           triggerClassName,
@@ -514,7 +520,7 @@ export function GooDropdown({
                 id={menuId}
                 ref={menuRef}
                 data-slot="goo-dropdown-content"
-                role={panelContent ? undefined : 'menu'}
+                role={panelContent ? 'dialog' : 'menu'}
                 aria-label={menuLabel}
                 className="pointer-events-auto absolute inset-x-0"
                 style={

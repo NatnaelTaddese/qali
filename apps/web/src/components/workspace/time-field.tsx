@@ -11,6 +11,12 @@ const MINUTES = Array.from({ length: 60 / MINUTE_STEP }, (_, i) =>
 );
 const MERIDIEM = ["AM", "PM"];
 
+/** Midnight at the *end* of the day — a legal `endMin` bound the wheels show as
+ * `12:00 AM` and must round-trip without collapsing to `00:00`. */
+const END_OF_DAY = 24 * 60;
+
+type Mode = "start" | "end";
+
 interface TimeParts {
   hour: string;
   minute: string;
@@ -18,9 +24,11 @@ interface TimeParts {
 }
 
 /** Minutes-since-midnight → wheel values, rounding off-grid minutes onto the
- * step so a stray value can't fall through to row 0. */
+ * step so a stray value can't fall through to row 0. End-of-day (1440) reads as
+ * `12:00 AM` rather than being clamped down to `11:45 PM`. */
 function minutesToParts(minutes: number): TimeParts {
-  const clamped = Math.max(0, Math.min(minutes, 24 * 60 - 1));
+  if (minutes >= END_OF_DAY) return { hour: "12", minute: "00", meridiem: "AM" };
+  const clamped = Math.max(0, minutes);
   const h24 = Math.floor(clamped / 60);
   const minute = Math.min(
     Math.round((clamped % 60) / MINUTE_STEP) * MINUTE_STEP,
@@ -35,8 +43,13 @@ function minutesToParts(minutes: number): TimeParts {
   };
 }
 
-/** Wheel values → minutes-since-midnight. */
-function partsToMinutes(parts: TimeParts): number {
+/** Wheel values → minutes-since-midnight. In an end field, 12 AM means the end
+ * of the day (1440), not 00:00 — so the interval stays valid and midnight is
+ * reachable as an end bound. */
+function partsToMinutes(parts: TimeParts, mode: Mode): number {
+  if (mode === "end" && parts.hour === "12" && parts.meridiem === "AM") {
+    return END_OF_DAY;
+  }
   const h12 = Number(parts.hour) % 12;
   const h24 = parts.meridiem === "PM" ? h12 + 12 : h12;
   return h24 * 60 + Number(parts.minute);
@@ -61,19 +74,22 @@ const WHEEL_CLASS = "w-14 border-transparent bg-transparent";
 export function TimeField({
   value,
   onChange,
+  mode = "start",
   disabled,
   className,
   "aria-label": ariaLabel,
 }: {
   value: number;
   onChange: (minutes: number) => void;
+  /** `end` treats 12 AM as end-of-day (1440) instead of 00:00. */
+  mode?: Mode;
   disabled?: boolean;
   className?: string;
   "aria-label"?: string;
 }) {
   const parts = minutesToParts(value);
   const setPart = (key: keyof TimeParts, part: string) =>
-    onChange(partsToMinutes({ ...parts, [key]: part }));
+    onChange(partsToMinutes({ ...parts, [key]: part }, mode));
 
   const wheels = (
     <div className="flex h-full items-center justify-center gap-1">

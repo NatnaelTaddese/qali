@@ -336,6 +336,7 @@ export function AvailabilityPanel({
                   <TimeField
                     value={row.endMin}
                     onChange={(minutes) => patchRow(weekday, { endMin: minutes })}
+                    mode="end"
                     disabled={!row.enabled}
                     aria-label={`${label} end`}
                     className="flex-1"

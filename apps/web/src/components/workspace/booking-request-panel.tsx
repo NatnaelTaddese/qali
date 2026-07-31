@@ -1,6 +1,4 @@
 import {
-  ArrowLeft01Icon,
-  ArrowRight01Icon,
   Cancel01Icon,
   Clock01Icon,
   Mail01Icon,
@@ -12,8 +10,11 @@ import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { format, formatDistanceToNowStrict } from "date-fns";
-import { useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+
+import { SPRING_DOCK } from "@/components/calendar/motion";
 
 export type Booking = Doc<"bookings">;
 
@@ -24,14 +25,21 @@ export type Booking = Doc<"bookings">;
  * guest, and Google is what emails them. Rejecting only flips the row — the
  * requester sees it through the link they already have.
  */
-function useBookingDecision(onDone: () => void) {
+type BookingDecision = "accept" | "reject";
+const COLLAPSED_NOTE_LINES = 3;
+const COLLAPSED_NOTE_HEIGHT = "3.75rem";
+
+function useBookingDecision(onDone: (booking: Booking) => void) {
   const acceptBooking = useAction(api.booking.acceptBooking);
   const rejectBooking = useMutation(api.booking.rejectBooking);
-  const [busy, setBusy] = useState<"accept" | "reject" | null>(null);
+  const [busy, setBusy] = useState<{
+    bookingId: Booking["_id"];
+    decision: BookingDecision;
+  } | null>(null);
 
-  const decide = async (booking: Booking, decision: "accept" | "reject") => {
+  const decide = async (booking: Booking, decision: BookingDecision) => {
     if (busy) return;
-    setBusy(decision);
+    setBusy({ bookingId: booking._id, decision });
     try {
       if (decision === "accept") {
         await acceptBooking({ bookingId: booking._id });
@@ -42,7 +50,7 @@ function useBookingDecision(onDone: () => void) {
         await rejectBooking({ bookingId: booking._id });
         toast.success(`Declined ${booking.requesterName}`);
       }
-      onDone();
+      onDone(booking);
     } catch (error: unknown) {
       toast.error(
         decision === "accept"
@@ -66,26 +74,13 @@ export function bookingTimeLabel(booking: Booking): string {
   )} – ${format(booking.endMs, "HH:mm")}`;
 }
 
-type BookingRequestPanelProps =
-  | {
-      booking: Booking;
-      onClose: () => void;
-      onBack?: never;
-      onDone?: never;
-    }
-  | {
-      booking: Booking;
-      onClose?: never;
-      onBack: () => void;
-      onDone: () => void;
-    };
-
 export function BookingRequestPanel({
   booking: snapshot,
   onClose,
-  onBack,
-  onDone,
-}: BookingRequestPanelProps) {
+}: {
+  booking: Booking;
+  onClose: () => void;
+}) {
   // The dock holds a snapshot taken when the block was clicked; subscribe so a
   // decision made elsewhere (or a second tab) is reflected here.
   const live = useQuery(api.booking.listMyBookings, {
@@ -93,25 +88,11 @@ export function BookingRequestPanel({
     endMs: snapshot.endMs + 1,
   });
   const booking = live?.find((b) => b._id === snapshot._id) ?? snapshot;
-  const { decide, busy } = useBookingDecision(onDone ?? onClose);
+  const { decide, busy } = useBookingDecision(onClose);
+  const activeDecision = busy?.bookingId === booking._id ? busy.decision : null;
 
   return (
     <div className="flex flex-col gap-3">
-      {onBack && (
-        <button
-          type="button"
-          onClick={onBack}
-          className="-ml-1 flex items-center gap-1 self-start rounded-lg px-1 py-0.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <HugeiconsIcon
-            icon={ArrowLeft01Icon}
-            strokeWidth={2}
-            className="size-4 text-muted-foreground"
-          />
-          Requests
-        </button>
-      )}
-
       <div className="flex items-start gap-2.5">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">
@@ -121,20 +102,18 @@ export function BookingRequestPanel({
             {bookingTimeLabel(booking)}
           </p>
         </div>
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <HugeiconsIcon
-              icon={Cancel01Icon}
-              strokeWidth={2}
-              className="size-4"
-            />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <HugeiconsIcon
+            icon={Cancel01Icon}
+            strokeWidth={2}
+            className="size-4"
+          />
+        </button>
       </div>
 
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -161,7 +140,7 @@ export function BookingRequestPanel({
             disabled={busy !== null}
             onClick={() => decide(booking, "reject")}
           >
-            {busy === "reject" ? <Spinner /> : null}
+            {activeDecision === "reject" ? <Spinner /> : null}
             Decline
           </Button>
           <Button
@@ -170,8 +149,8 @@ export function BookingRequestPanel({
             disabled={busy !== null}
             onClick={() => decide(booking, "accept")}
           >
-            {busy === "accept" ? <Spinner /> : null}
-            {busy === "accept" ? "Confirming…" : "Confirm"}
+            {activeDecision === "accept" ? <Spinner /> : null}
+            {activeDecision === "accept" ? "Confirming…" : "Confirm"}
           </Button>
         </div>
       ) : (
@@ -191,59 +170,207 @@ export function BookingRequestPanel({
  * can scroll independently without pushing the availability settings down. */
 export function PendingRequestsList({
   pending,
-  onOpen,
+  onDone,
 }: {
   pending: Booking[];
-  onOpen: (booking: Booking) => void;
+  onDone: (booking: Booking) => void;
 }) {
+  const { decide, busy } = useBookingDecision(onDone);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
+
+  const updateScrollFade = () => {
+    const list = listRef.current;
+    if (!list) return;
+    const next = {
+      top: list.scrollTop > 0,
+      bottom: list.scrollTop + list.clientHeight < list.scrollHeight - 1,
+    };
+    setScrollFade((current) =>
+      current.top === next.top && current.bottom === next.bottom
+        ? current
+        : next,
+    );
+  };
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    updateScrollFade();
+    const observer = new ResizeObserver(updateScrollFade);
+    observer.observe(list);
+    for (const card of list.children) observer.observe(card);
+    return () => observer.disconnect();
+  }, [pending]);
+
   return (
-    <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1">
-      {pending.map((booking) => (
-        <button
-          key={booking._id}
-          type="button"
-          onClick={() => onOpen(booking)}
-          className="group flex items-center gap-3 rounded-2xl px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <span
-            aria-hidden
-            className="h-10 w-[3px] shrink-0 rounded-full bg-primary/70"
+    <div className="relative flex min-h-0 flex-1">
+      <div
+        ref={listRef}
+        onScroll={updateScrollFade}
+        className="-mx-1 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1 scrollbar-gutter-stable"
+      >
+        {pending.map((booking) => (
+          <RequestCard
+            key={booking._id}
+            booking={booking}
+            busy={busy}
+            onDecide={(decision) => decide(booking, decision)}
           />
-          <span className="min-w-0 flex-1">
-            <span className="flex items-center gap-2">
-              <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                {booking.requesterName}
-              </span>
-              <span className="shrink-0 text-[11px] text-muted-foreground">
-                {formatDistanceToNowStrict(booking.createdAt, {
-                  addSuffix: true,
-                })}
-              </span>
-            </span>
-            <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <HugeiconsIcon
-                icon={Clock01Icon}
-                strokeWidth={2}
-                className="size-3.5 shrink-0"
-              />
-              <span className="truncate">{bookingTimeLabel(booking)}</span>
-            </span>
-            <span className="block truncate pl-5 text-xs text-muted-foreground">
-              {booking.requesterEmail}
-            </span>
-          </span>
-          <HugeiconsIcon
-            icon={ArrowRight01Icon}
-            strokeWidth={2}
-            className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
-          />
-        </button>
-      ))}
-      {pending.length === 0 && (
-        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-          No pending requests
-        </div>
+        ))}
+        {pending.length === 0 && (
+          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+            No pending requests
+          </div>
+        )}
+      </div>
+      {scrollFade.top && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute top-0 right-3 left-0 h-10 bg-linear-to-b from-popover to-transparent"
+        />
+      )}
+      {scrollFade.bottom && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute right-3 bottom-0 left-0 h-10 bg-linear-to-t from-popover to-transparent"
+        />
       )}
     </div>
+  );
+}
+
+function RequestCard({
+  booking,
+  busy,
+  onDecide,
+}: {
+  booking: Booking;
+  busy: {
+    bookingId: Booking["_id"];
+    decision: BookingDecision;
+  } | null;
+  onDecide: (decision: BookingDecision) => void;
+}) {
+  const reduce = useReducedMotion();
+  const noteRef = useRef<HTMLParagraphElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [canExpand, setCanExpand] = useState<boolean>();
+  const activeDecision = busy?.bookingId === booking._id ? busy.decision : null;
+
+  useEffect(() => {
+    const note = noteRef.current;
+    if (!note) return;
+
+    const measure = () => {
+      const lineHeight = Number.parseFloat(getComputedStyle(note).lineHeight);
+      setCanExpand(note.scrollHeight > lineHeight * COLLAPSED_NOTE_LINES + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(note);
+    return () => observer.disconnect();
+  }, [booking.note]);
+
+  return (
+    <article className="relative flex min-h-[180px] shrink-0 flex-col rounded-2xl border border-border bg-muted/50 px-3.5 py-3">
+      <span
+        aria-hidden
+        className="absolute top-3 bottom-3 left-1 w-[3px] rounded-full bg-primary/70"
+      />
+
+      <div className="flex items-start gap-2 pl-1">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">
+            {booking.requesterName}
+          </p>
+          <p className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+            <HugeiconsIcon
+              icon={Mail01Icon}
+              strokeWidth={2}
+              className="size-3.5 shrink-0"
+            />
+            <span className="truncate">{booking.requesterEmail}</span>
+          </p>
+        </div>
+        <span className="shrink-0 text-[11px] text-muted-foreground">
+          {formatDistanceToNowStrict(booking.createdAt, { addSuffix: true })}
+        </span>
+      </div>
+
+      <div className="mt-2 space-y-0.5 pl-1 text-xs">
+        <p className="flex items-center gap-1.5">
+          <HugeiconsIcon
+            icon={Clock01Icon}
+            strokeWidth={2}
+            className="size-3.5 shrink-0 text-muted-foreground"
+          />
+          <span className="truncate">{bookingTimeLabel(booking)}</span>
+        </p>
+        <p className="pl-5 text-[11px] text-muted-foreground">
+          Requester's timezone: {booking.timeZone.replace(/_/g, " ")}
+        </p>
+      </div>
+
+      <div className="mt-2 pl-1">
+        {booking.note ? (
+          <>
+            <motion.div
+              initial={false}
+              animate={{
+                height:
+                  expanded || canExpand === false
+                    ? "auto"
+                    : COLLAPSED_NOTE_HEIGHT,
+              }}
+              transition={reduce ? { duration: 0 } : SPRING_DOCK}
+              className="overflow-hidden"
+            >
+              <p
+                ref={noteRef}
+                className="text-sm leading-5 whitespace-pre-wrap text-foreground/90"
+              >
+                {booking.note}
+              </p>
+            </motion.div>
+            {(canExpand || expanded) && (
+              <button
+                type="button"
+                onClick={() => setExpanded((value) => !value)}
+                className="mt-1 rounded text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {expanded ? "Show less" : "Show more"}
+              </button>
+            )}
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground/60">No message</p>
+        )}
+      </div>
+
+      <div className="mt-auto flex items-center gap-1.5 pt-3 pl-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="flex-1"
+          disabled={busy !== null}
+          onClick={() => onDecide("reject")}
+        >
+          {activeDecision === "reject" ? <Spinner /> : null}
+          Decline
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          className="flex-1"
+          disabled={busy !== null}
+          onClick={() => onDecide("accept")}
+        >
+          {activeDecision === "accept" ? <Spinner /> : null}
+          {activeDecision === "accept" ? "Confirming…" : "Confirm"}
+        </Button>
+      </div>
+    </article>
   );
 }

@@ -10,7 +10,7 @@
  * or stale `startMs` has to fail against the server's own answer.
  */
 
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -615,10 +615,10 @@ export const requestBooking = mutation({
     }
 
     if (!(await consumeRateLimit(ctx, `page:${page.slug}`, MAX_REQUESTS_PER_PAGE))) {
-      throw new Error("This page has taken too many requests recently");
+      throw new ConvexError({ code: "PAGE_RATE_LIMIT" });
     }
     if (!(await consumeRateLimit(ctx, `email:${email}`, MAX_REQUESTS_PER_EMAIL))) {
-      throw new Error("You've sent several requests already — try again later");
+      throw new ConvexError({ code: "EMAIL_RATE_LIMIT" });
     }
 
     // Ask for a window just wide enough to contain the requested slot, so the

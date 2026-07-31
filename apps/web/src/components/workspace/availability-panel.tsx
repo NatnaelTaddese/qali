@@ -13,9 +13,11 @@ import { Label } from "@qali/ui/components/label";
 import { Spinner } from "@qali/ui/components/spinner";
 import { cn } from "@qali/ui/lib/utils";
 import { useMutation, useQuery } from "convex/react";
+import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { SPRING_DOCK } from "@/components/calendar/motion";
 import {
   PendingRequestsDeck,
   type Booking,
@@ -80,15 +82,18 @@ function rowsFromRules(
  * at a time — half-entered hours would otherwise be live on a public page.
  */
 export function AvailabilityPanel({
+  pendingBookings,
   onClose,
   onOpenRequest,
 }: {
+  pendingBookings: Booking[] | undefined;
   onClose: () => void;
   onOpenRequest: (booking: Booking) => void;
 }) {
   const page = useQuery(api.booking.getMyBookingPage);
   const defaults = useQuery(api.booking.bookingPageDefaults);
   const upsert = useMutation(api.booking.upsertBookingPage);
+  const reduce = useReducedMotion();
 
   const [slug, setSlug] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -191,16 +196,26 @@ export function AvailabilityPanel({
     }
   };
 
-  if (!rows || slug === null) {
+  if (!rows || slug === null || pendingBookings === undefined) {
     return (
-      <div className="flex h-40 items-center justify-center">
+      <motion.div
+        initial={false}
+        animate={{ height: 160 }}
+        transition={reduce ? { duration: 0 } : SPRING_DOCK}
+        className="flex items-center justify-center overflow-hidden"
+      >
         <Spinner />
-      </div>
+      </motion.div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <motion.div
+      initial={false}
+      animate={{ height: "auto" }}
+      transition={reduce ? { duration: 0 } : SPRING_DOCK}
+      className="flex flex-col gap-3 overflow-hidden"
+    >
       <div className="flex items-center gap-2.5">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">Booking link</p>
@@ -218,7 +233,7 @@ export function AvailabilityPanel({
         </button>
       </div>
 
-      <PendingRequestsDeck onOpen={onOpenRequest} />
+      <PendingRequestsDeck pending={pendingBookings} onOpen={onOpenRequest} />
 
       <div className="space-y-1.5">
         <div className="flex items-center gap-1.5">
@@ -396,6 +411,6 @@ export function AvailabilityPanel({
           {saving ? "Saving…" : "Save"}
         </Button>
       </div>
-    </div>
+    </motion.div>
   );
 }

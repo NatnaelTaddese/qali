@@ -13,8 +13,11 @@ import { Spinner } from "@qali/ui/components/spinner";
 import { cn } from "@qali/ui/lib/utils";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { format, formatDistanceToNowStrict } from "date-fns";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+
+import { SPRING_DOCK } from "@/components/calendar/motion";
 
 export type Booking = Doc<"bookings">;
 
@@ -168,12 +171,14 @@ const CARD_GAP_PX = 8;
  * peek and a counter instead of showing everything at once.
  */
 export function PendingRequestsDeck({
+  pending,
   onOpen,
 }: {
+  pending: Booking[];
   onOpen: (booking: Booking) => void;
 }) {
-  const pending = useQuery(api.booking.listPendingBookings) ?? [];
   const { decide, busy } = useBookingDecision(() => {});
+  const reduce = useReducedMotion();
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [activeIndex, setActiveIndex] = useState(0);
 
@@ -216,53 +221,66 @@ export function PendingRequestsDeck({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending.length]);
 
-  if (pending.length === 0) return null;
-
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center gap-1 px-2">
-        <p className="flex-1 text-xs font-medium text-muted-foreground">
-          {pending.length === 1 ? "1 request" : `${pending.length} requests`}
-        </p>
-        {pending.length > 1 && (
-          <>
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {activeIndex + 1}/{pending.length}
-            </span>
-            <DeckArrow
-              icon={ArrowLeft01Icon}
-              label="Previous request"
-              disabled={activeIndex === 0}
-              onClick={() => scrollToIndex(activeIndex - 1)}
-            />
-            <DeckArrow
-              icon={ArrowRight01Icon}
-              label="Next request"
-              disabled={activeIndex === pending.length - 1}
-              onClick={() => scrollToIndex(activeIndex + 1)}
-            />
-          </>
-        )}
-      </div>
+    <AnimatePresence initial={false}>
+      {pending.length > 0 && (
+        <motion.div
+          key="pending-requests"
+          initial={
+            reduce ? { opacity: 0 } : { opacity: 0, height: 0, marginBottom: -12 }
+          }
+          animate={{ opacity: 1, height: "auto", marginBottom: 0 }}
+          exit={
+            reduce ? { opacity: 0 } : { opacity: 0, height: 0, marginBottom: -12 }
+          }
+          transition={SPRING_DOCK}
+          className="space-y-1.5 overflow-hidden"
+        >
+          <div className="flex items-center gap-1 px-2">
+            <p className="flex-1 text-xs font-medium text-muted-foreground">
+              {pending.length === 1 ? "1 request" : `${pending.length} requests`}
+            </p>
+            {pending.length > 1 && (
+              <>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {activeIndex + 1}/{pending.length}
+                </span>
+                <DeckArrow
+                  icon={ArrowLeft01Icon}
+                  label="Previous request"
+                  disabled={activeIndex === 0}
+                  onClick={() => scrollToIndex(activeIndex - 1)}
+                />
+                <DeckArrow
+                  icon={ArrowRight01Icon}
+                  label="Next request"
+                  disabled={activeIndex === pending.length - 1}
+                  onClick={() => scrollToIndex(activeIndex + 1)}
+                />
+              </>
+            )}
+          </div>
 
-      <div
-        ref={scrollerRef}
-        onScroll={onScroll}
-        className="-mx-1 flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-p-1 px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {pending.map((booking, index) => (
-          <RequestCard
-            key={booking._id}
-            booking={booking}
-            active={index === activeIndex}
-            busy={busy}
-            onOpen={() => onOpen(booking)}
-            onDecide={(decision) => decide(booking, decision)}
-            onFocus={() => scrollToIndex(index)}
-          />
-        ))}
-      </div>
-    </div>
+          <div
+            ref={scrollerRef}
+            onScroll={onScroll}
+            className="-mx-1 flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-p-1 px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            {pending.map((booking, index) => (
+              <RequestCard
+                key={booking._id}
+                booking={booking}
+                active={index === activeIndex}
+                busy={busy}
+                onOpen={() => onOpen(booking)}
+                onDecide={(decision) => decide(booking, decision)}
+                onFocus={() => scrollToIndex(index)}
+              />
+            ))}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 

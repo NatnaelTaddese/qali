@@ -55,6 +55,7 @@ function cornerRadius(view: DockView | null): number {
 export function BottomIsland() {
   const { view, viewId, direction, open, close } = useDock();
   const reduce = useReducedMotion();
+  const pendingBookings = useQuery(api.booking.listPendingBookings);
   const ref = useRef<HTMLElement>(null);
   const expanded = view !== null;
 
@@ -149,6 +150,7 @@ export function BottomIsland() {
                 <AccountPanel onClose={close} />
               ) : view?.kind === "availability" ? (
                 <AvailabilityPanel
+                  pendingBookings={pendingBookings}
                   onClose={close}
                   onOpenRequest={(booking) => open({ kind: "booking", booking })}
                 />
@@ -156,6 +158,7 @@ export function BottomIsland() {
                 <BookingRequestPanel booking={view.booking} onClose={close} />
               ) : (
                 <NavRow
+                  pendingCount={pendingBookings?.length ?? 0}
                   onOpenAccount={() => open({ kind: "account" })}
                   onOpenAvailability={() => open({ kind: "availability" })}
                 />
@@ -169,14 +172,15 @@ export function BottomIsland() {
 }
 
 function NavRow({
+  pendingCount,
   onOpenAccount,
   onOpenAvailability,
 }: {
+  pendingCount: number;
   onOpenAccount: () => void;
   onOpenAvailability: () => void;
 }) {
   const syncNow = useAction(api.googleSync.syncNow);
-  const pendingCount = useQuery(api.booking.listPendingBookings)?.length ?? 0;
   const [isSyncing, setIsSyncing] = useState(false);
 
   const sync = async () => {

@@ -62,6 +62,7 @@ const LOOKBACK_MS = MS_PER_DAY;
 const RATE_WINDOW_MS = 60 * 60 * 1000;
 const MAX_REQUESTS_PER_EMAIL = 3;
 const MAX_REQUESTS_PER_PAGE = 20;
+const MAX_PENDING_BOOKINGS = 500;
 const EXPIRATION_BATCH_SIZE = 100;
 
 const slotSettingsValidator = {
@@ -428,11 +429,12 @@ export const listPendingBookings = query({
     }
     const rows = await ctx.db
       .query("bookings")
-      .withIndex("by_host_and_status", (q) =>
+      .withIndex("by_host_and_status_and_start", (q) =>
         q.eq("hostUserId", user._id).eq("status", "pending"),
       )
-      .collect();
-    return rows.sort((a, b) => a.startMs - b.startMs);
+      .order("asc")
+      .take(MAX_PENDING_BOOKINGS);
+    return rows;
   },
 });
 

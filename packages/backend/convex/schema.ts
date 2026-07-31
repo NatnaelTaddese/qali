@@ -228,7 +228,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_host_and_start", ["hostUserId", "startMs"])
-    .index("by_host_and_status", ["hostUserId", "status"])
+    .index("by_host_and_status_and_start", ["hostUserId", "status", "startMs"])
     .index("by_status_and_end", ["status", "endMs"])
     .index("by_token", ["token"]),
 

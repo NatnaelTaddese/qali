@@ -33,6 +33,8 @@ import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
 import { UserAvatar } from "./user-avatar";
 
+const MAX_TIMEOUT_MS = 2_147_000_000;
+
 /** Each view gets its own width so the shell visibly adapts to what it holds.
  * Padding is deliberately not part of this — every panel shares one inset.
  *
@@ -56,11 +58,28 @@ export function BottomIsland() {
   const { view, viewId, direction, open, close } = useDock();
   const reduce = useReducedMotion();
   const pendingBookings = useQuery(api.booking.listPendingBookings);
+  const [now, setNow] = useState(() => Date.now());
   const activePendingBookings = pendingBookings?.filter(
-    (booking) => booking.endMs > Date.now(),
+    (booking) => booking.endMs > now,
   );
   const ref = useRef<HTMLElement>(null);
   const expanded = view !== null;
+
+  // Convex scheduled mutations remove new requests exactly at their deadline;
+  // this timer gives pre-migration rows the same immediate UI behavior.
+  const nextEndMs = activePendingBookings?.reduce<number | undefined>(
+    (nearest, booking) =>
+      nearest === undefined || booking.endMs < nearest ? booking.endMs : nearest,
+    undefined,
+  );
+  useEffect(() => {
+    if (nextEndMs === undefined) return;
+    const timeout = setTimeout(
+      () => setNow(Date.now()),
+      Math.min(Math.max(nextEndMs - Date.now(), 0), MAX_TIMEOUT_MS),
+    );
+    return () => clearTimeout(timeout);
+  }, [nextEndMs, now]);
 
   // No scrim, so dismissal is wired by hand: Escape, or a pointer outside the dock.
   useEffect(() => {

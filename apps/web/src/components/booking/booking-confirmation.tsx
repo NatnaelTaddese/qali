@@ -11,12 +11,15 @@ import { cn } from "@qali/ui/lib/utils";
 import { useQuery } from "convex/react";
 import { format } from "date-fns";
 import { motion, useReducedMotion } from "motion/react";
+import { useEffect, useState } from "react";
 import { svg as appleSvg } from "thesvg/apple";
 import { svg as googleCalendarSvg } from "thesvg/google-calendar";
 
 import { buildGoogleUrl, downloadIcs } from "./calendar-links";
 import { visitorZoneLabel } from "./slot-picker";
 import { formatTime } from "./time-format";
+
+const MAX_TIMEOUT_MS = 2_147_000_000;
 
 /**
  * What the requester sees after asking for a time, and the only place they ever
@@ -37,6 +40,18 @@ export function BookingConfirmation({
 }) {
   const reduceMotion = useReducedMotion();
   const booking = useQuery(api.booking.getBookingByToken, { token });
+  const [now, setNow] = useState(() => Date.now());
+
+  // Scheduled expiration normally drives this through Convex. The local timer
+  // makes an already-open legacy request change state at the same deadline too.
+  useEffect(() => {
+    if (!booking || booking.status !== "pending" || booking.endMs <= now) return;
+    const timeout = setTimeout(
+      () => setNow(Date.now()),
+      Math.min(Math.max(booking.endMs - Date.now(), 0), MAX_TIMEOUT_MS),
+    );
+    return () => clearTimeout(timeout);
+  }, [booking, now]);
 
   if (booking === undefined) {
     return (
@@ -65,7 +80,7 @@ export function BookingConfirmation({
   )}`;
   const expired =
     booking.status === "expired" ||
-    (booking.status === "pending" && booking.endMs <= Date.now());
+    (booking.status === "pending" && booking.endMs <= now);
 
   const state =
     booking.status === "accepted"

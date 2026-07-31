@@ -72,6 +72,15 @@ export function BottomIsland() {
       // Another event hands the dock straight over to its own onClick — closing
       // first would flash the nav row between the two details.
       if (target.closest("[data-event]")) return;
+      // Popovers and menus opened from inside a panel (e.g. the availability
+      // time picker) portal to the body, so a pointer in them lands outside the
+      // dock's node. They are logically part of the dock — don't dismiss on them.
+      if (
+        target.closest(
+          "[data-slot='popover-content'],[data-slot='dropdown-menu-content']",
+        )
+      )
+        return;
       close();
     };
     window.addEventListener("keydown", onKey);

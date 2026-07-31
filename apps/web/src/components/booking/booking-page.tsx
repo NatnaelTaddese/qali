@@ -17,6 +17,7 @@ import { EASE_OUT_EXPO, SPRING_DOCK } from "@/components/calendar/motion";
 
 import { BookingConfirmation } from "./booking-confirmation";
 import { CalendarBackdrop } from "./calendar-backdrop";
+import { bookingRequestErrorMessage } from "./request-error";
 import { SlotPicker, VISITOR_TIME_ZONE, visitorZoneLabel } from "./slot-picker";
 import { formatTime, storeUse24Hour, storedUse24Hour } from "./time-format";
 
@@ -44,10 +45,15 @@ export function BookingPage({
   const page = useQuery(api.booking.getPublicPage, { slug });
   // Floored to the hour so the subscription argument is stable across renders
   // rather than a new millisecond each time.
-  const fromMs = useMemo(() => Math.floor(Date.now() / MS_PER_HOUR) * MS_PER_HOUR, []);
+  const fromMs = useMemo(
+    () => Math.floor(Date.now() / MS_PER_HOUR) * MS_PER_HOUR,
+    [],
+  );
   const availability = useQuery(
     api.booking.listSlots,
-    page ? { slug, fromMs, toMs: fromMs + WINDOW_DAYS * 24 * MS_PER_HOUR } : "skip",
+    page
+      ? { slug, fromMs, toMs: fromMs + WINDOW_DAYS * 24 * MS_PER_HOUR }
+      : "skip",
   );
   const requestBooking = useMutation(api.booking.requestBooking);
 
@@ -82,7 +88,10 @@ export function BookingPage({
 
   const emailLooksValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const canSubmit =
-    selectedSlot !== null && name.trim().length > 0 && emailLooksValid && !submitting;
+    selectedSlot !== null &&
+    name.trim().length > 0 &&
+    emailLooksValid &&
+    !submitting;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,9 +115,8 @@ export function BookingPage({
       onTokenChange(newToken);
     } catch (error: unknown) {
       setSubmitting(false);
-      toast.error("Couldn't send your request", {
-        description: error instanceof Error ? error.message : undefined,
-      });
+      const message = bookingRequestErrorMessage(error);
+      toast.error(message.title, { description: message.description });
     }
   };
 

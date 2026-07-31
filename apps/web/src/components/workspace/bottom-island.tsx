@@ -27,11 +27,15 @@ import {
   dockVariantsReduced,
   SPRING_DOCK,
 } from "@/components/calendar/motion";
+import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { AccountPanel } from "./account-panel";
 import { AvailabilityPanel } from "./availability-panel";
 import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
 import { UserAvatar } from "./user-avatar";
+
+const MAX_TIMEOUT_MS = 2_147_000_000;
+const AVAILABILITY_PREFETCH_GRACE_MS = 10_000;
 
 /** Each view gets its own width so the shell visibly adapts to what it holds.
  * Padding is deliberately not part of this — every panel shares one inset.
@@ -55,9 +59,99 @@ function cornerRadius(view: DockView | null): number {
 export function BottomIsland() {
   const { view, viewId, direction, open, close } = useDock();
   const reduce = useReducedMotion();
+  const availabilityOpen = view?.kind === "availability";
+  const [availabilityIntentVersion, setAvailabilityIntentVersion] = useState(0);
+  const [availabilityRequested, setAvailabilityRequested] = useState(false);
+  const availabilityDataActive =
+    availabilityOpen ||
+    availabilityRequested ||
+    availabilityIntentVersion > 0;
+  // This stays live for the dock badge and incoming-request calendar blocks.
   const pendingBookings = useQuery(api.booking.listPendingBookings);
+  // Warm settings on interaction intent so the dock knows its final content
+  // height before its spring begins. Retain them briefly after close for a
+  // smooth reopen, then release both subscriptions.
+  const bookingPage = useStableQuery(
+    api.booking.getMyBookingPage,
+    availabilityDataActive ? {} : "skip",
+  );
+  const bookingDefaults = useStableQuery(
+    api.booking.bookingPageDefaults,
+    availabilityDataActive ? {} : "skip",
+  );
+  const availabilityReady =
+    pendingBookings !== undefined &&
+    bookingPage !== undefined &&
+    (bookingPage !== null || bookingDefaults !== undefined);
+  const [now, setNow] = useState(() => Date.now());
+  const availabilityInstance = useRef(0);
+  const activePendingBookings = pendingBookings?.filter(
+    (booking) => booking.endMs > now,
+  );
   const ref = useRef<HTMLElement>(null);
   const expanded = view !== null;
+
+  useEffect(() => {
+    if (
+      availabilityOpen ||
+      availabilityRequested ||
+      availabilityIntentVersion === 0
+    )
+      return;
+    const timeout = setTimeout(
+      () => setAvailabilityIntentVersion(0),
+      AVAILABILITY_PREFETCH_GRACE_MS,
+    );
+    return () => clearTimeout(timeout);
+  }, [availabilityOpen, availabilityRequested, availabilityIntentVersion]);
+
+  useEffect(() => {
+    if (!availabilityRequested) return;
+    if (view !== null) {
+      setAvailabilityRequested(false);
+      return;
+    }
+    if (!availabilityReady) return;
+    setAvailabilityRequested(false);
+    availabilityInstance.current += 1;
+    open({ kind: "availability" });
+  }, [availabilityRequested, availabilityReady, view, open]);
+
+  const prepareAvailability = () => {
+    setAvailabilityIntentVersion((version) => version + 1);
+  };
+
+  const requestAvailability = () => {
+    prepareAvailability();
+    if (availabilityReady) {
+      availabilityInstance.current += 1;
+      open({ kind: "availability" });
+      return;
+    }
+    setAvailabilityRequested(true);
+  };
+
+  // Convex scheduled mutations remove new requests exactly at their deadline;
+  // this timer gives pre-migration rows the same immediate UI behavior.
+  const nextEndMs = activePendingBookings?.reduce<number | undefined>(
+    (nearest, booking) =>
+      nearest === undefined || booking.endMs < nearest ? booking.endMs : nearest,
+    undefined,
+  );
+  useEffect(() => {
+    if (nextEndMs === undefined) return;
+    let timeout: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      const remaining = nextEndMs - Date.now();
+      if (remaining <= 0) {
+        setNow(Date.now());
+        return;
+      }
+      timeout = setTimeout(schedule, Math.min(remaining, MAX_TIMEOUT_MS));
+    };
+    schedule();
+    return () => clearTimeout(timeout);
+  }, [nextEndMs]);
 
   // No scrim, so dismissal is wired by hand: Escape, or a pointer outside the dock.
   useEffect(() => {
@@ -160,17 +254,21 @@ export function BottomIsland() {
                 <AccountPanel onClose={close} />
               ) : view?.kind === "availability" ? (
                 <AvailabilityPanel
-                  pendingBookings={pendingBookings}
+                  key={availabilityInstance.current}
+                  pendingBookings={activePendingBookings}
+                  page={bookingPage}
+                  defaults={bookingDefaults}
                   onClose={close}
-                  onOpenRequest={(booking) => open({ kind: "booking", booking })}
                 />
               ) : view?.kind === "booking" ? (
                 <BookingRequestPanel booking={view.booking} onClose={close} />
               ) : (
                 <NavRow
-                  pendingCount={pendingBookings?.length ?? 0}
+                  pendingCount={activePendingBookings?.length ?? 0}
                   onOpenAccount={() => open({ kind: "account" })}
-                  onOpenAvailability={() => open({ kind: "availability" })}
+                  availabilityLoading={availabilityRequested}
+                  onPrepareAvailability={prepareAvailability}
+                  onOpenAvailability={requestAvailability}
                 />
               )}
             </motion.div>
@@ -183,11 +281,15 @@ export function BottomIsland() {
 
 function NavRow({
   pendingCount,
+  availabilityLoading,
   onOpenAccount,
+  onPrepareAvailability,
   onOpenAvailability,
 }: {
   pendingCount: number;
+  availabilityLoading: boolean;
   onOpenAccount: () => void;
+  onPrepareAvailability: () => void;
   onOpenAvailability: () => void;
 }) {
   const syncNow = useAction(api.googleSync.syncNow);
@@ -227,6 +329,8 @@ function NavRow({
             : "Booking link"
         }
         badge={pendingCount}
+        busy={availabilityLoading}
+        onIntent={onPrepareAvailability}
         onClick={onOpenAvailability}
       />
 
@@ -250,6 +354,7 @@ function NavButton({
   active,
   busy,
   badge,
+  onIntent,
   onClick,
 }: {
   icon: IconSvgElement;
@@ -258,6 +363,7 @@ function NavButton({
   busy?: boolean;
   /** A count worth interrupting for, shown as a dot on the icon. 0 hides it. */
   badge?: number;
+  onIntent?: () => void;
   onClick?: () => void;
 }) {
   return (
@@ -267,6 +373,9 @@ function NavButton({
         aria-current={active ? "page" : undefined}
         aria-busy={busy || undefined}
         disabled={busy}
+        onPointerEnter={onIntent}
+        onPointerDown={onIntent}
+        onFocus={onIntent}
         onClick={onClick}
         className={cn(
           "relative flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground",

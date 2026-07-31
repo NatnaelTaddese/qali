@@ -216,6 +216,7 @@ export default defineSchema({
       v.literal("pending"),
       v.literal("accepted"),
       v.literal("rejected"),
+      v.literal("expired"),
     ),
     // Unguessable handle that lets the requester follow their own request
     // without an account. It is the only key that reads this row publicly.
@@ -227,7 +228,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_host_and_start", ["hostUserId", "startMs"])
-    .index("by_host_and_status", ["hostUserId", "status"])
+    .index("by_host_and_status_and_start", ["hostUserId", "status", "startMs"])
+    .index("by_status_and_end", ["status", "endMs"])
     .index("by_token", ["token"]),
 
   // Fixed-window counters guarding the one mutation anonymous callers can

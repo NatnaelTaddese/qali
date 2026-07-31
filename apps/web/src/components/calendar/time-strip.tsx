@@ -183,19 +183,15 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       [days, effectiveEvents],
     );
 
-    // Pending booking requests get their own subscription here rather than
-    // riding along with the events query: they are a different table, and
-    // keeping them apart leaves the event rows referentially stable for the drag
-    // override and `useStableQuery`. Bucketed per column like the events are.
-    const bookings =
-      useQuery(api.booking.listMyBookings, {
-        startMs: days[0].getTime(),
-        endMs: days[days.length - 1].getTime() + MS_PER_DAY,
-      }) ?? [];
+    // The dock already holds this no-argument subscription. Convex shares the
+    // live result, so moving the date window never clears and reloads bookings.
+    const bookings = useQuery(api.booking.listPendingBookings) ?? [];
     const bookingsByDay = useMemo(() => {
       const buckets: (typeof bookings)[] = days.map(() => []);
       for (const booking of bookings) {
-        if (booking.status !== "pending") continue;
+        // Also enforce the deadline locally so legacy rows disappear while the
+        // expiration sweep catches up.
+        if (booking.endMs <= now) continue;
         days.forEach((day, i) => {
           const dayStartMs = day.getTime();
           if (
@@ -207,7 +203,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
         });
       }
       return buckets;
-    }, [days, bookings]);
+    }, [days, bookings, now]);
     const visibleEndIdx = Math.min(
       visibleStartIdx + columns - 1,
       days.length - 1,

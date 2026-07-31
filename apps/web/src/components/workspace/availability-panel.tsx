@@ -1,6 +1,10 @@
 import {
+  ArrowLeft01Icon,
+  ArrowRight01Icon,
   Cancel01Icon,
   Copy01Icon,
+  MinusSignIcon,
+  PlusSignIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -16,16 +20,18 @@ import {
   TooltipTrigger,
 } from "@qali/ui/components/tooltip";
 import { cn } from "@qali/ui/lib/utils";
+import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
-import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { SPRING_DOCK } from "@/components/calendar/motion";
 import {
-  PendingRequestsDeck,
-  type Booking,
-} from "./booking-request-panel";
+  dockVariants,
+  dockVariantsReduced,
+  SPRING_DOCK,
+} from "@/components/calendar/motion";
+import { PendingRequestsList, type Booking } from "./booking-request-panel";
 import { TimeField } from "./time-field";
 
 /** Weekdays in display order, matching the grid's Monday-first week. */
@@ -49,7 +55,23 @@ interface DayRow {
   endMin: number;
 }
 
-const DEFAULT_ROW: DayRow = { enabled: false, startMin: 9 * 60, endMin: 17 * 60 };
+type BookingPage = FunctionReturnType<typeof api.booking.getMyBookingPage>;
+type BookingDefaults = FunctionReturnType<
+  typeof api.booking.bookingPageDefaults
+>;
+
+interface AvailabilityPanelProps {
+  pendingBookings: Booking[] | undefined;
+  page: BookingPage | undefined;
+  defaults: BookingDefaults | undefined;
+  onClose: () => void;
+}
+
+const DEFAULT_ROW: DayRow = {
+  enabled: false,
+  startMin: 9 * 60,
+  endMin: 17 * 60,
+};
 
 function rowsFromRules(
   rules: { weekday: number; startMin: number; endMin: number }[],
@@ -64,6 +86,71 @@ function rowsFromRules(
   return rows;
 }
 
+function NumberStepper({
+  id,
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+}) {
+  const setValue = (next: number) =>
+    onChange(Math.min(max, Math.max(min, next)));
+
+  return (
+    <div className="flex h-8 items-center rounded-3xl bg-input/50 px-1 focus-within:ring-3 focus-within:ring-ring/30">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        disabled={value <= min}
+        aria-label={`Decrease ${label}`}
+        onClick={() => setValue(value - 1)}
+      >
+        <HugeiconsIcon
+          icon={MinusSignIcon}
+          strokeWidth={2}
+          className="size-3.5"
+        />
+      </Button>
+      <Input
+        id={id}
+        type="number"
+        min={min}
+        max={max}
+        value={value}
+        aria-label={label}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (Number.isFinite(next)) setValue(next);
+        }}
+        className="h-8 flex-1 rounded-none border-0 bg-transparent px-1 text-center [appearance:textfield] focus-visible:border-transparent focus-visible:ring-0 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        disabled={value >= max}
+        aria-label={`Increase ${label}`}
+        onClick={() => setValue(value + 1)}
+      >
+        <HugeiconsIcon
+          icon={PlusSignIcon}
+          strokeWidth={2}
+          className="size-3.5"
+        />
+      </Button>
+    </div>
+  );
+}
+
 /**
  * The host's side of the booking link: the slug it lives at, the weekly hours it
  * offers, and how those hours are cut into slots.
@@ -73,92 +160,183 @@ function rowsFromRules(
  */
 export function AvailabilityPanel({
   pendingBookings,
+  page,
+  defaults,
   onClose,
-  onOpenRequest,
-}: {
-  pendingBookings: Booking[] | undefined;
-  onClose: () => void;
-  onOpenRequest: (booking: Booking) => void;
-}) {
-  const page = useQuery(api.booking.getMyBookingPage);
-  const defaults = useQuery(api.booking.bookingPageDefaults);
-  const upsert = useMutation(api.booking.upsertBookingPage);
+}: AvailabilityPanelProps) {
   const reduce = useReducedMotion();
 
-  const [slug, setSlug] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
-  const [rows, setRows] = useState<Record<number, DayRow> | null>(null);
-  const [slotMinutes, setSlotMinutes] = useState(30);
-  const [noticeHours, setNoticeHours] = useState(2);
-  const [horizonDays, setHorizonDays] = useState(60);
-  const [enabled, setEnabled] = useState(true);
+  if (
+    page === undefined ||
+    (page === null && defaults === undefined) ||
+    pendingBookings === undefined
+  ) {
+    return (
+      <motion.div
+        initial={false}
+        animate={{ height: 160 }}
+        transition={reduce ? { duration: 0 } : SPRING_DOCK}
+        className="flex items-center justify-center overflow-hidden"
+      >
+        <Spinner />
+      </motion.div>
+    );
+  }
+
+  return (
+    <AvailabilityForm
+      pendingBookings={pendingBookings}
+      page={page}
+      defaults={defaults}
+      onClose={onClose}
+    />
+  );
+}
+
+function AvailabilityForm({
+  pendingBookings,
+  page,
+  defaults,
+  onClose,
+}: Omit<AvailabilityPanelProps, "pendingBookings" | "page"> & {
+  pendingBookings: Booking[];
+  page: BookingPage;
+}) {
+  const upsert = useMutation(api.booking.upsertBookingPage);
+  const reduce = useReducedMotion();
+  const initial = page ?? defaults;
+  const lastInitial = useRef(initial);
+  const dirty = useRef(false);
+  const editVersion = useRef(0);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const requestsRef = useRef<HTMLDivElement>(null);
+  const openRequestsOnMount = useRef(pendingBookings.length > 0);
+
+  const [slug, setSlug] = useState(
+    () => page?.slug ?? defaults?.suggestedSlug ?? "",
+  );
+  const [title, setTitle] = useState(() => page?.title ?? "");
+  const [rows, setRows] = useState<Record<number, DayRow>>(() =>
+    rowsFromRules(initial?.rules ?? []),
+  );
+  const [slotMinutes, setSlotMinutes] = useState(
+    () => initial?.slotMinutes ?? 30,
+  );
+  const [noticeHours, setNoticeHours] = useState(() =>
+    Math.round((initial?.minNoticeMinutes ?? 120) / 60),
+  );
+  const [horizonDays, setHorizonDays] = useState(
+    () => initial?.horizonDays ?? 60,
+  );
+  const [enabled, setEnabled] = useState(() => page?.enabled ?? true);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [screen, setScreen] = useState<"main" | "requests">("main");
+  const [direction, setDirection] = useState<-1 | 1>(1);
+  const [mainHeight, setMainHeight] = useState<number>();
+  const [requestsHeight, setRequestsHeight] = useState<number>();
 
-  // Seed the draft once the server answers. `slug === null` is the "not seeded
-  // yet" marker, so a saved page reopening the panel doesn't reset edits.
+  // Measure the settings screen before paint so a fresh dock can open directly
+  // to pending requests without losing the list's settings-height ceiling.
+  useLayoutEffect(() => {
+    if (!openRequestsOnMount.current) return;
+    openRequestsOnMount.current = false;
+    setMainHeight(mainRef.current?.offsetHeight);
+    setDirection(1);
+    setScreen("requests");
+  }, []);
+
+  // A save may finish after the panel was closed and reopened. Reconcile that
+  // late live result only while this fresh draft is still untouched.
   useEffect(() => {
-    if (slug !== null) return;
-    if (page) {
-      setSlug(page.slug);
-      setTitle(page.title ?? "");
-      setRows(rowsFromRules(page.rules));
-      setSlotMinutes(page.slotMinutes);
-      setNoticeHours(Math.round(page.minNoticeMinutes / 60));
-      setHorizonDays(page.horizonDays);
-      setEnabled(page.enabled);
-      return;
-    }
-    // `page === null` means the host has no page yet; wait for the defaults.
-    if (page === null && defaults) {
-      setSlug(defaults.suggestedSlug);
-      setRows(rowsFromRules(defaults.rules));
-      setSlotMinutes(defaults.slotMinutes);
-      setNoticeHours(Math.round(defaults.minNoticeMinutes / 60));
-      setHorizonDays(defaults.horizonDays);
-    }
-  }, [page, defaults, slug]);
+    if (initial === lastInitial.current) return;
+    lastInitial.current = initial;
+    if (!initial || dirty.current) return;
+    setSlug(page?.slug ?? defaults?.suggestedSlug ?? "");
+    setTitle(page?.title ?? "");
+    setRows(rowsFromRules(initial.rules));
+    setSlotMinutes(initial.slotMinutes);
+    setNoticeHours(Math.round(initial.minNoticeMinutes / 60));
+    setHorizonDays(initial.horizonDays);
+    setEnabled(page?.enabled ?? true);
+  }, [initial, page, defaults]);
 
-  const normalized = slug === null ? "" : normalizeSlug(slug);
+  useEffect(() => {
+    const element = screen === "main" ? mainRef.current : requestsRef.current;
+    if (!element) return;
+
+    const measure = () => {
+      const height = element.offsetHeight;
+      if (screen === "main") setMainHeight(height);
+      else setRequestsHeight(height);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [screen]);
+
+  const markDirty = () => {
+    dirty.current = true;
+    editVersion.current += 1;
+  };
+
+  const normalized = normalizeSlug(slug);
+  const persistedSlug = page?.slug;
+  const slugUnchanged =
+    persistedSlug !== undefined && normalized === persistedSlug;
   // Skip the round trip until there is something worth checking.
   const check = useQuery(
     api.booking.checkSlugAvailable,
-    normalized.length >= 3 ? { slug: normalized } : "skip",
+    normalized.length >= 3 && !slugUnchanged ? { slug: normalized } : "skip",
   );
 
   const rules = useMemo(
     () =>
-      rows
-        ? WEEKDAYS.filter(({ weekday }) => rows[weekday]?.enabled)
-            .map(({ weekday }) => ({
-              weekday,
-              startMin: rows[weekday].startMin,
-              endMin: rows[weekday].endMin,
-            }))
-            .filter((rule) => rule.endMin > rule.startMin)
-        : [],
+      WEEKDAYS.filter(({ weekday }) => rows[weekday]?.enabled)
+        .map(({ weekday }) => ({
+          weekday,
+          startMin: rows[weekday].startMin,
+          endMin: rows[weekday].endMin,
+        }))
+        .filter((rule) => rule.endMin > rule.startMin),
     [rows],
   );
 
-  const openDayCount = rows
-    ? WEEKDAYS.filter(({ weekday }) => rows[weekday]?.enabled).length
-    : 0;
-  const slugReady = normalized.length >= 3 && check?.available === true;
+  const openDayCount = WEEKDAYS.filter(
+    ({ weekday }) => rows[weekday]?.enabled,
+  ).length;
+  const slugReady =
+    normalized.length >= 3 && (slugUnchanged || check?.available === true);
   const canSave = slugReady && rules.length > 0 && !saving;
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const publicUrl = `${origin}/${normalized}`;
+  const variants = reduce ? dockVariantsReduced : dockVariants;
+
+  const openRequests = () => {
+    setMainHeight(mainRef.current?.offsetHeight);
+    setDirection(1);
+    setScreen("requests");
+  };
+
+  const returnToMain = () => {
+    setDirection(-1);
+    setScreen("main");
+  };
 
   const patchRow = (weekday: number, patch: Partial<DayRow>) => {
-    setRows((prev) =>
-      prev ? { ...prev, [weekday]: { ...prev[weekday], ...patch } } : prev,
-    );
+    markDirty();
+    setRows((prev) => ({
+      ...prev,
+      [weekday]: { ...prev[weekday], ...patch },
+    }));
   };
 
   // Copy one day's hours onto every other open day, so setting hours once is
   // enough for a typical week.
   const copyRowToAll = (weekday: number) => {
+    markDirty();
     setRows((prev) => {
-      if (!prev) return prev;
       const { startMin, endMin } = prev[weekday];
       const next: Record<number, DayRow> = { ...prev };
       for (const { weekday: wd } of WEEKDAYS) {
@@ -183,6 +361,7 @@ export function AvailabilityPanel({
 
   const save = async () => {
     if (!canSave) return;
+    const savedVersion = editVersion.current;
     setSaving(true);
     try {
       await upsert({
@@ -196,6 +375,9 @@ export function AvailabilityPanel({
         horizonDays,
         enabled,
       });
+      if (editVersion.current === savedVersion) {
+        dirty.current = false;
+      }
       toast.success(enabled ? "Booking link is live" : "Booking link saved");
     } catch (error: unknown) {
       toast.error("Couldn't save your booking link", {
@@ -206,278 +388,375 @@ export function AvailabilityPanel({
     }
   };
 
-  if (!rows || slug === null || pendingBookings === undefined) {
-    return (
-      <motion.div
-        initial={false}
-        animate={{ height: 160 }}
-        transition={reduce ? { duration: 0 } : SPRING_DOCK}
-        className="flex items-center justify-center overflow-hidden"
-      >
-        <Spinner />
-      </motion.div>
-    );
-  }
-
   return (
     <motion.div
       initial={false}
-      animate={{ height: "auto" }}
+      animate={{
+        height:
+          screen === "main"
+            ? (mainHeight ?? "auto")
+            : (requestsHeight ?? mainHeight ?? "auto"),
+      }}
       transition={reduce ? { duration: 0 } : SPRING_DOCK}
-      className="flex flex-col gap-3 overflow-hidden"
+      className="overflow-hidden"
     >
-      <div className="flex items-center gap-2.5">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">Booking link</p>
-          <p className="truncate text-xs text-muted-foreground">
-            Share it and people can request a time
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="size-4" />
-        </button>
-      </div>
-
-      <PendingRequestsDeck pending={pendingBookings} onOpen={onOpenRequest} />
-
-      <div className="space-y-1.5">
-        <div className="flex items-center gap-1.5">
-          <div className="flex h-9 min-w-0 flex-1 items-center gap-0 rounded-3xl bg-input/50 pl-3 focus-within:ring-3 focus-within:ring-ring/30">
-            <span className="shrink-0 truncate text-sm text-muted-foreground">
-              {origin.replace(/^https?:\/\//, "")}/
-            </span>
-            <Input
-              value={slug}
-              onChange={(e) => setSlug(e.target.value)}
-              placeholder="your-name"
-              aria-label="Booking link name"
-              spellCheck={false}
-              autoCapitalize="none"
-              className="h-9 flex-1 bg-transparent pl-0.5 focus-visible:border-transparent focus-visible:ring-0"
-            />
-          </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-label="Copy booking link"
-            disabled={!slugReady}
-            onClick={copyLink}
+      <AnimatePresence mode="popLayout" initial={false} custom={direction}>
+        {screen === "requests" ? (
+          <motion.div
+            key="requests"
+            ref={requestsRef}
+            custom={direction}
+            variants={variants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            style={{ maxHeight: mainHeight }}
+            className="flex flex-col gap-3 overflow-hidden"
           >
-            <HugeiconsIcon
-              icon={copied ? Tick02Icon : Copy01Icon}
-              strokeWidth={2}
-              className="size-4"
-            />
-          </Button>
-        </div>
-        {normalized.length >= 3 && check && !check.available && (
-          <p className="px-3 text-xs text-destructive">{check.reason}</p>
-        )}
-      </div>
-
-      <Input
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="What the meeting is called"
-        aria-label="Meeting title"
-      />
-
-      <div className="space-y-1.5">
-        <p className="px-2 text-xs font-medium text-muted-foreground">
-          Weekly hours
-        </p>
-        <div className="space-y-0.5">
-          {WEEKDAYS.map(({ weekday, label }) => {
-            const row = rows[weekday];
-            return (
-              <div
-                key={weekday}
-                className="group flex items-center gap-2.5 rounded-2xl px-1 py-1"
-              >
-                <Switch
-                  checked={row.enabled}
-                  onCheckedChange={(checked) =>
-                    patchRow(weekday, { enabled: checked })
-                  }
-                  aria-label={`${label} available`}
-                />
-                <span
-                  className={cn(
-                    "w-9 shrink-0 text-sm font-medium transition-colors",
-                    !row.enabled && "text-muted-foreground/60",
-                  )}
-                >
-                  {label}
-                </span>
-                <div className="flex flex-1 items-center gap-1.5">
-                  <TimeField
-                    value={row.startMin}
-                    onChange={(minutes) => patchRow(weekday, { startMin: minutes })}
-                    disabled={!row.enabled}
-                    aria-label={`${label} start`}
-                    className="flex-1"
-                  />
-                  <span
-                    className={cn(
-                      "text-xs transition-colors",
-                      row.enabled
-                        ? "text-muted-foreground"
-                        : "text-muted-foreground/50",
-                    )}
-                  >
-                    to
-                  </span>
-                  <TimeField
-                    value={row.endMin}
-                    onChange={(minutes) => patchRow(weekday, { endMin: minutes })}
-                    mode="end"
-                    disabled={!row.enabled}
-                    aria-label={`${label} end`}
-                    className="flex-1"
-                  />
-                </div>
-                {/* Fixed-width slot keeps every row's chips the same size whether
-                    or not the copy affordance is present. */}
-                <div className="flex size-6 shrink-0 items-center justify-center">
-                  {row.enabled && openDayCount > 1 && (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-xs"
-                            aria-label="Copy to all open days"
-                            onClick={() => copyRowToAll(weekday)}
-                            className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-                          >
-                            <HugeiconsIcon
-                              icon={Copy01Icon}
-                              strokeWidth={2}
-                              className="size-4"
-                            />
-                          </Button>
-                        }
-                      />
-                      <TooltipContent>Copy to all open days</TooltipContent>
-                    </Tooltip>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        {rows && rules.length === 0 && (
-          <p className="px-2 text-xs text-destructive">
-            Open at least one day
-          </p>
-        )}
-      </div>
-
-      <div className="space-y-1.5">
-        <p className="px-2 text-xs font-medium text-muted-foreground">
-          Slot length
-        </p>
-        <div
-          role="group"
-          aria-label="Slot length"
-          className="grid grid-cols-4 gap-1 rounded-2xl bg-muted p-1"
-        >
-          {SLOT_CHOICES.map((minutes) => (
-            <Button
-              key={minutes}
+            <button
               type="button"
-              variant="ghost"
-              size="sm"
-              aria-pressed={slotMinutes === minutes}
-              className="rounded-xl px-2 text-muted-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm hover:bg-background/60 dark:hover:bg-background/40 aria-pressed:dark:border-white/5"
-              onClick={() => setSlotMinutes(minutes)}
+              onClick={returnToMain}
+              className="-ml-1 flex items-center gap-1 self-start rounded-lg px-1 py-0.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              {minutes}m
-            </Button>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex gap-2">
-        <label className="flex-1 space-y-1">
-          <span className="px-2 text-xs font-medium text-muted-foreground">
-            Notice (hours)
-          </span>
-          <Input
-            type="number"
-            min={0}
-            max={720}
-            value={noticeHours}
-            onChange={(e) => setNoticeHours(Math.max(0, Number(e.target.value)))}
-            className="h-8 text-center"
-          />
-        </label>
-        <label className="flex-1 space-y-1">
-          <span className="px-2 text-xs font-medium text-muted-foreground">
-            Days ahead
-          </span>
-          <Input
-            type="number"
-            min={1}
-            max={365}
-            value={horizonDays}
-            onChange={(e) =>
-              setHorizonDays(Math.min(365, Math.max(1, Number(e.target.value))))
-            }
-            className="h-8 text-center"
-          />
-        </label>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <label className="flex min-w-0 flex-1 items-center gap-2.5">
-          <Switch
-            checked={enabled}
-            onCheckedChange={setEnabled}
-            aria-label={
-              enabled ? "Booking link is live" : "Booking link is paused"
-            }
-          />
-          <span className="min-w-0">
-            <span className="flex items-center gap-1.5 text-sm font-medium">
-              <span className="relative flex size-2 items-center justify-center">
-                <span
-                  className={cn(
-                    "size-2 rounded-full",
-                    enabled ? "bg-chart-2" : "bg-muted-foreground/40",
-                  )}
+              <HugeiconsIcon
+                icon={ArrowLeft01Icon}
+                strokeWidth={2}
+                className="size-4 text-muted-foreground"
+              />
+              Booking link
+            </button>
+            <div>
+              <p className="text-sm font-medium">Pending requests</p>
+              <p className="text-xs text-muted-foreground">
+                {pendingBookings.length === 1
+                  ? "1 person is waiting for a response"
+                  : `${pendingBookings.length} people are waiting for a response`}
+              </p>
+            </div>
+            <PendingRequestsList
+              pending={pendingBookings}
+              onDone={() => {
+                if (pendingBookings.length === 1) returnToMain();
+              }}
+            />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="main"
+            ref={mainRef}
+            custom={direction}
+            variants={variants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="flex flex-col gap-3 overflow-hidden"
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">Booking link</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  Share it and people can request a time
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close"
+                className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <HugeiconsIcon
+                  icon={Cancel01Icon}
+                  strokeWidth={2}
+                  className="size-4"
                 />
-                {enabled && !reduce && (
-                  <span className="absolute size-2 animate-ping rounded-full bg-chart-2 opacity-60" />
-                )}
-              </span>
-              {enabled ? "Live" : "Paused"}
-            </span>
-            <span className="block truncate text-xs font-normal text-muted-foreground">
-              {enabled
-                ? "People can request a time"
-                : "Hidden — not taking requests"}
-            </span>
-          </span>
-        </label>
-        <Button
-          type="button"
-          size="sm"
-          disabled={!canSave}
-          className={cn(saving && "opacity-80")}
-          onClick={save}
-        >
-          {saving && <Spinner />}
-          {saving ? "Saving…" : "Save"}
-        </Button>
-      </div>
+              </button>
+            </div>
+
+            {pendingBookings.length > 0 && (
+              <button
+                type="button"
+                onClick={openRequests}
+                className="group flex items-center gap-3 rounded-2xl bg-muted/60 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="flex min-w-0 flex-1 items-center gap-2">
+                  <span className="text-sm font-medium">Pending requests</span>
+                  <span className="flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] leading-5 font-semibold text-primary-foreground">
+                    {pendingBookings.length}
+                  </span>
+                </span>
+                <span className="text-xs text-muted-foreground">Review</span>
+                <HugeiconsIcon
+                  icon={ArrowRight01Icon}
+                  strokeWidth={2}
+                  className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+                />
+              </button>
+            )}
+
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <div className="flex h-9 min-w-0 flex-1 items-center gap-0 rounded-3xl bg-input/50 pl-3 focus-within:ring-3 focus-within:ring-ring/30">
+                  <span className="shrink-0 truncate text-sm text-muted-foreground">
+                    {origin.replace(/^https?:\/\//, "")}/
+                  </span>
+                  <Input
+                    value={slug}
+                    onChange={(e) => {
+                      markDirty();
+                      setSlug(e.target.value);
+                    }}
+                    placeholder="your-name"
+                    aria-label="Booking link name"
+                    spellCheck={false}
+                    autoCapitalize="none"
+                    className="h-9 flex-1 bg-transparent pl-0.5 focus-visible:border-transparent focus-visible:ring-0"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Copy booking link"
+                  disabled={!slugReady}
+                  onClick={copyLink}
+                >
+                  <HugeiconsIcon
+                    icon={copied ? Tick02Icon : Copy01Icon}
+                    strokeWidth={2}
+                    className="size-4"
+                  />
+                </Button>
+              </div>
+              {normalized.length >= 3 && check && !check.available && (
+                <p className="px-3 text-xs text-destructive">{check.reason}</p>
+              )}
+            </div>
+
+            <Input
+              value={title}
+              onChange={(e) => {
+                markDirty();
+                setTitle(e.target.value);
+              }}
+              placeholder="What the meeting is called"
+              aria-label="Meeting title"
+            />
+
+            <div className="space-y-1.5">
+              <p className="px-2 text-xs font-medium text-muted-foreground">
+                Weekly hours
+              </p>
+              <div className="space-y-0.5">
+                {WEEKDAYS.map(({ weekday, label }) => {
+                  const row = rows[weekday];
+                  return (
+                    <div
+                      key={weekday}
+                      className="group flex items-center gap-2.5 rounded-2xl px-1 py-1"
+                    >
+                      <Switch
+                        checked={row.enabled}
+                        onCheckedChange={(checked) =>
+                          patchRow(weekday, { enabled: checked })
+                        }
+                        aria-label={`${label} available`}
+                      />
+                      <span
+                        className={cn(
+                          "w-9 shrink-0 text-sm font-medium transition-colors",
+                          !row.enabled && "text-muted-foreground/60",
+                        )}
+                      >
+                        {label}
+                      </span>
+                      <div className="flex flex-1 items-center gap-1.5">
+                        <TimeField
+                          value={row.startMin}
+                          onChange={(minutes) =>
+                            patchRow(weekday, { startMin: minutes })
+                          }
+                          disabled={!row.enabled}
+                          aria-label={`${label} start`}
+                          className="flex-1"
+                        />
+                        <span
+                          className={cn(
+                            "text-xs transition-colors",
+                            row.enabled
+                              ? "text-muted-foreground"
+                              : "text-muted-foreground/50",
+                          )}
+                        >
+                          to
+                        </span>
+                        <TimeField
+                          value={row.endMin}
+                          onChange={(minutes) =>
+                            patchRow(weekday, { endMin: minutes })
+                          }
+                          mode="end"
+                          disabled={!row.enabled}
+                          aria-label={`${label} end`}
+                          className="flex-1"
+                        />
+                      </div>
+                      {/* Fixed-width slot keeps every row's chips the same size whether
+                    or not the copy affordance is present. */}
+                      <div className="flex size-6 shrink-0 items-center justify-center">
+                        {row.enabled && openDayCount > 1 && (
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  aria-label="Copy to all open days"
+                                  onClick={() => copyRowToAll(weekday)}
+                                  className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                                >
+                                  <HugeiconsIcon
+                                    icon={Copy01Icon}
+                                    strokeWidth={2}
+                                    className="size-4"
+                                  />
+                                </Button>
+                              }
+                            />
+                            <TooltipContent>
+                              Copy to all open days
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {rules.length === 0 && (
+                <p className="px-2 text-xs text-destructive">
+                  Open at least one day
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="px-2 text-xs font-medium text-muted-foreground">
+                Slot length
+              </p>
+              <div
+                role="group"
+                aria-label="Slot length"
+                className="grid grid-cols-4 gap-1 rounded-2xl bg-muted p-1"
+              >
+                {SLOT_CHOICES.map((minutes) => (
+                  <Button
+                    key={minutes}
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-pressed={slotMinutes === minutes}
+                    className="rounded-xl px-2 text-muted-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm hover:bg-background/60 dark:hover:bg-background/40 aria-pressed:dark:border-white/5"
+                    onClick={() => {
+                      markDirty();
+                      setSlotMinutes(minutes);
+                    }}
+                  >
+                    {minutes}m
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <div className="flex-1 space-y-1">
+                <label
+                  htmlFor="booking-notice-hours"
+                  className="block px-2 text-xs font-medium text-muted-foreground"
+                >
+                  Notice (hours)
+                </label>
+                <NumberStepper
+                  id="booking-notice-hours"
+                  label="Notice in hours"
+                  min={0}
+                  max={720}
+                  value={noticeHours}
+                  onChange={(value) => {
+                    markDirty();
+                    setNoticeHours(value);
+                  }}
+                />
+              </div>
+              <div className="flex-1 space-y-1">
+                <label
+                  htmlFor="booking-horizon-days"
+                  className="block px-2 text-xs font-medium text-muted-foreground"
+                >
+                  Days ahead
+                </label>
+                <NumberStepper
+                  id="booking-horizon-days"
+                  label="Days ahead"
+                  min={1}
+                  max={365}
+                  value={horizonDays}
+                  onChange={(value) => {
+                    markDirty();
+                    setHorizonDays(value);
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="flex min-w-0 flex-1 items-center gap-2.5">
+                <Switch
+                  checked={enabled}
+                  onCheckedChange={(checked) => {
+                    markDirty();
+                    setEnabled(checked);
+                  }}
+                  aria-label={
+                    enabled ? "Booking link is live" : "Booking link is paused"
+                  }
+                />
+                <span className="min-w-0">
+                  <span className="flex items-center gap-1.5 text-sm font-medium">
+                    <span className="relative flex size-2 items-center justify-center">
+                      <span
+                        className={cn(
+                          "size-2 rounded-full",
+                          enabled ? "bg-chart-2" : "bg-muted-foreground/40",
+                        )}
+                      />
+                      {enabled && !reduce && (
+                        <span className="absolute size-2 animate-ping rounded-full bg-chart-2 opacity-60" />
+                      )}
+                    </span>
+                    {enabled ? "Live" : "Paused"}
+                  </span>
+                  <span className="block truncate text-xs font-normal text-muted-foreground">
+                    {enabled
+                      ? "People can request a time"
+                      : "Hidden — not taking requests"}
+                  </span>
+                </span>
+              </label>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!canSave}
+                className={cn(saving && "opacity-80")}
+                onClick={save}
+              >
+                {saving && <Spinner />}
+                {saving ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

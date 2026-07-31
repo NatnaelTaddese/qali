@@ -3,10 +3,9 @@ import { useRef } from "react";
 
 /**
  * Like Convex's `useQuery`, but holds the previous result while the query is
- * re-loading after its args change (Convex returns `undefined` during that
- * window). This keeps the calendar from flashing empty on the rare occasions
- * the buffered date window shifts. Args passed within an unchanged window keep
- * the same subscription and never re-load in the first place.
+ * re-loading after its args change or is temporarily skipped. Convex returns
+ * `undefined` in both cases; retaining the last result supports
+ * stale-while-revalidate UI without keeping an unused subscription alive.
  *
  * Cast to `typeof useQuery` so every call site keeps Convex's own inference.
  */

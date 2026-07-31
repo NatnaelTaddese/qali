@@ -10,7 +10,7 @@
  * or stale `startMs` has to fail against the server's own answer.
  */
 
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -62,6 +62,8 @@ const LOOKBACK_MS = MS_PER_DAY;
 const RATE_WINDOW_MS = 60 * 60 * 1000;
 const MAX_REQUESTS_PER_EMAIL = 3;
 const MAX_REQUESTS_PER_PAGE = 20;
+const MAX_PENDING_BOOKINGS = 500;
+const EXPIRATION_BATCH_SIZE = 100;
 
 const slotSettingsValidator = {
   slotMinutes: v.number(),
@@ -151,7 +153,7 @@ async function collectBusy(
     .collect();
 
   for (const booking of bookings) {
-    if (booking.status === "rejected") continue;
+    if (booking.status === "rejected" || booking.status === "expired") continue;
     if (booking._id === excludeBookingId) continue;
     if (booking.endMs <= fromMs) continue;
     busy.push({ startMs: booking.startMs, endMs: booking.endMs });
@@ -416,7 +418,8 @@ export const listMyBookings = query({
   },
 });
 
-/** Pending requests from now on, newest last — the dock's request list. */
+/** Pending requests ordered by start time. Expiration mutations keep this
+ * deterministic query current without reading the wall clock here. */
 export const listPendingBookings = query({
   args: {},
   handler: async (ctx): Promise<Doc<"bookings">[]> => {
@@ -426,14 +429,56 @@ export const listPendingBookings = query({
     }
     const rows = await ctx.db
       .query("bookings")
-      .withIndex("by_host_and_status", (q) =>
+      .withIndex("by_host_and_status_and_start", (q) =>
         q.eq("hostUserId", user._id).eq("status", "pending"),
       )
-      .collect();
-    const now = Date.now();
-    return rows
-      .filter((b) => b.endMs > now)
-      .sort((a, b) => a.startMs - b.startMs);
+      .order("asc")
+      .take(MAX_PENDING_BOOKINGS);
+    return rows;
+  },
+});
+
+/** Expire one request at its scheduled end. A decision that won the race first
+ * is left untouched. */
+export const expireBooking = internalMutation({
+  args: { bookingId: v.id("bookings") },
+  handler: async (ctx, args): Promise<null> => {
+    const booking = await ctx.db.get(args.bookingId);
+    if (
+      !booking ||
+      booking.status !== "pending" ||
+      booking.endMs > Date.now()
+    ) {
+      return null;
+    }
+    await ctx.db.patch(args.bookingId, { status: "expired" });
+    return null;
+  },
+});
+
+/** Backfill requests created before per-booking expiration was introduced and
+ * recover in bounded batches if scheduled work was ever missed. */
+export const expirePastBookings = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<null> => {
+    const rows = await ctx.db
+      .query("bookings")
+      .withIndex("by_status_and_end", (q) =>
+        q.eq("status", "pending").lte("endMs", Date.now()),
+      )
+      .take(EXPIRATION_BATCH_SIZE);
+
+    for (const booking of rows) {
+      await ctx.db.patch(booking._id, { status: "expired" });
+    }
+    if (rows.length === EXPIRATION_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.booking.expirePastBookings,
+        {},
+      );
+    }
+    return null;
   },
 });
 
@@ -570,10 +615,10 @@ export const requestBooking = mutation({
     }
 
     if (!(await consumeRateLimit(ctx, `page:${page.slug}`, MAX_REQUESTS_PER_PAGE))) {
-      throw new Error("This page has taken too many requests recently");
+      throw new ConvexError({ code: "PAGE_RATE_LIMIT" });
     }
     if (!(await consumeRateLimit(ctx, `email:${email}`, MAX_REQUESTS_PER_EMAIL))) {
-      throw new Error("You've sent several requests already — try again later");
+      throw new ConvexError({ code: "EMAIL_RATE_LIMIT" });
     }
 
     // Ask for a window just wide enough to contain the requested slot, so the
@@ -591,7 +636,7 @@ export const requestBooking = mutation({
     }
 
     const token = crypto.randomUUID();
-    await ctx.db.insert("bookings", {
+    const bookingId = await ctx.db.insert("bookings", {
       hostUserId: page.userId,
       startMs: args.startMs,
       endMs,
@@ -602,6 +647,9 @@ export const requestBooking = mutation({
       status: "pending",
       token,
       createdAt: Date.now(),
+    });
+    await ctx.scheduler.runAt(endMs, internal.booking.expireBooking, {
+      bookingId,
     });
     return { token };
   },
@@ -713,8 +761,14 @@ export const acceptBooking = action({
       throw new Error("Request not found");
     }
     const { booking, page, conflict } = context;
+    if (booking.status === "expired") {
+      throw new Error("This request has expired");
+    }
     if (booking.status !== "pending") {
       throw new Error("This request has already been answered");
+    }
+    if (booking.endMs <= Date.now()) {
+      throw new Error("This request has expired");
     }
     if (conflict) {
       throw new Error("That time is no longer free on your calendar");
@@ -781,8 +835,14 @@ export const rejectBooking = mutation({
     if (!booking || booking.hostUserId !== user._id) {
       throw new Error("Request not found");
     }
+    if (booking.status === "expired") {
+      throw new Error("This request has expired");
+    }
     if (booking.status !== "pending") {
       throw new Error("This request has already been answered");
+    }
+    if (booking.endMs <= Date.now()) {
+      throw new Error("This request has expired");
     }
     await ctx.db.patch(args.bookingId, {
       status: "rejected",

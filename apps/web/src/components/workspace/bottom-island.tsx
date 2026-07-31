@@ -73,11 +73,12 @@ export function BottomIsland() {
       // first would flash the nav row between the two details.
       if (target.closest("[data-event]")) return;
       // Popovers and menus opened from inside a panel (e.g. the availability
-      // time picker) portal to the body, so a pointer in them lands outside the
-      // dock's node. They are logically part of the dock — don't dismiss on them.
+      // time picker's gooey dropdown) portal to the body, so a pointer in them
+      // lands outside the dock's node. They are logically part of the dock —
+      // don't dismiss on them.
       if (
         target.closest(
-          "[data-slot='popover-content'],[data-slot='dropdown-menu-content']",
+          "[data-slot='popover-content'],[data-slot='dropdown-menu-content'],[data-slot='goo-dropdown-content']",
         )
       )
         return;

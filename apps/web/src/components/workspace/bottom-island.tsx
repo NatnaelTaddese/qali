@@ -190,7 +190,6 @@ export function BottomIsland() {
                   page={bookingPage}
                   defaults={bookingDefaults}
                   onClose={close}
-                  onOpenRequest={(booking) => open({ kind: "booking", booking })}
                 />
               ) : view?.kind === "booking" ? (
                 <BookingRequestPanel booking={view.booking} onClose={close} />

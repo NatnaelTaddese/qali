@@ -10,14 +10,10 @@ import { api } from "@qali/backend/convex/_generated/api";
 import type { Doc } from "@qali/backend/convex/_generated/dataModel";
 import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
-import { cn } from "@qali/ui/lib/utils";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { format, formatDistanceToNowStrict } from "date-fns";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
-
-import { SPRING_DOCK } from "@/components/calendar/motion";
 
 export type Booking = Doc<"bookings">;
 
@@ -70,13 +66,26 @@ export function bookingTimeLabel(booking: Booking): string {
   )} – ${format(booking.endMs, "HH:mm")}`;
 }
 
+type BookingRequestPanelProps =
+  | {
+      booking: Booking;
+      onClose: () => void;
+      onBack?: never;
+      onDone?: never;
+    }
+  | {
+      booking: Booking;
+      onClose?: never;
+      onBack: () => void;
+      onDone: () => void;
+    };
+
 export function BookingRequestPanel({
   booking: snapshot,
   onClose,
-}: {
-  booking: Booking;
-  onClose: () => void;
-}) {
+  onBack,
+  onDone,
+}: BookingRequestPanelProps) {
   // The dock holds a snapshot taken when the block was clicked; subscribe so a
   // decision made elsewhere (or a second tab) is reflected here.
   const live = useQuery(api.booking.listMyBookings, {
@@ -84,10 +93,25 @@ export function BookingRequestPanel({
     endMs: snapshot.endMs + 1,
   });
   const booking = live?.find((b) => b._id === snapshot._id) ?? snapshot;
-  const { decide, busy } = useBookingDecision(onClose);
+  const { decide, busy } = useBookingDecision(onDone ?? onClose);
 
   return (
     <div className="flex flex-col gap-3">
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="-ml-1 flex items-center gap-1 self-start rounded-lg px-1 py-0.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <HugeiconsIcon
+            icon={ArrowLeft01Icon}
+            strokeWidth={2}
+            className="size-4 text-muted-foreground"
+          />
+          Requests
+        </button>
+      )}
+
       <div className="flex items-start gap-2.5">
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">
@@ -97,14 +121,20 @@ export function BookingRequestPanel({
             {bookingTimeLabel(booking)}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="size-4" />
-        </button>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <HugeiconsIcon
+              icon={Cancel01Icon}
+              strokeWidth={2}
+              className="size-4"
+            />
+          </button>
+        )}
       </div>
 
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -157,259 +187,63 @@ export function BookingRequestPanel({
   );
 }
 
-/** Card width as a share of the deck, leaving the rest of the track for the next
- * card to poke out of — that peek is the only affordance saying "there is more
- * this way", so it has to stay visible rather than being tuned away. */
-const CARD_WIDTH_PCT = 84;
-const CARD_GAP_PX = 8;
-
-/**
- * Pending requests as a horizontal deck: one card at a time, the next poking out
- * on the right, scroll-snapped.
- *
- * A vertical list was the obvious first shape and the wrong one — it grew the
- * dock by a row per request, so a popular link pushed the settings below it off
- * screen. The deck is a fixed height whatever the count, and pays for it with a
- * peek and a counter instead of showing everything at once.
- */
-export function PendingRequestsDeck({
+/** A compact request inbox. The list lives on its own drill-down screen, so it
+ * can scroll independently without pushing the availability settings down. */
+export function PendingRequestsList({
   pending,
   onOpen,
 }: {
   pending: Booking[];
   onOpen: (booking: Booking) => void;
 }) {
-  const { decide, busy } = useBookingDecision(() => {});
-  const reduce = useReducedMotion();
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const [activeIndex, setActiveIndex] = useState(0);
-
-  // Derive the active card from scroll position rather than tracking it on
-  // click, so a flick, a keyboard scroll and the arrows all agree.
-  const onScroll = () => {
-    const scroller = scrollerRef.current;
-    const first = scroller?.firstElementChild as HTMLElement | null;
-    if (!scroller || !first) return;
-    const step = first.offsetWidth + CARD_GAP_PX;
-    const count = scroller.children.length;
-    // The last card can never sit flush left: the track is wider than one card,
-    // so max scroll stops short of `(count - 1) * step` by exactly the peek. Read
-    // the end off the scroll extent instead of trusting the division to round up
-    // — otherwise the counter never reaches n/n and the next arrow never
-    // disables, and whether it does depends on CARD_WIDTH_PCT.
-    const atEnd = scroller.scrollWidth - scroller.clientWidth - scroller.scrollLeft <= 1;
-    setActiveIndex(
-      atEnd ? count - 1 : Math.min(Math.round(scroller.scrollLeft / step), count - 1),
-    );
-  };
-
-  const scrollToIndex = (index: number) => {
-    const scroller = scrollerRef.current;
-    const first = scroller?.firstElementChild as HTMLElement | null;
-    if (!scroller || !first) return;
-    const clamped = Math.max(0, Math.min(index, pending.length - 1));
-    scroller.scrollTo({
-      left: clamped * (first.offsetWidth + CARD_GAP_PX),
-      behavior: "smooth",
-    });
-  };
-
-  // A decision removes a card, which can leave the deck scrolled past its end.
-  useEffect(() => {
-    if (activeIndex > pending.length - 1) {
-      setActiveIndex(Math.max(0, pending.length - 1));
-      scrollToIndex(pending.length - 1);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pending.length]);
-
   return (
-    <AnimatePresence initial={false}>
-      {pending.length > 0 && (
-        <motion.div
-          key="pending-requests"
-          initial={
-            reduce ? { opacity: 0 } : { opacity: 0, height: 0, marginBottom: -12 }
-          }
-          animate={{ opacity: 1, height: "auto", marginBottom: 0 }}
-          exit={
-            reduce ? { opacity: 0 } : { opacity: 0, height: 0, marginBottom: -12 }
-          }
-          transition={SPRING_DOCK}
-          className="space-y-1.5 overflow-hidden"
+    <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1">
+      {pending.map((booking) => (
+        <button
+          key={booking._id}
+          type="button"
+          onClick={() => onOpen(booking)}
+          className="group flex items-center gap-3 rounded-2xl px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <div className="flex items-center gap-1 px-2">
-            <p className="flex-1 text-xs font-medium text-muted-foreground">
-              {pending.length === 1 ? "1 request" : `${pending.length} requests`}
-            </p>
-            {pending.length > 1 && (
-              <>
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {activeIndex + 1}/{pending.length}
-                </span>
-                <DeckArrow
-                  icon={ArrowLeft01Icon}
-                  label="Previous request"
-                  disabled={activeIndex === 0}
-                  onClick={() => scrollToIndex(activeIndex - 1)}
-                />
-                <DeckArrow
-                  icon={ArrowRight01Icon}
-                  label="Next request"
-                  disabled={activeIndex === pending.length - 1}
-                  onClick={() => scrollToIndex(activeIndex + 1)}
-                />
-              </>
-            )}
-          </div>
-
-          <div
-            ref={scrollerRef}
-            onScroll={onScroll}
-            className="-mx-1 flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-p-1 px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          >
-            {pending.map((booking, index) => (
-              <RequestCard
-                key={booking._id}
-                booking={booking}
-                active={index === activeIndex}
-                busy={busy}
-                onOpen={() => onOpen(booking)}
-                onDecide={(decision) => decide(booking, decision)}
-                onFocus={() => scrollToIndex(index)}
-              />
-            ))}
-          </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-}
-
-function DeckArrow({
-  icon,
-  label,
-  disabled,
-  onClick,
-}: {
-  icon: typeof ArrowLeft01Icon;
-  label: string;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-30 disabled:hover:bg-transparent"
-    >
-      <HugeiconsIcon icon={icon} strokeWidth={2} className="size-4" />
-    </button>
-  );
-}
-
-/** One request in the deck. Fixed height so the dock never resizes as the deck
- * is paged; the cards behind recede vertically, which is what reads as a stack
- * rather than as a row that happens to be clipped. */
-function RequestCard({
-  booking,
-  active,
-  busy,
-  onOpen,
-  onDecide,
-  onFocus,
-}: {
-  booking: Booking;
-  active: boolean;
-  busy: "accept" | "reject" | null;
-  onOpen: () => void;
-  onDecide: (decision: "accept" | "reject") => void;
-  onFocus: () => void;
-}) {
-  const minutes = Math.round((booking.endMs - booking.startMs) / 60_000);
-
-  return (
-    <div
-      // Tabbing into a card that is off to the side should bring it into view,
-      // otherwise the focus ring lands somewhere nobody can see.
-      onFocus={onFocus}
-      className={cn(
-        "relative flex h-[164px] shrink-0 snap-start flex-col overflow-hidden rounded-2xl border border-border bg-muted/60 pr-3 pl-3.5 transition-[transform,opacity] duration-200",
-        active ? "opacity-100" : "scale-y-[0.94] opacity-60",
-      )}
-      style={{ width: `${CARD_WIDTH_PCT}%` }}
-    >
-      <span
-        aria-hidden
-        className="absolute top-3 bottom-3 left-1 w-[3px] rounded-full bg-primary/70"
-      />
-
-      <button
-        type="button"
-        onClick={onOpen}
-        className="-mx-1 mt-2.5 min-w-0 rounded-lg px-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <p className="truncate text-sm font-medium">{booking.requesterName}</p>
-        <p className="truncate text-xs text-muted-foreground">
-          {booking.requesterEmail}
-        </p>
-      </button>
-
-      <div className="mt-2 space-y-0.5">
-        <p className="flex items-center gap-1.5 text-xs">
-          <HugeiconsIcon
-            icon={Clock01Icon}
-            strokeWidth={2}
-            className="size-3.5 shrink-0 text-muted-foreground"
+          <span
+            aria-hidden
+            className="h-10 w-[3px] shrink-0 rounded-full bg-primary/70"
           />
-          <span className="truncate">
-            {bookingTimeLabel(booking)} · {minutes}m
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                {booking.requesterName}
+              </span>
+              <span className="shrink-0 text-[11px] text-muted-foreground">
+                {formatDistanceToNowStrict(booking.createdAt, {
+                  addSuffix: true,
+                })}
+              </span>
+            </span>
+            <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <HugeiconsIcon
+                icon={Clock01Icon}
+                strokeWidth={2}
+                className="size-3.5 shrink-0"
+              />
+              <span className="truncate">{bookingTimeLabel(booking)}</span>
+            </span>
+            <span className="block truncate pl-5 text-xs text-muted-foreground">
+              {booking.requesterEmail}
+            </span>
           </span>
-        </p>
-        <p className="truncate pl-5 text-[11px] text-muted-foreground">
-          asked {formatDistanceToNowStrict(booking.createdAt, { addSuffix: true })}
-          {" · "}
-          {booking.timeZone.replace(/_/g, " ")}
-        </p>
-      </div>
-
-      {/* `min-h-0` so the note is what gives way when it is long, rather than the
-          buttons being pushed out of the fixed-height card. */}
-      <div className="mt-1.5 min-h-0 flex-1">
-        {booking.note ? (
-          <p className="line-clamp-2 text-xs text-muted-foreground">
-            {booking.note}
-          </p>
-        ) : (
-          <p className="text-xs text-muted-foreground/60">No message</p>
-        )}
-      </div>
-
-      <div className="flex items-center gap-1.5 pb-2.5">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="flex-1"
-          disabled={busy !== null}
-          onClick={() => onDecide("reject")}
-        >
-          {busy === "reject" ? <Spinner /> : null}
-          Decline
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          className="flex-1"
-          disabled={busy !== null}
-          onClick={() => onDecide("accept")}
-        >
-          {busy === "accept" ? <Spinner /> : null}
-          Confirm
-        </Button>
-      </div>
+          <HugeiconsIcon
+            icon={ArrowRight01Icon}
+            strokeWidth={2}
+            className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+          />
+        </button>
+      ))}
+      {pending.length === 0 && (
+        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+          No pending requests
+        </div>
+      )}
     </div>
   );
 }

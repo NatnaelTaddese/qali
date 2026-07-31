@@ -436,14 +436,34 @@ export function AvailabilityPanel({
       </div>
 
       <div className="flex items-center gap-2">
-        <label className="flex flex-1 items-center gap-2.5">
+        <label className="flex min-w-0 flex-1 items-center gap-2.5">
           <Switch
             checked={enabled}
             onCheckedChange={setEnabled}
-            aria-label="Link is live"
+            aria-label={
+              enabled ? "Booking link is live" : "Booking link is paused"
+            }
           />
-          <span className="text-sm font-normal text-muted-foreground">
-            Link is live
+          <span className="min-w-0">
+            <span className="flex items-center gap-1.5 text-sm font-medium">
+              <span className="relative flex size-2 items-center justify-center">
+                <span
+                  className={cn(
+                    "size-2 rounded-full",
+                    enabled ? "bg-chart-2" : "bg-muted-foreground/40",
+                  )}
+                />
+                {enabled && !reduce && (
+                  <span className="absolute size-2 animate-ping rounded-full bg-chart-2 opacity-60" />
+                )}
+              </span>
+              {enabled ? "Live" : "Paused"}
+            </span>
+            <span className="block truncate text-xs font-normal text-muted-foreground">
+              {enabled
+                ? "People can request a time"
+                : "Hidden — not taking requests"}
+            </span>
           </span>
         </label>
         <Button

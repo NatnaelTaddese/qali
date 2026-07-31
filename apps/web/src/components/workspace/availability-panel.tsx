@@ -7,19 +7,26 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import { normalizeSlug } from "@qali/backend/convex/lib/slug";
 import { Button } from "@qali/ui/components/button";
-import { Checkbox } from "@qali/ui/components/checkbox";
 import { Input } from "@qali/ui/components/input";
-import { Label } from "@qali/ui/components/label";
+import { Switch } from "@qali/ui/components/switch";
 import { Spinner } from "@qali/ui/components/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@qali/ui/components/tooltip";
 import { cn } from "@qali/ui/lib/utils";
 import { useMutation, useQuery } from "convex/react";
+import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { SPRING_DOCK } from "@/components/calendar/motion";
 import {
   PendingRequestsDeck,
   type Booking,
 } from "./booking-request-panel";
+import { TimeField } from "./time-field";
 
 /** Weekdays in display order, matching the grid's Monday-first week. */
 const WEEKDAYS = [
@@ -40,21 +47,6 @@ interface DayRow {
   enabled: boolean;
   startMin: number;
   endMin: number;
-}
-
-function minutesToTime(minutes: number): string {
-  const clamped = Math.max(0, Math.min(minutes, 24 * 60));
-  const pad = (n: number) => String(n).padStart(2, "0");
-  // 24:00 is a legal end bound but not a legal <input type="time"> value.
-  if (clamped === 24 * 60) return "23:59";
-  return `${pad(Math.floor(clamped / 60))}:${pad(clamped % 60)}`;
-}
-
-function timeToMinutes(value: string): number | null {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(value);
-  if (!match) return null;
-  const minutes = Number(match[1]) * 60 + Number(match[2]);
-  return minutes >= 0 && minutes <= 24 * 60 ? minutes : null;
 }
 
 const DEFAULT_ROW: DayRow = { enabled: false, startMin: 9 * 60, endMin: 17 * 60 };
@@ -80,15 +72,18 @@ function rowsFromRules(
  * at a time — half-entered hours would otherwise be live on a public page.
  */
 export function AvailabilityPanel({
+  pendingBookings,
   onClose,
   onOpenRequest,
 }: {
+  pendingBookings: Booking[] | undefined;
   onClose: () => void;
   onOpenRequest: (booking: Booking) => void;
 }) {
   const page = useQuery(api.booking.getMyBookingPage);
   const defaults = useQuery(api.booking.bookingPageDefaults);
   const upsert = useMutation(api.booking.upsertBookingPage);
+  const reduce = useReducedMotion();
 
   const [slug, setSlug] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -145,6 +140,9 @@ export function AvailabilityPanel({
     [rows],
   );
 
+  const openDayCount = rows
+    ? WEEKDAYS.filter(({ weekday }) => rows[weekday]?.enabled).length
+    : 0;
   const slugReady = normalized.length >= 3 && check?.available === true;
   const canSave = slugReady && rules.length > 0 && !saving;
   const origin = typeof window === "undefined" ? "" : window.location.origin;
@@ -154,6 +152,23 @@ export function AvailabilityPanel({
     setRows((prev) =>
       prev ? { ...prev, [weekday]: { ...prev[weekday], ...patch } } : prev,
     );
+  };
+
+  // Copy one day's hours onto every other open day, so setting hours once is
+  // enough for a typical week.
+  const copyRowToAll = (weekday: number) => {
+    setRows((prev) => {
+      if (!prev) return prev;
+      const { startMin, endMin } = prev[weekday];
+      const next: Record<number, DayRow> = { ...prev };
+      for (const { weekday: wd } of WEEKDAYS) {
+        if (wd !== weekday && next[wd].enabled) {
+          next[wd] = { ...next[wd], startMin, endMin };
+        }
+      }
+      return next;
+    });
+    toast.success("Hours copied to all open days");
   };
 
   const copyLink = async () => {
@@ -191,16 +206,26 @@ export function AvailabilityPanel({
     }
   };
 
-  if (!rows || slug === null) {
+  if (!rows || slug === null || pendingBookings === undefined) {
     return (
-      <div className="flex h-40 items-center justify-center">
+      <motion.div
+        initial={false}
+        animate={{ height: 160 }}
+        transition={reduce ? { duration: 0 } : SPRING_DOCK}
+        className="flex items-center justify-center overflow-hidden"
+      >
         <Spinner />
-      </div>
+      </motion.div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <motion.div
+      initial={false}
+      animate={{ height: "auto" }}
+      transition={reduce ? { duration: 0 } : SPRING_DOCK}
+      className="flex flex-col gap-3 overflow-hidden"
+    >
       <div className="flex items-center gap-2.5">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">Booking link</p>
@@ -218,7 +243,7 @@ export function AvailabilityPanel({
         </button>
       </div>
 
-      <PendingRequestsDeck onOpen={onOpenRequest} />
+      <PendingRequestsDeck pending={pendingBookings} onOpen={onOpenRequest} />
 
       <div className="space-y-1.5">
         <div className="flex items-center gap-1.5">
@@ -267,47 +292,83 @@ export function AvailabilityPanel({
         <p className="px-2 text-xs font-medium text-muted-foreground">
           Weekly hours
         </p>
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           {WEEKDAYS.map(({ weekday, label }) => {
             const row = rows[weekday];
             return (
-              <div key={weekday} className="flex items-center gap-2">
-                <Label className="w-20 shrink-0">
-                  <Checkbox
-                    checked={row.enabled}
-                    onCheckedChange={(checked: boolean) =>
-                      patchRow(weekday, { enabled: checked })
-                    }
+              <div
+                key={weekday}
+                className="group flex items-center gap-2.5 rounded-2xl px-1 py-1"
+              >
+                <Switch
+                  checked={row.enabled}
+                  onCheckedChange={(checked) =>
+                    patchRow(weekday, { enabled: checked })
+                  }
+                  aria-label={`${label} available`}
+                />
+                <span
+                  className={cn(
+                    "w-9 shrink-0 text-sm font-medium transition-colors",
+                    !row.enabled && "text-muted-foreground/60",
+                  )}
+                >
+                  {label}
+                </span>
+                <div className="flex flex-1 items-center gap-1.5">
+                  <TimeField
+                    value={row.startMin}
+                    onChange={(minutes) => patchRow(weekday, { startMin: minutes })}
+                    disabled={!row.enabled}
+                    aria-label={`${label} start`}
+                    className="flex-1"
                   />
-                  <span className="text-sm">{label}</span>
-                </Label>
-                {row.enabled ? (
-                  <div className="flex flex-1 items-center gap-1.5">
-                    <Input
-                      type="time"
-                      value={minutesToTime(row.startMin)}
-                      aria-label={`${label} start`}
-                      onChange={(e) => {
-                        const minutes = timeToMinutes(e.target.value);
-                        if (minutes !== null) patchRow(weekday, { startMin: minutes });
-                      }}
-                      className="h-8 flex-1 text-center"
-                    />
-                    <span className="text-xs text-muted-foreground">to</span>
-                    <Input
-                      type="time"
-                      value={minutesToTime(row.endMin)}
-                      aria-label={`${label} end`}
-                      onChange={(e) => {
-                        const minutes = timeToMinutes(e.target.value);
-                        if (minutes !== null) patchRow(weekday, { endMin: minutes });
-                      }}
-                      className="h-8 flex-1 text-center"
-                    />
-                  </div>
-                ) : (
-                  <p className="flex-1 text-xs text-muted-foreground">Unavailable</p>
-                )}
+                  <span
+                    className={cn(
+                      "text-xs transition-colors",
+                      row.enabled
+                        ? "text-muted-foreground"
+                        : "text-muted-foreground/50",
+                    )}
+                  >
+                    to
+                  </span>
+                  <TimeField
+                    value={row.endMin}
+                    onChange={(minutes) => patchRow(weekday, { endMin: minutes })}
+                    mode="end"
+                    disabled={!row.enabled}
+                    aria-label={`${label} end`}
+                    className="flex-1"
+                  />
+                </div>
+                {/* Fixed-width slot keeps every row's chips the same size whether
+                    or not the copy affordance is present. */}
+                <div className="flex size-6 shrink-0 items-center justify-center">
+                  {row.enabled && openDayCount > 1 && (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="Copy to all open days"
+                            onClick={() => copyRowToAll(weekday)}
+                            className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                          >
+                            <HugeiconsIcon
+                              icon={Copy01Icon}
+                              strokeWidth={2}
+                              className="size-4"
+                            />
+                          </Button>
+                        }
+                      />
+                      <TooltipContent>Copy to all open days</TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -376,15 +437,36 @@ export function AvailabilityPanel({
       </div>
 
       <div className="flex items-center gap-2">
-        <Label className="flex-1">
-          <Checkbox
+        <label className="flex min-w-0 flex-1 items-center gap-2.5">
+          <Switch
             checked={enabled}
-            onCheckedChange={(checked: boolean) => setEnabled(checked)}
+            onCheckedChange={setEnabled}
+            aria-label={
+              enabled ? "Booking link is live" : "Booking link is paused"
+            }
           />
-          <span className="text-sm font-normal text-muted-foreground">
-            Link is live
+          <span className="min-w-0">
+            <span className="flex items-center gap-1.5 text-sm font-medium">
+              <span className="relative flex size-2 items-center justify-center">
+                <span
+                  className={cn(
+                    "size-2 rounded-full",
+                    enabled ? "bg-chart-2" : "bg-muted-foreground/40",
+                  )}
+                />
+                {enabled && !reduce && (
+                  <span className="absolute size-2 animate-ping rounded-full bg-chart-2 opacity-60" />
+                )}
+              </span>
+              {enabled ? "Live" : "Paused"}
+            </span>
+            <span className="block truncate text-xs font-normal text-muted-foreground">
+              {enabled
+                ? "People can request a time"
+                : "Hidden — not taking requests"}
+            </span>
           </span>
-        </Label>
+        </label>
         <Button
           type="button"
           size="sm"
@@ -396,6 +478,6 @@ export function AvailabilityPanel({
           {saving ? "Saving…" : "Save"}
         </Button>
       </div>
-    </div>
+    </motion.div>
   );
 }

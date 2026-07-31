@@ -49,6 +49,22 @@ export type GooDropdownProps = {
   gooStrength?: number
   spring?: SpringConfig
   className?: string
+  /** Extra classes for the trigger button, e.g. to make it fill its row. */
+  triggerClassName?: string
+  /** Cap the panel height and scroll the list past it. Omit for a list that
+   * always renders at full height (the original behaviour). */
+  maxHeight?: number
+  /** Open with this item focused and scrolled into view instead of the first. */
+  selectedIndex?: number
+  /** Accessible name for the trigger button (its text is otherwise the name). */
+  triggerLabel?: string
+  /** Render arbitrary content in the morphing panel instead of `items` (e.g. a
+   * picker). Requires `contentHeight` to size the panel. */
+  panelContent?: ReactNode
+  /** Body height in px for `panelContent` mode (padding is added on top). */
+  contentHeight?: number
+  /** Play a tick when the pointer enters the trigger. Default true. */
+  triggerSound?: boolean
 }
 
 type Geometry = {
@@ -113,17 +129,21 @@ function roundedRectShape({ x, y, width, height, radius }: Shape) {
 
 function menuGeometry(
   trigger: DOMRect,
-  itemCount: number,
+  bodyHeight: number,
   width: number,
   align: 'start' | 'end',
   requestedSide: 'top' | 'bottom',
   gap: number,
-  itemHeight: number,
   buttonRadius: number,
   panelRadius: number,
+  maxHeight: number | undefined,
 ): Geometry {
   const panelWidth = Math.min(width, window.innerWidth - VIEWPORT_PADDING * 2)
-  const panelHeight = itemCount * itemHeight + PANEL_PADDING * 2
+  const contentHeight = bodyHeight + PANEL_PADDING * 2
+  // A capped panel shows a window onto the body; the content scrolls past it.
+  const panelHeight = maxHeight
+    ? Math.min(contentHeight, maxHeight)
+    : contentHeight
   const topSpace = trigger.top - VIEWPORT_PADDING - gap
   const bottomSpace = window.innerHeight - trigger.bottom - VIEWPORT_PADDING - gap
   const side =
@@ -209,6 +229,13 @@ export function GooDropdown({
   gooStrength = 8,
   spring = DEFAULT_SPRING,
   className,
+  triggerClassName,
+  maxHeight,
+  selectedIndex,
+  triggerLabel,
+  panelContent,
+  contentHeight,
+  triggerSound = true,
 }: GooDropdownProps) {
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
@@ -273,11 +300,27 @@ export function GooDropdown({
     }
   }, [geometry, open, progress, shouldReduceMotion, spring])
 
+  // Clamp so an out-of-range `selectedIndex` can't leave the menu with nothing
+  // focusable or send the scroll position off into space.
+  const targetIndex =
+    selectedIndex == null
+      ? 0
+      : Math.min(Math.max(selectedIndex, 0), Math.max(items.length - 1, 0))
+
   useEffect(() => {
-    if (!open || !geometry) return
-    const frame = requestAnimationFrame(() => itemRefs.current[0]?.focus())
+    if (!open || !geometry || panelContent) return
+    const frame = requestAnimationFrame(() => {
+      const el = itemRefs.current[targetIndex]
+      // Position the list before focusing so a long menu opens on the current
+      // value; preventScroll keeps focus from yanking the page instead.
+      if (targetIndex > 0 && menuRef.current) {
+        menuRef.current.scrollTop =
+          targetIndex * itemHeight - geometry.panelHeight / 2 + itemHeight / 2
+      }
+      el?.focus({ preventScroll: true })
+    })
     return () => cancelAnimationFrame(frame)
-  }, [geometry, open])
+  }, [geometry, open, targetIndex, itemHeight, panelContent])
 
   const closeMenu = (restoreFocus = true) => {
     setOpen(false)
@@ -298,7 +341,13 @@ export function GooDropdown({
       event.stopImmediatePropagation()
       closeMenu()
     }
-    const onViewportChange = () => closeMenu(false)
+    const onViewportChange = (event: Event) => {
+      // A scroll inside the menu's own list is expected — only page-level
+      // scroll or resize should dismiss.
+      if (event.type === 'scroll' && menuRef.current?.contains(event.target as Node))
+        return
+      closeMenu(false)
+    }
 
     window.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('keydown', onKeyDown, true)
@@ -314,20 +363,23 @@ export function GooDropdown({
 
   const openMenu = () => {
     const rect = triggerRef.current?.getBoundingClientRect()
-    if (!rect || disabled || items.length === 0) return
+    if (!rect || disabled || (!panelContent && items.length === 0)) return
+    const bodyHeight = panelContent
+      ? (contentHeight ?? 0)
+      : items.length * itemHeight
     progress.set(0)
-    setActiveIndex(0)
+    setActiveIndex(targetIndex)
     setGeometry(
       menuGeometry(
         rect,
-        items.length,
+        bodyHeight,
         width,
         align,
         side,
         gap,
-        itemHeight,
         buttonRadius,
         panelRadius,
+        maxHeight,
       ),
     )
     setOpen(true)
@@ -367,16 +419,20 @@ export function GooDropdown({
         ref={triggerRef}
         type="button"
         disabled={disabled}
-        onMouseEnter={() => playHoverSound()}
+        onMouseEnter={triggerSound ? () => playHoverSound() : undefined}
         onClick={() => {
           playClickSound()
           if (open) closeMenu()
           else openMenu()
         }}
+        aria-label={triggerLabel}
         aria-controls={menuId}
         aria-expanded={open}
-        aria-haspopup="menu"
-        className="relative flex h-8 items-center justify-center gap-1 px-3 text-sm font-medium whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:translate-y-px disabled:pointer-events-none disabled:opacity-50"
+        aria-haspopup={panelContent ? 'dialog' : 'menu'}
+        className={cn(
+          "relative flex h-8 items-center justify-center gap-1 px-3 text-sm font-medium whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:translate-y-px disabled:pointer-events-none disabled:opacity-50",
+          triggerClassName,
+        )}
         style={{
           borderRadius: buttonRadius,
           color: foreground,
@@ -463,7 +519,8 @@ export function GooDropdown({
               <div
                 id={menuId}
                 ref={menuRef}
-                role="menu"
+                data-slot="goo-dropdown-content"
+                role={panelContent ? 'dialog' : 'menu'}
                 aria-label={menuLabel}
                 className="pointer-events-auto absolute inset-x-0"
                 style={
@@ -472,11 +529,15 @@ export function GooDropdown({
                     height: geometry.panelHeight,
                     padding: PANEL_PADDING,
                     color: foreground,
+                    overflowY: !panelContent && maxHeight ? 'auto' : undefined,
+                    scrollbarWidth: 'thin',
                     '--goo-hover-fill': hoverFill,
                   } as React.CSSProperties & { '--goo-hover-fill': string }
                 }
               >
-                {items.map((item, index) => (
+                {panelContent}
+                {!panelContent &&
+                  items.map((item, index) => (
                   <button
                     key={item.label}
                     ref={(element) => {

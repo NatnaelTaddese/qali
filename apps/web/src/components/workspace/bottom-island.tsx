@@ -55,6 +55,7 @@ function cornerRadius(view: DockView | null): number {
 export function BottomIsland() {
   const { view, viewId, direction, open, close } = useDock();
   const reduce = useReducedMotion();
+  const pendingBookings = useQuery(api.booking.listPendingBookings);
   const ref = useRef<HTMLElement>(null);
   const expanded = view !== null;
 
@@ -71,6 +72,16 @@ export function BottomIsland() {
       // Another event hands the dock straight over to its own onClick — closing
       // first would flash the nav row between the two details.
       if (target.closest("[data-event]")) return;
+      // Popovers and menus opened from inside a panel (e.g. the availability
+      // time picker's gooey dropdown) portal to the body, so a pointer in them
+      // lands outside the dock's node. They are logically part of the dock —
+      // don't dismiss on them.
+      if (
+        target.closest(
+          "[data-slot='popover-content'],[data-slot='dropdown-menu-content'],[data-slot='goo-dropdown-content']",
+        )
+      )
+        return;
       close();
     };
     window.addEventListener("keydown", onKey);
@@ -149,6 +160,7 @@ export function BottomIsland() {
                 <AccountPanel onClose={close} />
               ) : view?.kind === "availability" ? (
                 <AvailabilityPanel
+                  pendingBookings={pendingBookings}
                   onClose={close}
                   onOpenRequest={(booking) => open({ kind: "booking", booking })}
                 />
@@ -156,6 +168,7 @@ export function BottomIsland() {
                 <BookingRequestPanel booking={view.booking} onClose={close} />
               ) : (
                 <NavRow
+                  pendingCount={pendingBookings?.length ?? 0}
                   onOpenAccount={() => open({ kind: "account" })}
                   onOpenAvailability={() => open({ kind: "availability" })}
                 />
@@ -169,14 +182,15 @@ export function BottomIsland() {
 }
 
 function NavRow({
+  pendingCount,
   onOpenAccount,
   onOpenAvailability,
 }: {
+  pendingCount: number;
   onOpenAccount: () => void;
   onOpenAvailability: () => void;
 }) {
   const syncNow = useAction(api.googleSync.syncNow);
-  const pendingCount = useQuery(api.booking.listPendingBookings)?.length ?? 0;
   const [isSyncing, setIsSyncing] = useState(false);
 
   const sync = async () => {

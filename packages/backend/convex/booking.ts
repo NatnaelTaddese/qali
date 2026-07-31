@@ -626,6 +626,9 @@ export const getBookingByToken = query({
       endMs: booking.endMs,
       requesterName: booking.requesterName,
       hostName: page?.displayName ?? "the host",
+      // The meeting's own title, so a downloaded/added calendar event carries it
+      // rather than a generic label. Falls back on the client when unset.
+      title: page?.title,
     };
   },
 });

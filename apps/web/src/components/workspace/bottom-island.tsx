@@ -27,6 +27,7 @@ import {
   dockVariantsReduced,
   SPRING_DOCK,
 } from "@/components/calendar/motion";
+import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { AccountPanel } from "./account-panel";
 import { AvailabilityPanel } from "./availability-panel";
 import { BookingRequestPanel } from "./booking-request-panel";
@@ -57,9 +58,19 @@ function cornerRadius(view: DockView | null): number {
 export function BottomIsland() {
   const { view, viewId, direction, open, close } = useDock();
   const reduce = useReducedMotion();
+  const availabilityOpen = view?.kind === "availability";
+  // This stays live for the dock badge and incoming-request calendar blocks.
   const pendingBookings = useQuery(api.booking.listPendingBookings);
-  const bookingPage = useQuery(api.booking.getMyBookingPage);
-  const bookingDefaults = useQuery(api.booking.bookingPageDefaults);
+  // Settings subscribe only while their panel is open. Stable queries retain
+  // the last result so reopening renders immediately while Convex reconnects.
+  const bookingPage = useStableQuery(
+    api.booking.getMyBookingPage,
+    availabilityOpen ? {} : "skip",
+  );
+  const bookingDefaults = useStableQuery(
+    api.booking.bookingPageDefaults,
+    availabilityOpen && bookingPage === null ? {} : "skip",
+  );
   const [now, setNow] = useState(() => Date.now());
   const availabilityInstance = useRef(0);
   const activePendingBookings = pendingBookings?.filter(

@@ -63,6 +63,9 @@ export function BookingConfirmation({
     booking.startMs,
     use24Hour,
   )}`;
+  const expired =
+    booking.status === "expired" ||
+    (booking.status === "pending" && booking.endMs <= Date.now());
 
   const state =
     booking.status === "accepted"
@@ -79,12 +82,19 @@ export function BookingConfirmation({
             heading: "Not this time",
             body: `${booking.hostName} declined this request. You're welcome to pick another time.`,
           }
-        : {
-            icon: Clock01Icon,
-            tokenClass: "bg-muted text-muted-foreground",
-            heading: "Request sent",
-            body: `Waiting for ${booking.hostName} to confirm. Keep this page — it updates the moment they answer.`,
-          };
+        : expired
+          ? {
+              icon: AlertCircleIcon,
+              tokenClass: "bg-muted text-muted-foreground",
+              heading: "This time has passed",
+              body: `${booking.hostName} didn't confirm before the requested time ended. You're welcome to pick another time.`,
+            }
+          : {
+              icon: Clock01Icon,
+              tokenClass: "bg-muted text-muted-foreground",
+              heading: "Request sent",
+              body: `Waiting for ${booking.hostName} to confirm. Keep this page — it updates the moment they answer.`,
+            };
 
   const eventTitle =
     booking.title?.trim() || `Meeting with ${booking.hostName}`;
@@ -166,7 +176,7 @@ export function BookingConfirmation({
         </div>
       )}
 
-      {booking.status !== "pending" && (
+      {(booking.status !== "pending" || expired) && (
         <div className="flex justify-center">
           <Button
             type="button"

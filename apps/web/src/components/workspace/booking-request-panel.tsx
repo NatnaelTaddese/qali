@@ -148,7 +148,9 @@ export function BookingRequestPanel({
         <p className="text-xs text-muted-foreground">
           {booking.status === "accepted"
             ? "Confirmed — it's on your calendar."
-            : "Declined."}
+            : booking.status === "expired"
+              ? "This request expired."
+              : "Declined."}
         </p>
       )}
     </div>

@@ -12,4 +12,11 @@ crons.interval(
   {},
 );
 
+crons.interval(
+  "expire past booking requests",
+  { minutes: 15 },
+  internal.booking.expirePastBookings,
+  {},
+);
+
 export default crons;

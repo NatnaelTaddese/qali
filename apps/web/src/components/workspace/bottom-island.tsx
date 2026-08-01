@@ -1,5 +1,6 @@
 import {
   Calendar03Icon,
+  Cursor02Icon,
   Link01Icon,
   Menu01Icon,
   PlusSignIcon,
@@ -7,6 +8,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
+import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import {
   Tooltip,
@@ -29,6 +31,7 @@ import {
 } from "@/components/calendar/motion";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { AccountPanel } from "./account-panel";
+import { useAvailabilityEdit } from "./availability-edit-context";
 import { AvailabilityPanel } from "./availability-panel";
 import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
@@ -58,6 +61,7 @@ function cornerRadius(view: DockView | null): number {
 
 export function BottomIsland() {
   const { view, viewId, direction, open, close } = useDock();
+  const { editing, setEditing } = useAvailabilityEdit();
   const reduce = useReducedMotion();
   const availabilityOpen = view?.kind === "availability";
   const [availabilityIntentVersion, setAvailabilityIntentVersion] = useState(0);
@@ -155,9 +159,13 @@ export function BottomIsland() {
 
   // No scrim, so dismissal is wired by hand: Escape, or a pointer outside the dock.
   useEffect(() => {
-    if (!expanded) return;
+    if (!expanded && !editing) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      if (e.key !== "Escape") return;
+      // While painting, Escape leaves the mode (back to the panel) rather than
+      // dismissing the dock outright.
+      if (editing) setEditing(false);
+      else close();
     };
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement | null;
@@ -179,9 +187,11 @@ export function BottomIsland() {
       close();
     };
     window.addEventListener("keydown", onKey);
-    // A half-filled create/edit form is real work; only Escape or Cancel discards it.
+    // A half-filled create/edit form is real work; only Escape or Cancel discards
+    // it. While painting, the whole calendar is a valid target, so an outside
+    // pointer must never dismiss the bar either.
     const frame =
-      view?.kind === "create" || view?.kind === "edit"
+      view?.kind === "create" || view?.kind === "edit" || editing
         ? null
         : // Next frame: the click that opened the dock must not immediately close it.
           requestAnimationFrame(() => {
@@ -192,7 +202,7 @@ export function BottomIsland() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [expanded, view?.kind, close]);
+  }, [expanded, view?.kind, close, editing, setEditing]);
 
   const variants = reduce ? dockVariantsReduced : dockVariants;
 
@@ -204,24 +214,27 @@ export function BottomIsland() {
         transition={SPRING_DOCK}
         // Plain style, not `animate` — `layout` rewrites borderRadius each frame
         // to correct for the box scaling, and an animated value fights that.
-        style={{ borderRadius: cornerRadius(view) }}
+        style={{ borderRadius: editing ? 28 : cornerRadius(view) }}
         className={cn(
           "pointer-events-auto overflow-hidden border border-border bg-popover/90 shadow-lg backdrop-blur",
-          view ? "p-4" : "px-2 py-1.5",
-          widthClass(view),
+          // The edit bar is a pill sized to its own content, like the nav row.
+          editing ? "py-1.5 pr-1.5 pl-4" : view ? "p-4" : "px-2 py-1.5",
+          !editing && widthClass(view),
         )}
       >
         <motion.div layout="position">
           <AnimatePresence mode="popLayout" initial={false} custom={direction}>
             <motion.div
-              key={viewId ?? "nav"}
+              key={editing ? "availability-edit" : (viewId ?? "nav")}
               custom={direction}
               variants={variants}
               initial="initial"
               animate="animate"
               exit="exit"
             >
-              {view?.kind === "event" ? (
+              {editing ? (
+                <AvailabilityEditBar onDone={() => setEditing(false)} />
+              ) : view?.kind === "event" ? (
                 <EventDetail
                   event={view.event}
                   onClose={close}
@@ -275,6 +288,35 @@ export function BottomIsland() {
           </AnimatePresence>
         </motion.div>
       </motion.nav>
+    </div>
+  );
+}
+
+/** The dock's face while painting availability: the same island, morphed into a
+ * heads-up bar. Done leaves the mode, and the booking-link panel underneath
+ * takes the dock back. */
+function AvailabilityEditBar({ onDone }: { onDone: () => void }) {
+  return (
+    <div className="flex items-center gap-2.5 whitespace-nowrap">
+      <HugeiconsIcon
+        icon={Cursor02Icon}
+        strokeWidth={2}
+        className="size-4 shrink-0 text-chart-2"
+      />
+      <p className="text-sm">
+        <span className="font-medium">Setting availability</span>
+        <span className="hidden text-muted-foreground sm:inline">
+          {" · "}drag a day to add, click a block to remove
+        </span>
+      </p>
+      <Button
+        type="button"
+        size="sm"
+        className="rounded-full"
+        onClick={onDone}
+      >
+        Done
+      </Button>
     </div>
   );
 }

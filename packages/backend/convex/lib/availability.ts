@@ -36,6 +36,20 @@ export interface AvailabilityOverride {
   intervals: DayInterval[];
 }
 
+/**
+ * `mergeIntervals` in wall-clock minutes, for a day's painted availability: sort
+ * by start and coalesce overlapping or touching `{startMin, endMin}` spans into
+ * a minimal ascending set, dropping zero-length ones. Slot generation already
+ * merges override windows, so this is for clean storage and rendering — two
+ * painted blocks that meet become one. Reuses the tested `Interval` merge.
+ */
+export function mergeDayIntervals(intervals: DayInterval[]): DayInterval[] {
+  const merged = mergeIntervals(
+    intervals.map((i) => ({ startMs: i.startMin, endMs: i.endMin })),
+  );
+  return merged.map((i) => ({ startMin: i.startMs, endMin: i.endMs }));
+}
+
 /** A half-open span of absolute time, `[startMs, endMs)`. */
 export interface Interval {
   startMs: number;

@@ -1,6 +1,7 @@
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
+  Calendar03Icon,
   Cancel01Icon,
   Copy01Icon,
   MinusSignIcon,
@@ -31,6 +32,7 @@ import {
   dockVariantsReduced,
   SPRING_DOCK,
 } from "@/components/calendar/motion";
+import { useAvailabilityEdit } from "./availability-edit-context";
 import { PendingRequestsList, type Booking } from "./booking-request-panel";
 import { TimeField } from "./time-field";
 
@@ -203,6 +205,7 @@ function AvailabilityForm({
   page: BookingPage;
 }) {
   const upsert = useMutation(api.booking.upsertBookingPage);
+  const { setEditing } = useAvailabilityEdit();
   const reduce = useReducedMotion();
   const initial = page ?? defaults;
   const lastInitial = useRef(initial);
@@ -639,6 +642,34 @@ function AvailabilityForm({
                 </p>
               )}
             </div>
+
+            {/* Per-date painting overrides individual days on the calendar; it
+                needs a saved page, so it's gated until one exists. */}
+            <button
+              type="button"
+              disabled={page === null}
+              onClick={() => setEditing(true)}
+              className="group flex items-center gap-3 rounded-2xl bg-muted/60 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-muted/60"
+            >
+              <HugeiconsIcon
+                icon={Calendar03Icon}
+                strokeWidth={2}
+                className="size-5 shrink-0 text-muted-foreground"
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="text-sm font-medium">Set specific dates</span>
+                <span className="truncate text-xs text-muted-foreground">
+                  {page === null
+                    ? "Save your link first to override single days"
+                    : "Paint availability for individual days on the calendar"}
+                </span>
+              </span>
+              <HugeiconsIcon
+                icon={ArrowRight01Icon}
+                strokeWidth={2}
+                className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+              />
+            </button>
 
             <div className="space-y-1.5">
               <p className="px-2 text-xs font-medium text-muted-foreground">

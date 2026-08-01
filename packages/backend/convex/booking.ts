@@ -356,6 +356,15 @@ export const setOverride = mutation({
     if (!/^\d{4}-\d{2}-\d{2}$/.test(args.dateKey)) {
       throw new Error("Invalid date");
     }
+    for (const interval of args.intervals ?? []) {
+      if (
+        interval.startMin < 0 ||
+        interval.endMin > 24 * 60 ||
+        interval.endMin <= interval.startMin
+      ) {
+        throw new Error("Each interval must end after it starts");
+      }
+    }
     const existing = await ctx.db
       .query("availabilityOverrides")
       .withIndex("by_user_and_date", (q) =>

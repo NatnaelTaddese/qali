@@ -1,9 +1,11 @@
 import { cn } from "@qali/ui/lib/utils";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 
+import { useAvailabilityEdit } from "@/components/workspace/availability-edit-context";
 import type { Booking } from "@/components/workspace/booking-request-panel";
 import { useDock } from "@/components/workspace/dock-context";
 
+import { AvailabilityBlock } from "./availability-block";
 import { BookingBlock } from "./booking-block";
 import { EventCard } from "./event-card";
 import { GhostEvent } from "./ghost-event";
@@ -59,7 +61,12 @@ export function DayColumn({
 }: DayColumnProps) {
   const dayStartMs = day.getTime();
   const dayEndMs = dayStartMs + MS_PER_DAY;
+  // A day whose last minute is already behind us can't be made available, so it
+  // takes no paint and shows no availability blocks while editing.
+  const dayIsPast = dayEndMs <= Date.now();
   const { view, open } = useDock();
+  const { editing, intervalsForDay, addInterval, removeInterval } =
+    useAvailabilityEdit();
   const ref = useRef<HTMLDivElement>(null);
   const pressClientY = useRef(0);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -94,7 +101,14 @@ export function DayColumn({
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
-    if ((e.target as HTMLElement).closest("[data-event]")) return;
+    // Nothing to paint on a day that's already gone.
+    if (editing && dayIsPast) return;
+    // A pointer down on an existing availability block edits that block, so it
+    // must never start a fresh selection.
+    if ((e.target as HTMLElement).closest("[data-availability]")) return;
+    // Outside edit mode, event cards run their own drag; while painting they are
+    // inert context, so a selection may start on top of one.
+    if (!editing && (e.target as HTMLElement).closest("[data-event]")) return;
     const anchorMs = Math.min(snappedMs(e.clientY), dayEndMs - SNAP_MS);
     pressClientY.current = e.clientY;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -125,11 +139,17 @@ export function DayColumn({
       setDraft(null);
       return;
     }
-    // The drag only proposes a range — the dock takes it from here and the user
-    // confirms. Hand the range over and drop the local draft; the ghost that
-    // stays on the grid is now driven by the dock's create view.
     const { startMs, endMs } = draft;
     setDraft(null);
+    // While painting availability, a selection commits straight to the day's
+    // override — no dock, no confirm step.
+    if (editing) {
+      addInterval(day, startMs, endMs);
+      return;
+    }
+    // Otherwise the drag only proposes a range — the dock takes it from here and
+    // the user confirms. Hand the range over and drop the local draft; the ghost
+    // that stays on the grid is now driven by the dock's create view.
     open({ kind: "create", startMs, endMs });
   };
 
@@ -145,26 +165,41 @@ export function DayColumn({
       )}
       style={{ scrollSnapAlign: "start" }}
     >
-      {positioned.map((p) => (
-        <EventCard
-          key={p.event._id}
-          positioned={p}
-          isDragging={draggingId === p.event._id}
-          laneLayout={laneLayout}
-          contactPhotos={contactPhotos}
-          onDragStart={(mode, e) =>
-            beginDrag(p.event, mode, e, gridRef.current)
-          }
-        />
-      ))}
-      {bookings.map((booking) => (
-        <BookingBlock
-          key={booking._id}
-          booking={booking}
-          dayStartMs={dayStartMs}
-          onOpen={() => open({ kind: "booking", booking })}
-        />
-      ))}
+      {/* While painting availability, events and requests drop back to inert
+          context so a selection can start anywhere on the column. */}
+      <div className={cn(editing && "pointer-events-none opacity-50")}>
+        {positioned.map((p) => (
+          <EventCard
+            key={p.event._id}
+            positioned={p}
+            isDragging={draggingId === p.event._id}
+            laneLayout={laneLayout}
+            contactPhotos={contactPhotos}
+            onDragStart={(mode, e) =>
+              beginDrag(p.event, mode, e, gridRef.current)
+            }
+          />
+        ))}
+        {bookings.map((booking) => (
+          <BookingBlock
+            key={booking._id}
+            booking={booking}
+            dayStartMs={dayStartMs}
+            onOpen={() => open({ kind: "booking", booking })}
+          />
+        ))}
+      </div>
+      {editing &&
+        !dayIsPast &&
+        intervalsForDay(day).intervals.map((interval, index) => (
+          <AvailabilityBlock
+            key={`${interval.startMin}-${interval.endMin}`}
+            interval={interval}
+            dayStartMs={dayStartMs}
+            saving={interval.saving}
+            onRemove={() => removeInterval(day, index)}
+          />
+        ))}
       {draft && draft.status === "dragging" && (
         <GhostEvent
           startMs={draft.startMs}

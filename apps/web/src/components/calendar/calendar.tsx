@@ -161,25 +161,14 @@ export function CalendarWeekView() {
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center justify-between gap-4 border-t border-border/80 bg-calendar-header px-4 py-2.5">
         <div className="flex items-center justify-center gap-2 text-sm">
-          <span className="text-muted-foreground">View</span>
-          <HugeiconsIcon
-            icon={ArrowRight01Icon}
-            strokeWidth={2}
-            className="size-4 text-muted-foreground/60"
-          />
           <MonthPicker selectedWeekStart={pageStart("week", anchor)} onSelect={jumpTo}>
-            <button
-              type="button"
-              className="flex items-center gap-2 rounded-md px-1 py-0.5 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <span className="font-medium">{viewTitle(view, anchor)}</span>
-              {view === "week" && (
-                <span className="flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
-                  W{getISOWeek(anchor)}
-                  <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} className="size-3" />
-                </span>
-              )}
-            </button>
+            <span className="font-medium">{viewTitle(view, anchor)}</span>
+            {view === "week" && (
+              <span className="flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
+                W{getISOWeek(anchor)}
+                <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} className="size-3" />
+              </span>
+            )}
           </MonthPicker>
         </div>
 

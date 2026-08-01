@@ -35,6 +35,8 @@ interface AvailabilityEditValue {
   /** Whether the calendar is in availability-painting mode. */
   editing: boolean;
   setEditing: (editing: boolean) => void;
+  /** Both schedule queries have resolved, so edits have a complete base. */
+  ready: boolean;
   /** The effective availability for a day (override intervals, else weekly). */
   intervalsForDay: (day: Date) => DayAvailability;
   /** Paint a new availability span onto a day, snapped ms in, saved at once. */
@@ -116,6 +118,12 @@ export function AvailabilityEditProvider({ children }: { children: ReactNode }) 
   }, [overrides]);
 
   const rules = page?.rules ?? [];
+  const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const ready =
+    page !== undefined &&
+    page !== null &&
+    page.timeZone === browserTimeZone &&
+    overrides !== undefined;
 
   const intervalsForDay = useCallback(
     (day: Date): DayAvailability => {
@@ -147,7 +155,11 @@ export function AvailabilityEditProvider({ children }: { children: ReactNode }) 
       savingKey: string | null,
     ) => {
       try {
-        await setOverride({ dateKey: dayKey(day), intervals });
+        await setOverride(
+          intervals === undefined
+            ? { dateKey: dayKey(day) }
+            : { dateKey: dayKey(day), intervals },
+        );
       } catch (error: unknown) {
         toast.error("Couldn't save availability", {
           description: error instanceof Error ? error.message : undefined,
@@ -202,12 +214,13 @@ export function AvailabilityEditProvider({ children }: { children: ReactNode }) 
     () => ({
       editing,
       setEditing: setEditingState,
+      ready,
       intervalsForDay,
       addInterval,
       removeInterval,
       resetDay,
     }),
-    [editing, intervalsForDay, addInterval, removeInterval, resetDay],
+    [editing, ready, intervalsForDay, addInterval, removeInterval, resetDay],
   );
 
   return (

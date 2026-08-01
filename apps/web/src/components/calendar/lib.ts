@@ -107,6 +107,20 @@ export const MS_PER_HOUR = 60 * MS_PER_MINUTE;
 export const MS_PER_DAY = 24 * MS_PER_HOUR;
 export const SNAP_MS = SNAP_MINUTES * MS_PER_MINUTE;
 
+/** Format minutes from midnight without interpreting them as an instant. */
+export function formatWallClockMinutes(
+  minutes: number,
+  includeDayPeriod = true,
+): string {
+  const normalized = ((Math.round(minutes) % (24 * 60)) + 24 * 60) % (24 * 60);
+  const hour24 = Math.floor(normalized / 60);
+  const minute = normalized % 60;
+  const hour12 = hour24 % 12 || 12;
+  const time = `${hour12}:${String(minute).padStart(2, "0")}`;
+  if (!includeDayPeriod) return time;
+  return `${time} ${hour24 < 12 ? "AM" : "PM"}`;
+}
+
 export const MONTH_EVENT_ROW_HEIGHT = 18;
 export const MONTH_EVENT_ROW_GAP = 2;
 

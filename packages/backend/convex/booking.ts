@@ -28,6 +28,7 @@ import { authComponent, createAuth } from "./auth";
 import {
   allDayBusyInterval,
   generateSlotGrid,
+  isValidDayInterval,
   type Interval,
   MS_PER_DAY,
   type SlotOption,
@@ -357,12 +358,10 @@ export const setOverride = mutation({
       throw new Error("Invalid date");
     }
     for (const interval of args.intervals ?? []) {
-      if (
-        interval.startMin < 0 ||
-        interval.endMin > 24 * 60 ||
-        interval.endMin <= interval.startMin
-      ) {
-        throw new Error("Each interval must end after it starts");
+      if (!isValidDayInterval(interval)) {
+        throw new Error(
+          "Each interval must use whole minutes within the day and end after it starts",
+        );
       }
     }
     const existing = await ctx.db

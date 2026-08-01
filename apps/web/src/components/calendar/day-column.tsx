@@ -1,4 +1,5 @@
 import { cn } from "@qali/ui/lib/utils";
+import { addDays, format } from "date-fns";
 import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAvailabilityEdit } from "@/components/workspace/availability-edit-context";
@@ -12,7 +13,9 @@ import { GhostEvent } from "./ghost-event";
 import {
   layoutDayEvents,
   MS_PER_DAY,
+  MS_PER_MINUTE,
   SNAP_MS,
+  SNAP_MINUTES,
   snappedMsFromOffsetY,
   type CalendarEvent,
 } from "./lib";
@@ -23,6 +26,11 @@ interface Draft {
   startMs: number;
   endMs: number;
   status: "armed" | "dragging";
+}
+
+interface KeyboardDraft {
+  startMin: number;
+  endMin: number;
 }
 
 const DRAG_THRESHOLD_PX = 4;
@@ -63,13 +71,26 @@ export function DayColumn({
   const dayEndMs = dayStartMs + MS_PER_DAY;
   // A day whose last minute is already behind us can't be made available, so it
   // takes no paint and shows no availability blocks while editing.
-  const dayIsPast = dayEndMs <= Date.now();
+  const dayIsPast = addDays(day, 1).getTime() <= Date.now();
   const { view, open } = useDock();
-  const { editing, intervalsForDay, addInterval, removeInterval } =
-    useAvailabilityEdit();
+  const {
+    editing,
+    ready,
+    intervalsForDay,
+    addInterval,
+    removeInterval,
+    resetDay,
+  } = useAvailabilityEdit();
   const ref = useRef<HTMLDivElement>(null);
   const pressClientY = useRef(0);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [keyboardDraft, setKeyboardDraft] = useState<KeyboardDraft>({
+    startMin: 9 * 60,
+    endMin: 9 * 60 + SNAP_MINUTES,
+  });
+  const [keyboardActive, setKeyboardActive] = useState(false);
+  const canEditDay = editing && ready && !dayIsPast;
+  const availability = canEditDay ? intervalsForDay(day) : null;
 
   // A create awaiting confirmation in the dock keeps its ghost on whichever
   // column it falls in, and follows the times as they're edited there.
@@ -102,7 +123,7 @@ export function DayColumn({
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     // Nothing to paint on a day that's already gone.
-    if (editing && dayIsPast) return;
+    if (editing && !canEditDay) return;
     // A pointer down on an existing availability block edits that block, so it
     // must never start a fresh selection.
     if ((e.target as HTMLElement).closest("[data-availability]")) return;
@@ -110,6 +131,7 @@ export function DayColumn({
     // inert context, so a selection may start on top of one.
     if (!editing && (e.target as HTMLElement).closest("[data-event]")) return;
     const anchorMs = Math.min(snappedMs(e.clientY), dayEndMs - SNAP_MS);
+    if (editing) setKeyboardActive(false);
     pressClientY.current = e.clientY;
     e.currentTarget.setPointerCapture(e.pointerId);
     setDraft({ anchorMs, startMs: anchorMs, endMs: anchorMs + SNAP_MS, status: "armed" });
@@ -153,12 +175,60 @@ export function DayColumn({
     open({ kind: "create", startMs, endMs });
   };
 
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!canEditDay || e.target !== e.currentTarget) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addInterval(
+        day,
+        dayStartMs + keyboardDraft.startMin * MS_PER_MINUTE,
+        dayStartMs + keyboardDraft.endMin * MS_PER_MINUTE,
+      );
+      return;
+    }
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    const delta = e.key === "ArrowUp" ? -SNAP_MINUTES : SNAP_MINUTES;
+    setKeyboardDraft((current) => {
+      if (e.shiftKey) {
+        return {
+          ...current,
+          endMin: Math.min(
+            24 * 60,
+            Math.max(current.startMin + SNAP_MINUTES, current.endMin + delta),
+          ),
+        };
+      }
+      const duration = current.endMin - current.startMin;
+      const startMin = Math.min(
+        24 * 60 - duration,
+        Math.max(0, current.startMin + delta),
+      );
+      return { startMin, endMin: startMin + duration };
+    });
+  };
+
   return (
     <div
       ref={ref}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onKeyDown={onKeyDown}
+      onFocus={(e) => {
+        if (e.target === e.currentTarget) setKeyboardActive(true);
+      }}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) setKeyboardActive(false);
+      }}
+      tabIndex={canEditDay ? 0 : undefined}
+      role={canEditDay ? "group" : undefined}
+      aria-keyshortcuts={canEditDay ? "ArrowUp ArrowDown Enter" : undefined}
+      aria-label={
+        canEditDay
+          ? `Add availability on ${format(day, "EEEE, MMMM d")}. Arrow keys move the selection, Shift plus arrow changes its duration, and Enter adds it.`
+          : undefined
+      }
       className={cn(
         "relative border-l border-border",
         draft && "touch-none select-none",
@@ -167,7 +237,10 @@ export function DayColumn({
     >
       {/* While painting availability, events and requests drop back to inert
           context so a selection can start anywhere on the column. */}
-      <div className={cn(editing && "pointer-events-none opacity-50")}>
+      <div
+        inert={editing ? true : undefined}
+        className={cn(editing && "pointer-events-none opacity-50")}
+      >
         {positioned.map((p) => (
           <EventCard
             key={p.event._id}
@@ -189,23 +262,41 @@ export function DayColumn({
           />
         ))}
       </div>
-      {editing &&
-        !dayIsPast &&
-        intervalsForDay(day).intervals.map((interval, index) => (
-          <AvailabilityBlock
-            key={`${interval.startMin}-${interval.endMin}`}
-            interval={interval}
-            dayStartMs={dayStartMs}
-            saving={interval.saving}
-            onRemove={() => removeInterval(day, index)}
-          />
-        ))}
+      {availability?.isOverride && (
+        <button
+          type="button"
+          data-availability
+          onClick={() => resetDay(day)}
+          className="absolute top-1 right-1 z-40 rounded-md bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shadow-sm ring-1 ring-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Use weekly
+        </button>
+      )}
+      {availability?.intervals.map((interval, index) => (
+        <AvailabilityBlock
+          key={`${interval.startMin}-${interval.endMin}`}
+          interval={interval}
+          dayStartMs={dayStartMs}
+          saving={interval.saving}
+          onRemove={() => removeInterval(day, index)}
+        />
+      ))}
       {draft && draft.status === "dragging" && (
         <GhostEvent
           startMs={draft.startMs}
           endMs={draft.endMs}
           dayStartMs={dayStartMs}
           pending={false}
+          wallClock={editing}
+        />
+      )}
+      {canEditDay && keyboardActive && !draft && (
+        <GhostEvent
+          startMs={dayStartMs + keyboardDraft.startMin * MS_PER_MINUTE}
+          endMs={dayStartMs + keyboardDraft.endMin * MS_PER_MINUTE}
+          dayStartMs={dayStartMs}
+          pending={false}
+          wallClock
         />
       )}
       {pendingRange && (

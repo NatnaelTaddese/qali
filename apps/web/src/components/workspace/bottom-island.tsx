@@ -61,7 +61,8 @@ function cornerRadius(view: DockView | null): number {
 
 export function BottomIsland() {
   const { view, viewId, direction, open, close } = useDock();
-  const { editing, setEditing } = useAvailabilityEdit();
+  const { editing, setEditing, ready: availabilityEditReady } =
+    useAvailabilityEdit();
   const reduce = useReducedMotion();
   const availabilityOpen = view?.kind === "availability";
   const [availabilityIntentVersion, setAvailabilityIntentVersion] = useState(0);
@@ -233,7 +234,10 @@ export function BottomIsland() {
               exit="exit"
             >
               {editing ? (
-                <AvailabilityEditBar onDone={() => setEditing(false)} />
+                <AvailabilityEditBar
+                  ready={availabilityEditReady}
+                  onDone={() => setEditing(false)}
+                />
               ) : view?.kind === "event" ? (
                 <EventDetail
                   event={view.event}
@@ -295,19 +299,33 @@ export function BottomIsland() {
 /** The dock's face while painting availability: the same island, morphed into a
  * heads-up bar. Done leaves the mode, and the booking-link panel underneath
  * takes the dock back. */
-function AvailabilityEditBar({ onDone }: { onDone: () => void }) {
+function AvailabilityEditBar({
+  ready,
+  onDone,
+}: {
+  ready: boolean;
+  onDone: () => void;
+}) {
   return (
     <div className="flex items-center gap-2.5 whitespace-nowrap">
-      <HugeiconsIcon
-        icon={Cursor02Icon}
-        strokeWidth={2}
-        className="size-4 shrink-0 text-chart-2"
-      />
+      {ready ? (
+        <HugeiconsIcon
+          icon={Cursor02Icon}
+          strokeWidth={2}
+          className="size-4 shrink-0 text-chart-2"
+        />
+      ) : (
+        <Spinner />
+      )}
       <p className="text-sm">
-        <span className="font-medium">Setting availability</span>
-        <span className="hidden text-muted-foreground sm:inline">
-          {" · "}drag a day to add, click a block to remove
+        <span className="font-medium">
+          {ready ? "Setting availability" : "Loading availability"}
         </span>
+        {ready && (
+          <span className="hidden text-muted-foreground sm:inline">
+            {" · "}drag a day to add, click a block to remove
+          </span>
+        )}
       </p>
       <Button
         type="button"

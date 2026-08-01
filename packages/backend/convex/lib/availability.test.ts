@@ -7,6 +7,7 @@ import {
   allDayBusyInterval,
   generateSlotGrid,
   generateSlots,
+  isValidDayInterval,
   mergeDayIntervals,
   mergeIntervals,
   MS_PER_MINUTE,
@@ -163,6 +164,20 @@ describe("mergeDayIntervals", () => {
     ).toEqual([
       { startMin: 9 * 60, endMin: 14 * 60 },
     ]);
+  });
+});
+
+describe("isValidDayInterval", () => {
+  test("rejects non-finite, fractional, reversed, and out-of-day bounds", () => {
+    expect(isValidDayInterval({ startMin: 9 * 60, endMin: 17 * 60 })).toBe(true);
+    expect(isValidDayInterval({ startMin: Number.NaN, endMin: 60 })).toBe(false);
+    expect(
+      isValidDayInterval({ startMin: 0, endMin: Number.POSITIVE_INFINITY }),
+    ).toBe(false);
+    expect(isValidDayInterval({ startMin: 0.5, endMin: 60 })).toBe(false);
+    expect(isValidDayInterval({ startMin: -1, endMin: 60 })).toBe(false);
+    expect(isValidDayInterval({ startMin: 60, endMin: 60 })).toBe(false);
+    expect(isValidDayInterval({ startMin: 60, endMin: 24 * 60 + 1 })).toBe(false);
   });
 });
 

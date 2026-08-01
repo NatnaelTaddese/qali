@@ -30,6 +30,17 @@ export interface DayInterval {
   endMin: number;
 }
 
+/** Whether a stored day interval has finite whole-minute bounds within a day. */
+export function isValidDayInterval(interval: DayInterval): boolean {
+  return (
+    Number.isInteger(interval.startMin) &&
+    Number.isInteger(interval.endMin) &&
+    interval.startMin >= 0 &&
+    interval.endMin <= MINUTES_PER_DAY &&
+    interval.endMin > interval.startMin
+  );
+}
+
 /** A single date's replacement for its weekday's rules. Empty = day blocked. */
 export interface AvailabilityOverride {
   dateKey: string;

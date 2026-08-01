@@ -362,8 +362,8 @@ function AvailabilityForm({
     }
   };
 
-  const save = async () => {
-    if (!canSave) return;
+  const persist = async (showSuccess: boolean): Promise<boolean> => {
+    if (!canSave) return false;
     const savedVersion = editVersion.current;
     setSaving(true);
     try {
@@ -381,14 +381,25 @@ function AvailabilityForm({
       if (editVersion.current === savedVersion) {
         dirty.current = false;
       }
-      toast.success(enabled ? "Booking link is live" : "Booking link saved");
+      if (showSuccess) {
+        toast.success(enabled ? "Booking link is live" : "Booking link saved");
+      }
+      return true;
     } catch (error: unknown) {
       toast.error("Couldn't save your booking link", {
         description: error instanceof Error ? error.message : undefined,
       });
+      return false;
     } finally {
       setSaving(false);
     }
+  };
+
+  const openDateEditor = async () => {
+    if (page === null) return;
+    // Persist the draft and current browser zone before the calendar starts
+    // authoring date keys and wall-clock minutes in that zone.
+    if (await persist(false)) setEditing(true);
   };
 
   return (
@@ -647,8 +658,8 @@ function AvailabilityForm({
                 needs a saved page, so it's gated until one exists. */}
             <button
               type="button"
-              disabled={page === null}
-              onClick={() => setEditing(true)}
+              disabled={page === null || !canSave}
+              onClick={() => void openDateEditor()}
               className="group flex items-center gap-3 rounded-2xl bg-muted/60 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-muted/60"
             >
               <HugeiconsIcon
@@ -661,7 +672,7 @@ function AvailabilityForm({
                 <span className="truncate text-xs text-muted-foreground">
                   {page === null
                     ? "Save your link first to override single days"
-                    : "Paint availability for individual days on the calendar"}
+                    : "Save these settings, then paint individual days"}
                 </span>
               </span>
               <HugeiconsIcon
@@ -779,7 +790,7 @@ function AvailabilityForm({
                 size="sm"
                 disabled={!canSave}
                 className={cn(saving && "opacity-80")}
-                onClick={save}
+                onClick={() => void persist(true)}
               >
                 {saving && <Spinner />}
                 {saving ? "Saving…" : "Save"}

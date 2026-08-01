@@ -2,10 +2,13 @@ import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { DayInterval } from "@qali/backend/convex/lib/availability";
 import { cn } from "@qali/ui/lib/utils";
-import { format } from "date-fns";
 import { motion, useReducedMotion } from "motion/react";
 
-import { msToPct, MS_PER_MINUTE } from "./lib";
+import {
+  formatWallClockMinutes,
+  msToPct,
+  MS_PER_MINUTE,
+} from "./lib";
 
 /**
  * One painted availability span on the time grid, shown only while setting
@@ -46,10 +49,7 @@ export function AvailabilityBlock({
       transition={
         reduce ? { duration: 0 } : { type: "spring", stiffness: 500, damping: 34 }
       }
-      aria-label={`Remove availability ${format(startMs, "h:mm a")} to ${format(
-        endMs,
-        "h:mm a",
-      )}`}
+      aria-label={`Remove availability ${formatWallClockMinutes(interval.startMin)} to ${formatWallClockMinutes(interval.endMin)}`}
       className={cn(
         "group absolute inset-x-1 z-20 flex min-h-[16px] origin-center overflow-hidden rounded-md border border-chart-2/50 bg-chart-2/15 text-left outline-none transition-colors",
         "hover:bg-chart-2/25 focus-visible:ring-2 focus-visible:ring-ring",
@@ -77,7 +77,8 @@ export function AvailabilityBlock({
         ))}
       <span className="relative flex w-full items-start justify-between gap-1 px-1.5 py-0.5">
         <span className="min-w-0 truncate text-[11px] leading-tight font-medium text-chart-2">
-          {format(startMs, "h:mm")} – {format(endMs, "h:mm a")}
+          {formatWallClockMinutes(interval.startMin, false)} –{" "}
+          {formatWallClockMinutes(interval.endMin)}
         </span>
         <HugeiconsIcon
           icon={Cancel01Icon}

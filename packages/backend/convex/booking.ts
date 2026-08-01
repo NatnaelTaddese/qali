@@ -35,6 +35,7 @@ import {
 } from "./lib/availability";
 import { insertCalendarEvent, toGoogleTime } from "./lib/google";
 import { normalizeSlug, slugError } from "./lib/slug";
+import { clearBookingNotifications } from "./notifications";
 
 /** Settings a new page starts on: business hours, half-hour slots, two hours'
  * notice, two months ahead. */
@@ -460,6 +461,7 @@ export const expireBooking = internalMutation({
       return null;
     }
     await ctx.db.patch(args.bookingId, { status: "expired" });
+    await clearBookingNotifications(ctx, args.bookingId);
     return null;
   },
 });
@@ -478,6 +480,7 @@ export const expirePastBookings = internalMutation({
 
     for (const booking of rows) {
       await ctx.db.patch(booking._id, { status: "expired" });
+      await clearBookingNotifications(ctx, booking._id);
     }
     if (rows.length === EXPIRATION_BATCH_SIZE) {
       await ctx.scheduler.runAfter(
@@ -592,6 +595,27 @@ async function consumeRateLimit(
  * slot is re-derived here and `startMs` has to match one the server itself
  * offers — the visitor's list is only a suggestion.
  */
+/** A short, human date range for a booking notification, in the host's zone —
+ * e.g. "Mon, Aug 4 · 2:00 – 2:30 PM". Display only. */
+function bookingNotificationBody(
+  startMs: number,
+  endMs: number,
+  timeZone: string,
+): string {
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(startMs);
+  const timeFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${day} · ${timeFmt.format(startMs)} – ${timeFmt.format(endMs)}`;
+}
+
 export const requestBooking = mutation({
   args: {
     slug: v.string(),
@@ -654,6 +678,17 @@ export const requestBooking = mutation({
       note: note || undefined,
       status: "pending",
       token,
+      createdAt: Date.now(),
+    });
+    // Surface the request in the host's notification bell. Times render in the
+    // host's page zone so the body reads the same as the booking panel.
+    await ctx.db.insert("notifications", {
+      userId: page.userId,
+      type: "booking_requested",
+      title: `New booking request from ${name}`,
+      body: bookingNotificationBody(args.startMs, endMs, page.timeZone),
+      bookingId,
+      read: false,
       createdAt: Date.now(),
     });
     await ctx.scheduler.runAt(endMs, internal.booking.expireBooking, {
@@ -739,6 +774,7 @@ export const markAccepted = internalMutation({
       calendarId: args.calendarId,
       decidedAt: Date.now(),
     });
+    await clearBookingNotifications(ctx, args.bookingId);
     return null;
   },
 });
@@ -856,6 +892,7 @@ export const rejectBooking = mutation({
       status: "rejected",
       decidedAt: Date.now(),
     });
+    await clearBookingNotifications(ctx, args.bookingId);
     return null;
   },
 });

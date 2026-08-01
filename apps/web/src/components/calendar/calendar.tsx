@@ -39,6 +39,7 @@ import { MonthPanel } from "./month-panel";
 import { MonthPicker } from "./month-picker";
 import { TimeStrip, type TimeStripHandle } from "./time-strip";
 import { useStableQuery } from "./use-stable-query";
+import { NotificationBell } from "@/components/workspace/notification-bell";
 
 const VIEWS: CalendarView[] = ["day", "week", "month"];
 
@@ -219,6 +220,7 @@ export function CalendarWeekView() {
 
           <CalendarPicker calendars={calendars} />
 
+          <NotificationBell />
         </div>
       </header>
 

@@ -1,10 +1,10 @@
 import {
   Calendar03Icon,
   Cursor02Icon,
-  Link01Icon,
   Menu01Icon,
   PlusSignIcon,
   Search01Icon,
+  TimeScheduleIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
@@ -382,7 +382,7 @@ function NavRow({
       <NavButton icon={Search01Icon} label="Search" />
       <NavButton icon={PlusSignIcon} label="Create" />
       <NavButton
-        icon={Link01Icon}
+        icon={TimeScheduleIcon}
         label={
           pendingCount > 0
             ? `Booking link · ${pendingCount} pending`

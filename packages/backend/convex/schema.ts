@@ -232,6 +232,27 @@ export default defineSchema({
     .index("by_status_and_end", ["status", "endMs"])
     .index("by_token", ["token"]),
 
+  // One row per in-app notification for a host. Written by the events that a
+  // host should hear about (currently a new booking request) and read by the
+  // header notification bell. Dismissing a notification hard-deletes its row, so
+  // the feed and this table never drift apart.
+  notifications: defineTable({
+    // Recipient. Matches `bookings.hostUserId` / the auth user's `_id`.
+    userId: v.string(),
+    type: v.union(v.literal("booking_requested")),
+    title: v.string(),
+    body: v.optional(v.string()),
+    // The booking this notification points at, so a click can open its panel.
+    bookingId: v.optional(v.id("bookings")),
+    read: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_user_and_created", ["userId", "createdAt"])
+    .index("by_user_and_read", ["userId", "read"])
+    // Lets a booking's lifecycle (accept / decline / expire) clear the request
+    // notification it spawned.
+    .index("by_booking", ["bookingId"]),
+
   // Fixed-window counters guarding the one mutation anonymous callers can
   // reach. Keyed by requester email and by page slug — a Convex mutation has no
   // client IP to key on.

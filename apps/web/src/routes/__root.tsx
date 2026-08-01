@@ -67,7 +67,7 @@ function RootComponent() {
             <Outlet />
           </div>
         </TooltipProvider>
-        <Toaster richColors />
+        <Toaster position="top-right" />
       </ThemeProvider>
       {/* Dev only: the booking page is public, and the devtools panel has no
           business rendering on a link a host hands to someone else. */}

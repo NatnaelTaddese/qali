@@ -358,10 +358,13 @@ export function GooDropdown({
   const panelContentMode = panelContent != null
   useEffect(() => {
     const body = panelContentMode ? (contentHeight ?? 0) : undefined
-    if (!open || !settled || body === undefined) {
+    if (!open) {
       resizeBodyRef.current = body
       return
     }
+    // Do not consume a height change while the opening morph is still using the
+    // previous geometry. Once settled, the difference triggers a real resize.
+    if (!settled || body === undefined) return
     if (resizeBodyRef.current === undefined || resizeBodyRef.current === body) {
       resizeBodyRef.current = body
       return
@@ -461,6 +464,22 @@ export function GooDropdown({
     })
     return () => cancelAnimationFrame(frame)
   }, [geometry, open, targetIndex, itemHeight, panelContent])
+
+  // Custom panels are dialogs rather than menus, so move focus into the portal
+  // instead of leaving it on the trigger that becomes visually hidden. Wait for
+  // the morph to settle so focus layout and ring painting do not compete with
+  // the clip-path animation.
+  useEffect(() => {
+    if (!open || !settled || !panelContentMode) return
+    const frame = requestAnimationFrame(() => {
+      const firstControl = menuRef.current?.querySelector<HTMLElement>(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+      const focusTarget = firstControl ?? menuRef.current
+      focusTarget?.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open, settled, panelContentMode])
 
   const closeMenu = (restoreFocus = true) => {
     setOpen(false)
@@ -681,6 +700,7 @@ export function GooDropdown({
                 ref={menuRef}
                 data-slot="goo-dropdown-content"
                 role={panelContent ? 'dialog' : 'menu'}
+                tabIndex={panelContent ? -1 : undefined}
                 aria-label={menuLabel}
                 className="pointer-events-auto absolute inset-x-0"
                 style={

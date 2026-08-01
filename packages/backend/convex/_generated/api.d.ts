@@ -18,6 +18,7 @@ import type * as healthCheck from "../healthCheck.js";
 import type * as http from "../http.js";
 import type * as lib_availability from "../lib/availability.js";
 import type * as lib_google from "../lib/google.js";
+import type * as lib_notifications from "../lib/notifications.js";
 import type * as lib_permissions from "../lib/permissions.js";
 import type * as lib_slug from "../lib/slug.js";
 import type * as notifications from "../notifications.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   "lib/availability": typeof lib_availability;
   "lib/google": typeof lib_google;
+  "lib/notifications": typeof lib_notifications;
   "lib/permissions": typeof lib_permissions;
   "lib/slug": typeof lib_slug;
   notifications: typeof notifications;

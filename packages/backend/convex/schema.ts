@@ -249,6 +249,7 @@ export default defineSchema({
   })
     .index("by_user_and_created", ["userId", "createdAt"])
     .index("by_user_and_read", ["userId", "read"])
+    .index("by_user_and_read_and_created", ["userId", "read", "createdAt"])
     // Lets a booking's lifecycle (accept / decline / expire) clear the request
     // notification it spawned.
     .index("by_booking", ["bookingId"]),

@@ -33,6 +33,18 @@ function panelBodyHeight(count: number): number {
   return HEADER_HEIGHT + listHeight;
 }
 
+export function notificationTriggerLabel(unread: number): string {
+  if (unread > 9) return "Notifications, 10 or more unread";
+  return unread > 0 ? `Notifications, ${unread} unread` : "Notifications";
+}
+
+export function shouldActivateNotificationRow(
+  key: string,
+  eventStartedOnRow: boolean,
+): boolean {
+  return eventStartedOnRow && (key === "Enter" || key === " ");
+}
+
 export function NotificationBell() {
   const notifications =
     (useStableQuery(api.notifications.list) as NotificationRow[] | undefined) ??
@@ -157,9 +169,7 @@ export function NotificationBell() {
   return (
     <GooDropdown
       trigger={trigger}
-      triggerLabel={
-        unread > 0 ? `Notifications, ${unread} unread` : "Notifications"
-      }
+      triggerLabel={notificationTriggerLabel(unread)}
       menuLabel="Notifications"
       panelContent={panelContent}
       contentHeight={panelBodyHeight(notifications.length)}
@@ -217,7 +227,12 @@ function NotificationItem({
         onKeyDown={
           actionable
             ? (event) => {
-                if (event.key === "Enter" || event.key === " ") {
+                if (
+                  shouldActivateNotificationRow(
+                    event.key,
+                    event.target === event.currentTarget,
+                  )
+                ) {
                   event.preventDefault();
                   onOpen();
                 }

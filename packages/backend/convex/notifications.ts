@@ -9,14 +9,23 @@
 
 import { v } from "convex/values";
 
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import {
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+} from "./_generated/server";
 import { authComponent } from "./auth";
+import { selectVisibleNotifications } from "./lib/notifications";
 
 /** How many notifications the bell shows at once. */
 const MAX_NOTIFICATIONS = 30;
 /** Enough to render "9+" without counting the whole table. */
 const UNREAD_CAP = 10;
+/** Keep bulk actions comfortably inside one Convex transaction. */
+const BULK_BATCH_SIZE = 100;
 
 export type NotificationWithBooking = Doc<"notifications"> & {
   booking: Doc<"bookings"> | null;
@@ -50,8 +59,10 @@ async function ownedNotification(
   return notification;
 }
 
-/** Most recent notifications for the signed-in user, newest first. Booking
- * notifications carry their booking doc so a click can open the dock panel. */
+/** Unread notifications first, followed by the most recent read history.
+ * Prioritizing unread rows keeps every unread item reachable through the fixed
+ * feed window as earlier rows are read. Booking notifications carry their
+ * booking doc so a click can open the dock panel. */
 export const list = query({
   args: {},
   handler: async (ctx): Promise<NotificationWithBooking[]> => {
@@ -59,11 +70,26 @@ export const list = query({
     if (!user) {
       return [];
     }
-    const rows = await ctx.db
+    const unread = await ctx.db
       .query("notifications")
-      .withIndex("by_user_and_created", (q) => q.eq("userId", user._id))
+      .withIndex("by_user_and_read", (q) =>
+        q.eq("userId", user._id).eq("read", false),
+      )
       .order("desc")
       .take(MAX_NOTIFICATIONS);
+    const recent =
+      unread.length < MAX_NOTIFICATIONS
+        ? await ctx.db
+            .query("notifications")
+            .withIndex("by_user_and_created", (q) => q.eq("userId", user._id))
+            .order("desc")
+            .take(MAX_NOTIFICATIONS)
+        : [];
+    const rows = selectVisibleNotifications(
+      unread,
+      recent,
+      MAX_NOTIFICATIONS,
+    );
     return Promise.all(
       rows.map(async (row) => ({
         ...row,
@@ -110,6 +136,39 @@ export const markRead = mutation({
   },
 });
 
+async function markAllReadBatch(
+  ctx: MutationCtx,
+  userId: string,
+  throughCreatedAt: number,
+): Promise<boolean> {
+  const unread = await ctx.db
+    .query("notifications")
+    .withIndex("by_user_and_read_and_created", (q) =>
+      q
+        .eq("userId", userId)
+        .eq("read", false)
+        .lte("createdAt", throughCreatedAt),
+    )
+    .take(BULK_BATCH_SIZE);
+  await Promise.all(unread.map((row) => ctx.db.patch(row._id, { read: true })));
+  return unread.length === BULK_BATCH_SIZE;
+}
+
+async function clearAllBatch(
+  ctx: MutationCtx,
+  userId: string,
+  throughCreatedAt: number,
+): Promise<boolean> {
+  const rows = await ctx.db
+    .query("notifications")
+    .withIndex("by_user_and_created", (q) =>
+      q.eq("userId", userId).lte("createdAt", throughCreatedAt),
+    )
+    .take(BULK_BATCH_SIZE);
+  await Promise.all(rows.map((row) => ctx.db.delete(row._id)));
+  return rows.length === BULK_BATCH_SIZE;
+}
+
 /** Mark every unread notification read (clears the badge). */
 export const markAllRead = mutation({
   args: {},
@@ -118,13 +177,35 @@ export const markAllRead = mutation({
     if (!user) {
       return;
     }
-    const unread = await ctx.db
-      .query("notifications")
-      .withIndex("by_user_and_read", (q) =>
-        q.eq("userId", user._id).eq("read", false),
-      )
-      .collect();
-    await Promise.all(unread.map((row) => ctx.db.patch(row._id, { read: true })));
+    const throughCreatedAt = Date.now();
+    const hasMore = await markAllReadBatch(ctx, user._id, throughCreatedAt);
+    if (hasMore) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.notifications.continueMarkAllRead,
+        { userId: user._id, throughCreatedAt },
+      );
+    }
+  },
+});
+
+/** Continue a bulk mark-read operation in bounded transactions. */
+export const continueMarkAllRead = internalMutation({
+  args: { userId: v.string(), throughCreatedAt: v.number() },
+  handler: async (ctx, args): Promise<null> => {
+    const hasMore = await markAllReadBatch(
+      ctx,
+      args.userId,
+      args.throughCreatedAt,
+    );
+    if (hasMore) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.notifications.continueMarkAllRead,
+        args,
+      );
+    }
+    return null;
   },
 });
 
@@ -155,10 +236,33 @@ export const clearAll = mutation({
     if (!user) {
       return;
     }
-    const rows = await ctx.db
-      .query("notifications")
-      .withIndex("by_user_and_created", (q) => q.eq("userId", user._id))
-      .collect();
-    await Promise.all(rows.map((row) => ctx.db.delete(row._id)));
+    const throughCreatedAt = Date.now();
+    const hasMore = await clearAllBatch(ctx, user._id, throughCreatedAt);
+    if (hasMore) {
+      await ctx.scheduler.runAfter(0, internal.notifications.continueClearAll, {
+        userId: user._id,
+        throughCreatedAt,
+      });
+    }
+  },
+});
+
+/** Continue a bulk clear operation in bounded transactions. */
+export const continueClearAll = internalMutation({
+  args: { userId: v.string(), throughCreatedAt: v.number() },
+  handler: async (ctx, args): Promise<null> => {
+    const hasMore = await clearAllBatch(
+      ctx,
+      args.userId,
+      args.throughCreatedAt,
+    );
+    if (hasMore) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.notifications.continueClearAll,
+        args,
+      );
+    }
+    return null;
   },
 });

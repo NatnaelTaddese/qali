@@ -1,18 +1,31 @@
 import { cn } from "@qali/ui/lib/utils";
 import { format } from "date-fns";
 
-import { msToPct } from "./lib";
+import { formatWallClockMinutes, msToPct, MS_PER_MINUTE } from "./lib";
 
 interface GhostEventProps {
   startMs: number;
   endMs: number;
   dayStartMs: number;
   pending: boolean;
+  wallClock?: boolean;
 }
 
-export function GhostEvent({ startMs, endMs, dayStartMs, pending }: GhostEventProps) {
+export function GhostEvent({
+  startMs,
+  endMs,
+  dayStartMs,
+  pending,
+  wallClock = false,
+}: GhostEventProps) {
   const topPct = msToPct(startMs, dayStartMs);
   const heightPct = msToPct(endMs, dayStartMs) - topPct;
+  const rangeLabel = wallClock
+    ? `${formatWallClockMinutes(
+        (startMs - dayStartMs) / MS_PER_MINUTE,
+        false,
+      )} – ${formatWallClockMinutes((endMs - dayStartMs) / MS_PER_MINUTE)}`
+    : `${format(startMs, "h:mm")} – ${format(endMs, "h:mm a")}`;
   return (
     <div
       className={cn(
@@ -24,7 +37,7 @@ export function GhostEvent({ startMs, endMs, dayStartMs, pending }: GhostEventPr
       <p className="truncate text-xs font-medium text-primary">
         {pending
           ? "New event"
-          : `${format(startMs, "h:mm")} – ${format(endMs, "h:mm a")}`}
+          : rangeLabel}
       </p>
     </div>
   );

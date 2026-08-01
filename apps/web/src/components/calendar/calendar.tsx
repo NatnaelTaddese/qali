@@ -7,11 +7,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import type { Doc } from "@qali/backend/convex/_generated/dataModel";
 import { Checkbox } from "@qali/ui/components/checkbox";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@qali/ui/components/popover";
+import { GooDropdown } from "@qali/ui/components/ui/goo-dropdown";
 import { cn } from "@qali/ui/lib/utils";
 import { useMutation } from "convex/react";
 import { addDays, getISOWeek } from "date-fns";
@@ -39,6 +35,7 @@ import { MonthPanel } from "./month-panel";
 import { MonthPicker } from "./month-picker";
 import { TimeStrip, type TimeStripHandle } from "./time-strip";
 import { useStableQuery } from "./use-stable-query";
+import { NotificationBell } from "@/components/workspace/notification-bell";
 
 const VIEWS: CalendarView[] = ["day", "week", "month"];
 
@@ -164,25 +161,14 @@ export function CalendarWeekView() {
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex items-center justify-between gap-4 border-t border-border/80 bg-calendar-header px-4 py-2.5">
         <div className="flex items-center justify-center gap-2 text-sm">
-          <span className="text-muted-foreground">View</span>
-          <HugeiconsIcon
-            icon={ArrowRight01Icon}
-            strokeWidth={2}
-            className="size-4 text-muted-foreground/60"
-          />
           <MonthPicker selectedWeekStart={pageStart("week", anchor)} onSelect={jumpTo}>
-            <button
-              type="button"
-              className="flex items-center gap-2 rounded-md px-1 py-0.5 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <span className="font-medium">{viewTitle(view, anchor)}</span>
-              {view === "week" && (
-                <span className="flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
-                  W{getISOWeek(anchor)}
-                  <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} className="size-3" />
-                </span>
-              )}
-            </button>
+            <span className="font-medium">{viewTitle(view, anchor)}</span>
+            {view === "week" && (
+              <span className="flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
+                W{getISOWeek(anchor)}
+                <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} className="size-3" />
+              </span>
+            )}
           </MonthPicker>
         </div>
 
@@ -219,6 +205,7 @@ export function CalendarWeekView() {
 
           <CalendarPicker calendars={calendars} />
 
+          <NotificationBell />
         </div>
       </header>
 
@@ -264,66 +251,86 @@ function CalendarPicker({ calendars }: { calendars: Doc<"calendars">[] }) {
   });
 
   return (
-    <Popover>
-      <PopoverTrigger
-        className="flex items-center gap-2 rounded-md px-1 py-0.5 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-        aria-label="Choose calendars"
-      >
-        <div className="flex items-center -space-x-1.5">
-          {sorted
-            .filter((c) => c.selected)
-            .slice(0, 8)
-            .map((c) => (
-              <span
-                key={c._id}
-                className="size-4 rounded-full ring-2 ring-background"
-                style={{
-                  backgroundColor: `var(${calendarColorVar(c)})`,
-                }}
-              />
+    <GooDropdown
+      trigger={
+        <>
+          <div className="flex items-center -space-x-1.5">
+            {sorted
+              .filter((c) => c.selected)
+              .slice(0, 8)
+              .map((c) => (
+                <span
+                  key={c._id}
+                  className="size-4 rounded-full ring-2 ring-background"
+                  style={{
+                    backgroundColor: `var(${calendarColorVar(c)})`,
+                  }}
+                />
+              ))}
+          </div>
+          <span className="text-sm">
+            {calendars.length === 0
+              ? "No calendars"
+              : `${selectedCount} of ${calendars.length} calendar${
+                  calendars.length === 1 ? "" : "s"
+                }`}
+          </span>
+        </>
+      }
+      triggerLabel="Choose calendars"
+      menuLabel="Calendars"
+      panelContent={
+        <div className="flex h-full flex-col">
+          <p className="flex h-7 shrink-0 items-center px-1 text-xs font-medium opacity-70">
+            Calendars
+          </p>
+          <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
+            {sorted.map((cal, index) => (
+              <label
+                key={cal._id}
+                className="flex h-8 cursor-pointer items-center gap-2.5 rounded-lg px-1.5 transition-colors hover:bg-[var(--goo-hover-fill)]"
+              >
+                <Checkbox
+                  autoFocus={index === 0}
+                  className="size-5 rounded-md border-primary-foreground/40 bg-primary-foreground/10 transition-colors focus-visible:border-primary-foreground focus-visible:ring-primary-foreground/30 data-checked:border-primary-foreground data-checked:bg-primary-foreground data-checked:text-primary dark:data-checked:bg-primary-foreground"
+                  checked={cal.selected}
+                  onCheckedChange={(checked) =>
+                    void setSelected({
+                      calendarId: cal._id,
+                      selected: checked === true,
+                    })
+                  }
+                />
+                <span
+                  className="size-3 shrink-0 rounded-full"
+                  style={{
+                    backgroundColor: `var(${calendarColorVar(cal)})`,
+                  }}
+                />
+                <span className="min-w-0 flex-1 truncate text-sm">
+                  {calendarDisplayName(cal)}
+                </span>
+              </label>
             ))}
+          </div>
         </div>
-        <span className="text-sm text-muted-foreground">
-          {calendars.length === 0
-            ? "No calendars"
-            : `${selectedCount} of ${calendars.length} calendar${
-                calendars.length === 1 ? "" : "s"
-              }`}
-        </span>
-      </PopoverTrigger>
-      <PopoverContent align="end" sideOffset={8} className="w-64">
-        <p className="mb-2 px-1 text-xs font-medium text-muted-foreground">
-          Calendars
-        </p>
-        <div className="flex flex-col gap-0.5">
-          {sorted.map((cal) => (
-            <label
-              key={cal._id}
-              className="flex cursor-pointer items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-accent"
-            >
-              <Checkbox
-                checked={cal.selected}
-                onCheckedChange={(checked) =>
-                  void setSelected({
-                    calendarId: cal._id,
-                    selected: checked === true,
-                  })
-                }
-              />
-              <span
-                className="size-3 shrink-0 rounded-full"
-                style={{
-                  backgroundColor: `var(${calendarColorVar(cal)})`,
-                }}
-              />
-              <span className="min-w-0 flex-1 truncate text-sm">
-                {calendarDisplayName(cal)}
-              </span>
-            </label>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
+      }
+      contentHeight={28 + Math.min(sorted.length, 8) * 32}
+      triggerSound={false}
+      align="end"
+      side="bottom"
+      gap={4}
+      width={256}
+      buttonRadius={10}
+      panelRadius={18}
+      fill="transparent"
+      foreground="var(--muted-foreground)"
+      hoverFill="var(--accent)"
+      activeFill="var(--primary)"
+      activeForeground="var(--primary-foreground)"
+      activeHoverFill="color-mix(in oklch, var(--primary-foreground) 14%, var(--primary))"
+      triggerClassName="gap-2 !px-1 rounded-lg hover:bg-accent"
+    />
   );
 }
 

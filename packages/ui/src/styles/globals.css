@@ -346,3 +346,39 @@
     animation: none !important;
   }
 }
+
+/* Sonner toasts share the notification panel's look and motion: a primary card
+   that springs in from the top, so a transient toast and the bell dropdown read
+   as one system. */
+[data-sonner-toast].cn-toast {
+  box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.45) !important;
+  transition:
+    transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 260ms ease,
+    height 400ms,
+    box-shadow 200ms !important;
+}
+
+/* Leaving is a quick, non-overshooting slide back out. */
+[data-sonner-toast][data-removed='true'].cn-toast {
+  transition:
+    transform 260ms cubic-bezier(0.4, 0, 1, 1),
+    opacity 200ms ease !important;
+}
+
+/* The description mirrors a notification item's secondary line. Sonner otherwise
+   colours it from the theme (not --normal-text), which goes invisible once the
+   surface is flipped to the primary token — so pin it to the toast's own text. */
+[data-sonner-toast].cn-toast [data-description] {
+  color: var(--normal-text) !important;
+  opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-sonner-toast].cn-toast,
+  [data-sonner-toast][data-removed='true'].cn-toast {
+    transition:
+      transform 200ms ease,
+      opacity 200ms ease !important;
+  }
+}

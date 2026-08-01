@@ -2,6 +2,7 @@ import React, {
   type ReactNode,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -46,6 +47,12 @@ export type GooDropdownProps = {
   fill?: string
   foreground?: string
   hoverFill?: string
+  /** Colours applied while the panel is open, so a trigger can morph from a
+   * quiet closed state into an accented one. Each falls back to its resting
+   * counterpart (`fill` / `foreground` / `hoverFill`) when omitted. */
+  activeFill?: string
+  activeForeground?: string
+  activeHoverFill?: string
   gooStrength?: number
   spring?: SpringConfig
   className?: string
@@ -59,12 +66,16 @@ export type GooDropdownProps = {
   /** Accessible name for the trigger button (its text is otherwise the name). */
   triggerLabel?: string
   /** Render arbitrary content in the morphing panel instead of `items` (e.g. a
-   * picker). Requires `contentHeight` to size the panel. */
-  panelContent?: ReactNode
+   * picker). Requires `contentHeight` to size the panel. Pass a function to
+   * receive a `close` callback, so an action inside the panel can dismiss it. */
+  panelContent?: ReactNode | ((close: () => void) => ReactNode)
   /** Body height in px for `panelContent` mode (padding is added on top). */
   contentHeight?: number
   /** Play a tick when the pointer enters the trigger. Default true. */
   triggerSound?: boolean
+  /** Notified when the panel opens or closes, e.g. to hide a trigger badge that
+   * the morphing panel would otherwise clip. */
+  onOpenChange?: (open: boolean) => void
 }
 
 type Geometry = {
@@ -105,6 +116,27 @@ const DEFAULT_SPRING: SpringConfig = {
 }
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
+
+const lerpShape = (a: Shape, b: Shape, t: number): Shape => ({
+  x: lerp(a.x, b.x, t),
+  y: lerp(a.y, b.y, t),
+  width: lerp(a.width, b.width, t),
+  height: lerp(a.height, b.height, t),
+  radius: lerp(a.radius, b.radius, t),
+})
+
+// Blend two panel geometries so a live height change (e.g. removing a list item)
+// can animate from the current size to a freshly measured one.
+const lerpGeometry = (a: Geometry, b: Geometry, t: number): Geometry => ({
+  left: lerp(a.left, b.left, t),
+  top: lerp(a.top, b.top, t),
+  width: lerp(a.width, b.width, t),
+  height: lerp(a.height, b.height, t),
+  panelTop: lerp(a.panelTop, b.panelTop, t),
+  panelHeight: lerp(a.panelHeight, b.panelHeight, t),
+  closed: lerpShape(a.closed, b.closed, t),
+  opened: lerpShape(a.opened, b.opened, t),
+})
 
 function roundedRectShape({ x, y, width, height, radius }: Shape) {
   const r = Math.max(0, Math.min(radius, width / 2, height / 2))
@@ -226,6 +258,9 @@ export function GooDropdown({
   fill = FILL,
   foreground = FOREGROUND,
   hoverFill = HOVER_FILL,
+  activeFill,
+  activeForeground,
+  activeHoverFill,
   gooStrength = 8,
   spring = DEFAULT_SPRING,
   className,
@@ -236,10 +271,20 @@ export function GooDropdown({
   panelContent,
   contentHeight,
   triggerSound = true,
+  onOpenChange,
 }: GooDropdownProps) {
   const [open, setOpen] = useState(false)
+  // Lags `open` by a frame so the active palette eases in via CSS transition
+  // instead of snapping the moment the panel mounts.
+  const [active, setActive] = useState(false)
+  // True once the open morph has settled. While settled, geometry changes are a
+  // live resize (not the open/close morph), so the panel clip is re-derived
+  // imperatively instead of snapping to the closed shape on re-render.
+  const [settled, setSettled] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [geometry, setGeometry] = useState<Geometry | null>(null)
+  const geometryRef = useRef<Geometry | null>(null)
+  const resizeBodyRef = useRef<number | undefined>(undefined)
   const shouldReduceMotion = useReducedMotion()
   const filterId = useId().replace(/[:]/g, '')
   const menuId = useId()
@@ -276,11 +321,13 @@ export function GooDropdown({
     if (!geometry) return
     if (shouldReduceMotion) {
       progress.set(open ? 1 : 0)
+      setSettled(open)
       if (!open) setGeometry(null)
       return
     }
 
     let cancelled = false
+    if (!open) setSettled(false)
     const animation = animate(progress, open ? 1 : 0, {
       ...spring,
       visualDuration: open
@@ -289,16 +336,112 @@ export function GooDropdown({
           ? spring.visualDuration * 0.7
           : 0.2,
     })
-    if (!open) {
-      animation.then(() => {
-        if (!cancelled) setGeometry(null)
-      })
-    }
+    animation.then(() => {
+      if (cancelled) return
+      if (open) setSettled(true)
+      else setGeometry(null)
+    })
     return () => {
       cancelled = true
       animation.stop()
     }
   }, [geometry, open, progress, shouldReduceMotion, spring])
+
+  // Keep a ref of the current geometry so the resize effect can read it as its
+  // starting point without depending on it (which would restart mid-animation).
+  useEffect(() => {
+    geometryRef.current = geometry
+  }, [geometry])
+
+  // After the open morph, a change to `contentHeight` (e.g. a list item removed)
+  // animates the panel from its current size to the newly measured one.
+  const panelContentMode = panelContent != null
+  useEffect(() => {
+    const body = panelContentMode ? (contentHeight ?? 0) : undefined
+    if (!open) {
+      resizeBodyRef.current = body
+      return
+    }
+    // Do not consume a height change while the opening morph is still using the
+    // previous geometry. Once settled, the difference triggers a real resize.
+    if (!settled || body === undefined) return
+    if (resizeBodyRef.current === undefined || resizeBodyRef.current === body) {
+      resizeBodyRef.current = body
+      return
+    }
+    const rect = triggerRef.current?.getBoundingClientRect()
+    const from = geometryRef.current
+    if (!rect || !from) {
+      resizeBodyRef.current = body
+      return
+    }
+    resizeBodyRef.current = body
+    const target = menuGeometry(
+      rect,
+      body,
+      width,
+      align,
+      side,
+      gap,
+      buttonRadius,
+      panelRadius,
+      maxHeight,
+    )
+    if (shouldReduceMotion) {
+      setGeometry(target)
+      return
+    }
+    const animation = animate(0, 1, {
+      duration: 0.26,
+      ease: [0.33, 1, 0.68, 1],
+      onUpdate: (t) => setGeometry(lerpGeometry(from, target, t)),
+    })
+    animation.then(() => setGeometry(target))
+    return () => animation.stop()
+  }, [
+    contentHeight,
+    open,
+    settled,
+    panelContentMode,
+    width,
+    align,
+    side,
+    gap,
+    buttonRadius,
+    panelRadius,
+    maxHeight,
+    shouldReduceMotion,
+  ])
+
+  // While settled, a re-render restamps the closed-shape clip from inline
+  // styles; re-derive the open shape here (before paint) so a live resize —
+  // which changes geometry every frame — never flashes back to the trigger box.
+  useLayoutEffect(() => {
+    if (!settled || !geometry) return
+    const shape = roundedRectShape(geometry.opened)
+    if (panelRef.current) panelRef.current.style.clipPath = shape
+    if (contentRef.current) contentRef.current.style.clipPath = shape
+  }, [settled, geometry])
+
+  // Drive the active palette one frame behind `open`: on open the panel mounts
+  // in its resting colour and then transitions in; on close it eases back out.
+  // Reduced motion switches instantly, matching the shape animation.
+  useEffect(() => {
+    if (!open) {
+      setActive(false)
+      return
+    }
+    if (shouldReduceMotion) {
+      setActive(true)
+      return
+    }
+    const frame = requestAnimationFrame(() => setActive(true))
+    return () => cancelAnimationFrame(frame)
+  }, [open, shouldReduceMotion])
+
+  useLayoutEffect(() => {
+    onOpenChange?.(open)
+  }, [open, onOpenChange])
 
   // Clamp so an out-of-range `selectedIndex` can't leave the menu with nothing
   // focusable or send the scroll position off into space.
@@ -321,6 +464,22 @@ export function GooDropdown({
     })
     return () => cancelAnimationFrame(frame)
   }, [geometry, open, targetIndex, itemHeight, panelContent])
+
+  // Custom panels are dialogs rather than menus, so move focus into the portal
+  // instead of leaving it on the trigger that becomes visually hidden. Wait for
+  // the morph to settle so focus layout and ring painting do not compete with
+  // the clip-path animation.
+  useEffect(() => {
+    if (!open || !settled || !panelContentMode) return
+    const frame = requestAnimationFrame(() => {
+      const firstControl = menuRef.current?.querySelector<HTMLElement>(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+      const focusTarget = firstControl ?? menuRef.current
+      focusTarget?.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open, settled, panelContentMode])
 
   const closeMenu = (restoreFocus = true) => {
     setOpen(false)
@@ -406,6 +565,15 @@ export function GooDropdown({
 
   const closedShape = geometry ? roundedRectShape(geometry.closed) : undefined
 
+  // While active, the trigger and panel take the active palette (if given), so
+  // the morph carries the button from its resting colour into its open one.
+  const effFill = active ? (activeFill ?? fill) : fill
+  const effForeground = active ? (activeForeground ?? foreground) : foreground
+  const effHoverFill = active ? (activeHoverFill ?? hoverFill) : hoverFill
+  const colorTransition = shouldReduceMotion
+    ? undefined
+    : `background 0.3s ease, color 0.3s ease`
+
   return (
     <div
       ref={rootRef}
@@ -413,7 +581,11 @@ export function GooDropdown({
     >
       <div
         className="pointer-events-none absolute inset-0"
-        style={{ borderRadius: buttonRadius, background: fill }}
+        style={{
+          borderRadius: buttonRadius,
+          background: effFill,
+          transition: colorTransition,
+        }}
       />
       <button
         ref={triggerRef}
@@ -435,8 +607,9 @@ export function GooDropdown({
         )}
         style={{
           borderRadius: buttonRadius,
-          color: foreground,
+          color: effForeground,
           opacity: open ? 0 : 1,
+          transition: colorTransition,
         }}
       >
         {trigger}
@@ -482,13 +655,18 @@ export function GooDropdown({
                   width: geometry.closed.width,
                   height: geometry.closed.height,
                   borderRadius: buttonRadius,
-                  background: fill,
+                  background: effFill,
+                  transition: colorTransition,
                 }}
               />
               <div
                 ref={panelRef}
                 className="absolute inset-0 will-change-[clip-path]"
-                style={{ background: fill, clipPath: closedShape }}
+                style={{
+                  background: effFill,
+                  clipPath: closedShape,
+                  transition: colorTransition,
+                }}
               />
               <div
                 className="absolute flex items-center justify-center gap-1 text-sm font-medium"
@@ -498,7 +676,8 @@ export function GooDropdown({
                   width: geometry.closed.width,
                   height: geometry.closed.height,
                   borderRadius: buttonRadius,
-                  color: foreground,
+                  color: effForeground,
+                  transition: colorTransition,
                 }}
               >
                 {trigger}
@@ -521,6 +700,7 @@ export function GooDropdown({
                 ref={menuRef}
                 data-slot="goo-dropdown-content"
                 role={panelContent ? 'dialog' : 'menu'}
+                tabIndex={panelContent ? -1 : undefined}
                 aria-label={menuLabel}
                 className="pointer-events-auto absolute inset-x-0"
                 style={
@@ -528,14 +708,17 @@ export function GooDropdown({
                     top: geometry.panelTop,
                     height: geometry.panelHeight,
                     padding: PANEL_PADDING,
-                    color: foreground,
+                    color: effForeground,
+                    transition: colorTransition,
                     overflowY: !panelContent && maxHeight ? 'auto' : undefined,
                     scrollbarWidth: 'thin',
-                    '--goo-hover-fill': hoverFill,
+                    '--goo-hover-fill': effHoverFill,
                   } as React.CSSProperties & { '--goo-hover-fill': string }
                 }
               >
-                {panelContent}
+                {typeof panelContent === 'function'
+                  ? panelContent(() => closeMenu())
+                  : panelContent}
                 {!panelContent &&
                   items.map((item, index) => (
                   <button

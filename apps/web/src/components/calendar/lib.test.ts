@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import {
   calendarDisplayName,
   type CalendarEvent,
+  formatWallClockMinutes,
   laneBox,
   layoutAllDayEvents,
   layoutDayEvents,
@@ -62,6 +63,15 @@ describe("calendarDisplayName", () => {
     expect(
       calendarDisplayName({ googleCalendarId: "fallback@example.com" }),
     ).toBe("fallback@example.com");
+  });
+});
+
+describe("formatWallClockMinutes", () => {
+  test("formats wall-clock bounds without a date or timezone", () => {
+    expect(formatWallClockMinutes(0)).toBe("12:00 AM");
+    expect(formatWallClockMinutes(9 * 60 + 15, false)).toBe("9:15");
+    expect(formatWallClockMinutes(13 * 60 + 5)).toBe("1:05 PM");
+    expect(formatWallClockMinutes(24 * 60)).toBe("12:00 AM");
   });
 });
 

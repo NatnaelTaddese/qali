@@ -7,6 +7,8 @@ import {
   allDayBusyInterval,
   generateSlotGrid,
   generateSlots,
+  isValidDayInterval,
+  mergeDayIntervals,
   mergeIntervals,
   MS_PER_MINUTE,
   utcToZoned,
@@ -147,6 +149,35 @@ describe("mergeIntervals", () => {
       { startMs: 0, endMs: 20 },
       { startMs: 30, endMs: 40 },
     ]);
+  });
+});
+
+describe("mergeDayIntervals", () => {
+  test("coalesces wall-clock minute spans that overlap or touch", () => {
+    expect(
+      mergeDayIntervals([
+        { startMin: 9 * 60, endMin: 11 * 60 },
+        { startMin: 13 * 60, endMin: 14 * 60 },
+        { startMin: 10 * 60, endMin: 12 * 60 },
+        { startMin: 12 * 60, endMin: 13 * 60 },
+      ]),
+    ).toEqual([
+      { startMin: 9 * 60, endMin: 14 * 60 },
+    ]);
+  });
+});
+
+describe("isValidDayInterval", () => {
+  test("rejects non-finite, fractional, reversed, and out-of-day bounds", () => {
+    expect(isValidDayInterval({ startMin: 9 * 60, endMin: 17 * 60 })).toBe(true);
+    expect(isValidDayInterval({ startMin: Number.NaN, endMin: 60 })).toBe(false);
+    expect(
+      isValidDayInterval({ startMin: 0, endMin: Number.POSITIVE_INFINITY }),
+    ).toBe(false);
+    expect(isValidDayInterval({ startMin: 0.5, endMin: 60 })).toBe(false);
+    expect(isValidDayInterval({ startMin: -1, endMin: 60 })).toBe(false);
+    expect(isValidDayInterval({ startMin: 60, endMin: 60 })).toBe(false);
+    expect(isValidDayInterval({ startMin: 60, endMin: 24 * 60 + 1 })).toBe(false);
   });
 });
 

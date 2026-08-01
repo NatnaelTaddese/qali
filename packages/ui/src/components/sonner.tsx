@@ -31,10 +31,12 @@ const Toaster = ({ ...props }: ToasterProps) => {
       }}
       style={
         {
-          "--normal-bg": "var(--popover)",
-          "--normal-text": "var(--popover-foreground)",
-          "--normal-border": "var(--border)",
-          "--border-radius": "var(--radius)",
+          // Match the notification panel's active surface: a primary card with
+          // no border, so a toast reads as the same family as the bell dropdown.
+          "--normal-bg": "var(--primary)",
+          "--normal-text": "var(--primary-foreground)",
+          "--normal-border": "transparent",
+          "--border-radius": "16px",
         } as React.CSSProperties
       }
       toastOptions={{

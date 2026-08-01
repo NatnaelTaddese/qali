@@ -72,7 +72,7 @@ export const list = query({
     }
     const unread = await ctx.db
       .query("notifications")
-      .withIndex("by_user_and_read", (q) =>
+      .withIndex("by_user_and_read_and_created", (q) =>
         q.eq("userId", user._id).eq("read", false),
       )
       .order("desc")

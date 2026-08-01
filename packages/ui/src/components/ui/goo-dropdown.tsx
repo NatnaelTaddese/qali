@@ -439,7 +439,7 @@ export function GooDropdown({
     return () => cancelAnimationFrame(frame)
   }, [open, shouldReduceMotion])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onOpenChange?.(open)
   }, [open, onOpenChange])
 

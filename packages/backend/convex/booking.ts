@@ -29,6 +29,7 @@ import {
   allDayBusyInterval,
   generateSlotGrid,
   isValidDayInterval,
+  mergeDayIntervals,
   type Interval,
   MS_PER_DAY,
   type SlotOption,
@@ -376,13 +377,14 @@ export const setOverride = mutation({
       if (existing) await ctx.db.delete(existing._id);
       return null;
     }
+    const intervals = mergeDayIntervals(args.intervals);
     if (existing) {
-      await ctx.db.patch(existing._id, { intervals: args.intervals });
+      await ctx.db.patch(existing._id, { intervals });
     } else {
       await ctx.db.insert("availabilityOverrides", {
         userId: user._id,
         dateKey: args.dateKey,
-        intervals: args.intervals,
+        intervals,
       });
     }
     return null;

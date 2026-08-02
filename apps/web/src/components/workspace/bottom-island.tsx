@@ -18,7 +18,7 @@ import {
 import { cn } from "@qali/ui/lib/utils";
 import { useAction, useQuery } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { EventCreate } from "@/components/calendar/event-create";
@@ -31,12 +31,22 @@ import {
 } from "@/components/calendar/motion";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { AccountPanel } from "./account-panel";
-import { AssistantPanel } from "./assistant-panel";
 import { useAvailabilityEdit } from "./availability-edit-context";
 import { AvailabilityPanel } from "./availability-panel";
 import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
 import { UserAvatar } from "./user-avatar";
+
+/**
+ * Split out of the workspace bundle.
+ *
+ * The panel brings a markdown renderer with it — ~47 kB gzipped — for a feature
+ * that is optional and, on a deployment with no API key, never reachable at
+ * all. It only mounts when the dock opens it, so it can arrive then too.
+ */
+const AssistantPanel = lazy(() =>
+  import("./assistant-panel").then((m) => ({ default: m.AssistantPanel })),
+);
 
 const MAX_TIMEOUT_MS = 2_147_000_000;
 const AVAILABILITY_PREFETCH_GRACE_MS = 10_000;
@@ -304,7 +314,15 @@ export function BottomIsland() {
               ) : view?.kind === "booking" ? (
                 <BookingRequestPanel booking={view.booking} onClose={close} />
               ) : view?.kind === "assistant" ? (
-                <AssistantPanel onClose={close} />
+                <Suspense
+                  fallback={
+                    <div className="flex h-24 items-center justify-center">
+                      <Spinner />
+                    </div>
+                  }
+                >
+                  <AssistantPanel onClose={close} />
+                </Suspense>
               ) : (
                 <NavRow
                   pendingCount={activePendingBookings?.length ?? 0}

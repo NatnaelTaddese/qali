@@ -15,6 +15,7 @@ import { useAction, useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { AssistantMarkdown } from "./assistant-markdown";
 import {
   AssistantProposalCard,
   type AssistantAction,
@@ -264,8 +265,17 @@ function TurnView({
                 variant={isUser ? "default" : "muted"}
                 align={isUser ? "end" : "start"}
               >
-                <BubbleContent className="whitespace-pre-wrap">
-                  {block.text}
+                {/* What the user typed is literal text — rendering it as
+                  * markdown would reformat their own words back at them. Only
+                  * the assistant's side is parsed. */}
+                <BubbleContent
+                  className={isUser ? "whitespace-pre-wrap" : undefined}
+                >
+                  {isUser ? (
+                    block.text
+                  ) : (
+                    <AssistantMarkdown text={block.text} />
+                  )}
                 </BubbleContent>
               </Bubble>
             );

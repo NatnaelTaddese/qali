@@ -47,19 +47,29 @@ export function AssistantProposalCard({ action }: { action: AssistantAction }) {
   };
 
   const pending = action.status === "pending";
-  const applying = action.status === "applying" || busy !== null;
+  const applying =
+    action.status === "applying" ||
+    (action.status === "pending" && busy !== null);
 
   return (
-    <article className="rounded-2xl border border-border bg-muted/50 px-3 py-2.5">
+    <article
+      aria-label="Proposed calendar change"
+      className="rounded-2xl border border-border bg-muted/50 px-3 py-2.5"
+    >
       <p className="text-sm leading-5">{action.preview}</p>
 
       {pending && !applying && (
-        <div className="mt-2.5 flex items-center gap-1.5">
+        <div
+          role="group"
+          aria-label="Proposal controls"
+          className="mt-2.5 flex items-center gap-1.5"
+        >
           <Button
             type="button"
             variant="ghost"
             size="sm"
             className="flex-1"
+            aria-label="Discard proposed change"
             onClick={() => decide("discard")}
           >
             Discard
@@ -68,6 +78,7 @@ export function AssistantProposalCard({ action }: { action: AssistantAction }) {
             type="button"
             size="sm"
             className="flex-1"
+            aria-label="Confirm proposed change"
             onClick={() => decide("confirm")}
           >
             Confirm
@@ -76,14 +87,21 @@ export function AssistantProposalCard({ action }: { action: AssistantAction }) {
       )}
 
       {applying && (
-        <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <p
+          role="status"
+          aria-live="polite"
+          className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"
+        >
           <Spinner className="size-3.5" />
-          Making the change…
+          {busy === "discard" ? "Discarding proposal…" : "Making the change…"}
         </p>
       )}
 
       {action.status === "applied" && (
-        <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <p
+          role="status"
+          className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"
+        >
           <HugeiconsIcon
             icon={CheckmarkCircle02Icon}
             strokeWidth={2}
@@ -94,7 +112,10 @@ export function AssistantProposalCard({ action }: { action: AssistantAction }) {
       )}
 
       {action.status === "rejected" && (
-        <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <p
+          role="status"
+          className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"
+        >
           <HugeiconsIcon
             icon={Cancel01Icon}
             strokeWidth={2}
@@ -105,7 +126,10 @@ export function AssistantProposalCard({ action }: { action: AssistantAction }) {
       )}
 
       {action.status === "failed" && (
-        <p className="mt-2 flex items-start gap-1.5 text-xs text-destructive">
+        <p
+          role="alert"
+          className="mt-2 flex items-start gap-1.5 text-xs text-destructive"
+        >
           <HugeiconsIcon
             icon={Alert02Icon}
             strokeWidth={2}

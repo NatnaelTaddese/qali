@@ -23,7 +23,11 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { action, type ActionCtx } from "./_generated/server";
 import { authComponent } from "./auth";
-import { getGoogleAccessToken } from "./lib/calendarOps";
+import {
+  ExternalWriteCommittedError,
+  getGoogleAccessToken,
+  isDefinitiveGoogleFailure,
+} from "./lib/calendarOps";
 import {
   ASSISTANT_TOOLS,
   TOOLS_BY_NAME,
@@ -52,6 +56,7 @@ const MAX_STEPS = 12;
 /** How often the in-flight reply is written back for the client to render.
  * Patching per delta would hammer the transaction log. */
 const FLUSH_INTERVAL_MS = 250;
+const MAX_USER_MESSAGE_LENGTH = 4_000;
 
 /**
  * Frozen. Nothing derived from the clock, the user, or the request may appear
@@ -67,11 +72,11 @@ The panel renders markdown, so **bold**, bullet lists, \`code\` and links all di
 
 ## Time
 
-Every user message opens with a bracketed line giving the user's current local date and time, their IANA zone, and that instant in epoch milliseconds. That line is your only clock — you have none of your own, and your training cutoff tells you nothing about today's date.
+Every user message opens with a bracketed line giving the server's current instant rendered in the user's IANA zone. That line is your only clock — you have none of your own, and your training cutoff tells you nothing about today's date.
 
 Read the date off that line directly. Do not re-derive it from the epoch value or convert between zones to get it: the local date and the UTC date routinely disagree, and the local one is the one the user means. Resolve "today", "tomorrow", "next Tuesday" and "in an hour" against it.
 
-Send every instant to a tool as epoch milliseconds. When you state a time back to the user, use their zone and ordinary words ("Thursday at 2pm"), never a raw timestamp and never a UTC offset.
+Send timed instants to tools as epoch milliseconds. For an all-day event, send the literal YYYY-MM-DD calendar dates requested, with Google's exclusive end date; never convert those dates through a timezone. When you state a time back to the user, use their zone and ordinary words ("Thursday at 2pm"), never a raw timestamp and never a UTC offset.
 
 ## Looking things up
 
@@ -136,7 +141,9 @@ function requireApiKey(): string {
 function outcomeOf(action: Doc<"assistantActions">): string {
   switch (action.status) {
     case "pending":
-      return "This is still on screen waiting for the user to confirm it.";
+      return action.resultSummary
+        ? `The last attempt did not complete and can be retried: ${action.resultSummary}`
+        : "This is still on screen waiting for the user to confirm it.";
     case "applying":
       return "The user confirmed this and it is being carried out now.";
     case "applied":
@@ -170,7 +177,6 @@ export const sendMessage = action({
     text: v.string(),
     /** The browser's IANA zone. The backend must never infer this. */
     timeZone: v.string(),
-    nowMs: v.number(),
   },
   handler: async (ctx, args): Promise<{ threadId: Id<"assistantThreads"> }> => {
     const apiKey = requireApiKey();
@@ -183,34 +189,43 @@ export const sendMessage = action({
     if (!text) {
       throw new Error("Message is empty");
     }
+    if (text.length > MAX_USER_MESSAGE_LENGTH) {
+      throw new ConvexError({ code: "ASSISTANT_MESSAGE_TOO_LONG" });
+    }
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: args.timeZone }).format();
+    } catch {
+      throw new Error("Invalid time zone");
+    }
 
-    const { threadId, assistantMessageId } = await ctx.runMutation(
-      internal.assistantData.startTurn,
-      {
-        userId: user._id,
-        threadId: args.threadId,
-        text,
-        nowMs: args.nowMs,
-      },
-    );
+    const { threadId, userMessageId, assistantMessageId, startedAt } =
+      await ctx.runMutation(
+        internal.assistantData.startTurn,
+        {
+          userId: user._id,
+          threadId: args.threadId,
+          text,
+        },
+      );
 
     try {
       await runAgentLoop(ctx, {
         apiKey,
         userId: user._id,
         threadId,
+        userMessageId,
         assistantMessageId,
         timeZone: args.timeZone,
-        nowMs: args.nowMs,
+        nowMs: startedAt,
       });
       await ctx.runMutation(internal.assistantData.finishTurn, {
         messageId: assistantMessageId,
         threadId,
-        nowMs: Date.now(),
       });
     } catch (error) {
       await ctx.runMutation(internal.assistantData.failTurn, {
         messageId: assistantMessageId,
+        threadId,
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
@@ -226,6 +241,7 @@ async function runAgentLoop(
     apiKey: string;
     userId: string;
     threadId: Id<"assistantThreads">;
+    userMessageId: Id<"assistantMessages">;
     assistantMessageId: Id<"assistantMessages">;
     timeZone: string;
     nowMs: number;
@@ -240,6 +256,7 @@ async function runAgentLoop(
     ctx.runQuery(internal.assistantData.getHistory, {
       threadId: run.threadId,
       userId: run.userId,
+      userMessageId: run.userMessageId,
     }),
     ctx.runQuery(internal.assistantData.getThreadActions, {
       threadId: run.threadId,
@@ -474,7 +491,6 @@ export const confirmAction = action({
       await ctx.runMutation(internal.assistantData.rejectAction, {
         actionId: args.actionId,
         userId: user._id,
-        nowMs: Date.now(),
       });
       return null;
     }
@@ -491,24 +507,45 @@ export const confirmAction = action({
     }
 
     try {
-      const accessToken = await getGoogleAccessToken(ctx, user._id);
+      const accessToken = proposalNeedsGoogleToken(action)
+        ? await getGoogleAccessToken(ctx, user._id)
+        : undefined;
       const summary = await applyProposal(ctx, user._id, accessToken, action);
       await ctx.runMutation(internal.assistantData.settleClaimedAction, {
         actionId: args.actionId,
         status: "applied",
         resultSummary: summary,
-        nowMs: Date.now(),
       });
     } catch (error) {
+      if (error instanceof ExternalWriteCommittedError) {
+        await ctx.runMutation(internal.assistantData.settleClaimedAction, {
+          actionId: args.actionId,
+          status: "applied",
+          resultSummary: `${error.successSummary} Google accepted it; local sync is catching up.`,
+        });
+        return null;
+      }
       const message = error instanceof Error ? error.message : String(error);
-      await ctx.runMutation(internal.assistantData.settleClaimedAction, {
+      if (isDefinitiveGoogleFailure(error)) {
+        await ctx.runMutation(internal.assistantData.settleClaimedAction, {
+          actionId: args.actionId,
+          status: "failed",
+          resultSummary: message,
+        });
+        throw error;
+      }
+      await ctx.runMutation(internal.assistantData.retryClaimedAction, {
         actionId: args.actionId,
-        status: "failed",
         resultSummary: message,
-        nowMs: Date.now(),
       });
       throw error;
     }
     return null;
   },
 });
+
+function proposalNeedsGoogleToken(action: Doc<"assistantActions">): boolean {
+  // Booking accept resolves its token inside the booking action; reject is a
+  // local mutation. In particular, declining must work after OAuth disconnects.
+  return action.tool !== "decide_booking_request";
+}

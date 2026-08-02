@@ -10,7 +10,11 @@ import {
 
 export interface CalendarPagerHandle {
   /** Scroll to a rendered page index. Use "smooth" for button nav. */
-  scrollToIndex: (index: number, behavior: ScrollBehavior) => void;
+  scrollToIndex: (
+    index: number,
+    behavior: ScrollBehavior,
+    onSettled?: () => void,
+  ) => void;
 }
 
 interface CalendarPagerProps {
@@ -42,6 +46,7 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
     const scrollerRef = useRef<HTMLDivElement>(null);
     const settleTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
     const suppressTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+    const settleCallback = useRef<(() => void) | undefined>(undefined);
     // Ignore scroll events caused by our own programmatic recentering.
     const suppress = useRef(false);
 
@@ -51,10 +56,31 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
       return Math.max(el.clientWidth - gutterWidth, 1);
     }, [gutterWidth]);
 
+    const finishScroll = useCallback(() => {
+      const el = scrollerRef.current;
+      if (!el || suppress.current) return;
+      const index = Math.round(el.scrollLeft / panelWidth());
+      const delta = index - centerIndex;
+      const onSettled = settleCallback.current;
+      settleCallback.current = undefined;
+      if (delta !== 0) onSettleDelta(delta);
+      onSettled?.();
+    }, [centerIndex, onSettleDelta, panelWidth]);
+
+    const scheduleSettle = useCallback(() => {
+      clearTimeout(settleTimer.current);
+      settleTimer.current = setTimeout(finishScroll, 120);
+    }, [finishScroll]);
+
+    const cancelPendingPulse = () => {
+      settleCallback.current = undefined;
+    };
+
     const scrollToIndex = useCallback(
-      (index: number, behavior: ScrollBehavior) => {
+      (index: number, behavior: ScrollBehavior, onSettled?: () => void) => {
         const el = scrollerRef.current;
         if (!el) return;
+        settleCallback.current = onSettled;
         if (behavior === "auto") {
           suppress.current = true;
           clearTimeout(suppressTimer.current);
@@ -63,8 +89,9 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
           }, 80);
         }
         el.scrollTo({ left: index * panelWidth(), behavior });
+        if (behavior === "smooth") scheduleSettle();
       },
-      [panelWidth],
+      [panelWidth, scheduleSettle],
     );
 
     useImperativeHandle(ref, () => ({ scrollToIndex }), [scrollToIndex]);
@@ -95,20 +122,16 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
 
     const onScroll = () => {
       if (suppress.current) return;
-      clearTimeout(settleTimer.current);
-      settleTimer.current = setTimeout(() => {
-        const el = scrollerRef.current;
-        if (!el || suppress.current) return;
-        const index = Math.round(el.scrollLeft / panelWidth());
-        const delta = index - centerIndex;
-        if (delta !== 0) onSettleDelta(delta);
-      }, 120);
+      scheduleSettle();
     };
 
     return (
       <div
         ref={scrollerRef}
         onScroll={onScroll}
+        onPointerDown={cancelPendingPulse}
+        onTouchStart={cancelPendingPulse}
+        onWheel={cancelPendingPulse}
         className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{ scrollSnapType: "x mandatory", scrollPaddingLeft: gutterWidth }}
       >

@@ -25,7 +25,6 @@ import {
   deleteEventOp,
   resolveEventForWrite,
   updateEventOp,
-  updateEventTimeOp,
 } from "./calendarOps";
 import {
   MS_PER_MINUTE,
@@ -37,6 +36,12 @@ import {
   zonedToUtcMs,
 } from "./availability";
 import { subtractBusy } from "./assistantHistory";
+import {
+  assistantRangeToEventTime,
+  formatAssistantAllDayRange,
+  isDateKey,
+  type AssistantEventRange,
+} from "./assistantLogic";
 
 // --- Plumbing --------------------------------------------------------------
 
@@ -66,6 +71,8 @@ export interface AssistantTool {
     rawArgs: unknown,
   ): Promise<ToolOutcome>;
 }
+
+const MAX_TOOL_RESULT_CHARS = 8_000;
 
 function jsonSchema(schema: z.ZodType): Record<string, unknown> {
   const generated = z.toJSONSchema(schema, { io: "input" }) as Record<
@@ -102,7 +109,15 @@ function readTool<S extends z.ZodType>(spec: {
       }
       try {
         const value = await spec.run(tc, parsed.data);
-        return { kind: "result", content: JSON.stringify(value) };
+        const content = JSON.stringify(value);
+        if (content.length > MAX_TOOL_RESULT_CHARS) {
+          return {
+            kind: "result",
+            content: "That lookup returned too much data. Use a smaller range or a more specific query.",
+            isError: true,
+          };
+        }
+        return { kind: "result", content };
       } catch (error) {
         return {
           kind: "result",
@@ -129,6 +144,10 @@ function writeTool<S extends z.ZodType>(spec: {
   description: string;
   schema: S;
   preview(tc: ToolContext, args: z.infer<S>): Promise<string> | string;
+  storedArgs?(
+    tc: ToolContext,
+    args: z.infer<S>,
+  ): Promise<Record<string, unknown>> | Record<string, unknown>;
 }): AssistantTool {
   return {
     name: spec.name,
@@ -166,10 +185,10 @@ function writeTool<S extends z.ZodType>(spec: {
           // confirmed hours later, from a context that no longer knows it.
           input: JSON.stringify({
             ...(parsed.data as object),
+            ...(spec.storedArgs ? await spec.storedArgs(tc, parsed.data) : {}),
             timeZone: tc.timeZone,
           }),
           preview,
-          nowMs: tc.nowMs,
         },
       );
 
@@ -206,7 +225,10 @@ function formatRange(
   allDay = false,
 ): string {
   if (allDay) {
-    return formatWhen(startMs, timeZone, true);
+    return formatAssistantAllDayRange(
+      new Date(startMs).toISOString().slice(0, 10),
+      new Date(endMs).toISOString().slice(0, 10),
+    );
   }
   const end = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -214,6 +236,21 @@ function formatRange(
     minute: "2-digit",
   }).format(new Date(endMs));
   return `${formatWhen(startMs, timeZone)}–${end}`;
+}
+
+function formatAssistantRange(
+  range: AssistantEventRange,
+  timeZone: string,
+): string {
+  if (range.kind === "allDay") {
+    return formatAssistantAllDayRange(range.startDate, range.endDate);
+  }
+  return formatRange(range.startMs, range.endMs, timeZone);
+}
+
+function previewValue(value: string, max = 120): string {
+  const flat = value.replace(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 }
 
 // --- Free-time search ------------------------------------------------------
@@ -244,10 +281,12 @@ const listEvents = readTool({
     "this whenever the user asks what is on their calendar, whether they are " +
     "free, or refers to an existing meeting you have not already looked up — " +
     "you need the eventId from here before you can change or cancel anything. " +
-    "All times are Unix epoch milliseconds.",
+    "Timed values are Unix epoch milliseconds; all-day results also include " +
+    "literal startDate and exclusive endDate values.",
   schema: listEventsSchema,
   async run(tc, args) {
-    const rows = await tc.ctx.runQuery(api.calendar.listEventsInRange, {
+    const rows = await tc.ctx.runQuery(internal.assistantData.listEventsForAssistant, {
+      userId: tc.userId,
       startMs: args.fromMs,
       endMs: args.toMs,
     });
@@ -256,6 +295,12 @@ const listEvents = readTool({
       summary: e.summary ?? "(No title)",
       startMs: e.startMs,
       endMs: e.endMs,
+      ...(e.allDay
+        ? {
+            startDate: new Date(e.startMs).toISOString().slice(0, 10),
+            endDate: new Date(e.endMs).toISOString().slice(0, 10),
+          }
+        : {}),
       when: formatRange(e.startMs, e.endMs, tc.timeZone, e.allDay),
       allDay: e.allDay,
       location: e.location,
@@ -308,16 +353,35 @@ const findFreeTime = readTool({
     }
     const durationMs = args.durationMinutes * MS_PER_MINUTE;
 
-    const rows = await tc.ctx.runQuery(api.calendar.listEventsInRange, {
-      startMs: args.fromMs,
-      endMs: args.toMs,
-    });
+    const [rows, bookings] = await Promise.all([
+      tc.ctx.runQuery(internal.assistantData.listEventsForAssistant, {
+        userId: tc.userId,
+        startMs: args.fromMs,
+        endMs: args.toMs,
+      }),
+      tc.ctx.runQuery(internal.assistantData.listBookingBlocksForAssistant, {
+        userId: tc.userId,
+        startMs: args.fromMs,
+        endMs: args.toMs,
+      }),
+    ]);
     const busy = mergeIntervals(
-      rows.filter(isBusy).map((e) =>
-        e.allDay
-          ? allDayBusyInterval(e.startMs, e.endMs, tc.timeZone)
-          : { startMs: e.startMs, endMs: e.endMs },
-      ),
+      [
+        ...rows.filter(isBusy).map((e) =>
+          e.allDay
+            ? allDayBusyInterval(e.startMs, e.endMs, tc.timeZone)
+            : { startMs: e.startMs, endMs: e.endMs },
+        ),
+        ...bookings
+          .filter(
+            (booking) =>
+              booking.startMs < args.toMs && booking.endMs > args.fromMs,
+          )
+          .map((booking) => ({
+            startMs: booking.startMs,
+            endMs: booking.endMs,
+          })),
+      ],
     );
 
     // Walk calendar days rather than fixed 24h blocks, so a DST change doesn't
@@ -415,15 +479,44 @@ const listPendingBookings = readTool({
   },
 });
 
+const timedRangeSchema = z
+  .object({
+    kind: z.literal("timed"),
+    startMs: z.number().finite().describe("Start instant, epoch ms."),
+    endMs: z.number().finite().describe("End instant, epoch ms."),
+  })
+  .refine((range) => range.endMs > range.startMs, {
+    message: "endMs must be later than startMs",
+  });
+
+const dateKeySchema = z
+  .string()
+  .refine(isDateKey, "Use a real calendar date in YYYY-MM-DD form");
+
+const allDayRangeSchema = z
+  .object({
+    kind: z.literal("allDay"),
+    startDate: dateKeySchema.describe("First calendar date, YYYY-MM-DD."),
+    endDate: dateKeySchema.describe(
+      "Exclusive end date, YYYY-MM-DD. For one day, use the following date.",
+    ),
+  })
+  .refine((range) => range.endDate > range.startDate, {
+    message: "endDate must be later than startDate",
+  });
+
+const eventRangeSchema = z.union([timedRangeSchema, allDayRangeSchema]);
+
 const createEventSchema = z.object({
-  summary: z.string().min(1).describe("Event title."),
-  startMs: z.number().describe("Start instant, epoch ms."),
-  endMs: z.number().describe("End instant, epoch ms."),
-  allDay: z.boolean().optional().describe("True for an all-day event."),
-  description: z.string().optional(),
-  location: z.string().optional(),
+  summary: z.string().min(1).max(500).describe("Event title."),
+  time: eventRangeSchema.describe(
+    "Timed events use epoch milliseconds. All-day events use calendar dates and an exclusive end date; never convert those dates through a timezone.",
+  ),
+  description: z.string().max(4_000).optional(),
+  location: z.string().max(1_000).optional(),
   guestEmails: z
-    .array(z.string())
+    .array(z.string().email().max(320))
+    .max(200)
     .optional()
     .describe(
       "Email addresses to invite. Google emails each one an invitation the " +
@@ -435,7 +528,8 @@ const createEventSchema = z.object({
     .optional()
     .describe("Attach a Google Meet link."),
   recurrence: z
-    .array(z.string())
+    .array(z.string().max(500))
+    .max(10)
     .optional()
     .describe('RFC5545 lines, e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO"].'),
 });
@@ -448,22 +542,45 @@ const createEvent = writeTool({
     "created and no invitations are sent until the user confirms.",
   schema: createEventSchema,
   preview(tc, args) {
-    const guests = args.guestEmails?.length
-      ? ` · invites ${args.guestEmails.join(", ")}`
-      : "";
-    return `Create “${args.summary}” ${formatRange(args.startMs, args.endMs, tc.timeZone, args.allDay)}${guests}`;
+    const parts = [`at ${formatAssistantRange(args.time, tc.timeZone)}`];
+    if (args.description !== undefined) {
+      parts.push(`description “${previewValue(args.description)}”`);
+    }
+    if (args.location !== undefined) {
+      parts.push(`location “${previewValue(args.location)}”`);
+    }
+    if (args.guestEmails !== undefined) {
+      parts.push(
+        args.guestEmails.length
+          ? `invite ${args.guestEmails.join(", ")}`
+          : "no guests",
+      );
+    }
+    if (args.addConference !== undefined) {
+      parts.push(args.addConference ? "add Google Meet" : "no conference");
+    }
+    if (args.recurrence !== undefined) {
+      parts.push(
+        args.recurrence.length
+          ? `recurrence ${args.recurrence.join("; ")}`
+          : "non-recurring",
+      );
+    }
+    return `Create “${args.summary}”: ${parts.join(" · ")}`;
   },
 });
 
 const updateEventSchema = z.object({
   eventId: z.string().describe("The eventId from list_events."),
-  summary: z.string().optional(),
-  description: z.string().optional(),
-  location: z.string().optional(),
-  startMs: z.number().optional().describe("Send with endMs, or not at all."),
-  endMs: z.number().optional(),
+  summary: z.string().min(1).max(500).optional(),
+  description: z.string().max(4_000).optional(),
+  location: z.string().max(1_000).optional(),
+  time: eventRangeSchema.optional().describe(
+    "Replacement time. Use date-only startDate/endDate for all-day events.",
+  ),
   guestEmails: z
-    .array(z.string())
+    .array(z.string().email().max(320))
+    .max(200)
     .optional()
     .describe("Replaces the guest list wholesale — anyone omitted is uninvited."),
   scope: z
@@ -495,17 +612,27 @@ const updateEvent = writeTool({
     "no guest is notified until the user confirms.",
   schema: updateEventSchema,
   async preview(tc, args) {
-    const row = await requireEditable(tc, args.eventId);
-    const parts: string[] = [];
-    if (args.summary) parts.push(`title → “${args.summary}”`);
-    if (args.startMs !== undefined && args.endMs !== undefined) {
-      parts.push(
-        `time → ${formatRange(args.startMs, args.endMs, tc.timeZone, row.allDay)}`,
-      );
+    const { row, capabilities } = await resolveEventForWrite(
+      tc.ctx,
+      tc.userId,
+      args.eventId as Id<"events">,
+      ["canEdit"],
+    );
+    if (args.guestEmails !== undefined && !capabilities.canInviteOthers) {
+      throw new Error("The organiser does not allow you to invite or remove guests");
     }
-    if (args.location) parts.push(`location → ${args.location}`);
-    if (args.description !== undefined) parts.push("description updated");
-    if (args.guestEmails) {
+    const parts: string[] = [];
+    if (args.summary !== undefined) parts.push(`title → “${args.summary}”`);
+    if (args.time !== undefined) {
+      parts.push(`time → ${formatAssistantRange(args.time, tc.timeZone)}`);
+    }
+    if (args.location !== undefined) {
+      parts.push(`location → “${previewValue(args.location)}”`);
+    }
+    if (args.description !== undefined) {
+      parts.push(`description → “${previewValue(args.description)}”`);
+    }
+    if (args.guestEmails !== undefined) {
       parts.push(
         args.guestEmails.length
           ? `guests → ${args.guestEmails.join(", ")}`
@@ -520,12 +647,36 @@ const updateEvent = writeTool({
         : "";
     return `Update “${row.summary ?? "(No title)"}”${scope}: ${parts.join(", ") || "no changes"}`;
   },
+  async storedArgs(tc, args) {
+    if (args.guestEmails === undefined) return {};
+    const row = await requireEditable(tc, args.eventId);
+    const editsSeries =
+      row.recurringEventId !== undefined &&
+      args.scope !== undefined &&
+      args.scope !== "thisEvent";
+    const expectedSeriesUpdatedMs = editsSeries
+      ? await tc.ctx.runQuery(
+          internal.assistantData.getRecurringSeriesVersion,
+          { userId: tc.userId, eventId: row._id },
+        )
+      : null;
+    if (editsSeries && expectedSeriesUpdatedMs === null) {
+      throw new Error(
+        "The recurring series is not fully synced yet. Refresh it before changing guests.",
+      );
+    }
+    return {
+      expectedGoogleUpdatedMs: row.googleUpdatedMs,
+      ...(expectedSeriesUpdatedMs === null ? {} : { expectedSeriesUpdatedMs }),
+    };
+  },
 });
 
 const moveEventSchema = z.object({
   eventId: z.string().describe("The eventId from list_events."),
-  startMs: z.number().describe("New start instant, epoch ms."),
-  endMs: z.number().describe("New end instant, epoch ms."),
+  time: eventRangeSchema.describe(
+    "New time. For an all-day event use startDate and exclusive endDate, not epoch milliseconds.",
+  ),
 });
 
 const moveEvent = writeTool({
@@ -540,7 +691,7 @@ const moveEvent = writeTool({
     return (
       `Move “${row.summary ?? "(No title)"}” from ` +
       `${formatRange(row.startMs, row.endMs, tc.timeZone, row.allDay)} to ` +
-      `${formatRange(args.startMs, args.endMs, tc.timeZone, row.allDay)}`
+      `${formatAssistantRange(args.time, tc.timeZone)}`
     );
   },
 });
@@ -586,10 +737,23 @@ const decideBookingRequest = writeTool({
     "public booking page. Accepting creates the event and emails the " +
     "requester. Neither happens until the user confirms.",
   schema: decideBookingSchema,
-  preview(_tc, args) {
-    return args.decision === "accept"
-      ? "Accept this booking request and add it to your calendar"
-      : "Reject this booking request";
+  async preview(tc, args) {
+    const context = await tc.ctx.runQuery(internal.booking.getBookingContext, {
+      bookingId: args.bookingId as Id<"bookings">,
+      hostUserId: tc.userId,
+    });
+    if (!context || context.booking.status !== "pending") {
+      throw new Error("Booking request not found or already answered");
+    }
+    const { booking, page } = context;
+    const who = `${booking.requesterName} <${booking.requesterEmail}>`;
+    const when = formatRange(booking.startMs, booking.endMs, tc.timeZone);
+    if (args.decision === "reject") {
+      return `Reject ${who}'s booking request for ${when}`;
+    }
+    const label = page.title?.trim() || "Meeting";
+    const note = booking.note ? ` · include note “${previewValue(booking.note)}”` : "";
+    return `Accept ${who} for ${when} · create “${label} with ${booking.requesterName}” · invite ${booking.requesterEmail}${note}`;
   },
 });
 
@@ -623,60 +787,91 @@ export const TOOLS_BY_NAME = new Map(ASSISTANT_TOOLS.map((t) => [t.name, t]));
 export async function applyProposal(
   ctx: ActionCtx,
   userId: string,
-  accessToken: string,
+  accessToken: string | undefined,
   action: Doc<"assistantActions">,
 ): Promise<string> {
-  const raw: unknown = JSON.parse(action.input);
+  const stored: unknown = JSON.parse(action.input);
+  const raw = await normalizeStoredProposal(
+    ctx,
+    userId,
+    action.tool,
+    stored,
+  );
   const timeZone =
     typeof raw === "object" && raw !== null && "timeZone" in raw
       ? String((raw as { timeZone: unknown }).timeZone)
       : undefined;
+  const operationId = action.operationId ?? String(action._id);
+  const token = () => {
+    if (!accessToken) throw new Error("Google access token is required");
+    return accessToken;
+  };
 
   switch (action.tool) {
     case "create_event": {
       const args = createEventSchema.parse(raw);
-      const event = await createEventOp(ctx, userId, accessToken, {
+      const time = assistantRangeToEventTime(args.time);
+      const event = await createEventOp(ctx, userId, token(), {
         summary: args.summary,
-        startMs: args.startMs,
-        endMs: args.endMs,
-        allDay: args.allDay,
+        ...time,
         description: args.description,
         location: args.location,
         attendees: args.guestEmails?.map((email) => ({ email })),
         addConference: args.addConference,
         recurrence: args.recurrence,
         timeZone,
+        operationId,
       });
       return `Created “${event.summary ?? args.summary}”.`;
     }
     case "update_event": {
       const args = updateEventSchema.parse(raw);
-      await updateEventOp(ctx, userId, accessToken, {
+      const time = args.time ? assistantRangeToEventTime(args.time) : undefined;
+      const expectedGoogleUpdatedMs =
+        typeof raw === "object" &&
+        raw !== null &&
+        "expectedGoogleUpdatedMs" in raw &&
+        typeof raw.expectedGoogleUpdatedMs === "number"
+          ? raw.expectedGoogleUpdatedMs
+          : undefined;
+      const expectedSeriesUpdatedMs =
+        typeof raw === "object" &&
+        raw !== null &&
+        "expectedSeriesUpdatedMs" in raw &&
+        typeof raw.expectedSeriesUpdatedMs === "number"
+          ? raw.expectedSeriesUpdatedMs
+          : undefined;
+      await updateEventOp(ctx, userId, token(), {
         eventId: args.eventId as Id<"events">,
         summary: args.summary,
         description: args.description,
         location: args.location,
-        startMs: args.startMs,
-        endMs: args.endMs,
+        startMs: time?.startMs,
+        endMs: time?.endMs,
+        allDay: time?.allDay,
         attendees: args.guestEmails?.map((email) => ({ email })),
         scope: args.scope,
         timeZone,
+        operationId,
+        expectedGoogleUpdatedMs,
+        expectedSeriesUpdatedMs,
       });
       return "Event updated.";
     }
     case "move_event": {
       const args = moveEventSchema.parse(raw);
-      await updateEventTimeOp(ctx, userId, accessToken, {
+      const time = assistantRangeToEventTime(args.time);
+      await updateEventOp(ctx, userId, token(), {
         eventId: args.eventId as Id<"events">,
-        startMs: args.startMs,
-        endMs: args.endMs,
+        ...time,
         timeZone,
+        operationId,
       });
       return "Event rescheduled.";
     }
     case "delete_event": {
       const args = deleteEventSchema.parse(raw);
-      await deleteEventOp(ctx, userId, accessToken, {
+      await deleteEventOp(ctx, userId, token(), {
         eventId: args.eventId as Id<"events">,
       });
       return "Event deleted.";
@@ -694,4 +889,51 @@ export async function applyProposal(
     default:
       throw new Error(`Unknown proposal type: ${action.tool}`);
   }
+}
+
+/** Pending proposals created before the date-only contract may still be on
+ * screen. Normalize only those persisted shapes at apply time; newly generated
+ * tool schemas expose the unambiguous `time` union exclusively. */
+async function normalizeStoredProposal(
+  ctx: ActionCtx,
+  userId: string,
+  tool: string,
+  raw: unknown,
+): Promise<unknown> {
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    "time" in raw ||
+    !("startMs" in raw) ||
+    !("endMs" in raw) ||
+    typeof raw.startMs !== "number" ||
+    typeof raw.endMs !== "number"
+  ) {
+    return raw;
+  }
+
+  let allDay =
+    tool === "create_event" && "allDay" in raw && raw.allDay === true;
+  if (
+    (tool === "update_event" || tool === "move_event") &&
+    "eventId" in raw &&
+    typeof raw.eventId === "string"
+  ) {
+    const context = await ctx.runQuery(internal.calendar.getEventContext, {
+      eventId: raw.eventId as Id<"events">,
+      userId,
+    });
+    allDay = context?.event.allDay ?? false;
+  }
+
+  return {
+    ...raw,
+    time: allDay
+      ? {
+          kind: "allDay",
+          startDate: new Date(raw.startMs).toISOString().slice(0, 10),
+          endDate: new Date(raw.endMs).toISOString().slice(0, 10),
+        }
+      : { kind: "timed", startMs: raw.startMs, endMs: raw.endMs },
+  };
 }

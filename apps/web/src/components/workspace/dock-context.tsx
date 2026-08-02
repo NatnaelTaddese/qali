@@ -15,9 +15,9 @@ export type DockView =
   | { kind: "account" }
   | { kind: "availability" }
   | { kind: "booking"; booking: Booking }
-  // The assistant holds its own conversation id internally: putting it here
-  // would change the view id the moment the first message creates a thread,
-  // replaying the panel swap in the middle of the user's first reply.
+  // The island holds the assistant thread outside the view: putting it here
+  // would change the view id when the first message creates a thread and replay
+  // the panel swap in the middle of the reply.
   | { kind: "assistant" };
 
 /** Stable key for the content swap — changing it cross-fades the dock's contents.

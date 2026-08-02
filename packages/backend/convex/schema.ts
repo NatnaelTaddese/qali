@@ -164,6 +164,7 @@ export default defineSchema({
   events: defineTable(eventDocValidator)
     .index("by_user_and_start", ["userId", "startMs"])
     .index("by_user_and_calendar", ["userId", "calendarId"])
+    .index("by_user_and_calendar_and_end", ["userId", "calendarId", "endMs"])
     .index("by_user_and_calendar_and_googleEventId", [
       "userId",
       "calendarId",
@@ -257,13 +258,21 @@ export default defineSchema({
     // Unguessable handle that lets the requester follow their own request
     // without an account. It is the only key that reads this row publicly.
     token: v.string(),
-    // Set when the host accepts and the Google event exists.
+    // Reserved when acceptance starts and retained with the Google event.
     googleEventId: v.optional(v.string()),
     calendarId: v.optional(v.string()),
     decidedAt: v.optional(v.number()),
+    // A stable Google create ID plus a short-lived claimant. Status remains
+    // pending while Google is in flight so existing clients keep rendering the
+    // request correctly and a lost response can be reconciled on retry.
+    acceptOperationId: v.optional(v.string()),
+    acceptAttemptId: v.optional(v.string()),
+    acceptLeaseExpiresAt: v.optional(v.number()),
+    acceptMayHaveSucceeded: v.optional(v.boolean()),
     createdAt: v.number(),
   })
     .index("by_host_and_start", ["hostUserId", "startMs"])
+    .index("by_host_and_end", ["hostUserId", "endMs"])
     .index("by_host_and_status_and_start", ["hostUserId", "status", "startMs"])
     .index("by_status_and_end", ["status", "endMs"])
     .index("by_token", ["token"]),
@@ -313,7 +322,7 @@ export default defineSchema({
     .index("by_user_and_resourceName", ["userId", "resourceName"]),
 
   // --- AI assistant ---------------------------------------------------------
-  // All three tables stay empty when no DEEPSEEK_API_KEY is configured; the
+  // These tables stay empty when no DEEPSEEK_API_KEY is configured; the
   // assistant is optional and its absence must not change anything else.
 
   // One conversation. `lastMessageAt` rather than `_creationTime` orders the
@@ -323,7 +332,21 @@ export default defineSchema({
     title: v.string(),
     createdAt: v.number(),
     lastMessageAt: v.number(),
+    // Transactional per-thread turn claim. Cleared by finish/fail; stale claims
+    // are recovered against the server timestamp when the next turn starts.
+    activeMessageId: v.optional(v.id("assistantMessages")),
   }).index("by_user_and_lastMessage", ["userId", "lastMessageAt"]),
+
+  // One bounded operational row per assistant user: fixed-window request quota
+  // and a global one-turn lease. Keeping this separate avoids churning threads.
+  assistantUserState: defineTable({
+    userId: v.string(),
+    windowStartMs: v.number(),
+    requestCount: v.number(),
+    activeMessageId: v.optional(v.id("assistantMessages")),
+    activeThreadId: v.optional(v.id("assistantThreads")),
+    leaseExpiresAt: v.optional(v.number()),
+  }).index("by_user", ["userId"]),
 
   // One row per turn. `blocks` is appended to in place while the model streams,
   // so the client's reactive subscription renders the reply as it arrives —
@@ -364,6 +387,10 @@ export default defineSchema({
     // The confirm card renders this, so what the user approves is stated in
     // words rather than inferred from raw arguments.
     preview: v.string(),
+    // Stable across retries and used as Google's client-selected event ID.
+    operationId: v.optional(v.string()),
+    attemptCount: v.optional(v.number()),
+    applyLeaseExpiresAt: v.optional(v.number()),
     // `applying` is the claim a confirm click takes before it calls Google, so
     // a double-click can't send the same invitation twice: the second click
     // finds the row already out of `pending` and does nothing.

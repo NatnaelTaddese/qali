@@ -6,6 +6,7 @@
   "author": "",
   "scripts": {
     "check-types": "tsc -p convex/tsconfig.json --noEmit",
+    "test": "bun test convex",
     "dev": "convex dev",
     "dev:setup": "convex dev --configure --until-success",
     "deploy:prod": "convex deploy"

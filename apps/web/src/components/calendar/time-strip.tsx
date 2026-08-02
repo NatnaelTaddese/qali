@@ -39,7 +39,7 @@ export interface TimeStripHandle {
   scrollToIndex: (index: number, behavior: ScrollBehavior) => void;
   /** Smooth-scroll a day column to the left edge and ease vertically to the
    * current-time line — a real continuous scroll to Today when it's on-strip. */
-  scrollToTodayColumn: (index: number) => void;
+  scrollToTodayColumn: (index: number, onSettled: () => void) => void;
   /** Arm the next recenter to also position vertically at the current-time
    * line (used when a Today view-transition rebuilds the strip off-buffer). */
   primeCenterNow: () => void;
@@ -79,6 +79,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     const bodyRef = useRef<HTMLDivElement>(null);
     const settleTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
     const suppressTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+    const todaySettleCallback = useRef<(() => void) | undefined>(undefined);
     const suppress = useRef(false);
     const didInitialNowScroll = useRef(false);
     const centerNowRef = useRef(false);
@@ -142,10 +143,34 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       return Math.max((el.clientWidth - GUTTER_TOTAL) / columns, 1);
     }, [columns]);
 
+    const finishScroll = useCallback(() => {
+      const el = scrollerRef.current;
+      if (!el || suppress.current) return;
+      const index = Math.max(
+        0,
+        Math.min(Math.round(el.scrollLeft / colWidth()), days.length - columns),
+      );
+      const delta = index - anchorIndex;
+      const onSettled = todaySettleCallback.current;
+      todaySettleCallback.current = undefined;
+      if (delta !== 0) onSettleDeltaDays(delta);
+      onSettled?.();
+    }, [anchorIndex, colWidth, columns, days.length, onSettleDeltaDays]);
+
+    const scheduleSettle = useCallback(() => {
+      clearTimeout(settleTimer.current);
+      settleTimer.current = setTimeout(finishScroll, 120);
+    }, [finishScroll]);
+
+    const cancelPendingTodayPulse = () => {
+      todaySettleCallback.current = undefined;
+    };
+
     const scrollToIndex = useCallback(
       (index: number, behavior: ScrollBehavior) => {
         const el = scrollerRef.current;
         if (!el) return;
+        todaySettleCallback.current = undefined;
         if (behavior === "auto") {
           setVisibleStartIdx(index);
           suppress.current = true;
@@ -155,8 +180,9 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
           }, 80);
         }
         el.scrollTo({ left: index * colWidth(), behavior });
+        if (behavior === "smooth") scheduleSettle();
       },
-      [colWidth],
+      [colWidth, scheduleSettle],
     );
 
     // Vertical scroll offset that places the current-time line ~35% down the
@@ -178,20 +204,23 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     }, []);
 
     const scrollToTodayColumn = useCallback(
-      (index: number) => {
+      (index: number, onSettled: () => void) => {
         const el = scrollerRef.current;
         if (!el) return;
+        todaySettleCallback.current = onSettled;
         didInitialNowScroll.current = true;
         el.scrollTo({
           left: index * colWidth(),
           top: nowScrollTop(),
           behavior: "smooth",
         });
+        scheduleSettle();
       },
-      [colWidth, nowScrollTop],
+      [colWidth, nowScrollTop, scheduleSettle],
     );
 
     const primeCenterNow = useCallback(() => {
+      todaySettleCallback.current = undefined;
       centerNowRef.current = true;
     }, []);
 
@@ -242,12 +271,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       );
       setVisibleStartIdx(index);
       if (suppress.current) return;
-      clearTimeout(settleTimer.current);
-      settleTimer.current = setTimeout(() => {
-        if (suppress.current) return;
-        const delta = index - anchorIndex;
-        if (delta !== 0) onSettleDeltaDays(delta);
-      }, 120);
+      scheduleSettle();
     };
 
     const { effectiveEvents, beginDrag, draggingId } = useEventDrag(events, days);
@@ -338,6 +362,9 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
         data-time-strip-scroller
         ref={scrollerRef}
         onScroll={onScroll}
+        onPointerDown={cancelPendingTodayPulse}
+        onTouchStart={cancelPendingTodayPulse}
+        onWheel={cancelPendingTodayPulse}
         className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain bg-calendar-header [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{ scrollSnapType: "x mandatory", scrollPaddingLeft: GUTTER_TOTAL }}
       >

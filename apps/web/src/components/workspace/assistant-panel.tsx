@@ -15,6 +15,10 @@ import { useAction, useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import {
+  isNearScrollBottom,
+  shouldSendAssistantMessage,
+} from "./assistant-interactions";
 import { AssistantMarkdown } from "./assistant-markdown";
 import {
   AssistantProposalCard,
@@ -44,20 +48,24 @@ const SUGGESTIONS = [
   "Move my next meeting an hour later",
 ];
 
-export function AssistantPanel({ onClose }: { onClose: () => void }) {
-  // The conversation lives here rather than in dock state: the first send is
-  // what creates it, and threading that back through the dock would replay the
-  // panel swap mid-reply.
-  const [threadId, setThreadId] = useState<Id<"assistantThreads"> | null>(null);
+export function AssistantPanel({
+  onClose,
+  threadId,
+  onThreadChange,
+}: {
+  onClose: () => void;
+  threadId: Id<"assistantThreads"> | null;
+  onThreadChange: (threadId: Id<"assistantThreads">) => void;
+}) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  // The very first message has nothing to subscribe to yet — the thread is
-  // created inside the action and its id only comes back when the whole turn
-  // finishes. Hold the text here so the panel responds to the click instead of
-  // sitting on the suggestions for several seconds.
   const [openingText, setOpeningText] = useState<string | null>(null);
   const sendMessage = useAction(api.assistant.sendMessage);
 
+  // sendMessage currently returns only after the model loop, but startTurn has
+  // already committed by then. The list subscription discovers that row so the
+  // first reply is subscribable and a failed action cannot strand its thread.
+  const threads = useQuery(api.assistantData.listThreads);
   const messages = useQuery(
     api.assistantData.listMessages,
     threadId ? { threadId } : "skip",
@@ -70,23 +78,49 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
 
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const shouldFollowRef = useRef(true);
+  const restoreFocusAfterSendRef = useRef(false);
 
-  // Follow the reply as it streams in. Every flush from the action patches the
-  // row, which re-runs the query, which lands here.
+  useEffect(() => {
+    if (!threadId && threads?.[0]) onThreadChange(threads[0]._id);
+  }, [threadId, threads, onThreadChange]);
+
+  // Keep following a stream only until the user deliberately scrolls away.
   useEffect(() => {
     const list = listRef.current;
-    if (list) list.scrollTop = list.scrollHeight;
-  }, [messages, openingText]);
+    if (list && shouldFollowRef.current) list.scrollTop = list.scrollHeight;
+  }, [messages, actions, openingText]);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
+  const turnInProgress = messages?.some(
+    (message) => message.status === "streaming",
+  );
+  const conversationLoading =
+    threads === undefined || (!threadId && (threads?.length ?? 0) > 0);
+  const composerBusy = sending || turnInProgress || conversationLoading;
+  const wasComposerBusyRef = useRef(composerBusy);
+
+  useEffect(() => {
+    if (
+      !composerBusy &&
+      (restoreFocusAfterSendRef.current || wasComposerBusyRef.current)
+    ) {
+      restoreFocusAfterSendRef.current = false;
+      inputRef.current?.focus();
+    }
+    wasComposerBusyRef.current = composerBusy;
+  }, [composerBusy]);
+
   const send = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || sending) return;
+    if (!trimmed || composerBusy) return;
+    shouldFollowRef.current = true;
     setDraft("");
     setSending(true);
+    restoreFocusAfterSendRef.current = true;
     if (!threadId) setOpeningText(trimmed);
     try {
       const result = await sendMessage({
@@ -95,9 +129,8 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
         // The backend must never guess these — every relative date the model
         // resolves depends on them.
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        nowMs: Date.now(),
       });
-      setThreadId(result.threadId);
+      onThreadChange(result.threadId);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : undefined;
       toast.error("The assistant couldn't reply", {
@@ -109,13 +142,22 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
     } finally {
       setSending(false);
       setOpeningText(null);
+      requestAnimationFrame(() => {
+        const input = inputRef.current;
+        if (input && !input.disabled) {
+          restoreFocusAfterSendRef.current = false;
+          input.focus();
+        }
+      });
     }
   };
 
-  // Suggestions belong to a genuinely empty panel — not to one whose first
-  // reply is already on its way.
-  const empty =
-    !openingText && (!threadId || (messages?.length ?? 0) === 0);
+  const empty = !openingText && !threadId && threads?.length === 0;
+  const loadingConversation =
+    !openingText &&
+    ((!threadId && threads === undefined) ||
+      (!threadId && Boolean(threads?.length)) ||
+      (Boolean(threadId) && messages === undefined));
 
   return (
     <div className="flex max-h-[26rem] flex-col gap-3">
@@ -129,7 +171,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close"
+          aria-label="Close assistant"
           className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
         >
           <HugeiconsIcon
@@ -156,8 +198,25 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
       ) : (
         <div
           ref={listRef}
+          role="log"
+          aria-label="Assistant conversation"
+          aria-live="polite"
+          aria-relevant="additions text"
+          aria-busy={composerBusy || undefined}
+          onScroll={(event) => {
+            shouldFollowRef.current = isNearScrollBottom(event.currentTarget);
+          }}
           className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1 scrollbar-gutter-stable"
         >
+          {loadingConversation && (
+            <p
+              role="status"
+              className="flex items-center gap-1.5 text-xs text-muted-foreground"
+            >
+              <Spinner className="size-3" />
+              Loading conversation…
+            </p>
+          )}
           {messages?.map((message) => (
             <TurnView
               key={message._id}
@@ -181,7 +240,10 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
               </Message>
               <Message align="start">
                 <MessageContent>
-                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <p
+                    role="status"
+                    className="flex items-center gap-1.5 text-xs text-muted-foreground"
+                  >
                     <Spinner className="size-3" />
                     Thinking…
                   </p>
@@ -196,18 +258,25 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
         <InputGroupTextarea
           ref={inputRef}
           value={draft}
+          aria-label="Message the assistant"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             // Enter sends; Shift+Enter is a newline. This is a one-line composer
             // most of the time, so the reverse would be the wrong default.
-            if (e.key === "Enter" && !e.shiftKey) {
+            if (
+              shouldSendAssistantMessage({
+                key: e.key,
+                shiftKey: e.shiftKey,
+                isComposing: e.nativeEvent.isComposing,
+              })
+            ) {
               e.preventDefault();
               void send(draft);
             }
           }}
           placeholder="Ask about your calendar…"
           rows={1}
-          disabled={sending}
+          disabled={composerBusy}
         />
         <InputGroupAddon align="inline-end">
           <InputGroupButton
@@ -215,10 +284,10 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
             size="icon-xs"
             variant="default"
             aria-label="Send"
-            disabled={sending || draft.trim().length === 0}
+            disabled={composerBusy || draft.trim().length === 0}
             onClick={() => void send(draft)}
           >
-            {sending ? (
+            {composerBusy ? (
               <Spinner />
             ) : (
               <HugeiconsIcon icon={ArrowUp02Icon} strokeWidth={2} />
@@ -287,6 +356,7 @@ function TurnView({
             return (
               <p
                 key={index}
+                role="status"
                 className="flex items-center gap-1.5 text-xs text-muted-foreground"
               >
                 {!done && <Spinner className="size-3" />}
@@ -307,14 +377,17 @@ function TurnView({
         })}
 
         {message.status === "streaming" && message.blocks.length === 0 && (
-          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <p
+            role="status"
+            className="flex items-center gap-1.5 text-xs text-muted-foreground"
+          >
             <Spinner className="size-3" />
             Thinking…
           </p>
         )}
 
         {message.status === "error" && (
-          <p className="text-xs text-destructive">
+          <p role="alert" className="text-xs text-destructive">
             {message.error ?? "Something went wrong."}
           </p>
         )}

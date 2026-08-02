@@ -2,6 +2,7 @@ import { memo } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { safeAssistantLink } from "./assistant-interactions";
 import { completeMarkdown } from "./streaming-markdown";
 
 /**
@@ -13,8 +14,8 @@ import { completeMarkdown } from "./streaming-markdown";
  * a narrow dock card, so every element is sized down by hand rather than
  * inheriting prose defaults built for an article column.
  *
- * `completeMarkdown` runs first because this renders mid-stream, on text that
- * is routinely cut in the middle of a token.
+ * `completeMarkdown` is intentionally conservative because this renders
+ * mid-stream; it must never rewrite a valid completed reply.
  */
 export const AssistantMarkdown = memo(function AssistantMarkdown({
   text,
@@ -58,18 +59,23 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
               {children}
             </pre>
           ),
-          // Anything the model links to is outside the app, and the model is
-          // not a trusted source of URLs — open detached from this window.
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer nofollow"
-              className="underline underline-offset-2"
-            >
-              {children}
-            </a>
-          ),
+          // Never let untrusted model output trigger a request on render.
+          img: () => null,
+          a: ({ href, children }) => {
+            const safeHref = safeAssistantLink(href);
+            return safeHref ? (
+              <a
+                href={safeHref}
+                target="_blank"
+                rel="noopener noreferrer nofollow"
+                className="underline underline-offset-2"
+              >
+                {children}
+              </a>
+            ) : (
+              <span>{children}</span>
+            );
+          },
           blockquote: ({ children }) => (
             <blockquote className="my-1.5 border-l-2 border-border pl-2.5 text-muted-foreground">
               {children}

@@ -114,10 +114,15 @@ export function CalendarWeekView() {
   // plain swap when reduced-motion is on or View Transitions are unsupported
   // (Firefox / older Safari).
   const runTransition = useCallback(
-    (name: string, apply: () => void) => {
+    (name: string, apply: () => void, onFinished?: () => void) => {
       const el = document.documentElement;
       if (reduce || typeof document.startViewTransition !== "function") {
-        apply();
+        if (onFinished) {
+          flushSync(apply);
+          onFinished();
+        } else {
+          apply();
+        }
         return;
       }
       el.dataset.calTransition = name;
@@ -126,19 +131,20 @@ export function CalendarWeekView() {
       });
       transition.finished.finally(() => {
         delete el.dataset.calTransition;
+        onFinished?.();
       });
     },
     [reduce],
   );
 
-  // Today: pulse today's marker and move it to center. When today is already in
+  // Today: move today's marker to center, then pulse it. When today is already in
   // the buffered window we scroll to it for real (continuous, through the actual
   // days); otherwise the days between aren't rendered, so we rebuild centered on
   // today under a directional slide transition. Day/week center today among the
   // visible columns; month shows today's whole month.
   const goToToday = () => {
     const today = new Date();
-    setPulseToken((t) => t + 1);
+    const pulseToday = () => setPulseToken((token) => token + 1);
 
     if (layout.mode === "strip") {
       const centerOffset = Math.floor(layout.columns / 2);
@@ -150,15 +156,17 @@ export function CalendarWeekView() {
         targetIndex >= 0 &&
         targetIndex <= layout.days.length - layout.columns
       ) {
-        stripRef.current?.scrollToTodayColumn(targetIndex);
+        stripRef.current?.scrollToTodayColumn(targetIndex, pulseToday);
         return;
       }
       const target = addDays(startOfDay(today), -centerOffset);
       const dir = Math.sign(target.getTime() - anchor.getTime());
       if (dir === 0) return;
       stripRef.current?.primeCenterNow();
-      runTransition(dir > 0 ? "slide-fwd" : "slide-back", () =>
-        setAnchor(target),
+      runTransition(
+        dir > 0 ? "slide-fwd" : "slide-back",
+        () => setAnchor(target),
+        pulseToday,
       );
       return;
     }
@@ -168,13 +176,17 @@ export function CalendarWeekView() {
       isSameMonth(s, today),
     );
     if (todayMonthIndex !== -1) {
-      pagerRef.current?.scrollToIndex(todayMonthIndex, "smooth");
+      pagerRef.current?.scrollToIndex(todayMonthIndex, "smooth", pulseToday);
       return;
     }
     const target = pageStart("month", today);
     const dir = Math.sign(target.getTime() - anchor.getTime());
     if (dir === 0) return;
-    runTransition(dir > 0 ? "slide-fwd" : "slide-back", () => setAnchor(target));
+    runTransition(
+      dir > 0 ? "slide-fwd" : "slide-back",
+      () => setAnchor(target),
+      pulseToday,
+    );
   };
 
   const switchView = (next: CalendarView) => {

@@ -8,6 +8,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
+import type { Id } from "@qali/backend/convex/_generated/dataModel";
 import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import {
@@ -18,7 +19,17 @@ import {
 import { cn } from "@qali/ui/lib/utils";
 import { useAction, useQuery } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { toast } from "sonner";
 
 import { EventCreate } from "@/components/calendar/event-create";
@@ -31,6 +42,10 @@ import {
 } from "@/components/calendar/motion";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { AccountPanel } from "./account-panel";
+import {
+  isEditableAssistantShortcutTarget,
+  shouldOpenAssistantShortcut,
+} from "./assistant-interactions";
 import { useAvailabilityEdit } from "./availability-edit-context";
 import { AvailabilityPanel } from "./availability-panel";
 import { BookingRequestPanel } from "./booking-request-panel";
@@ -44,9 +59,8 @@ import { UserAvatar } from "./user-avatar";
  * that is optional and, on a deployment with no API key, never reachable at
  * all. It only mounts when the dock opens it, so it can arrive then too.
  */
-const AssistantPanel = lazy(() =>
-  import("./assistant-panel").then((m) => ({ default: m.AssistantPanel })),
-);
+const loadAssistantPanel = () =>
+  import("./assistant-panel").then((m) => ({ default: m.AssistantPanel }));
 
 const MAX_TIMEOUT_MS = 2_147_000_000;
 const AVAILABILITY_PREFETCH_GRACE_MS = 10_000;
@@ -81,6 +95,8 @@ export function BottomIsland() {
   const availabilityOpen = view?.kind === "availability";
   const [availabilityIntentVersion, setAvailabilityIntentVersion] = useState(0);
   const [availabilityRequested, setAvailabilityRequested] = useState(false);
+  const [assistantThreadId, setAssistantThreadId] =
+    useState<Id<"assistantThreads"> | null>(null);
   const availabilityDataActive =
     availabilityOpen ||
     availabilityRequested ||
@@ -113,7 +129,29 @@ export function BottomIsland() {
     (booking) => booking.endMs > now,
   );
   const ref = useRef<HTMLElement>(null);
+  const assistantReturnFocusRef = useRef<HTMLElement | null>(null);
   const expanded = view !== null;
+
+  const openAssistant = useCallback(() => {
+    const active = document.activeElement;
+    assistantReturnFocusRef.current =
+      active instanceof HTMLElement ? active : null;
+    open({ kind: "assistant" });
+  }, [open]);
+
+  const closeCurrent = useCallback(() => {
+    const restoreAssistantFocus = view?.kind === "assistant";
+    close();
+    if (!restoreAssistantFocus) return;
+    requestAnimationFrame(() => {
+      const previous = assistantReturnFocusRef.current;
+      if (previous?.isConnected) previous.focus();
+      else
+        document
+          .querySelector<HTMLElement>("[data-assistant-trigger]")
+          ?.focus();
+    });
+  }, [close, view?.kind]);
 
   useEffect(() => {
     if (
@@ -183,14 +221,23 @@ export function BottomIsland() {
   useEffect(() => {
     if (!assistantAvailable) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      if (
+        shouldOpenAssistantShortcut(e, {
+          blocked:
+            editing ||
+            view?.kind === "create" ||
+            view?.kind === "edit" ||
+            view?.kind === "assistant",
+          editableTarget: isEditableAssistantShortcutTarget(e.target),
+        })
+      ) {
         e.preventDefault();
-        open({ kind: "assistant" });
+        openAssistant();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [assistantAvailable, open]);
+  }, [assistantAvailable, editing, view?.kind, openAssistant]);
 
   // No scrim, so dismissal is wired by hand: Escape, or a pointer outside the dock.
   useEffect(() => {
@@ -200,7 +247,7 @@ export function BottomIsland() {
       // While painting, Escape leaves the mode (back to the panel) rather than
       // dismissing the dock outright.
       if (editing) setEditing(false);
-      else close();
+      else closeCurrent();
     };
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement | null;
@@ -219,6 +266,7 @@ export function BottomIsland() {
         )
       )
         return;
+      // Do not steal focus back from the control the user clicked outside.
       close();
     };
     window.addEventListener("keydown", onKey);
@@ -237,7 +285,7 @@ export function BottomIsland() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [expanded, view?.kind, close, editing, setEditing]);
+  }, [expanded, view?.kind, close, closeCurrent, editing, setEditing]);
 
   const variants = reduce ? dockVariantsReduced : dockVariants;
 
@@ -275,7 +323,7 @@ export function BottomIsland() {
               ) : view?.kind === "event" ? (
                 <EventDetail
                   event={view.event}
-                  onClose={close}
+                  onClose={closeCurrent}
                   onEdit={() => open({ kind: "edit", event: view.event })}
                   onDuplicate={(prefill, startMs, endMs) =>
                     open({ kind: "create", startMs, endMs, prefill })
@@ -298,36 +346,35 @@ export function BottomIsland() {
                   onChangeRange={(startMs, endMs) =>
                     open({ ...view, startMs, endMs })
                   }
-                  onCancel={close}
-                  onCreated={close}
+                  onCancel={closeCurrent}
+                  onCreated={closeCurrent}
                 />
               ) : view?.kind === "account" ? (
-                <AccountPanel onClose={close} />
+                <AccountPanel onClose={closeCurrent} />
               ) : view?.kind === "availability" ? (
                 <AvailabilityPanel
                   key={availabilityInstance.current}
                   pendingBookings={activePendingBookings}
                   page={bookingPage}
                   defaults={bookingDefaults}
-                  onClose={close}
+                  onClose={closeCurrent}
                 />
               ) : view?.kind === "booking" ? (
-                <BookingRequestPanel booking={view.booking} onClose={close} />
+                <BookingRequestPanel
+                  booking={view.booking}
+                  onClose={closeCurrent}
+                />
               ) : view?.kind === "assistant" ? (
-                <Suspense
-                  fallback={
-                    <div className="flex h-24 items-center justify-center">
-                      <Spinner />
-                    </div>
-                  }
-                >
-                  <AssistantPanel onClose={close} />
-                </Suspense>
+                <AssistantPanelLoader
+                  threadId={assistantThreadId}
+                  onThreadChange={setAssistantThreadId}
+                  onClose={closeCurrent}
+                />
               ) : (
                 <NavRow
                   pendingCount={activePendingBookings?.length ?? 0}
                   assistantAvailable={assistantAvailable}
-                  onOpenAssistant={() => open({ kind: "assistant" })}
+                  onOpenAssistant={openAssistant}
                   onOpenAccount={() => open({ kind: "account" })}
                   availabilityLoading={availabilityRequested}
                   onPrepareAvailability={prepareAvailability}
@@ -340,6 +387,83 @@ export function BottomIsland() {
       </motion.nav>
     </div>
   );
+}
+
+function AssistantPanelLoader({
+  threadId,
+  onThreadChange,
+  onClose,
+}: {
+  threadId: Id<"assistantThreads"> | null;
+  onThreadChange: (threadId: Id<"assistantThreads">) => void;
+  onClose: () => void;
+}) {
+  const [attempt, setAttempt] = useState(0);
+  const Panel = useMemo(() => lazy(loadAssistantPanel), [attempt]);
+
+  return (
+    <AssistantPanelErrorBoundary
+      key={attempt}
+      onRetry={() => setAttempt((current) => current + 1)}
+      onClose={onClose}
+    >
+      <Suspense
+        fallback={
+          <div
+            role="status"
+            aria-label="Loading assistant"
+            className="flex h-24 items-center justify-center"
+          >
+            <Spinner />
+          </div>
+        }
+      >
+        <Panel
+          threadId={threadId}
+          onThreadChange={onThreadChange}
+          onClose={onClose}
+        />
+      </Suspense>
+    </AssistantPanelErrorBoundary>
+  );
+}
+
+class AssistantPanelErrorBoundary extends Component<
+  { children: ReactNode; onRetry: () => void; onClose: () => void },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div role="alert" className="flex flex-col gap-3 py-2">
+        <div>
+          <p className="text-sm font-medium">Assistant failed to load</p>
+          <p className="text-xs text-muted-foreground">
+            Check your connection and try again.
+          </p>
+        </div>
+        <div className="flex gap-1.5">
+          <Button type="button" size="sm" onClick={this.props.onRetry}>
+            Retry
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={this.props.onClose}
+          >
+            Close
+          </Button>
+        </div>
+      </div>
+    );
+  }
 }
 
 /** The dock's face while painting availability: the same island, morphed into a
@@ -434,6 +558,7 @@ function NavRow({
         <NavButton
           icon={AiMagicIcon}
           label="Assistant · ⌘K"
+          assistantTrigger
           onClick={onOpenAssistant}
         />
       )}
@@ -470,6 +595,7 @@ function NavButton({
   active,
   busy,
   badge,
+  assistantTrigger,
   onIntent,
   onClick,
 }: {
@@ -479,12 +605,14 @@ function NavButton({
   busy?: boolean;
   /** A count worth interrupting for, shown as a dot on the icon. 0 hides it. */
   badge?: number;
+  assistantTrigger?: boolean;
   onIntent?: () => void;
   onClick?: () => void;
 }) {
   return (
     <Tooltip>
       <TooltipTrigger
+        data-assistant-trigger={assistantTrigger || undefined}
         aria-label={label}
         aria-current={active ? "page" : undefined}
         aria-busy={busy || undefined}

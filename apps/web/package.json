@@ -9,6 +9,7 @@
     "serve": "vite preview",
     "start": "vite",
     "deploy": "wrangler deploy",
+    "test": "bun test src",
     "check-types": "vite build && tsc --noEmit"
   },
   "dependencies": {

@@ -260,6 +260,33 @@ describe("insertCalendarEvent conferencing", () => {
       undefined,
     );
   });
+
+  test("passes stable event and conference IDs for retry reconciliation", async () => {
+    const captured = captureRequest({ id: "qalistable", start: START, end: END });
+
+    await insertCalendarEvent(
+      "token",
+      "primary@example.com",
+      {
+        id: "qalistable",
+        summary: "Sync",
+        start: START,
+        end: END,
+      },
+      undefined,
+      true,
+      "stable-operation",
+    );
+
+    const body = captured.body as {
+      id?: string;
+      conferenceData?: { createRequest?: { requestId?: string } };
+    };
+    expect(body.id).toBe("qalistable");
+    expect(body.conferenceData?.createRequest?.requestId).toBe(
+      "stable-operation",
+    );
+  });
 });
 
 describe("patchCalendarEvent conferencing", () => {

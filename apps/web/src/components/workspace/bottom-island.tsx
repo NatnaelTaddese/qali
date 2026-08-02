@@ -1,4 +1,5 @@
 import {
+  AiMagicIcon,
   Calendar03Icon,
   Cursor02Icon,
   PlusSignIcon,
@@ -30,6 +31,7 @@ import {
 } from "@/components/calendar/motion";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { AccountPanel } from "./account-panel";
+import { AssistantPanel } from "./assistant-panel";
 import { useAvailabilityEdit } from "./availability-edit-context";
 import { AvailabilityPanel } from "./availability-panel";
 import { BookingRequestPanel } from "./booking-request-panel";
@@ -50,6 +52,9 @@ function widthClass(view: DockView | null): string {
   // The availability panel carries a seven-row weekly grid, so it needs more
   // room than the event panels.
   if (view.kind === "availability") return "w-[min(30rem,100%)]";
+  // A conversation needs line length to stay readable, and the confirm cards
+  // inside it carry a full sentence plus two buttons.
+  if (view.kind === "assistant") return "w-[min(34rem,100%)]";
   return "w-[min(27rem,100%)]";
 }
 
@@ -72,6 +77,11 @@ export function BottomIsland() {
     availabilityIntentVersion > 0;
   // This stays live for the dock badge and incoming-request calendar blocks.
   const pendingBookings = useQuery(api.booking.listPendingBookings);
+  // The assistant is optional: with no API key configured its button is not
+  // rendered at all. `undefined` (still loading) counts as unavailable so the
+  // button doesn't pop into the nav row a beat after first paint.
+  const assistantAvailable =
+    useQuery(api.assistantData.isAvailable) === true;
   // Warm settings on interaction intent so the dock knows its final content
   // height before its spring begins. Retain them briefly after close for a
   // smooth reopen, then release both subscriptions.
@@ -156,6 +166,21 @@ export function BottomIsland() {
     schedule();
     return () => clearTimeout(timeout);
   }, [nextEndMs]);
+
+  // ⌘K opens the assistant from anywhere in the workspace. Registered only when
+  // there is an assistant to open, so on a deployment without an API key the
+  // shortcut stays free for whatever the app wants next.
+  useEffect(() => {
+    if (!assistantAvailable) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        open({ kind: "assistant" });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [assistantAvailable, open]);
 
   // No scrim, so dismissal is wired by hand: Escape, or a pointer outside the dock.
   useEffect(() => {
@@ -278,9 +303,13 @@ export function BottomIsland() {
                 />
               ) : view?.kind === "booking" ? (
                 <BookingRequestPanel booking={view.booking} onClose={close} />
+              ) : view?.kind === "assistant" ? (
+                <AssistantPanel onClose={close} />
               ) : (
                 <NavRow
                   pendingCount={activePendingBookings?.length ?? 0}
+                  assistantAvailable={assistantAvailable}
+                  onOpenAssistant={() => open({ kind: "assistant" })}
                   onOpenAccount={() => open({ kind: "account" })}
                   availabilityLoading={availabilityRequested}
                   onPrepareAvailability={prepareAvailability}
@@ -340,13 +369,17 @@ function AvailabilityEditBar({
 
 function NavRow({
   pendingCount,
+  assistantAvailable,
   availabilityLoading,
+  onOpenAssistant,
   onOpenAccount,
   onPrepareAvailability,
   onOpenAvailability,
 }: {
   pendingCount: number;
+  assistantAvailable: boolean;
   availabilityLoading: boolean;
+  onOpenAssistant: () => void;
   onOpenAccount: () => void;
   onPrepareAvailability: () => void;
   onOpenAvailability: () => void;
@@ -379,6 +412,13 @@ function NavRow({
       />
       <NavButton icon={Search01Icon} label="Search" />
       <NavButton icon={PlusSignIcon} label="Create" />
+      {assistantAvailable && (
+        <NavButton
+          icon={AiMagicIcon}
+          label="Assistant · ⌘K"
+          onClick={onOpenAssistant}
+        />
+      )}
       <NavButton
         icon={TimeScheduleIcon}
         label={

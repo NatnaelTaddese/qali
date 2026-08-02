@@ -97,6 +97,7 @@ export function BottomIsland() {
   const [availabilityRequested, setAvailabilityRequested] = useState(false);
   const [assistantThreadId, setAssistantThreadId] =
     useState<Id<"assistantThreads"> | null>(null);
+  const [assistantStartingFresh, setAssistantStartingFresh] = useState(false);
   const availabilityDataActive =
     availabilityOpen ||
     availabilityRequested ||
@@ -152,6 +153,19 @@ export function BottomIsland() {
           ?.focus();
     });
   }, [close, view?.kind]);
+
+  const selectAssistantThread = useCallback(
+    (threadId: Id<"assistantThreads">) => {
+      setAssistantThreadId(threadId);
+      setAssistantStartingFresh(false);
+    },
+    [],
+  );
+
+  const startNewAssistantChat = useCallback(() => {
+    setAssistantThreadId(null);
+    setAssistantStartingFresh(true);
+  }, []);
 
   useEffect(() => {
     if (
@@ -367,7 +381,9 @@ export function BottomIsland() {
               ) : view?.kind === "assistant" ? (
                 <AssistantPanelLoader
                   threadId={assistantThreadId}
-                  onThreadChange={setAssistantThreadId}
+                  onThreadChange={selectAssistantThread}
+                  startFresh={assistantStartingFresh}
+                  onNewChat={startNewAssistantChat}
                   onClose={closeCurrent}
                 />
               ) : (
@@ -392,10 +408,14 @@ export function BottomIsland() {
 function AssistantPanelLoader({
   threadId,
   onThreadChange,
+  startFresh,
+  onNewChat,
   onClose,
 }: {
   threadId: Id<"assistantThreads"> | null;
   onThreadChange: (threadId: Id<"assistantThreads">) => void;
+  startFresh: boolean;
+  onNewChat: () => void;
   onClose: () => void;
 }) {
   const [attempt, setAttempt] = useState(0);
@@ -421,6 +441,8 @@ function AssistantPanelLoader({
         <Panel
           threadId={threadId}
           onThreadChange={onThreadChange}
+          startFresh={startFresh}
+          onNewChat={onNewChat}
           onClose={onClose}
         />
       </Suspense>

@@ -19,6 +19,7 @@ import type * as googleSync from "../googleSync.js";
 import type * as healthCheck from "../healthCheck.js";
 import type * as http from "../http.js";
 import type * as lib_assistantHistory from "../lib/assistantHistory.js";
+import type * as lib_assistantLogic from "../lib/assistantLogic.js";
 import type * as lib_assistantTools from "../lib/assistantTools.js";
 import type * as lib_availability from "../lib/availability.js";
 import type * as lib_calendarOps from "../lib/calendarOps.js";
@@ -47,6 +48,7 @@ declare const fullApi: ApiFromModules<{
   healthCheck: typeof healthCheck;
   http: typeof http;
   "lib/assistantHistory": typeof lib_assistantHistory;
+  "lib/assistantLogic": typeof lib_assistantLogic;
   "lib/assistantTools": typeof lib_assistantTools;
   "lib/availability": typeof lib_availability;
   "lib/calendarOps": typeof lib_calendarOps;

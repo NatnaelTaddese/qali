@@ -1,4 +1,8 @@
-import { ArrowUp02Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
+import {
+  ArrowUp02Icon,
+  Cancel01Icon,
+  PlusSignIcon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import type { Doc, Id } from "@qali/backend/convex/_generated/dataModel";
@@ -52,10 +56,14 @@ export function AssistantPanel({
   onClose,
   threadId,
   onThreadChange,
+  startFresh,
+  onNewChat,
 }: {
   onClose: () => void;
   threadId: Id<"assistantThreads"> | null;
   onThreadChange: (threadId: Id<"assistantThreads">) => void;
+  startFresh: boolean;
+  onNewChat: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -80,10 +88,27 @@ export function AssistantPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const shouldFollowRef = useRef(true);
   const restoreFocusAfterSendRef = useRef(false);
+  const openingPreviousThreadIdRef = useRef<Id<"assistantThreads"> | null>(
+    null,
+  );
 
   useEffect(() => {
-    if (!threadId && threads?.[0]) onThreadChange(threads[0]._id);
-  }, [threadId, threads, onThreadChange]);
+    const latest = threads?.[0];
+    if (!threadId && latest && !startFresh) {
+      onThreadChange(latest._id);
+    } else if (
+      !threadId &&
+      latest &&
+      startFresh &&
+      openingText &&
+      latest._id !== openingPreviousThreadIdRef.current
+    ) {
+      // A fresh send creates its thread inside the action. Subscribe as soon as
+      // that new row becomes the latest one, without mistaking the previous
+      // latest conversation for the new turn before startTurn commits.
+      onThreadChange(latest._id);
+    }
+  }, [startFresh, threadId, threads, openingText, onThreadChange]);
 
   // Keep following a stream only until the user deliberately scrolls away.
   useEffect(() => {
@@ -99,7 +124,8 @@ export function AssistantPanel({
     (message) => message.status === "streaming",
   );
   const conversationLoading =
-    threads === undefined || (!threadId && (threads?.length ?? 0) > 0);
+    !startFresh &&
+    (threads === undefined || (!threadId && (threads?.length ?? 0) > 0));
   const composerBusy = sending || turnInProgress || conversationLoading;
   const wasComposerBusyRef = useRef(composerBusy);
 
@@ -121,7 +147,10 @@ export function AssistantPanel({
     setDraft("");
     setSending(true);
     restoreFocusAfterSendRef.current = true;
-    if (!threadId) setOpeningText(trimmed);
+    if (!threadId) {
+      openingPreviousThreadIdRef.current = threads?.[0]?._id ?? null;
+      setOpeningText(trimmed);
+    }
     try {
       const result = await sendMessage({
         threadId: threadId ?? undefined,
@@ -152,11 +181,23 @@ export function AssistantPanel({
     }
   };
 
-  const empty = !openingText && !threadId && threads?.length === 0;
+  const beginNewChat = () => {
+    if (composerBusy || !threadId) return;
+    setDraft("");
+    shouldFollowRef.current = true;
+    openingPreviousThreadIdRef.current = threads?.[0]?._id ?? null;
+    onNewChat();
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const empty =
+    !openingText &&
+    !threadId &&
+    (startFresh || threads?.length === 0);
   const loadingConversation =
     !openingText &&
-    ((!threadId && threads === undefined) ||
-      (!threadId && Boolean(threads?.length)) ||
+    ((!startFresh && !threadId && threads === undefined) ||
+      (!startFresh && !threadId && Boolean(threads?.length)) ||
       (Boolean(threadId) && messages === undefined));
 
   return (
@@ -168,18 +209,29 @@ export function AssistantPanel({
             Asks before it changes anything
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close assistant"
-          className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <HugeiconsIcon
-            icon={Cancel01Icon}
-            strokeWidth={2}
-            className="size-4"
-          />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={beginNewChat}
+            disabled={composerBusy || !threadId}
+            className="flex h-7 shrink-0 items-center gap-1 rounded-full px-2 text-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40"
+          >
+            <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} className="size-3.5" />
+            New chat
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close assistant"
+            className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <HugeiconsIcon
+              icon={Cancel01Icon}
+              strokeWidth={2}
+              className="size-4"
+            />
+          </button>
+        </div>
       </div>
 
       {empty ? (

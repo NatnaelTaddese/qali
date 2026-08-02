@@ -1,7 +1,6 @@
 import {
   Calendar03Icon,
   Cursor02Icon,
-  Menu01Icon,
   PlusSignIcon,
   Search01Icon,
   TimeScheduleIcon,
@@ -378,7 +377,6 @@ function NavRow({
         busy={isSyncing}
         onClick={sync}
       />
-      <NavButton icon={Menu01Icon} label="Agenda" />
       <NavButton icon={Search01Icon} label="Search" />
       <NavButton icon={PlusSignIcon} label="Create" />
       <NavButton

@@ -26,13 +26,23 @@ import {
   type CalendarEvent,
   visibleAllDayMetrics,
 } from "./lib";
-import { getNowIndicatorLayout, NowIndicator } from "./now-indicator";
+import {
+  getNowIndicatorLayout,
+  NowIndicator,
+  type NowIndicatorLayout,
+} from "./now-indicator";
 import { PanelHeader } from "./panel-header";
 import { useEventDrag } from "./use-event-drag";
 
 export interface TimeStripHandle {
   /** Scroll to a day column index. Use "smooth" for button nav. */
   scrollToIndex: (index: number, behavior: ScrollBehavior) => void;
+  /** Smooth-scroll a day column to the left edge and ease vertically to the
+   * current-time line — a real continuous scroll to Today when it's on-strip. */
+  scrollToTodayColumn: (index: number) => void;
+  /** Arm the next recenter to also position vertically at the current-time
+   * line (used when a Today view-transition rebuilds the strip off-buffer). */
+  primeCenterNow: () => void;
 }
 
 interface TimeStripProps {
@@ -46,6 +56,8 @@ interface TimeStripProps {
   events: CalendarEvent[];
   /** Fired once scrolling settles `deltaDays` away from the anchor. */
   onSettleDeltaDays: (deltaDays: number) => void;
+  /** Increments on each Today click; pulses today's date pill on change. */
+  pulseToken: number;
 }
 
 /**
@@ -60,7 +72,7 @@ interface TimeStripProps {
  */
 export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
   function TimeStrip(
-    { days, anchorIndex, columns, events, onSettleDeltaDays },
+    { days, anchorIndex, columns, events, onSettleDeltaDays, pulseToken },
     ref,
   ) {
     const scrollerRef = useRef<HTMLDivElement>(null);
@@ -69,6 +81,8 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     const suppressTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
     const suppress = useRef(false);
     const didInitialNowScroll = useRef(false);
+    const centerNowRef = useRef(false);
+    const nowLayoutRef = useRef<NowIndicatorLayout | null>(null);
     const [now, setNow] = useState(() => Date.now());
     const [visibleStartIdx, setVisibleStartIdx] = useState(anchorIndex);
     const contacts = useQuery(api.contacts.listContacts) ?? [];
@@ -145,11 +159,71 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       [colWidth],
     );
 
-    useImperativeHandle(ref, () => ({ scrollToIndex }), [scrollToIndex]);
+    // Vertical scroll offset that places the current-time line ~35% down the
+    // viewport. Falls back to the current position when today isn't on-strip.
+    const nowScrollTop = useCallback(() => {
+      const el = scrollerRef.current;
+      const body = bodyRef.current;
+      const layout = nowLayoutRef.current;
+      if (!el) return 0;
+      if (layout?.today && body) {
+        return Math.max(
+          0,
+          body.offsetTop +
+            body.clientHeight * (layout.topPct / 100) -
+            el.clientHeight * 0.35,
+        );
+      }
+      return el.scrollTop;
+    }, []);
 
-    // Recenter instantly when the strip rebuilds (anchor/view change) or mounts.
+    const scrollToTodayColumn = useCallback(
+      (index: number) => {
+        const el = scrollerRef.current;
+        if (!el) return;
+        didInitialNowScroll.current = true;
+        el.scrollTo({
+          left: index * colWidth(),
+          top: nowScrollTop(),
+          behavior: "smooth",
+        });
+      },
+      [colWidth, nowScrollTop],
+    );
+
+    const primeCenterNow = useCallback(() => {
+      centerNowRef.current = true;
+    }, []);
+
+    useImperativeHandle(
+      ref,
+      () => ({ scrollToIndex, scrollToTodayColumn, primeCenterNow }),
+      [scrollToIndex, scrollToTodayColumn, primeCenterNow],
+    );
+
+    // Recenter when the strip rebuilds (anchor/view change) or mounts. A primed
+    // Today jump also parks vertically at the current-time line so the freshly
+    // built (off-buffer) view is already centered on now under the transition.
     useLayoutEffect(() => {
+      const el = scrollerRef.current;
+      if (centerNowRef.current && el) {
+        centerNowRef.current = false;
+        setVisibleStartIdx(anchorIndex);
+        suppress.current = true;
+        clearTimeout(suppressTimer.current);
+        suppressTimer.current = setTimeout(() => {
+          suppress.current = false;
+        }, 80);
+        didInitialNowScroll.current = true;
+        el.scrollTo({
+          left: anchorIndex * colWidth(),
+          top: nowScrollTop(),
+          behavior: "auto",
+        });
+        return;
+      }
       scrollToIndex(anchorIndex, "auto");
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [days, anchorIndex, scrollToIndex]);
 
     // Keep the anchor centered across viewport resizes.
@@ -235,6 +309,9 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       allDayExpanded,
     );
     const nowLayout = getNowIndicatorLayout(days, now);
+    // Expose the latest layout to the imperative scroll helpers (which run
+    // outside render) without threading it through their dependency arrays.
+    nowLayoutRef.current = nowLayout;
 
     // On first entry to a current day/week, put now comfortably below the
     // sticky header. This guard deliberately prevents event/sync rerenders from
@@ -290,6 +367,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
               allDayEvents={allDayLayout}
               allDayHeight={allDayHeight}
               allDayExpanded={allDayExpanded}
+              pulseToken={pulseToken}
             />
           </div>
           <div

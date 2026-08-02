@@ -289,6 +289,22 @@
   animation-name: cal-width-out-new;
 }
 
+/* Slide variants: a directional drift + crossfade used when jumping to Today
+   across a distance the day strip can't scroll through. `fwd` reveals later
+   dates (today ahead of the current view), `back` reveals earlier ones. */
+:root[data-cal-transition="slide-fwd"]::view-transition-old(calendar-body) {
+  animation-name: cal-slide-fwd-old;
+}
+:root[data-cal-transition="slide-fwd"]::view-transition-new(calendar-body) {
+  animation-name: cal-slide-fwd-new;
+}
+:root[data-cal-transition="slide-back"]::view-transition-old(calendar-body) {
+  animation-name: cal-slide-back-old;
+}
+:root[data-cal-transition="slide-back"]::view-transition-new(calendar-body) {
+  animation-name: cal-slide-back-new;
+}
+
 @keyframes cal-zoom-in-old {
   to {
     opacity: 0;
@@ -336,6 +352,31 @@
 @keyframes cal-width-out-new {
   from {
     opacity: 0;
+  }
+}
+
+@keyframes cal-slide-fwd-old {
+  to {
+    opacity: 0;
+    transform: translateX(-6%);
+  }
+}
+@keyframes cal-slide-fwd-new {
+  from {
+    opacity: 0;
+    transform: translateX(10%);
+  }
+}
+@keyframes cal-slide-back-old {
+  to {
+    opacity: 0;
+    transform: translateX(6%);
+  }
+}
+@keyframes cal-slide-back-new {
+  from {
+    opacity: 0;
+    transform: translateX(-10%);
   }
 }
 

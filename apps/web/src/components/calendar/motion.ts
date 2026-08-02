@@ -59,6 +59,18 @@ export const dockVariantsReduced: Variants = {
   exit: { opacity: 0, transition: { duration: 0.14, ease: EASE_OUT_EXPO } },
 };
 
+// Background flash on today's marker once a Today jump settles. A soft double
+// pulse of a translucent overlay's opacity (theme/colour handled in CSS).
+export const TODAY_FLASH = {
+  keyframes: { opacity: [0, 1, 0, 1, 0] as number[] },
+  transition: {
+    duration: 1.0,
+    delay: 0.3,
+    times: [0, 0.18, 0.42, 0.6, 1] as number[],
+    ease: "easeOut" as const,
+  },
+};
+
 // Shape moves first. Text follows.
 export const expand = {
   collapsedWidth: 44,

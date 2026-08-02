@@ -10,7 +10,7 @@ import { Checkbox } from "@qali/ui/components/checkbox";
 import { GooDropdown } from "@qali/ui/components/ui/goo-dropdown";
 import { cn } from "@qali/ui/lib/utils";
 import { useMutation } from "convex/react";
-import { addDays, getISOWeek } from "date-fns";
+import { addDays, getISOWeek, isSameDay, isSameMonth, startOfDay } from "date-fns";
 import { useReducedMotion } from "motion/react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -42,6 +42,7 @@ const VIEWS: CalendarView[] = ["day", "week", "month"];
 export function CalendarWeekView() {
   const [view, setView] = useState<CalendarView>("week");
   const [anchor, setAnchor] = useState(() => pageStart("week", new Date()));
+  const [pulseToken, setPulseToken] = useState(0);
   const pagerRef = useRef<CalendarPagerHandle>(null);
   const stripRef = useRef<TimeStripHandle>(null);
   const reduce = useReducedMotion();
@@ -105,21 +106,21 @@ export function CalendarWeekView() {
     [view],
   );
 
-  // Animate between calendar granularities via the View Transitions API.
-  // `flushSync` commits the new tree (and its layout effects) synchronously so
-  // the browser snapshots the settled view. `style` picks the animation: "zoom"
-  // (scale crossfade) for anything touching the month overview, "width" (the day
-  // column stretching/shrinking from the gutter) for week↔day. Falls back to a
-  // plain swap when reduced-motion is on or the browser lacks View Transitions
+  // Animate calendar-body changes via the View Transitions API. `name` selects a
+  // [data-cal-transition] variant: "zoom" (scale crossfade) for month-overview
+  // changes, "width" for week↔day, "slide-fwd"/"slide-back" for a directional
+  // Today jump. `flushSync` commits the new tree (and its layout effects)
+  // synchronously so the browser snapshots the settled view. Falls back to a
+  // plain swap when reduced-motion is on or View Transitions are unsupported
   // (Firefox / older Safari).
   const runTransition = useCallback(
-    (style: "zoom" | "width", direction: "in" | "out", apply: () => void) => {
+    (name: string, apply: () => void) => {
       const el = document.documentElement;
       if (reduce || typeof document.startViewTransition !== "function") {
         apply();
         return;
       }
-      el.dataset.calTransition = `${style}-${direction}`;
+      el.dataset.calTransition = name;
       const transition = document.startViewTransition(() => {
         flushSync(apply);
       });
@@ -129,6 +130,52 @@ export function CalendarWeekView() {
     },
     [reduce],
   );
+
+  // Today: pulse today's marker and move it to center. When today is already in
+  // the buffered window we scroll to it for real (continuous, through the actual
+  // days); otherwise the days between aren't rendered, so we rebuild centered on
+  // today under a directional slide transition. Day/week center today among the
+  // visible columns; month shows today's whole month.
+  const goToToday = () => {
+    const today = new Date();
+    setPulseToken((t) => t + 1);
+
+    if (layout.mode === "strip") {
+      const centerOffset = Math.floor(layout.columns / 2);
+      const todayIndex = layout.days.findIndex((d) => isSameDay(d, today));
+      const targetIndex = todayIndex - centerOffset;
+      // On-strip and fully scrollable to a centered position: real scroll.
+      if (
+        todayIndex !== -1 &&
+        targetIndex >= 0 &&
+        targetIndex <= layout.days.length - layout.columns
+      ) {
+        stripRef.current?.scrollToTodayColumn(targetIndex);
+        return;
+      }
+      const target = addDays(startOfDay(today), -centerOffset);
+      const dir = Math.sign(target.getTime() - anchor.getTime());
+      if (dir === 0) return;
+      stripRef.current?.primeCenterNow();
+      runTransition(dir > 0 ? "slide-fwd" : "slide-back", () =>
+        setAnchor(target),
+      );
+      return;
+    }
+
+    // Month.
+    const todayMonthIndex = layout.pageStarts.findIndex((s) =>
+      isSameMonth(s, today),
+    );
+    if (todayMonthIndex !== -1) {
+      pagerRef.current?.scrollToIndex(todayMonthIndex, "smooth");
+      return;
+    }
+    const target = pageStart("month", today);
+    const dir = Math.sign(target.getTime() - anchor.getTime());
+    if (dir === 0) return;
+    runTransition(dir > 0 ? "slide-fwd" : "slide-back", () => setAnchor(target));
+  };
 
   const switchView = (next: CalendarView) => {
     const apply = () => {
@@ -143,15 +190,13 @@ export function CalendarWeekView() {
     const isWeekDay =
       (view === "week" && next === "day") ||
       (view === "day" && next === "week");
-    runTransition(
-      isWeekDay ? "width" : "zoom",
-      granularityDelta > 0 ? "out" : "in",
-      apply,
-    );
+    const style = isWeekDay ? "width" : "zoom";
+    const direction = granularityDelta > 0 ? "out" : "in";
+    runTransition(`${style}-${direction}`, apply);
   };
 
   const openDay = (day: Date) => {
-    runTransition("zoom", "in", () => {
+    runTransition("zoom-in", () => {
       setAnchor(pageStart("day", day));
       setView("day");
     });
@@ -194,7 +239,7 @@ export function CalendarWeekView() {
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => jumpTo(new Date())}
+              onClick={goToToday}
               className="rounded-md px-2.5 py-1 text-sm font-medium hover:bg-accent"
             >
               Today
@@ -223,6 +268,7 @@ export function CalendarWeekView() {
                 days={pageDays("month", start)}
                 events={events}
                 onSelectDay={openDay}
+                pulseToken={pulseToken}
               />
             )}
           />
@@ -234,6 +280,7 @@ export function CalendarWeekView() {
             columns={layout.columns}
             events={events}
             onSettleDeltaDays={(delta) => setAnchor((a) => addDays(a, delta))}
+            pulseToken={pulseToken}
           />
         )}
       </div>

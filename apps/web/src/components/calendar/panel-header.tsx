@@ -13,12 +13,15 @@ import {
   HEADER_DATE_HEIGHT,
 } from "./lib";
 import { press } from "./motion";
+import { TodayFlash } from "./today-pulse";
 
 interface PanelHeaderProps {
   days: Date[];
   allDayEvents: AllDayEventLayout[];
   allDayHeight: number;
   allDayExpanded: boolean;
+  /** Increments on each Today click; pulses today's date pill on change. */
+  pulseToken: number;
 }
 
 /** Weekday/date row plus the all-day band for a single day or week page.
@@ -28,6 +31,7 @@ export function PanelHeader({
   allDayEvents,
   allDayHeight,
   allDayExpanded,
+  pulseToken,
 }: PanelHeaderProps) {
   const { open } = useDock();
   const colorFor = useEventColor();
@@ -76,15 +80,17 @@ export function PanelHeader({
               >
                 {format(day, "EEE")}
               </span>
-              <span
-                className={cn(
-                  "text-lg font-semibold",
-                  today &&
-                    "flex size-7 items-center justify-center self-center rounded-full bg-primary text-primary-foreground",
-                )}
-              >
-                {format(day, "d")}
-              </span>
+              {today ? (
+                <span className="relative flex size-7 items-center justify-center self-center overflow-hidden rounded-full bg-primary text-lg font-semibold text-primary-foreground">
+                  <TodayFlash
+                    token={pulseToken}
+                    className="z-0 bg-[color-mix(in_oklab,white_55%,transparent)]"
+                  />
+                  <span className="relative z-10">{format(day, "d")}</span>
+                </span>
+              ) : (
+                <span className="text-lg font-semibold">{format(day, "d")}</span>
+              )}
             </div>
           );
         })}

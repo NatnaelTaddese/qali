@@ -58,3 +58,28 @@ export function safeAssistantLink(href: string | undefined): string | null {
     return null;
   }
 }
+
+export function acknowledgedAssistantUserMessageId<T extends string>(
+  messages:
+    | readonly {
+        _id: T;
+        role: string;
+        blocks: readonly { type: string; text?: string }[];
+      }[]
+    | undefined,
+  previousUserMessageId: T | null,
+  pendingText: string,
+): T | null {
+  for (let index = (messages?.length ?? 0) - 1; index >= 0; index -= 1) {
+    const message = messages?.[index];
+    if (message?.role !== "user") continue;
+    const text = message.blocks
+      .filter((block) => block.type === "text")
+      .map((block) => block.text ?? "")
+      .join("");
+    return message._id !== previousUserMessageId && text === pendingText
+      ? message._id
+      : null;
+  }
+  return null;
+}

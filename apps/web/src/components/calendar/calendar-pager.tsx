@@ -99,6 +99,7 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
     // Recenter instantly whenever the buffered window rebuilds (anchor/view
     // change) or the first mount. `pageStarts` is a fresh array each time.
     useLayoutEffect(() => {
+      clearTimeout(settleTimer.current);
       scrollToIndex(centerIndex, "auto");
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [pageStarts, gutterWidth]);
@@ -120,6 +121,14 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
       return () => observer.disconnect();
     }, [centerIndex, scrollToIndex]);
 
+    useEffect(
+      () => () => {
+        clearTimeout(settleTimer.current);
+        clearTimeout(suppressTimer.current);
+      },
+      [],
+    );
+
     const onScroll = () => {
       if (suppress.current) return;
       scheduleSettle();
@@ -132,7 +141,7 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
         onPointerDown={cancelPendingPulse}
         onTouchStart={cancelPendingPulse}
         onWheel={cancelPendingPulse}
-        className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{ scrollSnapType: "x mandatory", scrollPaddingLeft: gutterWidth }}
       >
         {gutter && (

@@ -14,11 +14,7 @@ export type DockView =
   | { kind: "create"; startMs: number; endMs: number; prefill?: EventPrefill }
   | { kind: "account" }
   | { kind: "availability" }
-  | { kind: "booking"; booking: Booking }
-  // The island holds the assistant thread outside the view: putting it here
-  // would change the view id when the first message creates a thread and replay
-  // the panel swap in the middle of the reply.
-  | { kind: "assistant" };
+  | { kind: "booking"; booking: Booking };
 
 /** Stable key for the content swap — changing it cross-fades the dock's contents.
  * A create view keys on its kind alone, so editing its times re-renders the form

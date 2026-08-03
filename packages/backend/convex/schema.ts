@@ -365,6 +365,10 @@ export default defineSchema({
       v.literal("error"),
     ),
     error: v.optional(v.string()),
+    // Suggested next prompts, generated best-effort once a turn settles and only
+    // when they'd genuinely help — usually absent. The panel renders them as
+    // clickable chips under the latest reply.
+    suggestions: v.optional(v.array(v.string())),
     createdAt: v.number(),
   }).index("by_thread", ["threadId", "createdAt"]),
 

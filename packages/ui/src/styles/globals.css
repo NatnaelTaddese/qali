@@ -8,6 +8,27 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Goo panels expose their live palette to nested semantic components. Typed
+ * custom properties let those nested surfaces interpolate with the panel shell
+ * instead of snapping when the dropdown enters its active palette. */
+@property --goo-fill {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+
+@property --goo-foreground {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+
+@property --goo-hover-fill {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+
 :root {
   --background: oklch(99% 0 0);
   --foreground: oklch(13% 0 0);
@@ -165,6 +186,30 @@
 }
 
 @layer components {
+  /* Custom goo panels can contain components that use the regular semantic
+   * theme tokens. Bridge those tokens to the panel's resolved palette so an
+   * inverted panel remains legible regardless of the page theme around it. */
+  .goo-panel-theme {
+    --background: var(--goo-fill);
+    --foreground: var(--goo-foreground);
+    --card: color-mix(in oklch, var(--goo-foreground) 4%, var(--goo-fill));
+    --card-foreground: var(--goo-foreground);
+    --popover: var(--goo-fill);
+    --popover-foreground: var(--goo-foreground);
+    --primary: var(--goo-foreground);
+    --primary-foreground: var(--goo-fill);
+    --secondary: color-mix(in oklch, var(--goo-foreground) 4%, var(--goo-fill));
+    --secondary-foreground: var(--goo-foreground);
+    --muted: color-mix(in oklch, var(--goo-foreground) 4%, var(--goo-fill));
+    --muted-foreground: color-mix(in oklch, var(--goo-foreground) 60%, var(--goo-fill));
+    --accent: var(--goo-hover-fill);
+    --accent-foreground: var(--goo-foreground);
+    --border: color-mix(in oklch, var(--goo-foreground) 7%, var(--goo-fill));
+    --input: color-mix(in oklch, var(--goo-foreground) 7%, var(--goo-fill));
+    --ring: color-mix(in oklch, var(--goo-foreground) 14%, var(--goo-fill));
+    color: var(--foreground);
+  }
+
   /* Calendar event cards adapt to their rendered height: a size-query
    * container lets short events drop the time line and tighten the title so
    * the name stays visible instead of being clipped. */
@@ -249,6 +294,17 @@
   view-transition-name: calendar-body;
 }
 
+/* Only the named calendar body should animate. The browser's default root
+   crossfade snapshots the header and page chrome too, producing a full-page
+   flash while a distant Today jump replaces the buffered date window. */
+:root[data-cal-transition]::view-transition-old(root) {
+  animation: none;
+  opacity: 0;
+}
+:root[data-cal-transition]::view-transition-new(root) {
+  animation: none;
+}
+
 ::view-transition-group(calendar-body) {
   animation-duration: 320ms;
   animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); /* EASE_OUT_EXPO */
@@ -303,6 +359,78 @@
 }
 :root[data-cal-transition="slide-back"]::view-transition-new(calendar-body) {
   animation-name: cal-slide-back-new;
+}
+
+/* ── Assistant panel animations ──────────────────────────────────────────────
+ * The ai/ components (loading-state, thinking, text-streaming, task-rows) drive
+ * these by name from inline `animation:` styles. `spin` ships with Tailwind; the
+ * rest are custom and defined here. Reduced motion neutralises the decorative
+ * ones below. */
+@keyframes shimmer-text {
+  to {
+    background-position: -200% 0;
+  }
+}
+@keyframes pixel-on {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes stream-word-in {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+    transform: translateY(0.22em) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Freeze the shimmer/pixel loops to their resting state; entrances resolve
+   * instantly rather than sliding. The elapsed timer still ticks (it's JS). */
+  [style*="shimmer-text"] {
+    animation: none !important;
+    background-position: 0 0 !important;
+  }
+  [style*="pixel-on"] {
+    animation: none !important;
+  }
 }
 
 @keyframes cal-zoom-in-old {

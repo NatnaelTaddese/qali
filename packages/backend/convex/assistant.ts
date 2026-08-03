@@ -13,6 +13,7 @@
 import { ConvexError, v } from "convex/values";
 import OpenAI from "openai";
 import type {
+  ChatCompletionCreateParamsNonStreaming,
   ChatCompletionCreateParamsStreaming,
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions";
@@ -209,12 +210,13 @@ export const sendMessage = action({
       );
 
     try {
-      await runAgentLoop(ctx, {
+      const followUp = await runAgentLoop(ctx, {
         apiKey,
         userId: user._id,
         threadId,
         userMessageId,
         assistantMessageId,
+        userText: text,
         timeZone: args.timeZone,
         nowMs: startedAt,
       });
@@ -222,6 +224,21 @@ export const sendMessage = action({
         messageId: assistantMessageId,
         threadId,
       });
+      // After the composer is unblocked, not before: follow-ups are a nicety, so
+      // they must never hold the turn open. Any failure just yields no chips.
+      if (followUp) {
+        try {
+          const suggestions = await generateFollowUps(apiKey, followUp);
+          if (suggestions.length > 0) {
+            await ctx.runMutation(internal.assistantData.setSuggestions, {
+              messageId: assistantMessageId,
+              suggestions,
+            });
+          }
+        } catch {
+          // best-effort; ignore.
+        }
+      }
     } catch (error) {
       await ctx.runMutation(internal.assistantData.failTurn, {
         messageId: assistantMessageId,
@@ -235,6 +252,11 @@ export const sendMessage = action({
   },
 });
 
+/** What a settled turn hands back so its follow-ups can be generated after the
+ * composer is unblocked. `null` when follow-ups don't apply — a proposal is
+ * awaiting confirmation, or the turn produced no answer to build on. */
+type FollowUpContext = { userText: string; assistantText: string };
+
 async function runAgentLoop(
   ctx: ActionCtx,
   run: {
@@ -243,10 +265,11 @@ async function runAgentLoop(
     threadId: Id<"assistantThreads">;
     userMessageId: Id<"assistantMessages">;
     assistantMessageId: Id<"assistantMessages">;
+    userText: string;
     timeZone: string;
     nowMs: number;
   },
-): Promise<void> {
+): Promise<FollowUpContext | null> {
   const client = new OpenAI({
     apiKey: run.apiKey,
     baseURL: DEEPSEEK_BASE_URL,
@@ -291,6 +314,10 @@ async function runAgentLoop(
     timeZone: run.timeZone,
     nowMs: run.nowMs,
   };
+
+  // A turn that parks a proposal ends with a confirm card, so its natural next
+  // action is confirm/decline — no follow-up prompts for those.
+  let proposedThisTurn = false;
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
     const body = {
@@ -359,7 +386,11 @@ async function runAgentLoop(
     const pending = orderedCalls(calls);
 
     if (pending.length === 0) {
-      return;
+      // Natural end: the model answered instead of calling another tool. Offer
+      // follow-ups only when it actually said something and left no proposal.
+      return !proposedThisTurn && text.trim()
+        ? { userText: run.userText, assistantText: text }
+        : null;
     }
 
     // Record what the model asked for before running any of it, so a tool that
@@ -404,6 +435,7 @@ async function runAgentLoop(
         },
       });
       if (outcome.kind === "proposal") {
+        proposedThisTurn = true;
         await ctx.runMutation(internal.assistantData.appendBlock, {
           messageId: run.assistantMessageId,
           block: {
@@ -430,6 +462,62 @@ async function runAgentLoop(
       text: "I got stuck working on that. Could you try asking a smaller piece of it?",
     },
   });
+  // A stuck turn is not something to suggest follow-ups from.
+  return null;
+}
+
+/** The follow-up generator's frozen instruction. Kept lean and strict: the panel
+ * only ever wants a short JSON array, and most turns should yield none. */
+const FOLLOWUP_SYSTEM = `You suggest what the user of a calendar scheduling assistant might naturally ask next.
+
+Return ONLY a JSON array of strings — nothing else, no prose, no code fences. 0 to 3 items. Each item is a short prompt written as the user would type it (imperative or question), at most 8 words, no trailing punctuation beyond a question mark.
+
+Suggest only genuinely useful next steps that follow from the reply. If nothing useful follows — the reply already closed the thread, or was a simple acknowledgement — return []. Prefer [] over filler. Never restate what was just answered.`;
+
+/** One cheap, non-streaming call for follow-up prompts. Isolated from the turn:
+ * its own client, its own try/catch upstream, and it returns [] on anything it
+ * can't cleanly parse. */
+async function generateFollowUps(
+  apiKey: string,
+  context: FollowUpContext,
+): Promise<string[]> {
+  const client = new OpenAI({ apiKey, baseURL: DEEPSEEK_BASE_URL });
+  const body = {
+    model: MODEL,
+    max_tokens: 200,
+    messages: [
+      { role: "system", content: FOLLOWUP_SYSTEM },
+      {
+        role: "user",
+        content: `The user asked:\n${context.userText}\n\nThe assistant replied:\n${context.assistantText}\n\nSuggested follow-ups as a JSON array:`,
+      },
+    ],
+    thinking: { type: "disabled" },
+  };
+  const completion = await client.chat.completions.create(
+    body as unknown as ChatCompletionCreateParamsNonStreaming,
+  );
+  return parseSuggestions(completion.choices[0]?.message?.content ?? "");
+}
+
+/** Pull a clean string array out of the model's reply, defending against code
+ * fences, stray prose, empties and over-long items. Returns [] on any doubt. */
+function parseSuggestions(raw: string): string[] {
+  const start = raw.indexOf("[");
+  const end = raw.lastIndexOf("]");
+  if (start === -1 || end <= start) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0 && item.length <= 80)
+    .slice(0, 3);
 }
 
 /** Dispatch one call. An unknown name or a thrown handler becomes an error

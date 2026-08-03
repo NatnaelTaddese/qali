@@ -9,10 +9,10 @@ import type { Doc } from "@qali/backend/convex/_generated/dataModel";
 import { Checkbox } from "@qali/ui/components/checkbox";
 import { GooDropdown } from "@qali/ui/components/ui/goo-dropdown";
 import { cn } from "@qali/ui/lib/utils";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { addDays, getISOWeek, isSameDay, isSameMonth, startOfDay } from "date-fns";
 import { useReducedMotion } from "motion/react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import { CalendarPager, type CalendarPagerHandle } from "./calendar-pager";
@@ -38,6 +38,7 @@ import { useStableQuery } from "./use-stable-query";
 import { NotificationBell } from "@/components/workspace/notification-bell";
 
 const VIEWS: CalendarView[] = ["day", "week", "month"];
+const EVENT_WINDOW_CACHE_LIMIT = 8;
 
 export function CalendarWeekView() {
   const [view, setView] = useState<CalendarView>("week");
@@ -79,11 +80,53 @@ export function CalendarWeekView() {
     };
   }, [view, anchor]);
 
-  const events =
-    useStableQuery(api.calendar.listEventsInRange, {
+  const queriedEvents = useQuery(api.calendar.listEventsInRange, {
+    startMs: layout.rangeStartMs,
+    endMs: layout.rangeEndMs,
+  });
+  const eventWindowsRef = useRef<
+    Array<{
+      startMs: number;
+      endMs: number;
+      events: Doc<"events">[];
+    }>
+  >([]);
+  useEffect(() => {
+    if (queriedEvents === undefined) return;
+    const window = {
       startMs: layout.rangeStartMs,
       endMs: layout.rangeEndMs,
-    }) ?? [];
+      events: queriedEvents,
+    };
+    eventWindowsRef.current = [
+      window,
+      ...eventWindowsRef.current.filter(
+        (entry) =>
+          entry.startMs !== window.startMs || entry.endMs !== window.endMs,
+      ),
+    ].slice(0, EVENT_WINDOW_CACHE_LIMIT);
+  }, [queriedEvents, layout.rangeStartMs, layout.rangeEndMs]);
+  const events = useMemo(() => {
+    if (queriedEvents !== undefined) return queriedEvents;
+    const cached = new Map<Doc<"events">["_id"], Doc<"events">>();
+    for (const window of eventWindowsRef.current) {
+      if (
+        window.endMs <= layout.rangeStartMs ||
+        window.startMs >= layout.rangeEndMs
+      ) {
+        continue;
+      }
+      for (const event of window.events) {
+        if (
+          event.startMs < layout.rangeEndMs &&
+          event.endMs > layout.rangeStartMs
+        ) {
+          cached.set(event._id, event);
+        }
+      }
+    }
+    return [...cached.values()].sort((a, b) => a.startMs - b.startMs);
+  }, [queriedEvents, layout.rangeStartMs, layout.rangeEndMs]);
 
   const calendars = useStableQuery(api.calendar.listCalendars) ?? [];
   // Prev/next: step one page (month) or the configured day count, animating the scroll.
@@ -216,7 +259,10 @@ export function CalendarWeekView() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex items-center justify-between gap-4 border-t border-border/80 bg-calendar-header px-4 py-2.5">
+      <header
+        data-dock-keep-open
+        className="flex items-center justify-between gap-4 border-t border-border/80 bg-calendar-header px-4 py-2.5"
+      >
         <div className="flex items-center justify-center gap-2 text-sm">
           <MonthPicker selectedWeekStart={pageStart("week", anchor)} onSelect={jumpTo}>
             <span className="font-medium">{viewTitle(view, anchor)}</span>

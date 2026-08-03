@@ -84,6 +84,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     const didInitialNowScroll = useRef(false);
     const centerNowRef = useRef(false);
     const nowLayoutRef = useRef<NowIndicatorLayout | null>(null);
+    const userInteractedRef = useRef(false);
     const [now, setNow] = useState(() => Date.now());
     const [visibleStartIdx, setVisibleStartIdx] = useState(anchorIndex);
     const contacts = useQuery(api.contacts.listContacts) ?? [];
@@ -163,6 +164,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     }, [finishScroll]);
 
     const cancelPendingTodayPulse = () => {
+      userInteractedRef.current = true;
       todaySettleCallback.current = undefined;
     };
 
@@ -220,6 +222,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     );
 
     const primeCenterNow = useCallback(() => {
+      clearTimeout(settleTimer.current);
       todaySettleCallback.current = undefined;
       centerNowRef.current = true;
     }, []);
@@ -235,6 +238,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     // built (off-buffer) view is already centered on now under the transition.
     useLayoutEffect(() => {
       const el = scrollerRef.current;
+      clearTimeout(settleTimer.current);
       if (centerNowRef.current && el) {
         centerNowRef.current = false;
         setVisibleStartIdx(anchorIndex);
@@ -255,12 +259,31 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [days, anchorIndex, scrollToIndex]);
 
-    // Keep the anchor centered across viewport resizes.
+    // Keep the anchor centered only when the strip's width actually changes.
+    // Height-only window resizes happen while mobile browser chrome collapses
+    // during a vertical scroll and must never yank the horizontal position.
+    const lastWidth = useRef(0);
     useEffect(() => {
-      const onResize = () => scrollToIndex(anchorIndex, "auto");
-      window.addEventListener("resize", onResize);
-      return () => window.removeEventListener("resize", onResize);
+      const el = scrollerRef.current;
+      if (!el || typeof ResizeObserver === "undefined") return;
+      lastWidth.current = el.clientWidth;
+      const observer = new ResizeObserver(() => {
+        const width = el.clientWidth;
+        if (width === lastWidth.current) return;
+        lastWidth.current = width;
+        scrollToIndex(anchorIndex, "auto");
+      });
+      observer.observe(el);
+      return () => observer.disconnect();
     }, [anchorIndex, scrollToIndex]);
+
+    useEffect(
+      () => () => {
+        clearTimeout(settleTimer.current);
+        clearTimeout(suppressTimer.current);
+      },
+      [],
+    );
 
     const onScroll = () => {
       const el = scrollerRef.current;
@@ -343,6 +366,10 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     // strip, so paging to an unrelated week doesn't yank the scroll position.
     useLayoutEffect(() => {
       if (didInitialNowScroll.current || !nowLayout?.today) return;
+      if (userInteractedRef.current) {
+        didInitialNowScroll.current = true;
+        return;
+      }
       const scroller = scrollerRef.current;
       const body = bodyRef.current;
       if (!scroller || !body) return;
@@ -365,7 +392,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
         onPointerDown={cancelPendingTodayPulse}
         onTouchStart={cancelPendingTodayPulse}
         onWheel={cancelPendingTodayPulse}
-        className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain bg-calendar-header [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain bg-calendar-header [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{ scrollSnapType: "x mandatory", scrollPaddingLeft: GUTTER_TOTAL }}
       >
         <div

@@ -28,8 +28,12 @@ const orbit = Array.from({ length: 9 }, (_, i) => {
   return k === -1 ? null : k * 110;
 });
 
-const PATTERNS: Record<string, { delays: (number | null)[]; dur: number; round: boolean }> = {
-  Drive: { delays: chevron, dur: 650, round: false },
+type Pattern = { delays: (number | null)[]; dur: number; round: boolean };
+
+const DEFAULT_PATTERN: Pattern = { delays: chevron, dur: 650, round: false };
+
+const PATTERNS: Record<string, Pattern> = {
+  Drive: DEFAULT_PATTERN,
   Dots: { delays: chevron, dur: 650, round: true },
   Orbit: { delays: orbit, dur: 950, round: false },
 };
@@ -53,7 +57,7 @@ export default function LoadingState({
   variant?: string;
 }) {
   const elapsed = useElapsed();
-  const { delays, dur, round } = PATTERNS[variant] ?? PATTERNS.Drive;
+  const { delays, dur, round } = PATTERNS[variant] ?? DEFAULT_PATTERN;
 
   return (
     <div className="flex w-fit items-center gap-2.5">
@@ -61,7 +65,7 @@ export default function LoadingState({
         {delays.map((d, i) => (
           <span
             key={i}
-            className={`size-[4px] bg-ink ${round ? "rounded-full" : "rounded-[1px]"}`}
+            className={`size-[4px] bg-foreground ${round ? "rounded-full" : "rounded-[1px]"}`}
             style={{
               opacity: d === null ? 0.07 : 0.15,
               animation:
@@ -74,14 +78,14 @@ export default function LoadingState({
         className="bg-clip-text text-[13px] font-medium text-transparent"
         style={{
           backgroundImage:
-            "linear-gradient(90deg, var(--ink-3) 35%, var(--ink) 50%, var(--ink-3) 65%)",
+            "linear-gradient(90deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%)",
           backgroundSize: "200% 100%",
           animation: "shimmer-text 1.4s linear infinite",
         }}
       >
         {label}
       </span>
-      <span className="font-mono text-[12px] text-ink-3 tabular-nums">
+      <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
         {elapsed}
       </span>
     </div>

@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  acknowledgedAssistantUserMessageId,
   isNearScrollBottom,
   safeAssistantLink,
   shouldOpenAssistantShortcut,
@@ -83,5 +84,30 @@ describe("assistant interactions", () => {
     expect(safeAssistantLink("javascript:alert(1)")).toBeNull();
     expect(safeAssistantLink("data:text/html,unsafe")).toBeNull();
     expect(safeAssistantLink("/internal")).toBeNull();
+  });
+
+  test("acknowledges only the newly appended matching user message", () => {
+    const previous = {
+      _id: "old",
+      role: "user",
+      blocks: [{ type: "text", text: "Same prompt" }],
+    };
+    expect(
+      acknowledgedAssistantUserMessageId([previous], "old", "Same prompt"),
+    ).toBeNull();
+    expect(
+      acknowledgedAssistantUserMessageId(
+        [
+          previous,
+          {
+            _id: "new",
+            role: "user",
+            blocks: [{ type: "text", text: "Same prompt" }],
+          },
+        ],
+        "old",
+        "Same prompt",
+      ),
+    ).toBe("new");
   });
 });

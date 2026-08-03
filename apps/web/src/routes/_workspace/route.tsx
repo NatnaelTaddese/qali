@@ -1,6 +1,7 @@
 import { Navigate, Outlet, createFileRoute } from "@tanstack/react-router";
 import { Authenticated, AuthLoading, Unauthenticated } from "convex/react";
 
+import { AssistantDock } from "@/components/workspace/assistant-dock";
 import { AvailabilityEditProvider } from "@/components/workspace/availability-edit-context";
 import { BottomIsland } from "@/components/workspace/bottom-island";
 import { DockProvider } from "@/components/workspace/dock-context";
@@ -21,6 +22,7 @@ function WorkspaceLayout() {
                 <Outlet />
               </main>
               <BottomIsland />
+              <AssistantDock />
             </div>
           </AvailabilityEditProvider>
         </DockProvider>

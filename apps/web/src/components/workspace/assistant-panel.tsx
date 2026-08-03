@@ -6,6 +6,14 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import type { Doc, Id } from "@qali/backend/convex/_generated/dataModel";
+import LoadingState from "@qali/ui/components/ai/loading-state";
+import ThinkingTrace, {
+  type ThinkingRow,
+} from "@qali/ui/components/ai/thinking";
+import {
+  FollowUps,
+  StreamingText,
+} from "@qali/ui/components/ai/text-streaming";
 import { Bubble, BubbleContent } from "@qali/ui/components/bubble";
 import {
   InputGroup,
@@ -15,11 +23,15 @@ import {
 } from "@qali/ui/components/input-group";
 import { Message, MessageContent } from "@qali/ui/components/message";
 import { Spinner } from "@qali/ui/components/spinner";
-import { useAction, useQuery } from "convex/react";
-import { useEffect, useRef, useState } from "react";
+import { useAction } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
+import { motion, useReducedMotion } from "motion/react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 
 import {
+  acknowledgedAssistantUserMessageId,
   isNearScrollBottom,
   shouldSendAssistantMessage,
 } from "./assistant-interactions";
@@ -52,45 +64,90 @@ const SUGGESTIONS = [
   "Move my next meeting an hour later",
 ];
 
+const SEND_MORPH_TRANSITION = {
+  type: "spring",
+  visualDuration: 0.38,
+  bounce: 0.18,
+} as const;
+
+type SendMorphSource = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  backgroundColor: string;
+  color: string;
+  borderRadius: number;
+};
+
+type PendingSend = {
+  key: string;
+  text: string;
+  previousUserMessageId: Id<"assistantMessages"> | null;
+  morphSource: SendMorphSource | null;
+  animateEntry: boolean;
+};
+
 export function AssistantPanel({
   onClose,
   threadId,
   onThreadChange,
   startFresh,
   onNewChat,
+  threads,
+  messages,
+  actions,
 }: {
   onClose: () => void;
   threadId: Id<"assistantThreads"> | null;
   onThreadChange: (threadId: Id<"assistantThreads">) => void;
   startFresh: boolean;
   onNewChat: () => void;
+  // The dock owns these subscriptions so the conversation stays warm between
+  // opens instead of reloading each time the panel mounts.
+  threads: FunctionReturnType<typeof api.assistantData.listThreads> | undefined;
+  messages:
+    | FunctionReturnType<typeof api.assistantData.listMessages>
+    | undefined;
+  actions:
+    | FunctionReturnType<typeof api.assistantData.listPendingActions>
+    | undefined;
 }) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [openingText, setOpeningText] = useState<string | null>(null);
+  const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
   const sendMessage = useAction(api.assistant.sendMessage);
+  const reduceMotion = useReducedMotion();
+  const sendGooFilterId = useId().replace(/[:]/g, "");
 
-  // sendMessage currently returns only after the model loop, but startTurn has
-  // already committed by then. The list subscription discovers that row so the
-  // first reply is subscribable and a failed action cannot strand its thread.
-  const threads = useQuery(api.assistantData.listThreads);
-  const messages = useQuery(
-    api.assistantData.listMessages,
-    threadId ? { threadId } : "skip",
-  );
-  const actions = useQuery(
-    api.assistantData.listPendingActions,
-    threadId ? { threadId } : "skip",
-  );
   const actionsById = new Map((actions ?? []).map((a) => [a._id, a]));
 
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const shouldFollowRef = useRef(true);
   const restoreFocusAfterSendRef = useRef(false);
   const openingPreviousThreadIdRef = useRef<Id<"assistantThreads"> | null>(
     null,
   );
+  const pendingKeyRef = useRef(0);
+
+  // Top/bottom fade over the scroll area — the same dynamic treatment the event
+  // and booking panels use, shown only when there is more to scroll that way.
+  const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
+  const updateScrollFade = () => {
+    const list = listRef.current;
+    if (!list) return;
+    const next = {
+      top: list.scrollTop > 0,
+      bottom: list.scrollTop + list.clientHeight < list.scrollHeight - 1,
+    };
+    setScrollFade((current) =>
+      current.top === next.top && current.bottom === next.bottom
+        ? current
+        : next,
+    );
+  };
 
   useEffect(() => {
     const latest = threads?.[0];
@@ -100,7 +157,7 @@ export function AssistantPanel({
       !threadId &&
       latest &&
       startFresh &&
-      openingText &&
+      pendingSend &&
       latest._id !== openingPreviousThreadIdRef.current
     ) {
       // A fresh send creates its thread inside the action. Subscribe as soon as
@@ -108,13 +165,31 @@ export function AssistantPanel({
       // latest conversation for the new turn before startTurn commits.
       onThreadChange(latest._id);
     }
-  }, [startFresh, threadId, threads, openingText, onThreadChange]);
+  }, [startFresh, threadId, threads, pendingSend, onThreadChange]);
 
   // Keep following a stream only until the user deliberately scrolls away.
   useEffect(() => {
     const list = listRef.current;
     if (list && shouldFollowRef.current) list.scrollTop = list.scrollHeight;
-  }, [messages, actions, openingText]);
+    updateScrollFade();
+  }, [messages, actions, pendingSend]);
+
+  // Recompute the scroll fade whenever the conversation's own size changes, not
+  // just on scroll — a reply streaming in lengthens the content under a still
+  // scrollbar.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || typeof ResizeObserver === "undefined") return;
+    const syncScroll = () => {
+      if (shouldFollowRef.current) list.scrollTop = list.scrollHeight;
+      updateScrollFade();
+    };
+    syncScroll();
+    const observer = new ResizeObserver(syncScroll);
+    observer.observe(list);
+    for (const child of list.children) observer.observe(child);
+    return () => observer.disconnect();
+  }, [messages, actions, pendingSend]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -125,7 +200,9 @@ export function AssistantPanel({
   );
   const conversationLoading =
     !startFresh &&
-    (threads === undefined || (!threadId && (threads?.length ?? 0) > 0));
+    (threads === undefined ||
+      (!threadId && (threads?.length ?? 0) > 0) ||
+      (Boolean(threadId) && messages === undefined));
   const composerBusy = sending || turnInProgress || conversationLoading;
   const wasComposerBusyRef = useRef(composerBusy);
 
@@ -143,13 +220,47 @@ export function AssistantPanel({
   const send = async (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || composerBusy) return;
+    let previousUserMessageId: Id<"assistantMessages"> | null = null;
+    for (let index = (messages?.length ?? 0) - 1; index >= 0; index -= 1) {
+      const message = messages?.[index];
+      if (message?.role === "user") {
+        previousUserMessageId = message._id;
+        break;
+      }
+    }
+    const nextPending: PendingSend = {
+      key: `pending-${pendingKeyRef.current++}`,
+      text: trimmed,
+      previousUserMessageId,
+      morphSource: null,
+      animateEntry: !reduceMotion,
+    };
+    if (!reduceMotion && draft.trim() === trimmed && composerRef.current) {
+      const rect = composerRef.current.getBoundingClientRect();
+      const fill = composerRef.current.querySelector<HTMLElement>(
+        "[data-assistant-composer-fill]",
+      );
+      const fillStyle = getComputedStyle(fill ?? composerRef.current);
+      const inputStyle = inputRef.current
+        ? getComputedStyle(inputRef.current)
+        : fillStyle;
+      nextPending.morphSource = {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+        backgroundColor: fillStyle.backgroundColor,
+        color: inputStyle.color,
+        borderRadius: Number.parseFloat(fillStyle.borderRadius) || 18,
+      };
+    }
     shouldFollowRef.current = true;
     setDraft("");
+    setPendingSend(nextPending);
     setSending(true);
     restoreFocusAfterSendRef.current = true;
     if (!threadId) {
       openingPreviousThreadIdRef.current = threads?.[0]?._id ?? null;
-      setOpeningText(trimmed);
     }
     try {
       const result = await sendMessage({
@@ -168,9 +279,10 @@ export function AssistantPanel({
           : message,
       });
       setDraft(trimmed);
+      setPendingSend(null);
     } finally {
       setSending(false);
-      setOpeningText(null);
+      setPendingSend(null);
       requestAnimationFrame(() => {
         const input = inputRef.current;
         if (input && !input.disabled) {
@@ -191,17 +303,64 @@ export function AssistantPanel({
   };
 
   const empty =
-    !openingText &&
+    !pendingSend &&
     !threadId &&
     (startFresh || threads?.length === 0);
   const loadingConversation =
-    !openingText &&
+    !pendingSend &&
     ((!startFresh && !threadId && threads === undefined) ||
       (!startFresh && !threadId && Boolean(threads?.length)) ||
       (Boolean(threadId) && messages === undefined));
 
+  const acknowledgedPendingId = pendingSend
+    ? acknowledgedAssistantUserMessageId(
+        messages,
+        pendingSend.previousUserMessageId,
+        pendingSend.text,
+      )
+    : null;
+  const acknowledgedPendingIndex = acknowledgedPendingId
+    ? (messages?.findIndex(
+        (message) => message._id === acknowledgedPendingId,
+      ) ?? -1)
+    : -1;
+  const messagesBeforePending =
+    pendingSend && acknowledgedPendingIndex >= 0
+      ? (messages?.slice(0, acknowledgedPendingIndex) ?? [])
+      : (messages ?? []);
+  const messagesAfterPending =
+    pendingSend && acknowledgedPendingIndex >= 0
+      ? (messages?.slice(acknowledgedPendingIndex + 1) ?? [])
+      : [];
+
   return (
-    <div className="flex max-h-[26rem] flex-col gap-3">
+    <div className="flex h-full flex-col gap-3">
+      <svg aria-hidden className="absolute h-0 w-0">
+        <defs>
+          <filter
+            id={sendGooFilterId}
+            x="-35%"
+            y="-35%"
+            width="170%"
+            height="170%"
+          >
+            <feGaussianBlur
+              in="SourceGraphic"
+              stdDeviation="6"
+              result="blur"
+            />
+            <feColorMatrix
+              in="blur"
+              mode="matrix"
+              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -10"
+              result="goo"
+            />
+            <feComposite in="SourceGraphic" in2="goo" operator="atop" />
+          </filter>
+        </defs>
+      </svg>
+      {/* Fills the goo dock's fixed-height panel body; the conversation scrolls
+        * inside rather than the container growing to fit. */}
       <div className="flex items-start gap-2.5">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">Assistant</p>
@@ -235,7 +394,7 @@ export function AssistantPanel({
       </div>
 
       {empty ? (
-        <div className="flex flex-col gap-1.5 py-2">
+        <div className="flex min-h-0 flex-1 flex-col justify-end gap-1.5 py-2">
           {SUGGESTIONS.map((suggestion) => (
             <button
               key={suggestion}
@@ -248,7 +407,8 @@ export function AssistantPanel({
           ))}
         </div>
       ) : (
-        <div
+        <motion.div
+          layoutScroll
           ref={listRef}
           role="log"
           aria-label="Assistant conversation"
@@ -258,7 +418,7 @@ export function AssistantPanel({
           onScroll={(event) => {
             shouldFollowRef.current = isNearScrollBottom(event.currentTarget);
           }}
-          className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1 scrollbar-gutter-stable"
+          className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-1 scrollbar-gutter-stable"
         >
           {loadingConversation && (
             <p
@@ -269,151 +429,359 @@ export function AssistantPanel({
               Loading conversation…
             </p>
           )}
-          {messages?.map((message) => (
+          {messagesBeforePending.map((message, index) => (
             <TurnView
               key={message._id}
               message={message}
               actionsById={actionsById}
+              isLast={
+                !pendingSend && index === messagesBeforePending.length - 1
+              }
+              onSend={send}
             />
           ))}
 
-          {/* Stands in for the opening turn until the thread exists to
-            * subscribe to. Once it does, the real rows render instead. */}
-          {openingText && !threadId && (
-            <>
-              <Message align="end">
-                <MessageContent>
-                  <Bubble variant="default" align="end">
-                    <BubbleContent className="whitespace-pre-wrap">
-                      {openingText}
-                    </BubbleContent>
-                  </Bubble>
-                </MessageContent>
-              </Message>
-              <Message align="start">
-                <MessageContent>
-                  <p
-                    role="status"
-                    className="flex items-center gap-1.5 text-xs text-muted-foreground"
-                  >
-                    <Spinner className="size-3" />
-                    Thinking…
-                  </p>
-                </MessageContent>
-              </Message>
-            </>
+          {/* Receives the composer's measured goo morph. Once the subscription
+            * acknowledges the user row, the same keyed view moves into that
+            * row's place without duplicating the message. */}
+          {pendingSend && (
+            <PendingUserMessage
+              key={pendingSend.key}
+              pending={pendingSend}
+              gooFilterId={sendGooFilterId}
+            />
           )}
-        </div>
+          {pendingSend && !acknowledgedPendingId && (
+            <Message key={`${pendingSend.key}-loading`} align="start">
+              <MessageContent>
+                <LoadingState label="Thinking" />
+              </MessageContent>
+            </Message>
+          )}
+          {messagesAfterPending.map((message, index) => (
+            <TurnView
+              key={message._id}
+              message={message}
+              actionsById={actionsById}
+              isLast={index === messagesAfterPending.length - 1}
+              onSend={send}
+            />
+          ))}
+        </motion.div>
       )}
 
-      <InputGroup>
-        <InputGroupTextarea
-          ref={inputRef}
-          value={draft}
-          aria-label="Message the assistant"
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            // Enter sends; Shift+Enter is a newline. This is a one-line composer
-            // most of the time, so the reverse would be the wrong default.
-            if (
-              shouldSendAssistantMessage({
-                key: e.key,
-                shiftKey: e.shiftKey,
-                isComposing: e.nativeEvent.isComposing,
-              })
-            ) {
-              e.preventDefault();
-              void send(draft);
-            }
+      {/* The composer reads as one of the dock's own cards: same border and
+        * radius as the panels around it, a muted fill that lifts on focus, and
+        * a filled circular send that mirrors the nav's primary affordances. */}
+      <div
+        ref={composerRef}
+        className="group/composer relative w-full"
+      >
+        <span
+          aria-hidden
+          data-assistant-composer-fill
+          className="pointer-events-none absolute inset-0 rounded-2xl bg-muted/40 transition-colors in-data-[palette-settled=false]:transition-none group-has-[[data-slot=input-group-control]:focus-visible]/composer:bg-background"
+          style={{
+            borderRadius: 18,
           }}
-          placeholder="Ask about your calendar…"
-          rows={1}
-          disabled={composerBusy}
         />
-        <InputGroupAddon align="inline-end">
-          <InputGroupButton
-            type="button"
-            size="icon-xs"
-            variant="default"
-            aria-label="Send"
-            disabled={composerBusy || draft.trim().length === 0}
-            onClick={() => void send(draft)}
-          >
-            {composerBusy ? (
-              <Spinner />
-            ) : (
-              <HugeiconsIcon icon={ArrowUp02Icon} strokeWidth={2} />
-            )}
-          </InputGroupButton>
-        </InputGroupAddon>
-      </InputGroup>
+        <InputGroup className="items-end rounded-2xl border-border bg-transparent shadow-xs">
+          <InputGroupTextarea
+            ref={inputRef}
+            value={draft}
+            aria-label="Message the assistant"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter sends; Shift+Enter is a newline. This is a one-line composer
+              // most of the time, so the reverse would be the wrong default.
+              if (
+                shouldSendAssistantMessage({
+                  key: e.key,
+                  shiftKey: e.shiftKey,
+                  isComposing: e.nativeEvent.isComposing,
+                })
+              ) {
+                e.preventDefault();
+                void send(draft);
+              }
+            }}
+            placeholder="Ask about your calendar…"
+            rows={1}
+            disabled={composerBusy}
+          />
+          <InputGroupAddon align="inline-end">
+            <InputGroupButton
+              type="button"
+              size="icon-xs"
+              variant="default"
+              aria-label="Send"
+              className="rounded-full"
+              disabled={composerBusy || draft.trim().length === 0}
+              onClick={() => void send(draft)}
+            >
+              {composerBusy ? (
+                <Spinner />
+              ) : (
+                <HugeiconsIcon icon={ArrowUp02Icon} strokeWidth={2} />
+              )}
+            </InputGroupButton>
+          </InputGroupAddon>
+        </InputGroup>
+      </div>
     </div>
   );
 }
 
+function PendingUserMessage({
+  pending,
+  gooFilterId,
+}: {
+  pending: PendingSend;
+  gooFilterId: string;
+}) {
+  const targetRef = useRef<HTMLDivElement>(null);
+  const [target, setTarget] = useState<SendMorphSource | null>(null);
+  const [morphing, setMorphing] = useState(pending.morphSource !== null);
+
+  useLayoutEffect(() => {
+    if (!pending.morphSource) return;
+    // Let the conversation's follow-to-bottom effect settle first. Until this
+    // frame runs, the fixed overlay remains exactly over the old composer.
+    const frame = requestAnimationFrame(() => {
+      if (!targetRef.current) return;
+      const rect = targetRef.current.getBoundingClientRect();
+      const content = targetRef.current.querySelector<HTMLElement>(
+        '[data-slot="bubble-content"]',
+      );
+      const style = getComputedStyle(content ?? targetRef.current);
+      setTarget({
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+        backgroundColor: style.backgroundColor,
+        color: style.color,
+        borderRadius: Number.parseFloat(style.borderRadius) || 24,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pending.key, pending.morphSource]);
+
+  const source = pending.morphSource;
+
+  return (
+    <Message align="end">
+      <MessageContent>
+        <motion.div
+          ref={targetRef}
+          initial={
+            source || !pending.animateEntry
+              ? false
+              : { opacity: 0, scale: 0.94, y: 8 }
+          }
+          animate={{ opacity: morphing ? 0 : 1, scale: 1, y: 0 }}
+          transition={source ? { duration: 0 } : SEND_MORPH_TRANSITION}
+          className="relative w-fit max-w-[80%] self-end"
+        >
+          <Bubble
+            variant="default"
+            align="end"
+            className="relative max-w-full"
+          >
+            <BubbleContent className="whitespace-pre-wrap">
+              {pending.text}
+            </BubbleContent>
+          </Bubble>
+        </motion.div>
+        {source &&
+          morphing &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <motion.div
+              aria-hidden
+              className="pointer-events-none fixed z-[90] overflow-visible"
+              style={{
+                left: source.left,
+                top: source.top,
+                width: source.width,
+                height: source.height,
+                willChange: "left, top, width, height",
+              }}
+              animate={
+                target
+                  ? {
+                      left: target.left,
+                      top: target.top,
+                      width: target.width,
+                      height: target.height,
+                    }
+                  : undefined
+              }
+              transition={SEND_MORPH_TRANSITION}
+              onAnimationComplete={
+                target ? () => setMorphing(false) : undefined
+              }
+            >
+              <motion.div
+                className="absolute inset-0"
+                style={{
+                  backgroundColor: source.backgroundColor,
+                  borderRadius: source.borderRadius,
+                  filter: `url(#${gooFilterId})`,
+                }}
+                animate={
+                  target
+                    ? {
+                        backgroundColor: target.backgroundColor,
+                        borderRadius: target.borderRadius,
+                      }
+                    : undefined
+                }
+                transition={SEND_MORPH_TRANSITION}
+              />
+              <motion.div
+                className="relative flex h-full items-center overflow-hidden px-3 py-2.5 text-sm leading-5 whitespace-pre-wrap"
+                style={{ color: source.color }}
+                animate={target ? { color: target.color } : undefined}
+                transition={SEND_MORPH_TRANSITION}
+              >
+                {pending.text}
+              </motion.div>
+            </motion.div>,
+            document.body,
+          )}
+      </MessageContent>
+    </Message>
+  );
+}
+
+type Block = AssistantMessage["blocks"][number];
+
 /**
  * One stored turn.
  *
- * A turn is a list of blocks rather than a string because a reply can
- * interleave prose, tool activity and proposals. Text becomes a bubble, a tool
- * call becomes a one-line status, a proposal becomes a confirm card, and the
- * raw tool results stay hidden — they are written for the model, not the user.
+ * A user turn is just their own words. An assistant turn interleaves prose,
+ * tool activity and proposals, so it's assembled rather than printed:
+ *
+ *  - the tool_call/tool_result blocks drive one collapsible {@link ThinkingTrace}
+ *    — live while the turn streams, then settled and expandable;
+ *  - prose reveals word-by-word while the turn is live, then settles into the
+ *    markdown renderer;
+ *  - a proposal becomes a confirm card, and raw tool results stay hidden —
+ *    they are written for the model, not the user;
+ *  - a settled turn may end with suggested follow-ups, when the backend judged
+ *    them useful.
  */
 function TurnView({
   message,
   actionsById,
+  isLast,
+  onSend,
 }: {
   message: AssistantMessage;
   actionsById: Map<Id<"assistantActions">, AssistantAction>;
+  isLast: boolean;
+  onSend: (text: string) => void;
 }) {
-  const isUser = message.role === "user";
-  // A trailing tool call with no result yet is what the panel is waiting on.
-  const settled = new Set(
-    message.blocks.flatMap((b) =>
-      b.type === "tool_result" ? [b.toolCallId] : [],
-    ),
+  if (message.role === "user") {
+    return (
+      <Message align="end">
+        <MessageContent className="gap-2">
+          {message.blocks.map((block, index) =>
+            // What the user typed is literal text — rendering it as markdown
+            // would reformat their own words back at them.
+            block.type === "text" && block.text.trim() ? (
+              <Bubble key={index} variant="default" align="end">
+                <BubbleContent className="whitespace-pre-wrap">
+                  {block.text}
+                </BubbleContent>
+              </Bubble>
+            ) : null,
+          )}
+        </MessageContent>
+      </Message>
+    );
+  }
+
+  const streaming = message.status === "streaming";
+
+  // A tool call with no result yet is what the panel is waiting on.
+  const resultByCall = new Map<string, { isError?: boolean }>();
+  for (const block of message.blocks) {
+    if (block.type === "tool_result") {
+      resultByCall.set(block.toolCallId, { isError: block.isError });
+    }
+  }
+  const toolCalls = message.blocks.filter(
+    (block): block is Extract<Block, { type: "tool_call" }> =>
+      block.type === "tool_call",
   );
 
+  // The live call, if any: the last one still waiting on its result — its label
+  // is what the trace shimmers while the turn works.
+  const activeTool = [...toolCalls]
+    .reverse()
+    .find((tc) => !resultByCall.has(tc.toolCallId));
+  const activeLabel = activeTool
+    ? (TOOL_LABELS[activeTool.name] ?? "Working")
+    : "Working";
+
+  const thinkingRows: ThinkingRow[] = toolCalls.map((tc) => ({
+    primary: TOOL_LABELS[tc.name] ?? "Working",
+    secondary: tc.name,
+    done: resultByCall.has(tc.toolCallId),
+    error: resultByCall.get(tc.toolCallId)?.isError,
+  }));
+
+  // Only the newest prose gets the streaming reveal; earlier text is settled.
+  const lastTextIndex = message.blocks.reduce(
+    (last, block, i) =>
+      block.type === "text" && block.text.trim() ? i : last,
+    -1,
+  );
+
+  const suggestions = message.suggestions ?? [];
+  const showFollowUps =
+    isLast && message.status === "complete" && suggestions.length > 0;
+
   return (
-    <Message align={isUser ? "end" : "start"}>
-      <MessageContent className="gap-2">
+    <Message align="start">
+      <MessageContent className="w-full gap-2">
+        {streaming && message.blocks.length === 0 && (
+          <LoadingState
+            label={activeLabel === "Working" ? "Thinking" : activeLabel}
+          />
+        )}
+
+        {toolCalls.length > 0 && (
+          <ThinkingTrace
+            rows={thinkingRows}
+            working={streaming}
+            activeLabel={activeLabel}
+          />
+        )}
+
         {message.blocks.map((block, index) => {
           if (block.type === "text") {
             if (!block.text.trim()) return null;
+            // The assistant's reply uses the panel's full width — a scheduling
+            // answer is denser than a chat message and shouldn't be boxed into
+            // a narrow bubble.
             return (
               <Bubble
                 key={index}
-                variant={isUser ? "default" : "muted"}
-                align={isUser ? "end" : "start"}
+                variant="muted"
+                align="start"
+                className="w-full max-w-full"
               >
-                {/* What the user typed is literal text — rendering it as
-                  * markdown would reformat their own words back at them. Only
-                  * the assistant's side is parsed. */}
-                <BubbleContent
-                  className={isUser ? "whitespace-pre-wrap" : undefined}
-                >
-                  {isUser ? (
-                    block.text
+                <BubbleContent>
+                  {streaming && index === lastTextIndex ? (
+                    <StreamingText text={block.text} />
                   ) : (
                     <AssistantMarkdown text={block.text} />
                   )}
                 </BubbleContent>
               </Bubble>
-            );
-          }
-
-          if (block.type === "tool_call") {
-            const label = TOOL_LABELS[block.name] ?? "Working";
-            const done = settled.has(block.toolCallId);
-            return (
-              <p
-                key={index}
-                role="status"
-                className="flex items-center gap-1.5 text-xs text-muted-foreground"
-              >
-                {!done && <Spinner className="size-3" />}
-                {done ? label : `${label}…`}
-              </p>
             );
           }
 
@@ -424,24 +792,18 @@ function TurnView({
             ) : null;
           }
 
-          // tool_result blocks are model-facing only.
+          // tool_call / tool_result are handled by the activity view above.
           return null;
         })}
-
-        {message.status === "streaming" && message.blocks.length === 0 && (
-          <p
-            role="status"
-            className="flex items-center gap-1.5 text-xs text-muted-foreground"
-          >
-            <Spinner className="size-3" />
-            Thinking…
-          </p>
-        )}
 
         {message.status === "error" && (
           <p role="alert" className="text-xs text-destructive">
             {message.error ?? "Something went wrong."}
           </p>
+        )}
+
+        {showFollowUps && (
+          <FollowUps suggestions={suggestions} onSelect={onSend} />
         )}
       </MessageContent>
     </Message>

@@ -1,5 +1,4 @@
 import {
-  AiMagicIcon,
   Calendar03Icon,
   Cursor02Icon,
   PlusSignIcon,
@@ -8,7 +7,6 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
-import type { Id } from "@qali/backend/convex/_generated/dataModel";
 import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import {
@@ -19,17 +17,7 @@ import {
 import { cn } from "@qali/ui/lib/utils";
 import { useAction, useQuery } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import {
-  Component,
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { EventCreate } from "@/components/calendar/event-create";
@@ -42,25 +30,11 @@ import {
 } from "@/components/calendar/motion";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { AccountPanel } from "./account-panel";
-import {
-  isEditableAssistantShortcutTarget,
-  shouldOpenAssistantShortcut,
-} from "./assistant-interactions";
 import { useAvailabilityEdit } from "./availability-edit-context";
 import { AvailabilityPanel } from "./availability-panel";
 import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
 import { UserAvatar } from "./user-avatar";
-
-/**
- * Split out of the workspace bundle.
- *
- * The panel brings a markdown renderer with it — ~47 kB gzipped — for a feature
- * that is optional and, on a deployment with no API key, never reachable at
- * all. It only mounts when the dock opens it, so it can arrive then too.
- */
-const loadAssistantPanel = () =>
-  import("./assistant-panel").then((m) => ({ default: m.AssistantPanel }));
 
 const MAX_TIMEOUT_MS = 2_147_000_000;
 const AVAILABILITY_PREFETCH_GRACE_MS = 10_000;
@@ -76,9 +50,6 @@ function widthClass(view: DockView | null): string {
   // The availability panel carries a seven-row weekly grid, so it needs more
   // room than the event panels.
   if (view.kind === "availability") return "w-[min(30rem,100%)]";
-  // A conversation needs line length to stay readable, and the confirm cards
-  // inside it carry a full sentence plus two buttons.
-  if (view.kind === "assistant") return "w-[min(34rem,100%)]";
   return "w-[min(27rem,100%)]";
 }
 
@@ -95,20 +66,12 @@ export function BottomIsland() {
   const availabilityOpen = view?.kind === "availability";
   const [availabilityIntentVersion, setAvailabilityIntentVersion] = useState(0);
   const [availabilityRequested, setAvailabilityRequested] = useState(false);
-  const [assistantThreadId, setAssistantThreadId] =
-    useState<Id<"assistantThreads"> | null>(null);
-  const [assistantStartingFresh, setAssistantStartingFresh] = useState(false);
   const availabilityDataActive =
     availabilityOpen ||
     availabilityRequested ||
     availabilityIntentVersion > 0;
   // This stays live for the dock badge and incoming-request calendar blocks.
   const pendingBookings = useQuery(api.booking.listPendingBookings);
-  // The assistant is optional: with no API key configured its button is not
-  // rendered at all. `undefined` (still loading) counts as unavailable so the
-  // button doesn't pop into the nav row a beat after first paint.
-  const assistantAvailable =
-    useQuery(api.assistantData.isAvailable) === true;
   // Warm settings on interaction intent so the dock knows its final content
   // height before its spring begins. Retain them briefly after close for a
   // smooth reopen, then release both subscriptions.
@@ -130,42 +93,9 @@ export function BottomIsland() {
     (booking) => booking.endMs > now,
   );
   const ref = useRef<HTMLElement>(null);
-  const assistantReturnFocusRef = useRef<HTMLElement | null>(null);
   const expanded = view !== null;
 
-  const openAssistant = useCallback(() => {
-    const active = document.activeElement;
-    assistantReturnFocusRef.current =
-      active instanceof HTMLElement ? active : null;
-    open({ kind: "assistant" });
-  }, [open]);
-
-  const closeCurrent = useCallback(() => {
-    const restoreAssistantFocus = view?.kind === "assistant";
-    close();
-    if (!restoreAssistantFocus) return;
-    requestAnimationFrame(() => {
-      const previous = assistantReturnFocusRef.current;
-      if (previous?.isConnected) previous.focus();
-      else
-        document
-          .querySelector<HTMLElement>("[data-assistant-trigger]")
-          ?.focus();
-    });
-  }, [close, view?.kind]);
-
-  const selectAssistantThread = useCallback(
-    (threadId: Id<"assistantThreads">) => {
-      setAssistantThreadId(threadId);
-      setAssistantStartingFresh(false);
-    },
-    [],
-  );
-
-  const startNewAssistantChat = useCallback(() => {
-    setAssistantThreadId(null);
-    setAssistantStartingFresh(true);
-  }, []);
+  const closeCurrent = close;
 
   useEffect(() => {
     if (
@@ -229,30 +159,6 @@ export function BottomIsland() {
     return () => clearTimeout(timeout);
   }, [nextEndMs]);
 
-  // ⌘K opens the assistant from anywhere in the workspace. Registered only when
-  // there is an assistant to open, so on a deployment without an API key the
-  // shortcut stays free for whatever the app wants next.
-  useEffect(() => {
-    if (!assistantAvailable) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (
-        shouldOpenAssistantShortcut(e, {
-          blocked:
-            editing ||
-            view?.kind === "create" ||
-            view?.kind === "edit" ||
-            view?.kind === "assistant",
-          editableTarget: isEditableAssistantShortcutTarget(e.target),
-        })
-      ) {
-        e.preventDefault();
-        openAssistant();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [assistantAvailable, editing, view?.kind, openAssistant]);
-
   // No scrim, so dismissal is wired by hand: Escape, or a pointer outside the dock.
   useEffect(() => {
     if (!expanded && !editing) return;
@@ -280,6 +186,11 @@ export function BottomIsland() {
         )
       )
         return;
+      // Calendar chrome (the header's view switcher, prev/next, Today) runs a
+      // view transition that snapshots the whole page. Dismissing here would
+      // fire the dock's exit animation into that frozen frame — a choppy close.
+      // Navigating the calendar leaves an open panel in place instead.
+      if (target.closest("[data-dock-keep-open]")) return;
       // Do not steal focus back from the control the user clicked outside.
       close();
     };
@@ -304,7 +215,13 @@ export function BottomIsland() {
   const variants = reduce ? dockVariantsReduced : dockVariants;
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
+    // A view-transition-name keeps the dock out of the calendar's day/week/month
+    // view transition: unnamed, this fixed layer is captured in the root
+    // snapshot and cross-fades on every switch; named, it persists in place.
+    <div
+      className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4"
+      style={{ viewTransitionName: "bottom-island" }}
+    >
       <motion.nav
         ref={ref}
         layout
@@ -378,19 +295,9 @@ export function BottomIsland() {
                   booking={view.booking}
                   onClose={closeCurrent}
                 />
-              ) : view?.kind === "assistant" ? (
-                <AssistantPanelLoader
-                  threadId={assistantThreadId}
-                  onThreadChange={selectAssistantThread}
-                  startFresh={assistantStartingFresh}
-                  onNewChat={startNewAssistantChat}
-                  onClose={closeCurrent}
-                />
               ) : (
                 <NavRow
                   pendingCount={activePendingBookings?.length ?? 0}
-                  assistantAvailable={assistantAvailable}
-                  onOpenAssistant={openAssistant}
                   onOpenAccount={() => open({ kind: "account" })}
                   availabilityLoading={availabilityRequested}
                   onPrepareAvailability={prepareAvailability}
@@ -403,89 +310,6 @@ export function BottomIsland() {
       </motion.nav>
     </div>
   );
-}
-
-function AssistantPanelLoader({
-  threadId,
-  onThreadChange,
-  startFresh,
-  onNewChat,
-  onClose,
-}: {
-  threadId: Id<"assistantThreads"> | null;
-  onThreadChange: (threadId: Id<"assistantThreads">) => void;
-  startFresh: boolean;
-  onNewChat: () => void;
-  onClose: () => void;
-}) {
-  const [attempt, setAttempt] = useState(0);
-  const Panel = useMemo(() => lazy(loadAssistantPanel), [attempt]);
-
-  return (
-    <AssistantPanelErrorBoundary
-      key={attempt}
-      onRetry={() => setAttempt((current) => current + 1)}
-      onClose={onClose}
-    >
-      <Suspense
-        fallback={
-          <div
-            role="status"
-            aria-label="Loading assistant"
-            className="flex h-24 items-center justify-center"
-          >
-            <Spinner />
-          </div>
-        }
-      >
-        <Panel
-          threadId={threadId}
-          onThreadChange={onThreadChange}
-          startFresh={startFresh}
-          onNewChat={onNewChat}
-          onClose={onClose}
-        />
-      </Suspense>
-    </AssistantPanelErrorBoundary>
-  );
-}
-
-class AssistantPanelErrorBoundary extends Component<
-  { children: ReactNode; onRetry: () => void; onClose: () => void },
-  { failed: boolean }
-> {
-  state = { failed: false };
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  render() {
-    if (!this.state.failed) return this.props.children;
-    return (
-      <div role="alert" className="flex flex-col gap-3 py-2">
-        <div>
-          <p className="text-sm font-medium">Assistant failed to load</p>
-          <p className="text-xs text-muted-foreground">
-            Check your connection and try again.
-          </p>
-        </div>
-        <div className="flex gap-1.5">
-          <Button type="button" size="sm" onClick={this.props.onRetry}>
-            Retry
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={this.props.onClose}
-          >
-            Close
-          </Button>
-        </div>
-      </div>
-    );
-  }
 }
 
 /** The dock's face while painting availability: the same island, morphed into a
@@ -533,17 +357,13 @@ function AvailabilityEditBar({
 
 function NavRow({
   pendingCount,
-  assistantAvailable,
   availabilityLoading,
-  onOpenAssistant,
   onOpenAccount,
   onPrepareAvailability,
   onOpenAvailability,
 }: {
   pendingCount: number;
-  assistantAvailable: boolean;
   availabilityLoading: boolean;
-  onOpenAssistant: () => void;
   onOpenAccount: () => void;
   onPrepareAvailability: () => void;
   onOpenAvailability: () => void;
@@ -576,14 +396,6 @@ function NavRow({
       />
       <NavButton icon={Search01Icon} label="Search" />
       <NavButton icon={PlusSignIcon} label="Create" />
-      {assistantAvailable && (
-        <NavButton
-          icon={AiMagicIcon}
-          label="Assistant · ⌘K"
-          assistantTrigger
-          onClick={onOpenAssistant}
-        />
-      )}
       <NavButton
         icon={TimeScheduleIcon}
         label={
@@ -617,7 +429,6 @@ function NavButton({
   active,
   busy,
   badge,
-  assistantTrigger,
   onIntent,
   onClick,
 }: {
@@ -627,14 +438,12 @@ function NavButton({
   busy?: boolean;
   /** A count worth interrupting for, shown as a dot on the icon. 0 hides it. */
   badge?: number;
-  assistantTrigger?: boolean;
   onIntent?: () => void;
   onClick?: () => void;
 }) {
   return (
     <Tooltip>
       <TooltipTrigger
-        data-assistant-trigger={assistantTrigger || undefined}
         aria-label={label}
         aria-current={active ? "page" : undefined}
         aria-busy={busy || undefined}

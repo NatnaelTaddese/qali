@@ -502,6 +502,24 @@ export const appendBlock = internalMutation({
   },
 });
 
+/** Attach best-effort follow-up suggestions to a settled turn. Independent of
+ * the turn's success path: a failure to generate them must never touch status,
+ * so this only writes the field and tolerates the message being gone. */
+export const setSuggestions = internalMutation({
+  args: {
+    messageId: v.id("assistantMessages"),
+    suggestions: v.array(v.string()),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message || message.status === "error") {
+      return null;
+    }
+    await ctx.db.patch(args.messageId, { suggestions: args.suggestions });
+    return null;
+  },
+});
+
 /** Close a turn out. Only now does it become replayable history. */
 export const finishTurn = internalMutation({
   args: {

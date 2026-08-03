@@ -8,6 +8,13 @@ import {
   useRef,
 } from "react";
 
+import {
+  SETTLE_BACKSTOP_MS,
+  SETTLE_IDLE_MS,
+  SNAP_EPSILON,
+  SUPPORTS_SCROLL_END,
+} from "./lib";
+
 export interface CalendarPagerHandle {
   /** Scroll to a rendered page index. Use "smooth" for button nav. */
   scrollToIndex: (
@@ -45,10 +52,10 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
   ) {
     const scrollerRef = useRef<HTMLDivElement>(null);
     const settleTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-    const suppressTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
     const settleCallback = useRef<(() => void) | undefined>(undefined);
-    // Ignore scroll events caused by our own programmatic recentering.
-    const suppress = useRef(false);
+    const lastScrollLeft = useRef(0);
+    /** Set once a scroll that should produce a settle has actually moved. */
+    const settlePending = useRef(false);
 
     const panelWidth = useCallback(() => {
       const el = scrollerRef.current;
@@ -56,21 +63,55 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
       return Math.max(el.clientWidth - gutterWidth, 1);
     }, [gutterWidth]);
 
+    // Read through a ref so `finishScroll` — and everything memoized on it,
+    // up to the recentering layout effect — keeps a stable identity even if a
+    // caller passes a fresh closure each render.
+    const onSettleRef = useRef(onSettleDelta);
+    onSettleRef.current = onSettleDelta;
+
+    // Deliberately unguarded — see the note in time-strip.tsx: a settle caused
+    // by our own recenter computes delta 0, so suppressing it buys nothing and
+    // a stuck suppression flag would disable navigation entirely.
     const finishScroll = useCallback(() => {
       const el = scrollerRef.current;
-      if (!el || suppress.current) return;
-      const index = Math.round(el.scrollLeft / panelWidth());
+      clearTimeout(settleTimer.current);
+      // `scrollend` covers the vertical axis too; only settle if the pager
+      // actually moved horizontally.
+      if (!el || !settlePending.current) return;
+      settlePending.current = false;
+      const index = Math.max(
+        0,
+        Math.min(
+          Math.round(el.scrollLeft / panelWidth()),
+          pageStarts.length - 1,
+        ),
+      );
       const delta = index - centerIndex;
       const onSettled = settleCallback.current;
       settleCallback.current = undefined;
-      if (delta !== 0) onSettleDelta(delta);
+      if (delta !== 0) onSettleRef.current(delta);
       onSettled?.();
-    }, [centerIndex, onSettleDelta, panelWidth]);
+    }, [centerIndex, pageStarts.length, panelWidth]);
 
+    // See time-strip.tsx: `scrollend` where available, an inactivity timer
+    // otherwise, and never armed up front against a smooth animation.
+    const finishScrollRef = useRef(finishScroll);
+    finishScrollRef.current = finishScroll;
     const scheduleSettle = useCallback(() => {
       clearTimeout(settleTimer.current);
-      settleTimer.current = setTimeout(finishScroll, 120);
-    }, [finishScroll]);
+      settleTimer.current = setTimeout(
+        () => finishScrollRef.current(),
+        SUPPORTS_SCROLL_END ? SETTLE_BACKSTOP_MS : SETTLE_IDLE_MS,
+      );
+    }, []);
+
+    useEffect(() => {
+      const el = scrollerRef.current;
+      if (!el || !SUPPORTS_SCROLL_END) return;
+      const onScrollEnd = () => finishScrollRef.current();
+      el.addEventListener("scrollend", onScrollEnd);
+      return () => el.removeEventListener("scrollend", onScrollEnd);
+    }, []);
 
     const cancelPendingPulse = () => {
       settleCallback.current = undefined;
@@ -80,29 +121,32 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
       (index: number, behavior: ScrollBehavior, onSettled?: () => void) => {
         const el = scrollerRef.current;
         if (!el) return;
-        settleCallback.current = onSettled;
-        if (behavior === "auto") {
-          suppress.current = true;
-          clearTimeout(suppressTimer.current);
-          suppressTimer.current = setTimeout(() => {
-            suppress.current = false;
-          }, 80);
+        const target = index * panelWidth();
+        // Already there: `scrollTo` emits no scroll event, so run any settle
+        // callback directly rather than wait for one that never arrives.
+        if (Math.abs(el.scrollLeft - target) <= SNAP_EPSILON) {
+          settleCallback.current = undefined;
+          onSettled?.();
+          return;
         }
-        el.scrollTo({ left: index * panelWidth(), behavior });
-        if (behavior === "smooth") scheduleSettle();
+        settleCallback.current = onSettled;
+        el.scrollTo({ left: target, behavior });
       },
-      [panelWidth, scheduleSettle],
+      [panelWidth],
     );
 
     useImperativeHandle(ref, () => ({ scrollToIndex }), [scrollToIndex]);
 
     // Recenter instantly whenever the buffered window rebuilds (anchor/view
     // change) or the first mount. `pageStarts` is a fresh array each time.
+    //
+    // Every dependency here must be stable across unrelated parent renders; a
+    // churning `scrollToIndex` would reset `scrollLeft` mid-gesture and snap
+    // the pager back to a different month.
     useLayoutEffect(() => {
       clearTimeout(settleTimer.current);
       scrollToIndex(centerIndex, "auto");
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pageStarts, gutterWidth]);
+    }, [pageStarts, gutterWidth, centerIndex, scrollToIndex]);
 
     // Re-center only when the viewport *width* actually changes, so height
     // changes and no-op observer fires don't fight an in-flight navigation.
@@ -124,13 +168,18 @@ export const CalendarPager = forwardRef<CalendarPagerHandle, CalendarPagerProps>
     useEffect(
       () => () => {
         clearTimeout(settleTimer.current);
-        clearTimeout(suppressTimer.current);
       },
       [],
     );
 
     const onScroll = () => {
-      if (suppress.current) return;
+      const el = scrollerRef.current;
+      if (!el) return;
+      const left = el.scrollLeft;
+      // The scroller owns both axes; vertical scrolling must not arm a settle.
+      if (left === lastScrollLeft.current) return;
+      lastScrollLeft.current = left;
+      settlePending.current = true;
       scheduleSettle();
     };
 

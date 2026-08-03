@@ -1,6 +1,6 @@
 import { cn } from "@qali/ui/lib/utils";
 import { addDays, format } from "date-fns";
-import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAvailabilityEdit } from "@/components/workspace/availability-edit-context";
 import type { Booking } from "@/components/workspace/booking-request-panel";
@@ -57,7 +57,7 @@ interface DayColumnProps {
   bookings: Booking[];
 }
 
-export function DayColumn({
+function DayColumnImpl({
   day,
   events,
   gridRef,
@@ -310,3 +310,12 @@ export function DayColumn({
     </div>
   );
 }
+
+/**
+ * A strip renders dozens of these at once and scrolling re-renders the strip
+ * on every animation frame, so memoization is what keeps a gesture cheap.
+ * It only holds while every prop keeps its identity — in particular the
+ * `?? []` query fallbacks in time-strip.tsx must stay hoisted to module
+ * constants, or each render mints new arrays and this becomes a no-op.
+ */
+export const DayColumn = memo(DayColumnImpl);

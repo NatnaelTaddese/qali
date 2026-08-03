@@ -9,10 +9,10 @@ import type { Doc } from "@qali/backend/convex/_generated/dataModel";
 import { Checkbox } from "@qali/ui/components/checkbox";
 import { GooDropdown } from "@qali/ui/components/ui/goo-dropdown";
 import { cn } from "@qali/ui/lib/utils";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
 import { addDays, getISOWeek, isSameDay, isSameMonth, startOfDay } from "date-fns";
 import { useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import { CalendarPager, type CalendarPagerHandle } from "./calendar-pager";
@@ -21,7 +21,7 @@ import {
   addPages,
   calendarDisplayName,
   type CalendarView,
-  MS_PER_DAY,
+  eventQueryRange,
   pageDays,
   pageStart,
   STRIP_SIDE_DAYS,
@@ -38,7 +38,9 @@ import { useStableQuery } from "./use-stable-query";
 import { NotificationBell } from "@/components/workspace/notification-bell";
 
 const VIEWS: CalendarView[] = ["day", "week", "month"];
-const EVENT_WINDOW_CACHE_LIMIT = 8;
+/** Stable empty fallback: a fresh `[]` each render would defeat the
+ * memoization downstream in the strip. */
+const NO_EVENTS: Doc<"events">[] = [];
 
 export function CalendarWeekView() {
   const [view, setView] = useState<CalendarView>("week");
@@ -55,78 +57,37 @@ export function CalendarWeekView() {
       const pageStarts = Array.from({ length: 2 * buffer + 1 }, (_, i) =>
         addPages("month", anchor, i - buffer),
       );
-      const firstDays = pageDays("month", pageStarts[0]);
-      const lastDays = pageDays("month", pageStarts[pageStarts.length - 1]);
       return {
         mode: "month" as const,
         pageStarts,
         centerIndex: buffer,
-        rangeStartMs: firstDays[0].getTime(),
-        rangeEndMs: lastDays[lastDays.length - 1].getTime() + MS_PER_DAY,
       };
     }
     const columns = VIEW_COLUMNS[view];
     const navDays = VIEW_NAV_DAYS[view];
     const side = STRIP_SIDE_DAYS[view];
-    const days = stripDays(anchor, columns, side);
     return {
       mode: "strip" as const,
       columns,
       navDays,
       anchorIndex: side,
-      days,
-      rangeStartMs: days[0].getTime(),
-      rangeEndMs: days[days.length - 1].getTime() + MS_PER_DAY,
+      days: stripDays(anchor, columns, side),
     };
   }, [view, anchor]);
 
-  const queriedEvents = useQuery(api.calendar.listEventsInRange, {
-    startMs: layout.rangeStartMs,
-    endMs: layout.rangeEndMs,
-  });
-  const eventWindowsRef = useRef<
-    Array<{
-      startMs: number;
-      endMs: number;
-      events: Doc<"events">[];
-    }>
-  >([]);
-  useEffect(() => {
-    if (queriedEvents === undefined) return;
-    const window = {
-      startMs: layout.rangeStartMs,
-      endMs: layout.rangeEndMs,
-      events: queriedEvents,
-    };
-    eventWindowsRef.current = [
-      window,
-      ...eventWindowsRef.current.filter(
-        (entry) =>
-          entry.startMs !== window.startMs || entry.endMs !== window.endMs,
-      ),
-    ].slice(0, EVENT_WINDOW_CACHE_LIMIT);
-  }, [queriedEvents, layout.rangeStartMs, layout.rangeEndMs]);
-  const events = useMemo(() => {
-    if (queriedEvents !== undefined) return queriedEvents;
-    const cached = new Map<Doc<"events">["_id"], Doc<"events">>();
-    for (const window of eventWindowsRef.current) {
-      if (
-        window.endMs <= layout.rangeStartMs ||
-        window.startMs >= layout.rangeEndMs
-      ) {
-        continue;
-      }
-      for (const event of window.events) {
-        if (
-          event.startMs < layout.rangeEndMs &&
-          event.endMs > layout.rangeStartMs
-        ) {
-          cached.set(event._id, event);
-        }
-      }
-    }
-    return [...cached.values()].sort((a, b) => a.startMs - b.startMs);
-  }, [queriedEvents, layout.rangeStartMs, layout.rangeEndMs]);
+  // The query window is quantized to a week/month boundary, so scrolling
+  // within it reuses the same Convex subscription instead of refetching per
+  // day. `useStableQuery` holds the previous result across the boundary
+  // crossings that do change it, and because each window fully contains the
+  // strips reachable from it, that stale result is never missing a visible
+  // day — the grid never blanks. `bucketDayEvents`/`MonthPanel` filter the
+  // extra events down to the rendered days.
+  const queryRange = useMemo(
+    () => eventQueryRange(view, anchor),
+    [view, anchor],
+  );
+  const events =
+    useStableQuery(api.calendar.listEventsInRange, queryRange) ?? NO_EVENTS;
 
   const calendars = useStableQuery(api.calendar.listCalendars) ?? [];
   // Prev/next: step one page (month) or the configured day count, animating the scroll.
@@ -147,6 +108,19 @@ export function CalendarWeekView() {
       setAnchor(pageStart(view, date));
     },
     [view],
+  );
+
+  // Settle handlers must keep a stable identity across renders: the scrollers
+  // derive their recentering effect's dependencies from them, so an inline
+  // arrow here re-fires that effect on every render and yanks the scroll
+  // position mid-gesture. The functional updates make `[]` deps correct.
+  const handleSettleDeltaDays = useCallback(
+    (delta: number) => setAnchor((a) => addDays(a, delta)),
+    [],
+  );
+  const handleSettleDeltaPages = useCallback(
+    (delta: number) => setAnchor((a) => addPages("month", a, delta)),
+    [],
   );
 
   // Animate calendar-body changes via the View Transitions API. `name` selects a
@@ -319,7 +293,7 @@ export function CalendarWeekView() {
             pageStarts={layout.pageStarts}
             centerIndex={layout.centerIndex}
             gutterWidth={0}
-            onSettleDelta={(delta) => setAnchor((a) => addPages("month", a, delta))}
+            onSettleDelta={handleSettleDeltaPages}
             renderPage={(start) => (
               <MonthPanel
                 monthStart={start}
@@ -337,7 +311,7 @@ export function CalendarWeekView() {
             anchorIndex={layout.anchorIndex}
             columns={layout.columns}
             events={events}
-            onSettleDeltaDays={(delta) => setAnchor((a) => addDays(a, delta))}
+            onSettleDeltaDays={handleSettleDeltaDays}
             pulseToken={pulseToken}
           />
         )}

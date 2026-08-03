@@ -22,6 +22,10 @@ import {
   MIN_DAY_HEIGHT,
   MS_PER_DAY,
   MS_PER_MINUTE,
+  SETTLE_BACKSTOP_MS,
+  SETTLE_IDLE_MS,
+  SNAP_EPSILON,
+  SUPPORTS_SCROLL_END,
   TIME_GRID_BOTTOM_SPACER_HEIGHT,
   type CalendarEvent,
   visibleAllDayMetrics,
@@ -33,6 +37,14 @@ import {
 } from "./now-indicator";
 import { PanelHeader } from "./panel-header";
 import { useEventDrag } from "./use-event-drag";
+
+/** Idle gap before the strip stops being marked as scrolling. */
+const SCROLLING_IDLE_MS = 120;
+
+/** Stable empty fallbacks: a fresh `[]` per render would give every day column
+ * a new prop identity and defeat its memoization. */
+const NO_CONTACTS: never[] = [];
+const NO_BOOKINGS: never[] = [];
 
 export interface TimeStripHandle {
   /** Scroll to a day column index. Use "smooth" for button nav. */
@@ -77,17 +89,21 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
   ) {
     const scrollerRef = useRef<HTMLDivElement>(null);
     const bodyRef = useRef<HTMLDivElement>(null);
+    const stripRef = useRef<HTMLDivElement>(null);
     const settleTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-    const suppressTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+    const scrollingTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+    const scrollRaf = useRef<number | null>(null);
+    const lastScrollLeft = useRef(0);
     const todaySettleCallback = useRef<(() => void) | undefined>(undefined);
-    const suppress = useRef(false);
+    /** Set once a scroll that should produce a settle has actually moved. */
+    const settlePending = useRef(false);
     const didInitialNowScroll = useRef(false);
     const centerNowRef = useRef(false);
     const nowLayoutRef = useRef<NowIndicatorLayout | null>(null);
     const userInteractedRef = useRef(false);
     const [now, setNow] = useState(() => Date.now());
     const [visibleStartIdx, setVisibleStartIdx] = useState(anchorIndex);
-    const contacts = useQuery(api.contacts.listContacts) ?? [];
+    const contacts = useQuery(api.contacts.listContacts) ?? NO_CONTACTS;
     const contactPhotos = useMemo(() => {
       const photos = new Map<string, string>();
       for (const contact of contacts) {
@@ -144,9 +160,26 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       return Math.max((el.clientWidth - GUTTER_TOTAL) / columns, 1);
     }, [columns]);
 
+    // Read through a ref so `finishScroll` — and everything memoized on it,
+    // up to the recentering layout effect — keeps a stable identity even if a
+    // caller passes a fresh closure each render.
+    const onSettleRef = useRef(onSettleDeltaDays);
+    onSettleRef.current = onSettleDeltaDays;
+
+    // Deliberately unguarded: settling always reads the real scroll position.
+    // A settle triggered by our own recenter lands exactly on `anchorIndex`, so
+    // it computes delta 0 and does nothing — which is why suppressing those is
+    // an optimization at best. Gating this on a "programmatic scroll in flight"
+    // flag risks the flag sticking (a target computed from a stale column width
+    // is never reached) and silently disabling navigation altogether.
     const finishScroll = useCallback(() => {
       const el = scrollerRef.current;
-      if (!el || suppress.current) return;
+      clearTimeout(settleTimer.current);
+      // `scrollend` fires for this scroller's vertical axis too, and settling
+      // on a scroll that never moved horizontally would consume a pending
+      // Today pulse without the strip having gone anywhere.
+      if (!el || !settlePending.current) return;
+      settlePending.current = false;
       const index = Math.max(
         0,
         Math.min(Math.round(el.scrollLeft / colWidth()), days.length - columns),
@@ -154,14 +187,33 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       const delta = index - anchorIndex;
       const onSettled = todaySettleCallback.current;
       todaySettleCallback.current = undefined;
-      if (delta !== 0) onSettleDeltaDays(delta);
+      if (delta !== 0) onSettleRef.current(delta);
       onSettled?.();
-    }, [anchorIndex, colWidth, columns, days.length, onSettleDeltaDays]);
+    }, [anchorIndex, colWidth, columns, days.length]);
 
+    // `scrollend` is the real signal, but Safari only shipped it in 26.2, so an
+    // inactivity timer runs alongside: primary where the event is missing, and
+    // a slower backstop where it exists (a scroll cancelled by snap correction
+    // can skip `scrollend`). Re-armed from `onScroll`, so it measures time since
+    // the last scroll event — during a smooth animation that keeps pushing
+    // out, which is why arming it up front used to settle mid-flight.
+    const finishScrollRef = useRef(finishScroll);
+    finishScrollRef.current = finishScroll;
     const scheduleSettle = useCallback(() => {
       clearTimeout(settleTimer.current);
-      settleTimer.current = setTimeout(finishScroll, 120);
-    }, [finishScroll]);
+      settleTimer.current = setTimeout(
+        () => finishScrollRef.current(),
+        SUPPORTS_SCROLL_END ? SETTLE_BACKSTOP_MS : SETTLE_IDLE_MS,
+      );
+    }, []);
+
+    useEffect(() => {
+      const el = scrollerRef.current;
+      if (!el || !SUPPORTS_SCROLL_END) return;
+      const onScrollEnd = () => finishScrollRef.current();
+      el.addEventListener("scrollend", onScrollEnd);
+      return () => el.removeEventListener("scrollend", onScrollEnd);
+    }, []);
 
     const cancelPendingTodayPulse = () => {
       userInteractedRef.current = true;
@@ -173,18 +225,14 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
         const el = scrollerRef.current;
         if (!el) return;
         todaySettleCallback.current = undefined;
-        if (behavior === "auto") {
-          setVisibleStartIdx(index);
-          suppress.current = true;
-          clearTimeout(suppressTimer.current);
-          suppressTimer.current = setTimeout(() => {
-            suppress.current = false;
-          }, 80);
-        }
-        el.scrollTo({ left: index * colWidth(), behavior });
-        if (behavior === "smooth") scheduleSettle();
+        const target = index * colWidth();
+        if (behavior === "auto") setVisibleStartIdx(index);
+        // Already there: `scrollTo` would emit no scroll event, so skip it
+        // rather than wait on a settle that can never arrive.
+        if (Math.abs(el.scrollLeft - target) <= SNAP_EPSILON) return;
+        el.scrollTo({ left: target, behavior });
       },
-      [colWidth, scheduleSettle],
+      [colWidth],
     );
 
     // Vertical scroll offset that places the current-time line ~35% down the
@@ -209,14 +257,26 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       (index: number, onSettled: () => void) => {
         const el = scrollerRef.current;
         if (!el) return;
-        todaySettleCallback.current = onSettled;
         didInitialNowScroll.current = true;
-        el.scrollTo({
-          left: index * colWidth(),
-          top: nowScrollTop(),
-          behavior: "smooth",
-        });
+        const left = index * colWidth();
+        const top = nowScrollTop();
+        // No movement means no scroll event and therefore no settle, so run the
+        // pulse callback directly rather than waiting for one that never comes.
+        if (
+          Math.abs(el.scrollLeft - left) <= SNAP_EPSILON &&
+          Math.abs(el.scrollTop - top) <= SNAP_EPSILON
+        ) {
+          todaySettleCallback.current = undefined;
+          onSettled();
+          return;
+        }
+        todaySettleCallback.current = onSettled;
+        // This scroll may only move vertically (today's column already anchored),
+        // which `onScroll` deliberately ignores — so arm the settle here or the
+        // pulse would wait on one that never comes.
+        settlePending.current = true;
         scheduleSettle();
+        el.scrollTo({ left, top, behavior: "smooth" });
       },
       [colWidth, nowScrollTop, scheduleSettle],
     );
@@ -236,17 +296,18 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     // Recenter when the strip rebuilds (anchor/view change) or mounts. A primed
     // Today jump also parks vertically at the current-time line so the freshly
     // built (off-buffer) view is already centered on now under the transition.
+    //
+    // Every dependency here must be stable across unrelated parent renders:
+    // `days` changes identity only when the parent's layout memo recomputes,
+    // and `scrollToIndex`/`colWidth`/`nowScrollTop` are constant for a given
+    // view. If one of them starts churning, this effect resets `scrollLeft`
+    // mid-gesture and the strip visibly snaps back to a different week.
     useLayoutEffect(() => {
       const el = scrollerRef.current;
       clearTimeout(settleTimer.current);
       if (centerNowRef.current && el) {
         centerNowRef.current = false;
         setVisibleStartIdx(anchorIndex);
-        suppress.current = true;
-        clearTimeout(suppressTimer.current);
-        suppressTimer.current = setTimeout(() => {
-          suppress.current = false;
-        }, 80);
         didInitialNowScroll.current = true;
         el.scrollTo({
           left: anchorIndex * colWidth(),
@@ -256,8 +317,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
         return;
       }
       scrollToIndex(anchorIndex, "auto");
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [days, anchorIndex, scrollToIndex]);
+    }, [days, anchorIndex, scrollToIndex, colWidth, nowScrollTop]);
 
     // Keep the anchor centered only when the strip's width actually changes.
     // Height-only window resizes happen while mobile browser chrome collapses
@@ -280,21 +340,58 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     useEffect(
       () => () => {
         clearTimeout(settleTimer.current);
-        clearTimeout(suppressTimer.current);
+        clearTimeout(scrollingTimer.current);
+        if (scrollRaf.current !== null) cancelAnimationFrame(scrollRaf.current);
       },
       [],
     );
 
+    // Marks the strip as scrolling without re-rendering, so the all-day rail
+    // can skip its height transition while the visible days change underneath
+    // it. A React state flag here would re-render the whole strip twice per
+    // gesture just to toggle a CSS class.
+    // Only touch the DOM on the transitions. Writing the attribute on every
+    // scroll event invalidates styles for the whole header — every date cell —
+    // on every frame of a gesture, which is far more expensive than the
+    // transition it exists to suppress.
+    const scrolling = useRef(false);
+    const markScrolling = useCallback(() => {
+      if (!scrolling.current) {
+        scrolling.current = true;
+        stripRef.current?.setAttribute("data-scrolling", "");
+      }
+      clearTimeout(scrollingTimer.current);
+      scrollingTimer.current = setTimeout(() => {
+        scrolling.current = false;
+        stripRef.current?.removeAttribute("data-scrolling");
+      }, SCROLLING_IDLE_MS);
+    }, []);
+
     const onScroll = () => {
       const el = scrollerRef.current;
       if (!el) return;
-      const index = Math.max(
-        0,
-        Math.min(Math.round(el.scrollLeft / colWidth()), days.length - columns),
-      );
-      setVisibleStartIdx(index);
-      if (suppress.current) return;
+      const left = el.scrollLeft;
+      // The scroller owns both axes; a vertical scroll must not arm a settle or
+      // force a layout read for a horizontal position that hasn't moved.
+      if (left === lastScrollLeft.current) return;
+      lastScrollLeft.current = left;
+      settlePending.current = true;
+      markScrolling();
       scheduleSettle();
+      if (scrollRaf.current !== null) return;
+      scrollRaf.current = requestAnimationFrame(() => {
+        scrollRaf.current = null;
+        const current = scrollerRef.current;
+        if (!current) return;
+        const index = Math.max(
+          0,
+          Math.min(
+            Math.round(current.scrollLeft / colWidth()),
+            days.length - columns,
+          ),
+        );
+        setVisibleStartIdx((prev) => (prev === index ? prev : index));
+      });
     };
 
     const { effectiveEvents, beginDrag, draggingId } = useEventDrag(events, days);
@@ -306,7 +403,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
 
     // The dock already holds this no-argument subscription. Convex shares the
     // live result, so moving the date window never clears and reloads bookings.
-    const bookings = useQuery(api.booking.listPendingBookings) ?? [];
+    const bookings = useQuery(api.booking.listPendingBookings) ?? NO_BOOKINGS;
     const bookingsByDay = useMemo(() => {
       const buckets: (typeof bookings)[] = days.map(() => []);
       for (const booking of bookings) {
@@ -325,31 +422,23 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       }
       return buckets;
     }, [days, bookings, now]);
-    const visibleEndIdx = Math.min(
-      visibleStartIdx + columns - 1,
-      days.length - 1,
-    );
+    // Clamp on the render path: switching week→day shrinks `days` (31→13)
+    // while a stale `visibleStartIdx` from the wider strip survives until the
+    // recentering effect commits, so indexing `days` unclamped can read past
+    // the end. The effect corrects the state on the next commit either way.
+    const maxStartIdx = Math.max(0, days.length - columns);
+    const startIdx = Math.min(Math.max(visibleStartIdx, 0), maxStartIdx);
+    const visibleEndIdx = Math.min(startIdx + columns - 1, days.length - 1);
     const allDayLayout = useMemo(
-      () =>
-        layoutAllDayEvents(
-          days,
-          allDayEvents,
-          visibleStartIdx,
-          visibleEndIdx,
-        ),
-      [days, allDayEvents, visibleStartIdx, visibleEndIdx],
+      () => layoutAllDayEvents(days, allDayEvents, startIdx, visibleEndIdx),
+      [days, allDayEvents, startIdx, visibleEndIdx],
     );
-    const visibleRangeKey = `${days[visibleStartIdx].getTime()}:${columns}`;
+    const visibleRangeKey = `${days[startIdx]?.getTime() ?? 0}:${columns}`;
     const [expandedAllDayRange, setExpandedAllDayRange] = useState<string>();
     const allDayExpanded = expandedAllDayRange === visibleRangeKey;
     const { laneCount: visibleAllDayLaneCount, hiddenEventCount } = useMemo(
-      () =>
-        visibleAllDayMetrics(
-          allDayLayout,
-          visibleStartIdx,
-          visibleEndIdx,
-        ),
-      [allDayLayout, visibleStartIdx, visibleEndIdx],
+      () => visibleAllDayMetrics(allDayLayout, startIdx, visibleEndIdx),
+      [allDayLayout, startIdx, visibleEndIdx],
     );
     const allDayHeight = allDayBandHeight(
       visibleAllDayLaneCount,
@@ -415,7 +504,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
             flex: `0 0 calc(${days.length} * (100% - ${GUTTER_TOTAL}px) / ${columns})`,
           }}
         >
-          <div className="sticky top-0 z-30 shrink-0">
+          <div ref={stripRef} className="group/strip sticky top-0 z-30 shrink-0">
             <PanelHeader
               days={days}
               allDayEvents={allDayLayout}

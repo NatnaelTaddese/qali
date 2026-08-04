@@ -300,6 +300,16 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     useLayoutEffect(() => {
       const el = scrollerRef.current;
       clearTimeout(settleTimer.current);
+      // The all-day cards ease their left/width as spans clamp at the scroll
+      // edge. A recenter rebuilds the day window and jumps every card's buffer-
+      // relative position, so flag it — `group-data-[recenter]` suppresses that
+      // easing for this commit (and the visibleStartIdx reset it triggers) so
+      // the cards snap into place instead of sliding.
+      let raf = 0;
+      if (el) {
+        el.setAttribute("data-recenter", "");
+        raf = requestAnimationFrame(() => el.removeAttribute("data-recenter"));
+      }
       if (centerNowRef.current && el) {
         centerNowRef.current = false;
         setVisibleStartIdx(anchorIndex);
@@ -309,9 +319,10 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
           top: nowScrollTop(),
           behavior: "auto",
         });
-        return;
+        return () => cancelAnimationFrame(raf);
       }
       scrollToIndex(anchorIndex, "auto");
+      return () => cancelAnimationFrame(raf);
     }, [days, anchorIndex, scrollToIndex, colWidth, nowScrollTop]);
 
     // Keep the anchor centered only when the strip's width actually changes.
@@ -453,7 +464,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
         onPointerDown={cancelPendingTodayPulse}
         onTouchStart={cancelPendingTodayPulse}
         onWheel={cancelPendingTodayPulse}
-        className="flex min-h-0 flex-1 overflow-auto overscroll-x-contain bg-calendar-header [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="group/strip flex min-h-0 flex-1 overflow-auto overscroll-x-contain bg-calendar-header [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{ scrollSnapType: "x mandatory", scrollPaddingLeft: GUTTER_TOTAL }}
       >
         <div

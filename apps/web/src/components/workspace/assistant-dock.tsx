@@ -147,13 +147,11 @@ export function AssistantDock() {
   );
 
   return (
-    // A view-transition-name pulls the dock out of the calendar's day/week/month
-    // view transition: without it the fixed dock is captured in the root
-    // snapshot and cross-fades on every switch. Named, it persists as its own
-    // stable layer and stays put.
+    // Named as its own layer only while a calendar view transition runs, so the
+    // fixed dock doesn't flicker with the root snapshot (see globals.css).
     <div
       className="fixed right-6 bottom-6 z-50"
-      style={{ viewTransitionName: "assistant-dock" }}
+      data-dock-view-transition="assistant-dock"
     >
       <GooDropdown
         ref={dropdownRef}

@@ -347,7 +347,12 @@ export interface AllDayEventLayout {
   lane: number;
 }
 
-/** Pack spanning all-day events into the first available non-overlapping lane. */
+/** Pack spanning all-day events into the first available non-overlapping lane.
+ *
+ * Lanes are packed over the whole buffered `days` window, so a card keeps the
+ * same lane no matter where the strip is scrolled — cards never swap rows. The
+ * returned spans are then clamped to the visible range, so a card's width
+ * shrinks as its off-screen end crosses the viewport edge. */
 export function layoutAllDayEvents(
   days: Date[],
   events: CalendarEvent[],
@@ -356,15 +361,9 @@ export function layoutAllDayEvents(
 ): AllDayEventLayout[] {
   const spans = events
     .map((event) => ({ event, ...allDayColumnSpan(event, days) }))
-    .filter(
-      ({ startIdx, endIdx }) =>
-        endIdx >= visibleStartIdx && startIdx <= visibleEndIdx,
-    )
-    .map((span) => ({
-      ...span,
-      startIdx: Math.max(span.startIdx, visibleStartIdx),
-      endIdx: Math.min(span.endIdx, visibleEndIdx),
-    }))
+    // Order by each event's true span so lane priority is fixed globally: an
+    // earlier-starting card always claims the lower lane, and the packing below
+    // is identical for every scroll position.
     .sort(
       (a, b) =>
         a.startIdx - b.startIdx ||
@@ -374,12 +373,25 @@ export function layoutAllDayEvents(
     );
   const laneEnds: number[] = [];
 
-  return spans.map((span) => {
-    let lane = laneEnds.findIndex((endIdx) => endIdx < span.startIdx);
-    if (lane === -1) lane = laneEnds.length;
-    laneEnds[lane] = span.endIdx;
-    return { ...span, lane };
-  });
+  return spans
+    .map((span) => {
+      let lane = laneEnds.findIndex((endIdx) => endIdx < span.startIdx);
+      if (lane === -1) lane = laneEnds.length;
+      laneEnds[lane] = span.endIdx;
+      return { ...span, lane };
+    })
+    // Drop cards fully outside the window, then clamp the rest to it. Lanes are
+    // already assigned from the full spans above, so clamping only resizes each
+    // card for rendering — it never reshuffles rows.
+    .filter(
+      ({ startIdx, endIdx }) =>
+        endIdx >= visibleStartIdx && startIdx <= visibleEndIdx,
+    )
+    .map((entry) => ({
+      ...entry,
+      startIdx: Math.max(entry.startIdx, visibleStartIdx),
+      endIdx: Math.min(entry.endIdx, visibleEndIdx),
+    }));
 }
 
 export function visibleAllDayMetrics(

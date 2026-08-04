@@ -38,7 +38,7 @@ export function PanelHeader({
   const template = dayColsTemplate(days.length);
   return (
     <div
-      className="relative flex flex-col border-b border-border bg-calendar-header backdrop-blur-xs transition-[height] duration-200 group-data-[scrolling]/strip:transition-none motion-reduce:transition-none"
+      className="relative flex flex-col border-b border-border bg-calendar-header backdrop-blur-xs transition-[height] duration-200 motion-reduce:transition-none"
       style={{ height: HEADER_DATE_HEIGHT + allDayHeight }}
     >
       {/* Column dividers as one continuous overlay so the lines run the full
@@ -98,10 +98,10 @@ export function PanelHeader({
       <div
         id="calendar-all-day-rail"
         className={cn(
-          // The height tracks the visible days' all-day lanes, so it changes
-          // continuously while scrolling — easing that would jitter the grid
-          // below. The expand/collapse toggle still animates.
-          "relative grid items-start gap-y-1 py-1 transition-[height] duration-200 group-data-[scrolling]/strip:transition-none motion-reduce:transition-none",
+          // The height tracks the visible days' all-day lanes, so it eases both
+          // when they change under a scroll and when the expand/collapse toggle
+          // fires.
+          "relative grid items-start gap-y-1 py-1 transition-[height] duration-200 motion-reduce:transition-none",
           allDayExpanded ? "overflow-y-auto" : "overflow-hidden",
         )}
         style={{

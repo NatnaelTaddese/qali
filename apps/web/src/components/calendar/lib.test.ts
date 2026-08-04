@@ -167,22 +167,50 @@ describe("layoutAllDayEvents", () => {
     });
   });
 
-  test("repacks continuing events when earlier conflicts leave the visible range", () => {
-    const layout = layoutAllDayEvents(
-      days,
-      [
-        allDayEvent("first", 0, 3),
-        allDayEvent("second", 0, 3),
-        allDayEvent("continuing", 1, 5),
-      ],
-      3,
-      4,
+  test("packs lanes globally but clamps spans to the visible range", () => {
+    const events = [
+      allDayEvent("first", 0, 3), // [0,2]
+      allDayEvent("second", 0, 3), // [0,2]
+      allDayEvent("continuing", 1, 5), // [1,4]
+    ];
+    const byId = (visibleStartIdx: number, visibleEndIdx: number) =>
+      Object.fromEntries(
+        layoutAllDayEvents(days, events, visibleStartIdx, visibleEndIdx).map(
+          (entry) => [entry.event._id, entry],
+        ),
+      );
+
+    // Full window: lanes packed globally, spans untouched.
+    expect(byId(0, 4).continuing).toMatchObject({
+      lane: 2,
+      startIdx: 1,
+      endIdx: 4,
+    });
+
+    // Scrolled so `first`/`second` leave the window: `continuing` keeps its
+    // global lane 2 (rows never repack) but its span clamps to the visible
+    // range, so the card renders narrower.
+    const scrolled = byId(3, 4);
+    expect(scrolled.first).toBeUndefined();
+    expect(scrolled.second).toBeUndefined();
+    expect(scrolled.continuing).toMatchObject({
+      lane: 2,
+      startIdx: 3,
+      endIdx: 4,
+    });
+  });
+
+  test("orders lanes by true start, not input order", () => {
+    // `late` is declared first but starts a day later, so `early` still wins the
+    // top lane — the two never swap rows as the strip scrolls.
+    const laneById = Object.fromEntries(
+      layoutAllDayEvents(days, [
+        allDayEvent("late", 1, 5), // days 1–4
+        allDayEvent("early", 0, 2), // days 0–1, overlaps `late` on day 1
+      ]).map(({ event, lane }) => [event._id, lane]),
     );
 
-    expect(layout).toHaveLength(1);
-    expect(layout[0].lane).toBe(0);
-    expect(layout[0].startIdx).toBe(3);
-    expect(layout[0].endIdx).toBe(4);
+    expect(laneById).toEqual({ early: 0, late: 1 });
   });
 });
 

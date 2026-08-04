@@ -215,17 +215,14 @@ export function BottomIsland() {
   const variants = reduce ? dockVariantsReduced : dockVariants;
 
   return (
-    // A view-transition-name keeps the dock out of the calendar's day/week/month
-    // view transition: unnamed, this fixed layer is captured in the root
-    // snapshot and cross-fades on every switch; named, it persists in place.
-    <div
-      className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4"
-      style={{ viewTransitionName: "bottom-island" }}
-    >
+    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
       <motion.nav
         ref={ref}
         layout
         transition={SPRING_DOCK}
+        // Named as its own layer only while a calendar view transition runs, so
+        // the fixed dock doesn't flicker with the root snapshot (see globals.css).
+        data-dock-view-transition="bottom-island"
         // Plain style, not `animate` — `layout` rewrites borderRadius each frame
         // to correct for the box scaling, and an animated value fights that.
         style={{ borderRadius: editing ? 28 : cornerRadius(view) }}

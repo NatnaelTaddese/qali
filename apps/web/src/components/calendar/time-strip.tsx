@@ -38,9 +38,6 @@ import {
 import { PanelHeader } from "./panel-header";
 import { useEventDrag } from "./use-event-drag";
 
-/** Idle gap before the strip stops being marked as scrolling. */
-const SCROLLING_IDLE_MS = 120;
-
 /** Stable empty fallbacks: a fresh `[]` per render would give every day column
  * a new prop identity and defeat its memoization. */
 const NO_CONTACTS: never[] = [];
@@ -89,9 +86,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
   ) {
     const scrollerRef = useRef<HTMLDivElement>(null);
     const bodyRef = useRef<HTMLDivElement>(null);
-    const stripRef = useRef<HTMLDivElement>(null);
     const settleTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-    const scrollingTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
     const scrollRaf = useRef<number | null>(null);
     const lastScrollLeft = useRef(0);
     const todaySettleCallback = useRef<(() => void) | undefined>(undefined);
@@ -340,32 +335,10 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     useEffect(
       () => () => {
         clearTimeout(settleTimer.current);
-        clearTimeout(scrollingTimer.current);
         if (scrollRaf.current !== null) cancelAnimationFrame(scrollRaf.current);
       },
       [],
     );
-
-    // Marks the strip as scrolling without re-rendering, so the all-day rail
-    // can skip its height transition while the visible days change underneath
-    // it. A React state flag here would re-render the whole strip twice per
-    // gesture just to toggle a CSS class.
-    // Only touch the DOM on the transitions. Writing the attribute on every
-    // scroll event invalidates styles for the whole header — every date cell —
-    // on every frame of a gesture, which is far more expensive than the
-    // transition it exists to suppress.
-    const scrolling = useRef(false);
-    const markScrolling = useCallback(() => {
-      if (!scrolling.current) {
-        scrolling.current = true;
-        stripRef.current?.setAttribute("data-scrolling", "");
-      }
-      clearTimeout(scrollingTimer.current);
-      scrollingTimer.current = setTimeout(() => {
-        scrolling.current = false;
-        stripRef.current?.removeAttribute("data-scrolling");
-      }, SCROLLING_IDLE_MS);
-    }, []);
 
     const onScroll = () => {
       const el = scrollerRef.current;
@@ -376,7 +349,6 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       if (left === lastScrollLeft.current) return;
       lastScrollLeft.current = left;
       settlePending.current = true;
-      markScrolling();
       scheduleSettle();
       if (scrollRaf.current !== null) return;
       scrollRaf.current = requestAnimationFrame(() => {
@@ -504,7 +476,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
             flex: `0 0 calc(${days.length} * (100% - ${GUTTER_TOTAL}px) / ${columns})`,
           }}
         >
-          <div ref={stripRef} className="group/strip sticky top-0 z-30 shrink-0">
+          <div className="sticky top-0 z-30 shrink-0">
             <PanelHeader
               days={days}
               allDayEvents={allDayLayout}

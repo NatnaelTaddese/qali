@@ -305,6 +305,21 @@
   animation: none;
 }
 
+/* The fixed docks are otherwise captured in that root snapshot and flicker as it
+   is replaced. Naming them lifts each into its own stable layer that persists
+   across the switch. Scoped to [data-cal-transition] (set just before the
+   transition, cleared after) so the name exists only during the ~320ms window:
+   a persistent view-transition-name on a fixed element drops Chromium to
+   main-thread scrolling and stalls the all-day height transition. The name goes
+   on the blurred nav itself, never an ancestor, or it would become a
+   backdrop-filter root and clip the nav's own blur. */
+:root[data-cal-transition] [data-dock-view-transition="bottom-island"] {
+  view-transition-name: bottom-island;
+}
+:root[data-cal-transition] [data-dock-view-transition="assistant-dock"] {
+  view-transition-name: assistant-dock;
+}
+
 ::view-transition-group(calendar-body) {
   animation-duration: 320ms;
   animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); /* EASE_OUT_EXPO */

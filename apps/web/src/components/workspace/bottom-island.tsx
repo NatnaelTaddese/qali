@@ -28,7 +28,6 @@ import {
   dockVariantsReduced,
   SPRING_DOCK,
 } from "@/components/calendar/motion";
-import { MS_PER_HOUR, SNAP_MS } from "@/components/calendar/lib";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { AccountPanel } from "./account-panel";
 import { useAvailabilityEdit } from "./availability-edit-context";
@@ -60,7 +59,7 @@ function cornerRadius(view: DockView | null): number {
 }
 
 export function BottomIsland() {
-  const { view, viewId, direction, open, close } = useDock();
+  const { view, viewId, direction, open, close, openCreate } = useDock();
   const { editing, setEditing, ready: availabilityEditReady } =
     useAvailabilityEdit();
   const reduce = useReducedMotion();
@@ -297,14 +296,7 @@ export function BottomIsland() {
                 <NavRow
                   pendingCount={activePendingBookings?.length ?? 0}
                   onOpenAccount={() => open({ kind: "account" })}
-                  onCreate={() => {
-                    // No range in hand from the grid: default to the next 15-min
-                    // slot for a one-hour event. The user can still nudge the
-                    // range from the create panel.
-                    const startMs =
-                      Math.ceil(Date.now() / SNAP_MS) * SNAP_MS;
-                    open({ kind: "create", startMs, endMs: startMs + MS_PER_HOUR });
-                  }}
+                  onCreate={openCreate}
                   availabilityLoading={availabilityRequested}
                   onPrepareAvailability={prepareAvailability}
                   onOpenAvailability={requestAvailability}

@@ -12,7 +12,7 @@ import { cn } from "@qali/ui/lib/utils";
 import { useMutation } from "convex/react";
 import { addDays, getISOWeek, isSameDay, isSameMonth, startOfDay } from "date-fns";
 import { useReducedMotion } from "motion/react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import { CalendarPager, type CalendarPagerHandle } from "./calendar-pager";
@@ -35,6 +35,7 @@ import { MonthPanel } from "./month-panel";
 import { MonthPicker } from "./month-picker";
 import { TimeStrip, type TimeStripHandle } from "./time-strip";
 import { useStableQuery } from "./use-stable-query";
+import { useDock } from "@/components/workspace/dock-context";
 import { NotificationBell } from "@/components/workspace/notification-bell";
 
 const VIEWS: CalendarView[] = ["day", "week", "month"];
@@ -90,6 +91,21 @@ export function CalendarWeekView() {
     useStableQuery(api.calendar.listEventsInRange, queryRange) ?? NO_EVENTS;
 
   const calendars = useStableQuery(api.calendar.listCalendars) ?? [];
+
+  // Tell the dock which day its Create button should seed a new event on: today
+  // when the current page shows it, otherwise the page's own start. The dock
+  // reads this plus the events below to land on the next free slot.
+  const { registerCreateSeed } = useDock();
+  const focusDayMs = useMemo(() => {
+    const today = startOfDay(new Date());
+    const onPage = pageDays(view, anchor).some((day) => isSameDay(day, today));
+    return (onPage ? today : startOfDay(anchor)).getTime();
+  }, [view, anchor]);
+  useEffect(() => {
+    registerCreateSeed({ dayStartMs: focusDayMs, events });
+    return () => registerCreateSeed(null);
+  }, [registerCreateSeed, focusDayMs, events]);
+
   // Prev/next: step one page (month) or the configured day count, animating the scroll.
   const step = (dir: number) => {
     if (layout.mode === "month") {

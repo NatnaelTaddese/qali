@@ -14,6 +14,7 @@ import {
   addPages,
   eventQueryRange,
   MS_PER_DAY,
+  nextFreeSlot,
   pageDays,
   pageStart,
   STRIP_SIDE_DAYS,
@@ -53,6 +54,64 @@ function allDayEvent(
     allDay: true,
   } as unknown as CalendarEvent;
 }
+
+describe("nextFreeSlot", () => {
+  const at = (h: number, m = 0) => dayStart + (h * 60 + m) * 60_000;
+  // A moment before the test day so "today" logic never kicks in for it.
+  const beforeDay = dayStart - MS_PER_DAY;
+
+  test("defaults to 9:00 AM for 30 minutes on an empty future day", () => {
+    expect(nextFreeSlot(dayStart, [], beforeDay)).toEqual({
+      startMs: at(9),
+      endMs: at(9, 30),
+    });
+  });
+
+  test("skips past an event that blocks the 9 AM slot", () => {
+    const slot = nextFreeSlot(dayStart, [timedEvent("a", 9, 0, 10, 0)], beforeDay);
+    expect(slot).toEqual({ startMs: at(10), endMs: at(10, 30) });
+  });
+
+  test("finds the gap between two meetings", () => {
+    const events = [
+      timedEvent("a", 9, 0, 9, 30),
+      timedEvent("b", 10, 0, 11, 0),
+    ];
+    expect(nextFreeSlot(dayStart, events, beforeDay)).toEqual({
+      startMs: at(9, 30),
+      endMs: at(10),
+    });
+  });
+
+  test("ignores all-day events", () => {
+    const slot = nextFreeSlot(dayStart, [allDayEvent("a", 0, 1)], beforeDay);
+    expect(slot).toEqual({ startMs: at(9), endMs: at(9, 30) });
+  });
+
+  test("starts from the next snap boundary when the day is today", () => {
+    const now = at(13, 5);
+    expect(nextFreeSlot(dayStart, [], now)).toEqual({
+      startMs: at(13, 15),
+      endMs: at(13, 45),
+    });
+  });
+
+  test("stays at 9 AM on a past day even though now is later", () => {
+    // now is on a day after the target: the target isn't today, so 9 AM wins
+    // rather than leaking the current time onto a past day.
+    const now = dayStart + MS_PER_DAY + at(15) - dayStart;
+    expect(nextFreeSlot(dayStart, [], now)).toEqual({
+      startMs: at(9),
+      endMs: at(9, 30),
+    });
+  });
+
+  test("falls back to the last slot before midnight on a full day", () => {
+    const events = [timedEvent("all", 0, 0, 24, 0)];
+    const slot = nextFreeSlot(dayStart, events, beforeDay);
+    expect(slot).toEqual({ startMs: at(23, 30), endMs: at(24) });
+  });
+});
 
 describe("calendarDisplayName", () => {
   test("prefers the user's override, then summary, then calendar id", () => {

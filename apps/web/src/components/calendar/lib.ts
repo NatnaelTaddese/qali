@@ -222,6 +222,53 @@ export function formatWallClockMinutes(
   return `${time} ${hour24 < 12 ? "AM" : "PM"}`;
 }
 
+/** The default time a freshly created event starts on a day with no better cue —
+ * the same 9:00 AM the keyboard-driven grid draft uses. */
+export const DEFAULT_EVENT_START_MINUTES = 9 * 60;
+/** New events default to a half-hour block. */
+export const DEFAULT_EVENT_DURATION_MS = 30 * MS_PER_MINUTE;
+
+/** The first `durationMs` slot on `dayStartMs` that no timed event overlaps.
+ *
+ * Search begins at 9:00 AM, or — when the day is today and it's already later —
+ * at the next {@link SNAP_MINUTES} boundary from `nowMs`, so "create" lands on a
+ * usable time rather than the morning. Slots step by `SNAP_MS`. If the day fills
+ * up, the last snap boundary that still fits before midnight is returned, so a
+ * range always comes back. All-day events don't occupy the timeline and are
+ * ignored. */
+export function nextFreeSlot(
+  dayStartMs: number,
+  events: CalendarEvent[],
+  nowMs: number,
+  durationMs: number = DEFAULT_EVENT_DURATION_MS,
+): { startMs: number; endMs: number } {
+  const nineAmMs = dayStartMs + DEFAULT_EVENT_START_MINUTES * MS_PER_MINUTE;
+  const isToday = nowMs >= dayStartMs && nowMs < dayStartMs + MS_PER_DAY;
+  // On today, never propose a time in the past (start no earlier than the next
+  // snap from now); on any other day, start at 9 AM.
+  const fromNowMs = Math.ceil(nowMs / SNAP_MS) * SNAP_MS;
+  let startMs = isToday ? Math.max(nineAmMs, fromNowMs) : nineAmMs;
+  const lastStartMs = dayStartMs + MS_PER_DAY - durationMs;
+
+  const timed = events
+    .filter((event) => !event.allDay)
+    .sort((a, b) => a.startMs - b.startMs);
+
+  while (startMs <= lastStartMs) {
+    const endMs = startMs + durationMs;
+    const clash = timed.find(
+      (event) => event.startMs < endMs && event.endMs > startMs,
+    );
+    if (!clash) return { startMs, endMs };
+    // Jump past the blocking event, snapped forward, rather than crawling by one
+    // slot through a long meeting.
+    startMs = Math.max(startMs + SNAP_MS, Math.ceil(clash.endMs / SNAP_MS) * SNAP_MS);
+  }
+
+  // Day is full: fall back to the last slot that fits before midnight.
+  return { startMs: lastStartMs, endMs: lastStartMs + durationMs };
+}
+
 export const MONTH_EVENT_ROW_HEIGHT = 18;
 export const MONTH_EVENT_ROW_GAP = 2;
 

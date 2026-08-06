@@ -407,6 +407,7 @@ export function AssistantPanel({
           ))}
         </div>
       ) : (
+        <div className="relative -mx-1 flex min-h-0 flex-1 flex-col">
         <motion.div
           layoutScroll
           ref={listRef}
@@ -417,8 +418,9 @@ export function AssistantPanel({
           aria-busy={composerBusy || undefined}
           onScroll={(event) => {
             shouldFollowRef.current = isNearScrollBottom(event.currentTarget);
+            updateScrollFade();
           }}
-          className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-1 scrollbar-gutter-stable"
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-1 scrollbar-gutter-stable [scrollbar-width:thin] [scrollbar-color:var(--muted-foreground)_transparent]"
         >
           {loadingConversation && (
             <p
@@ -468,6 +470,19 @@ export function AssistantPanel({
             />
           ))}
         </motion.div>
+          {scrollFade.top && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-linear-to-b from-popover to-transparent"
+            />
+          )}
+          {scrollFade.bottom && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-linear-to-t from-popover to-transparent"
+            />
+          )}
+        </div>
       )}
 
       {/* The composer reads as one of the dock's own cards: same border and

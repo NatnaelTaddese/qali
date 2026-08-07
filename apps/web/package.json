@@ -34,6 +34,7 @@
     "dotenv": "catalog:",
     "motion": "^12.42.2",
     "next-themes": "catalog:",
+    "posthog-js": "^1.407.2",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "^10.1.0",

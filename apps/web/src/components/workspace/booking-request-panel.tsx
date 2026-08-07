@@ -13,6 +13,7 @@ import { format, formatDistanceToNowStrict } from "date-fns";
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { usePostHog } from "posthog-js/react";
 
 import { SPRING_DOCK } from "@/components/calendar/motion";
 
@@ -32,6 +33,7 @@ const COLLAPSED_NOTE_HEIGHT = "3.75rem";
 function useBookingDecision(onDone: (booking: Booking) => void) {
   const acceptBooking = useAction(api.booking.acceptBooking);
   const rejectBooking = useMutation(api.booking.rejectBooking);
+  const posthog = usePostHog();
   const [busy, setBusy] = useState<{
     bookingId: Booking["_id"];
     decision: BookingDecision;
@@ -50,6 +52,11 @@ function useBookingDecision(onDone: (booking: Booking) => void) {
         await rejectBooking({ bookingId: booking._id });
         toast.success(`Declined ${booking.requesterName}`);
       }
+      posthog.capture(
+        decision === "accept"
+          ? "booking_request_accepted"
+          : "booking_request_rejected",
+      );
       onDone(booking);
     } catch (error: unknown) {
       toast.error(

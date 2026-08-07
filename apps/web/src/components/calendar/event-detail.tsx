@@ -28,6 +28,7 @@ import { format, formatDistanceToNowStrict, isSameDay } from "date-fns";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
+import { usePostHog } from "posthog-js/react";
 
 import { Avatar } from "./avatar";
 import { calendarColorVar, useEventColor } from "./colors";
@@ -281,6 +282,7 @@ function RsvpControl({
   current?: string;
 }) {
   const respond = useAction(api.calendar.respondToEvent);
+  const posthog = usePostHog();
   // Held only until the synced row catches up, so the segment moves on click
   // rather than after the round trip to Google.
   const [optimistic, setOptimistic] = useState<string>();
@@ -297,8 +299,13 @@ function RsvpControl({
   const choose = (status: (typeof RSVP_CHOICES)[number]["status"]) => {
     if (status === active) return;
     setOptimistic(status);
-    respond({ eventId: event._id, responseStatus: status }).catch(
-      (error: unknown) => {
+    respond({ eventId: event._id, responseStatus: status })
+      .then(() => {
+        posthog.capture("calendar_invitation_responded", {
+          response_status: status,
+        });
+      })
+      .catch((error: unknown) => {
         setOptimistic(undefined);
         toast.error("Couldn't send your reply", {
           description: error instanceof Error ? error.message : undefined,
@@ -400,6 +407,7 @@ export function EventDetail({
 }) {
   const reduce = useReducedMotion();
   const deleteEvent = useAction(api.calendar.deleteEvent);
+  const posthog = usePostHog();
   const refreshEventRecurrence = useAction(api.calendar.refreshEventRecurrence);
   const calendars = useQuery(api.calendar.listCalendars) ?? [];
   // The dock hands us the row as it was when the event was opened. Subscribing
@@ -455,7 +463,12 @@ export function EventDetail({
 
   const remove = () =>
     deleteEvent({ eventId: event._id })
-      .then(onClose)
+      .then(() => {
+        posthog.capture("calendar_event_deleted", {
+          removal_type: capabilities.canDelete ? "deleted" : "removed_self",
+        });
+        onClose();
+      })
       .catch((error: unknown) => {
         toast.error("Couldn't remove event", {
           description: error instanceof Error ? error.message : undefined,

@@ -12,6 +12,11 @@ export const env = createEnv({
     CONVEX_SITE_URL: convexUrlSchema("example.convex.site"),
     GOOGLE_CLIENT_ID: z.string().min(1),
     GOOGLE_CLIENT_SECRET: z.string().min(1),
+    // Optional on purpose. Without it the AI assistant is simply absent — the
+    // rest of the app must keep working, so this can never be required here:
+    // `auth.ts` imports this module, so a failed validation would take down
+    // every backend function rather than just the assistant.
+    DEEPSEEK_API_KEY: z.string().min(1).optional(),
   },
   runtimeEnv: process.env,
   skipValidation: !!process.env.SKIP_ENV_VALIDATION,

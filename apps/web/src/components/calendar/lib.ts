@@ -31,11 +31,24 @@ export const WEEK_STARTS_ON = 1; // Monday
 /** The three period granularities the calendar can page through. */
 export type CalendarView = "day" | "week" | "month";
 
-/** Pages of buffer rendered on each side of the anchor, per view. Larger =
- * more navigation without a refetch, at the cost of DOM/query size. */
+/** Pages of buffer rendered on each side of the anchor, per view.
+ *
+ * This is a *rendering* cost, not a data one: how far you can fling before the
+ * strip rebuilds. Every extra column is reconciled on each column crossing
+ * during a gesture, and a wider strip measurably degrades scrolling — 3 pages
+ * (49 columns) was tried and is too heavy. How far you can scroll without
+ * *refetching* is set separately, and much more generously, by
+ * `QUERY_SIDE_WEEKS`/`QUERY_SIDE_MONTHS`; widen those instead.
+ *
+ * Month stays at 1: at a measured ~1.3 KB per event its 7-month query window
+ * already hits Convex's 8 MiB response limit above ~31 events/day, and a
+ * buffer of 2 would widen that to 11 months and drop the ceiling to ~20 —
+ * reachable with several team calendars, and it throws rather than degrading.
+ * One page either side suffices anyway, since `scrollSnapStop: "always"` caps
+ * a month flick at a single page. */
 export const VIEW_BUFFER: Record<CalendarView, number> = {
   day: 7,
-  week: 3,
+  week: 2,
   month: 1,
 };
 
@@ -44,14 +57,86 @@ export const VIEW_BUFFER: Record<CalendarView, number> = {
 export type StripView = Exclude<CalendarView, "month">;
 export const VIEW_COLUMNS: Record<StripView, number> = { day: 1, week: 7 };
 export const VIEW_NAV_DAYS: Record<StripView, number> = { day: 1, week: 3 };
-/** Extra day columns rendered off-screen on each side of the visible window. */
-export const STRIP_SIDE_DAYS: Record<StripView, number> = { day: 6, week: 12 };
+/** Extra day columns rendered off-screen on each side of the visible window —
+ * `VIEW_BUFFER` pages' worth, so the two constants can't drift apart. */
+export const STRIP_SIDE_DAYS: Record<StripView, number> = {
+  day: VIEW_BUFFER.day * VIEW_COLUMNS.day,
+  week: VIEW_BUFFER.week * VIEW_COLUMNS.week,
+};
+
+/** Interned day starts, so the same calendar day is always the same `Date`
+ * object. Stepping the anchor rebuilds the strip but keeps all but one column's
+ * `day` prop referentially equal, which is what lets the memoized day columns
+ * skip re-rendering on the settle frame. */
+const dayCache = new Map<number, Date>();
+/** Comfortably more than the widest strip plus a few anchor steps; trimmed
+ * wholesale rather than by LRU since a stale entry costs only a re-render. */
+const DAY_CACHE_LIMIT = 512;
+
+function internDay(date: Date): Date {
+  const key = date.getTime();
+  const cached = dayCache.get(key);
+  if (cached) return cached;
+  if (dayCache.size >= DAY_CACHE_LIMIT) dayCache.clear();
+  dayCache.set(key, date);
+  return date;
+}
 
 /** The full day columns of a strip: `side` off-screen days, the visible
  * window, then `side` more. The anchor (leftmost visible day) sits at `side`. */
 export function stripDays(anchor: Date, columns: number, side: number): Date[] {
   const total = side + columns + side;
-  return Array.from({ length: total }, (_, i) => addDays(anchor, i - side));
+  return Array.from({ length: total }, (_, i) =>
+    internDay(addDays(anchor, i - side)),
+  );
+}
+
+// A settle can move the anchor by at most the buffer (the scroller cannot
+// reach further than the rendered strip), so from any anchor the next anchor
+// is within `VIEW_BUFFER` pages. The query window must still cover the strip
+// rendered *there*, or the retained previous result has a hole in it and those
+// columns render empty until the new query lands. Solving that containment for
+// the forward case — anchor up to a page into its quantized period, plus a
+// full-buffer settle, plus the far side of the new strip — gives 2·buffer + 1.
+/** Weeks of events fetched each side of the anchor's week, for the day/week
+ * strips. Derived so `eventQueryRange` provably covers any reachable strip. */
+export const QUERY_SIDE_WEEKS = 2 * VIEW_BUFFER.week + 1;
+/** Months of events fetched each side of the anchor's month, for month view.
+ * Month anchors are always month starts, but a page's 6×7 grid overhangs its
+ * month by up to 6 days on each end, so the same margin covers it. */
+export const QUERY_SIDE_MONTHS = 2 * VIEW_BUFFER.month + 1;
+
+/**
+ * The event-query window for an anchor, quantized to a week (strip views) or
+ * month (month view) boundary.
+ *
+ * Convex keys subscriptions on their args, so a window derived directly from
+ * the rendered range mints a brand-new subscription — and a full round-trip —
+ * every time the anchor moves a single day, even though consecutive windows
+ * overlap almost entirely. Snapping to a coarser boundary means scrolling
+ * within it reuses the identical subscription and never refetches.
+ *
+ * The padding is deliberately generous: the window for a given anchor covers
+ * not just that anchor's strip but every strip reachable while the window
+ * stays put, so crossing a boundary never leaves a gap the previous result
+ * couldn't fill.
+ */
+export function eventQueryRange(
+  view: CalendarView,
+  anchor: Date,
+): { startMs: number; endMs: number } {
+  if (view === "month") {
+    const base = startOfMonth(anchor);
+    return {
+      startMs: addMonths(base, -QUERY_SIDE_MONTHS).getTime(),
+      endMs: addMonths(base, QUERY_SIDE_MONTHS + 1).getTime(),
+    };
+  }
+  const base = startOfWeek(anchor, { weekStartsOn: WEEK_STARTS_ON });
+  return {
+    startMs: addWeeks(base, -QUERY_SIDE_WEEKS).getTime(),
+    endMs: addWeeks(base, QUERY_SIDE_WEEKS + 1).getTime(),
+  };
 }
 
 /** Normalize a date to the start of its page for the given view. */
@@ -96,6 +181,22 @@ export function viewTitle(view: CalendarView, start: Date): string {
   return `${format(start, firstFmt)} – ${format(last, "MMM yyyy")}`;
 }
 
+// Scroll-settle mechanics, shared by the day/week strip and the month pager.
+
+/** Tolerance, in px, for treating a scroll position as "already at target".
+ * Column and page widths are fractional, so exact equality never holds. */
+export const SNAP_EPSILON = 2;
+/** Idle gap that counts as a settle when `scrollend` isn't available. */
+export const SETTLE_IDLE_MS = 140;
+/** Slower safety net where `scrollend` exists but can be skipped (e.g. a scroll
+ * cancelled by snap correction). Firing early is harmless: a settle at the
+ * anchor computes delta 0. */
+export const SETTLE_BACKSTOP_MS = 400;
+/** Whether the browser fires `scrollend`. Safari only shipped it in 26.2, so
+ * the inactivity timer above remains the primary path there. */
+export const SUPPORTS_SCROLL_END =
+  typeof window !== "undefined" && "onscrollend" in window;
+
 /** Smallest per-hour height before the grid stops compressing and scrolls instead. */
 export const MIN_HOUR_HEIGHT = 40;
 export const MIN_DAY_HEIGHT = 24 * MIN_HOUR_HEIGHT;
@@ -119,6 +220,53 @@ export function formatWallClockMinutes(
   const time = `${hour12}:${String(minute).padStart(2, "0")}`;
   if (!includeDayPeriod) return time;
   return `${time} ${hour24 < 12 ? "AM" : "PM"}`;
+}
+
+/** The default time a freshly created event starts on a day with no better cue —
+ * the same 9:00 AM the keyboard-driven grid draft uses. */
+export const DEFAULT_EVENT_START_MINUTES = 9 * 60;
+/** New events default to a half-hour block. */
+export const DEFAULT_EVENT_DURATION_MS = 30 * MS_PER_MINUTE;
+
+/** The first `durationMs` slot on `dayStartMs` that no timed event overlaps.
+ *
+ * Search begins at 9:00 AM, or — when the day is today and it's already later —
+ * at the next {@link SNAP_MINUTES} boundary from `nowMs`, so "create" lands on a
+ * usable time rather than the morning. Slots step by `SNAP_MS`. If the day fills
+ * up, the last snap boundary that still fits before midnight is returned, so a
+ * range always comes back. All-day events don't occupy the timeline and are
+ * ignored. */
+export function nextFreeSlot(
+  dayStartMs: number,
+  events: CalendarEvent[],
+  nowMs: number,
+  durationMs: number = DEFAULT_EVENT_DURATION_MS,
+): { startMs: number; endMs: number } {
+  const nineAmMs = dayStartMs + DEFAULT_EVENT_START_MINUTES * MS_PER_MINUTE;
+  const isToday = nowMs >= dayStartMs && nowMs < dayStartMs + MS_PER_DAY;
+  // On today, never propose a time in the past (start no earlier than the next
+  // snap from now); on any other day, start at 9 AM.
+  const fromNowMs = Math.ceil(nowMs / SNAP_MS) * SNAP_MS;
+  let startMs = isToday ? Math.max(nineAmMs, fromNowMs) : nineAmMs;
+  const lastStartMs = dayStartMs + MS_PER_DAY - durationMs;
+
+  const timed = events
+    .filter((event) => !event.allDay)
+    .sort((a, b) => a.startMs - b.startMs);
+
+  while (startMs <= lastStartMs) {
+    const endMs = startMs + durationMs;
+    const clash = timed.find(
+      (event) => event.startMs < endMs && event.endMs > startMs,
+    );
+    if (!clash) return { startMs, endMs };
+    // Jump past the blocking event, snapped forward, rather than crawling by one
+    // slot through a long meeting.
+    startMs = Math.max(startMs + SNAP_MS, Math.ceil(clash.endMs / SNAP_MS) * SNAP_MS);
+  }
+
+  // Day is full: fall back to the last slot that fits before midnight.
+  return { startMs: lastStartMs, endMs: lastStartMs + durationMs };
 }
 
 export const MONTH_EVENT_ROW_HEIGHT = 18;
@@ -189,8 +337,12 @@ export function bucketDayEvents(
   days: Date[],
   events: CalendarEvent[],
 ): { allDayEvents: CalendarEvent[]; timedByDay: CalendarEvent[][] } {
-  const rangeStartMs = days[0].getTime();
-  const rangeEndMs = days[days.length - 1].getTime() + MS_PER_DAY;
+  // Hoisted out of the per-event loop: this runs on every column crossing
+  // during a scroll, over the whole (deliberately wide) query window, so a
+  // `getTime()` per event per day is real work to avoid.
+  const dayStarts = days.map((day) => day.getTime());
+  const rangeStartMs = dayStarts[0];
+  const rangeEndMs = dayStarts[dayStarts.length - 1] + MS_PER_DAY;
   const allDayEvents: CalendarEvent[] = [];
   const timedByDay: CalendarEvent[][] = days.map(() => []);
   for (const event of events) {
@@ -200,12 +352,14 @@ export function bucketDayEvents(
       }
       continue;
     }
-    days.forEach((day, i) => {
-      const dayStartMs = day.getTime();
-      if (event.startMs < dayStartMs + MS_PER_DAY && event.endMs > dayStartMs) {
-        timedByDay[i].push(event);
-      }
-    });
+    for (let i = 0; i < dayStarts.length; i++) {
+      const dayStartMs = dayStarts[i];
+      // Days ascend, so once one starts at or after the event's end, no later
+      // day can overlap it either.
+      if (dayStartMs >= event.endMs) break;
+      if (dayStartMs + MS_PER_DAY <= event.startMs) continue;
+      timedByDay[i].push(event);
+    }
   }
   allDayEvents.sort((a, b) => a.startMs - b.startMs);
   return { allDayEvents, timedByDay };
@@ -240,7 +394,12 @@ export interface AllDayEventLayout {
   lane: number;
 }
 
-/** Pack spanning all-day events into the first available non-overlapping lane. */
+/** Pack spanning all-day events into the first available non-overlapping lane.
+ *
+ * Lanes are packed over the whole buffered `days` window, so a card keeps the
+ * same lane no matter where the strip is scrolled — cards never swap rows. The
+ * returned spans are then clamped to the visible range, so a card's width
+ * shrinks as its off-screen end crosses the viewport edge. */
 export function layoutAllDayEvents(
   days: Date[],
   events: CalendarEvent[],
@@ -249,15 +408,9 @@ export function layoutAllDayEvents(
 ): AllDayEventLayout[] {
   const spans = events
     .map((event) => ({ event, ...allDayColumnSpan(event, days) }))
-    .filter(
-      ({ startIdx, endIdx }) =>
-        endIdx >= visibleStartIdx && startIdx <= visibleEndIdx,
-    )
-    .map((span) => ({
-      ...span,
-      startIdx: Math.max(span.startIdx, visibleStartIdx),
-      endIdx: Math.min(span.endIdx, visibleEndIdx),
-    }))
+    // Order by each event's true span so lane priority is fixed globally: an
+    // earlier-starting card always claims the lower lane, and the packing below
+    // is identical for every scroll position.
     .sort(
       (a, b) =>
         a.startIdx - b.startIdx ||
@@ -267,12 +420,25 @@ export function layoutAllDayEvents(
     );
   const laneEnds: number[] = [];
 
-  return spans.map((span) => {
-    let lane = laneEnds.findIndex((endIdx) => endIdx < span.startIdx);
-    if (lane === -1) lane = laneEnds.length;
-    laneEnds[lane] = span.endIdx;
-    return { ...span, lane };
-  });
+  return spans
+    .map((span) => {
+      let lane = laneEnds.findIndex((endIdx) => endIdx < span.startIdx);
+      if (lane === -1) lane = laneEnds.length;
+      laneEnds[lane] = span.endIdx;
+      return { ...span, lane };
+    })
+    // Drop cards fully outside the window, then clamp the rest to it. Lanes are
+    // already assigned from the full spans above, so clamping only resizes each
+    // card for rendering — it never reshuffles rows.
+    .filter(
+      ({ startIdx, endIdx }) =>
+        endIdx >= visibleStartIdx && startIdx <= visibleEndIdx,
+    )
+    .map((entry) => ({
+      ...entry,
+      startIdx: Math.max(entry.startIdx, visibleStartIdx),
+      endIdx: Math.min(entry.endIdx, visibleEndIdx),
+    }));
 }
 
 export function visibleAllDayMetrics(

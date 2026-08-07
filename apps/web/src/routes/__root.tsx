@@ -71,7 +71,7 @@ function RootComponent() {
       </ThemeProvider>
       {/* Dev only: the booking page is public, and the devtools panel has no
           business rendering on a link a host hands to someone else. */}
-      {import.meta.env.DEV && <TanStackRouterDevtools position="bottom-left" />}
+      {import.meta.env.DEV && <TanStackRouterDevtools position="top-left" />}
     </>
   );
 }

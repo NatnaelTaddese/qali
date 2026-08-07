@@ -1,7 +1,9 @@
 import React, {
+  forwardRef,
   type ReactNode,
   useEffect,
   useId,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -76,6 +78,19 @@ export type GooDropdownProps = {
   /** Notified when the panel opens or closes, e.g. to hide a trigger badge that
    * the morphing panel would otherwise clip. */
   onOpenChange?: (open: boolean) => void
+  /** When false, a page scroll no longer dismisses the panel, so scrolling the
+   * content behind it (e.g. a calendar) leaves it open. Outside pointer, Escape
+   * and resize still close it. Default true. */
+  dismissOnScroll?: boolean
+}
+
+/** Imperative controls for opening the panel from outside its trigger — e.g. a
+ * global keyboard shortcut. The panel still owns its open state; this just lets
+ * a parent request a change. */
+export type GooDropdownHandle = {
+  open: () => void
+  close: () => void
+  toggle: () => void
 }
 
 type Geometry = {
@@ -243,7 +258,8 @@ function menuGeometry(
   }
 }
 
-export function GooDropdown({
+export const GooDropdown = forwardRef<GooDropdownHandle, GooDropdownProps>(
+  function GooDropdown({
   trigger = 'Share',
   items = DEFAULT_ITEMS,
   disabled = false,
@@ -272,7 +288,8 @@ export function GooDropdown({
   contentHeight,
   triggerSound = true,
   onOpenChange,
-}: GooDropdownProps) {
+  dismissOnScroll = true,
+}: GooDropdownProps, ref) {
   const [open, setOpen] = useState(false)
   // Lags `open` by a frame so the active palette eases in via CSS transition
   // instead of snapping the moment the panel mounts.
@@ -511,14 +528,17 @@ export function GooDropdown({
     window.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('keydown', onKeyDown, true)
     window.addEventListener('resize', onViewportChange)
-    window.addEventListener('scroll', onViewportChange, true)
+    // Page scroll dismissal is opt-out: a panel laid over scrollable content it
+    // doesn't own (a calendar) shouldn't vanish the moment that content scrolls.
+    if (dismissOnScroll)
+      window.addEventListener('scroll', onViewportChange, true)
     return () => {
       window.removeEventListener('pointerdown', onPointerDown)
       window.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('resize', onViewportChange)
       window.removeEventListener('scroll', onViewportChange, true)
     }
-  }, [open])
+  }, [open, dismissOnScroll])
 
   const openMenu = () => {
     const rect = triggerRef.current?.getBoundingClientRect()
@@ -543,6 +563,19 @@ export function GooDropdown({
     )
     setOpen(true)
   }
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      open: openMenu,
+      close: () => closeMenu(),
+      toggle: () => (open ? closeMenu() : openMenu()),
+    }),
+    // `openMenu`/`closeMenu` are re-created each render and close over the
+    // current geometry props, so include them: a resize-while-closed followed
+    // by an imperative `open()` must use the latest, not a stale, closure.
+    [open, openMenu, closeMenu],
+  )
 
   const select = (item: DropdownItem) => {
     playClickSound()
@@ -572,7 +605,7 @@ export function GooDropdown({
   const effHoverFill = active ? (activeHoverFill ?? hoverFill) : hoverFill
   const colorTransition = shouldReduceMotion
     ? undefined
-    : `background 0.3s ease, color 0.3s ease`
+    : `background 0.3s ease, color 0.3s ease, --goo-fill 0.3s ease, --goo-foreground 0.3s ease, --goo-hover-fill 0.3s ease`
 
   return (
     <div
@@ -699,6 +732,7 @@ export function GooDropdown({
                 id={menuId}
                 ref={menuRef}
                 data-slot="goo-dropdown-content"
+                data-palette-settled={open && settled}
                 role={panelContent ? 'dialog' : 'menu'}
                 tabIndex={panelContent ? -1 : undefined}
                 aria-label={menuLabel}
@@ -712,8 +746,14 @@ export function GooDropdown({
                     transition: colorTransition,
                     overflowY: !panelContent && maxHeight ? 'auto' : undefined,
                     scrollbarWidth: 'thin',
+                    '--goo-fill': effFill,
+                    '--goo-foreground': effForeground,
                     '--goo-hover-fill': effHoverFill,
-                  } as React.CSSProperties & { '--goo-hover-fill': string }
+                  } as React.CSSProperties & {
+                    '--goo-fill': string
+                    '--goo-foreground': string
+                    '--goo-hover-fill': string
+                  }
                 }
               >
                 {typeof panelContent === 'function'
@@ -745,6 +785,7 @@ export function GooDropdown({
         )}
     </div>
   )
-}
+  },
+)
 
 export default GooDropdown

@@ -12,6 +12,7 @@ import {
   WEEK_STARTS_ON,
   type CalendarEvent,
 } from "./lib";
+import { TodayFlash } from "./today-pulse";
 
 const WEEK_REF = startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_ON });
 const WEEKDAY_LABELS = Array.from({ length: 7 }, (_, i) =>
@@ -27,10 +28,12 @@ interface MonthPanelProps {
   events: CalendarEvent[];
   /** Open a specific day in day view. */
   onSelectDay: (day: Date) => void;
+  /** Increments on each Today click; pulses today's cell on change. */
+  pulseToken: number;
 }
 
 /** A single month page: weekday labels over a 6×7 grid of day cells. */
-export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanelProps) {
+export function MonthPanel({ monthStart, days, events, onSelectDay, pulseToken }: MonthPanelProps) {
   const { open } = useDock();
   const colorFor = useEventColor();
   const eventAreaRef = useRef<HTMLDivElement>(null);
@@ -87,13 +90,19 @@ export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanel
               key={day.getTime()}
               onClick={() => onSelectDay(day)}
               className={cn(
-                "flex min-h-0 flex-col gap-0.5 border-b border-l border-border p-1 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                "relative flex min-h-0 flex-col gap-0.5 overflow-hidden border-b border-l border-border p-1 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                 !inMonth && "bg-muted/30 text-muted-foreground",
               )}
             >
+              {today && (
+                <TodayFlash
+                  token={pulseToken}
+                  className="bg-[color-mix(in_oklab,var(--primary)_28%,transparent)]"
+                />
+              )}
               <span
                 className={cn(
-                  "flex size-6 items-center justify-center self-start text-xs font-medium",
+                  "relative z-10 flex size-6 items-center justify-center self-start text-xs font-medium",
                   today && "rounded-full bg-primary text-primary-foreground",
                 )}
               >
@@ -101,7 +110,7 @@ export function MonthPanel({ monthStart, days, events, onSelectDay }: MonthPanel
               </span>
               <div
                 ref={i === 0 ? eventAreaRef : undefined}
-                className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-hidden"
+                className="relative z-10 flex min-h-0 flex-1 flex-col gap-0.5 overflow-hidden"
               >
                 {dayEvents.slice(0, visibleCount).map((event) => {
                   const colorVar = colorFor(event);

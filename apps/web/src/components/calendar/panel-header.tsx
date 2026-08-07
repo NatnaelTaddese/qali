@@ -6,19 +6,24 @@ import { useDock } from "@/components/workspace/dock-context";
 
 import { useEventColor } from "./colors";
 import {
+  ALLDAY_BAND_PADDING,
   ALLDAY_COLLAPSED_LANES,
+  ALLDAY_EVENT_GAP,
   ALLDAY_EVENT_HEIGHT,
   type AllDayEventLayout,
   dayColsTemplate,
   HEADER_DATE_HEIGHT,
 } from "./lib";
 import { press } from "./motion";
+import { TodayFlash } from "./today-pulse";
 
 interface PanelHeaderProps {
   days: Date[];
   allDayEvents: AllDayEventLayout[];
   allDayHeight: number;
   allDayExpanded: boolean;
+  /** Increments on each Today click; pulses today's date pill on change. */
+  pulseToken: number;
 }
 
 /** Weekday/date row plus the all-day band for a single day or week page.
@@ -28,10 +33,24 @@ export function PanelHeader({
   allDayEvents,
   allDayHeight,
   allDayExpanded,
+  pulseToken,
 }: PanelHeaderProps) {
   const { open } = useDock();
   const colorFor = useEventColor();
   const template = dayColsTemplate(days.length);
+  // Absolutely positioned cards don't contribute to the rail's scroll height, so
+  // when expanded past the visible cap we'd have no way to reach the lower lanes.
+  // A zero-width spacer sized to the rendered lane stack restores that scroll.
+  const renderedLaneCount = allDayEvents.reduce((max, { lane }) => {
+    if (!allDayExpanded && lane >= ALLDAY_COLLAPSED_LANES) return max;
+    return Math.max(max, lane + 1);
+  }, 0);
+  const railContentHeight =
+    renderedLaneCount === 0
+      ? 0
+      : ALLDAY_BAND_PADDING * 2 +
+        renderedLaneCount * ALLDAY_EVENT_HEIGHT +
+        (renderedLaneCount - 1) * ALLDAY_EVENT_GAP;
   return (
     <div
       className="relative flex flex-col border-b border-border bg-calendar-header backdrop-blur-xs transition-[height] duration-200 motion-reduce:transition-none"
@@ -76,15 +95,17 @@ export function PanelHeader({
               >
                 {format(day, "EEE")}
               </span>
-              <span
-                className={cn(
-                  "text-lg font-semibold",
-                  today &&
-                    "flex size-7 items-center justify-center self-center rounded-full bg-primary text-primary-foreground",
-                )}
-              >
-                {format(day, "d")}
-              </span>
+              {today ? (
+                <span className="relative flex size-7 items-center justify-center self-center overflow-hidden rounded-full bg-primary text-lg font-semibold text-primary-foreground">
+                  <TodayFlash
+                    token={pulseToken}
+                    className="z-0 bg-[color-mix(in_oklab,white_55%,transparent)]"
+                  />
+                  <span className="relative z-10">{format(day, "d")}</span>
+                </span>
+              ) : (
+                <span className="text-lg font-semibold">{format(day, "d")}</span>
+              )}
             </div>
           );
         })}
@@ -92,18 +113,28 @@ export function PanelHeader({
       <div
         id="calendar-all-day-rail"
         className={cn(
-          "relative grid items-start gap-y-1 py-1 transition-[height] duration-200 motion-reduce:transition-none",
+          // The height tracks the visible days' all-day lanes, so it eases both
+          // when they change under a scroll and when the expand/collapse toggle
+          // fires. Cards are positioned absolutely (rather than on a grid) so a
+          // card's width can ease with a CSS transition when its span clamps at
+          // the scroll edge — grid-column placement can't be transitioned.
+          "relative transition-[height] duration-200 motion-reduce:transition-none",
           allDayExpanded ? "overflow-y-auto" : "overflow-hidden",
         )}
-        style={{
-          gridTemplateColumns: template,
-          gridAutoRows: ALLDAY_EVENT_HEIGHT,
-          height: allDayHeight,
-        }}
+        style={{ height: allDayHeight }}
       >
+        <div
+          aria-hidden
+          className="w-0 shrink-0"
+          style={{ height: railContentHeight }}
+        />
         {allDayEvents.map(({ event, startIdx, endIdx, lane }) => {
           if (!allDayExpanded && lane >= ALLDAY_COLLAPSED_LANES) return null;
           const colorVar = colorFor(event);
+          // Columns are equal 1fr tracks, so one day is `100% / days.length` of
+          // the rail; the ±4px insets reproduce the old `mx-1` gutter between
+          // adjacent cards.
+          const colPct = `(100% / ${days.length})`;
           return (
             <motion.button
               type="button"
@@ -112,10 +143,19 @@ export function PanelHeader({
               onClick={() => open({ kind: "event", event })}
               whileTap={press.whileTap}
               transition={{ scale: press.transition }}
-              className="relative mx-1 flex items-center overflow-hidden rounded-md py-0.5 pr-2 pl-2.5 text-left text-xs font-medium ring-1 ring-border/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              // `left` and `width` ease so both edges animate as the span clamps
+              // at the scroll boundary. `top` never eases (it only moves on lane
+              // changes, which should snap). During a buffer recenter the strip
+              // sets `data-recenter`, which suppresses this so cards don't slide
+              // when their day window is rebuilt out from under them.
+              className="absolute flex items-center overflow-hidden rounded-md py-0.5 pr-2 pl-2.5 text-left text-xs font-medium ring-1 ring-border/60 transition-[left,width] duration-200 group-data-[recenter]/strip:transition-none motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               style={{
-                gridColumn: `${startIdx + 1} / ${endIdx + 2}`,
-                gridRow: lane + 1,
+                left: `calc(${colPct} * ${startIdx} + 4px)`,
+                width: `calc(${colPct} * ${endIdx - startIdx + 1} - 8px)`,
+                top:
+                  ALLDAY_BAND_PADDING +
+                  lane * (ALLDAY_EVENT_HEIGHT + ALLDAY_EVENT_GAP),
+                height: ALLDAY_EVENT_HEIGHT,
                 backgroundColor: `color-mix(in oklab, var(${colorVar}) 22%, var(--card))`,
               }}
             >

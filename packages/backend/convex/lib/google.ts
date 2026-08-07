@@ -16,22 +16,52 @@ export class SyncTokenExpiredError extends Error {
   }
 }
 
+export class GoogleApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "GoogleApiError";
+  }
+}
+
+export class GoogleNetworkError extends Error {
+  constructor(cause: unknown) {
+    super(
+      `Google request did not return a response: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    this.name = "GoogleNetworkError";
+  }
+}
+
 async function googleFetch(
   url: string,
   accessToken: string,
   init?: RequestInit,
 ): Promise<unknown> {
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        ...init?.headers,
+      },
+    });
+  } catch (error) {
+    throw new GoogleNetworkError(error);
+  }
 
   if (!res.ok) {
-    const body = await res.text();
+    let body = "<response body unavailable>";
+    try {
+      body = await res.text();
+    } catch {
+      // The HTTP status is authoritative for a non-success response even when
+      // its diagnostic body cannot be read.
+    }
     // Expired sync token: the Calendar API signals this with HTTP 410, while the
     // People API returns HTTP 400 with reason "EXPIRED_SYNC_TOKEN". Both should
     // drop the stored token and restart a full sync.
@@ -41,13 +71,23 @@ async function googleFetch(
     ) {
       throw new SyncTokenExpiredError();
     }
-    throw new Error(`Google API ${res.status} ${res.statusText}: ${body}`);
+    throw new GoogleApiError(
+      res.status,
+      `Google API ${res.status} ${res.statusText}: ${body}`,
+    );
   }
   // DELETE answers 204 with an empty body, which res.json() would choke on.
   if (res.status === 204) {
     return null;
   }
-  return res.json();
+  try {
+    return await res.json();
+  } catch (error) {
+    // A successful write may already be committed when the response stream is
+    // interrupted, so callers must reconcile rather than treat this as a known
+    // pre-commit failure.
+    throw new GoogleNetworkError(error);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +423,8 @@ export async function insertCalendarEvent(
   accessToken: string,
   calendarId: string,
   body: {
+    /** Client-selected ID used to make retries idempotent. */
+    id?: string;
     summary: string;
     description?: string;
     location?: string;
@@ -402,6 +444,7 @@ export async function insertCalendarEvent(
   /** Ask Google to mint a Google Meet link for the event. The generated URL
    * comes back on the response as `hangoutLink`. */
   addConference?: boolean,
+  conferenceRequestId?: string,
 ): Promise<MappedEvent> {
   const params = new URLSearchParams();
   if (sendUpdates) params.set("sendUpdates", sendUpdates);
@@ -414,7 +457,7 @@ export async function insertCalendarEvent(
   const qs = params.toString();
   const query = qs ? `?${qs}` : "";
   const requestBody = addConference
-    ? { ...body, conferenceData: newMeetRequest() }
+    ? { ...body, conferenceData: newMeetRequest(conferenceRequestId) }
     : body;
   const data = (await googleFetch(
     `${CALENDAR_BASE}/calendars/${encodeURIComponent(calendarId)}/events${query}`,
@@ -427,10 +470,10 @@ export async function insertCalendarEvent(
 /** The `conferenceData` payload that asks Google to create a Google Meet. The
  * `requestId` dedupes retries — a repeated request with the same id returns the
  * existing conference rather than making a second one. */
-function newMeetRequest() {
+function newMeetRequest(requestId: string = crypto.randomUUID()) {
   return {
     createRequest: {
-      requestId: crypto.randomUUID(),
+      requestId,
       conferenceSolutionKey: { type: "hangoutsMeet" },
     },
   };
@@ -500,6 +543,7 @@ export async function patchCalendarEvent(
   /** `"add"` mints a Google Meet link, `"remove"` clears any existing one, and
    * `undefined` leaves the event's conferencing untouched. */
   conference?: "add" | "remove",
+  conferenceRequestId?: string,
 ): Promise<MappedEvent> {
   const params = new URLSearchParams();
   if (sendUpdates) params.set("sendUpdates", sendUpdates);
@@ -509,7 +553,7 @@ export async function patchCalendarEvent(
   const query = qs ? `?${qs}` : "";
   const requestBody =
     conference === "add"
-      ? { ...body, conferenceData: newMeetRequest() }
+      ? { ...body, conferenceData: newMeetRequest(conferenceRequestId) }
       : conference === "remove"
         ? { ...body, conferenceData: null }
         : body;

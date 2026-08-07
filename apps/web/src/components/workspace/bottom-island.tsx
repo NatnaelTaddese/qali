@@ -1,7 +1,6 @@
 import {
   Calendar03Icon,
   Cursor02Icon,
-  Menu01Icon,
   PlusSignIcon,
   Search01Icon,
   TimeScheduleIcon,
@@ -60,7 +59,7 @@ function cornerRadius(view: DockView | null): number {
 }
 
 export function BottomIsland() {
-  const { view, viewId, direction, open, close } = useDock();
+  const { view, viewId, direction, open, close, openCreate } = useDock();
   const { editing, setEditing, ready: availabilityEditReady } =
     useAvailabilityEdit();
   const reduce = useReducedMotion();
@@ -95,6 +94,8 @@ export function BottomIsland() {
   );
   const ref = useRef<HTMLElement>(null);
   const expanded = view !== null;
+
+  const closeCurrent = close;
 
   useEffect(() => {
     if (
@@ -166,7 +167,7 @@ export function BottomIsland() {
       // While painting, Escape leaves the mode (back to the panel) rather than
       // dismissing the dock outright.
       if (editing) setEditing(false);
-      else close();
+      else closeCurrent();
     };
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement | null;
@@ -185,6 +186,12 @@ export function BottomIsland() {
         )
       )
         return;
+      // Calendar chrome (the header's view switcher, prev/next, Today) runs a
+      // view transition that snapshots the whole page. Dismissing here would
+      // fire the dock's exit animation into that frozen frame — a choppy close.
+      // Navigating the calendar leaves an open panel in place instead.
+      if (target.closest("[data-dock-keep-open]")) return;
+      // Do not steal focus back from the control the user clicked outside.
       close();
     };
     window.addEventListener("keydown", onKey);
@@ -203,7 +210,7 @@ export function BottomIsland() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [expanded, view?.kind, close, editing, setEditing]);
+  }, [expanded, view?.kind, close, closeCurrent, editing, setEditing]);
 
   const variants = reduce ? dockVariantsReduced : dockVariants;
 
@@ -213,6 +220,9 @@ export function BottomIsland() {
         ref={ref}
         layout
         transition={SPRING_DOCK}
+        // Named as its own layer only while a calendar view transition runs, so
+        // the fixed dock doesn't flicker with the root snapshot (see globals.css).
+        data-dock-view-transition="bottom-island"
         // Plain style, not `animate` — `layout` rewrites borderRadius each frame
         // to correct for the box scaling, and an animated value fights that.
         style={{ borderRadius: editing ? 28 : cornerRadius(view) }}
@@ -241,7 +251,7 @@ export function BottomIsland() {
               ) : view?.kind === "event" ? (
                 <EventDetail
                   event={view.event}
-                  onClose={close}
+                  onClose={closeCurrent}
                   onEdit={() => open({ kind: "edit", event: view.event })}
                   onDuplicate={(prefill, startMs, endMs) =>
                     open({ kind: "create", startMs, endMs, prefill })
@@ -264,25 +274,29 @@ export function BottomIsland() {
                   onChangeRange={(startMs, endMs) =>
                     open({ ...view, startMs, endMs })
                   }
-                  onCancel={close}
-                  onCreated={close}
+                  onCancel={closeCurrent}
+                  onCreated={closeCurrent}
                 />
               ) : view?.kind === "account" ? (
-                <AccountPanel onClose={close} />
+                <AccountPanel onClose={closeCurrent} />
               ) : view?.kind === "availability" ? (
                 <AvailabilityPanel
                   key={availabilityInstance.current}
                   pendingBookings={activePendingBookings}
                   page={bookingPage}
                   defaults={bookingDefaults}
-                  onClose={close}
+                  onClose={closeCurrent}
                 />
               ) : view?.kind === "booking" ? (
-                <BookingRequestPanel booking={view.booking} onClose={close} />
+                <BookingRequestPanel
+                  booking={view.booking}
+                  onClose={closeCurrent}
+                />
               ) : (
                 <NavRow
                   pendingCount={activePendingBookings?.length ?? 0}
                   onOpenAccount={() => open({ kind: "account" })}
+                  onCreate={openCreate}
                   availabilityLoading={availabilityRequested}
                   onPrepareAvailability={prepareAvailability}
                   onOpenAvailability={requestAvailability}
@@ -343,12 +357,14 @@ function NavRow({
   pendingCount,
   availabilityLoading,
   onOpenAccount,
+  onCreate,
   onPrepareAvailability,
   onOpenAvailability,
 }: {
   pendingCount: number;
   availabilityLoading: boolean;
   onOpenAccount: () => void;
+  onCreate: () => void;
   onPrepareAvailability: () => void;
   onOpenAvailability: () => void;
 }) {
@@ -378,9 +394,8 @@ function NavRow({
         busy={isSyncing}
         onClick={sync}
       />
-      <NavButton icon={Menu01Icon} label="Agenda" />
       <NavButton icon={Search01Icon} label="Search" />
-      <NavButton icon={PlusSignIcon} label="Create" />
+      <NavButton icon={PlusSignIcon} label="Create" onClick={onCreate} />
       <NavButton
         icon={TimeScheduleIcon}
         label={

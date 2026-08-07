@@ -74,7 +74,22 @@ bunx convex env set GOOGLE_CLIENT_SECRET "<google-client-secret>"
 cd ../..
 ```
 
-## 4. Run, verify, and open a PR
+## 4. Configure the AI assistant (optional)
+
+qali's calendar assistant runs on [DeepSeek](https://platform.deepseek.com/).
+It is entirely optional: with no key set, the assistant's entry point is hidden
+and every other feature works exactly as it does without it.
+
+```bash
+cd packages/backend
+bunx convex env set DEEPSEEK_API_KEY "<deepseek-api-key>"
+cd ../..
+```
+
+The assistant never writes to your calendar on its own — it proposes a change
+and waits for you to confirm it in the dock.
+
+## 5. Run, verify, and open a PR
 
 ```bash
 bun run dev          # start everything; open http://localhost:3001

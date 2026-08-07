@@ -1,7 +1,20 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import type { EventPrefill } from "@/components/calendar/event-create";
-import type { CalendarEvent } from "@/components/calendar/lib";
+import {
+  DEFAULT_EVENT_DURATION_MS,
+  nextFreeSlot,
+  type CalendarEvent,
+} from "@/components/calendar/lib";
+import { startOfDay } from "date-fns";
 import type { Booking } from "@/components/workspace/booking-request-panel";
 
 /** What the dock is currently showing. `null` means the plain nav bar.
@@ -34,6 +47,10 @@ function slideDirection(prev: DockView | null, next: DockView): number {
   return Math.sign(next.event.startMs - prev.event.startMs);
 }
 
+/** How the calendar seeds a new event: the day it's currently showing plus the
+ * timed events on it, so the dock can land "create" on the next free slot. */
+type CreateSeed = { dayStartMs: number; events: CalendarEvent[] };
+
 interface DockContextValue {
   view: DockView | null;
   viewId: string | null;
@@ -41,6 +58,12 @@ interface DockContextValue {
   direction: number;
   open: (view: DockView) => void;
   close: () => void;
+  /** The calendar registers the day it's focused on (and that day's events) so
+   * the dock's Create button can seed a new event there. Pass `null` to clear. */
+  registerCreateSeed: (seed: CreateSeed | null) => void;
+  /** Open a create view on the registered day's next free 30-min slot, falling
+   * back to the next slot from now when the calendar hasn't registered one. */
+  openCreate: () => void;
 }
 
 const DockContext = createContext<DockContextValue | null>(null);
@@ -59,6 +82,25 @@ export function DockProvider({ children }: { children: ReactNode }) {
 
   const close = useCallback(() => setState({ view: null, direction: 0 }), []);
 
+  // A ref, not state: the calendar re-registers on every scroll settle, and the
+  // Create button only reads it on click — no render needs to track it.
+  const createSeedRef = useRef<CreateSeed | null>(null);
+  const registerCreateSeed = useCallback((seed: CreateSeed | null) => {
+    createSeedRef.current = seed;
+  }, []);
+
+  const openCreate = useCallback(() => {
+    const seed = createSeedRef.current;
+    const dayStartMs = seed?.dayStartMs ?? startOfDay(Date.now()).getTime();
+    const range = nextFreeSlot(
+      dayStartMs,
+      seed?.events ?? [],
+      Date.now(),
+      DEFAULT_EVENT_DURATION_MS,
+    );
+    open({ kind: "create", ...range });
+  }, [open]);
+
   const value = useMemo<DockContextValue>(
     () => ({
       view: state.view,
@@ -66,8 +108,10 @@ export function DockProvider({ children }: { children: ReactNode }) {
       direction: state.direction,
       open,
       close,
+      registerCreateSeed,
+      openCreate,
     }),
-    [state, open, close],
+    [state, open, close, registerCreateSeed, openCreate],
   );
 
   return <DockContext value={value}>{children}</DockContext>;

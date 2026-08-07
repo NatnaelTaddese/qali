@@ -34,7 +34,15 @@ import {
   MS_PER_DAY,
   type SlotOption,
 } from "./lib/availability";
-import { insertCalendarEvent, toGoogleTime } from "./lib/google";
+import {
+  getCalendarEvent,
+  GoogleApiError,
+  GoogleNetworkError,
+  insertCalendarEvent,
+  mapGoogleEvent,
+  toGoogleTime,
+} from "./lib/google";
+import { googleEventIdForOperation } from "./lib/assistantLogic";
 import { normalizeSlug, slugError } from "./lib/slug";
 import { clearBookingNotifications } from "./notifications";
 
@@ -67,6 +75,7 @@ const MAX_REQUESTS_PER_EMAIL = 3;
 const MAX_REQUESTS_PER_PAGE = 20;
 const MAX_PENDING_BOOKINGS = 500;
 const EXPIRATION_BATCH_SIZE = 100;
+const ACCEPT_LEASE_MS = 2 * 60 * 1000;
 
 const slotSettingsValidator = {
   slotMinutes: v.number(),
@@ -111,6 +120,7 @@ async function collectBusy(
   fromMs: number,
   toMs: number,
   excludeBookingId?: Id<"bookings">,
+  excludeGoogleEventId?: string,
 ): Promise<Interval[]> {
   const calendars = await ctx.db
     .query("calendars")
@@ -132,6 +142,7 @@ async function collectBusy(
 
   const busy: Interval[] = [];
   for (const event of events) {
+    if (event.googleEventId === excludeGoogleEventId) continue;
     if (event.status === "cancelled") continue;
     // The host marked this one "free" in their own calendar, so it is not a
     // reason to withhold the time.
@@ -458,7 +469,9 @@ export const expireBooking = internalMutation({
     if (
       !booking ||
       booking.status !== "pending" ||
-      booking.endMs > Date.now()
+      booking.endMs > Date.now() ||
+      (booking.acceptAttemptId &&
+        (booking.acceptLeaseExpiresAt ?? 0) > Date.now())
     ) {
       return null;
     }
@@ -481,6 +494,12 @@ export const expirePastBookings = internalMutation({
       .take(EXPIRATION_BATCH_SIZE);
 
     for (const booking of rows) {
+      if (
+        booking.acceptAttemptId &&
+        (booking.acceptLeaseExpiresAt ?? 0) > Date.now()
+      ) {
+        continue;
+      }
       await ctx.db.patch(booking._id, { status: "expired" });
       await clearBookingNotifications(ctx, booking._id);
     }
@@ -764,19 +783,112 @@ export const markAccepted = internalMutation({
     hostUserId: v.string(),
     googleEventId: v.string(),
     calendarId: v.string(),
+    attemptId: v.string(),
   },
-  handler: async (ctx, args): Promise<null> => {
+  handler: async (ctx, args): Promise<boolean> => {
     const booking = await ctx.db.get(args.bookingId);
-    if (!booking || booking.hostUserId !== args.hostUserId) {
-      return null;
+    if (
+      !booking ||
+      booking.hostUserId !== args.hostUserId ||
+      booking.status !== "pending" ||
+      booking.acceptAttemptId !== args.attemptId
+    ) {
+      return false;
     }
     await ctx.db.patch(args.bookingId, {
       status: "accepted",
       googleEventId: args.googleEventId,
       calendarId: args.calendarId,
       decidedAt: Date.now(),
+      acceptAttemptId: undefined,
+      acceptLeaseExpiresAt: undefined,
+      acceptMayHaveSucceeded: undefined,
     });
     await clearBookingNotifications(ctx, args.bookingId);
+    return true;
+  },
+});
+
+/** Claim acceptance and recheck the slot in the same transaction. Booking-row
+ * changes that could create a conflicting acceptance now race here, not at
+ * Google. A stable operation ID remains after uncertain failures. */
+export const claimBookingAcceptance = internalMutation({
+  args: {
+    bookingId: v.id("bookings"),
+    hostUserId: v.string(),
+    attemptId: v.string(),
+    calendarId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const booking = await ctx.db.get(args.bookingId);
+    if (
+      !booking ||
+      booking.hostUserId !== args.hostUserId ||
+      booking.status !== "pending" ||
+      booking.endMs <= now
+    ) {
+      return null;
+    }
+    if (
+      booking.acceptAttemptId &&
+      (booking.acceptLeaseExpiresAt ?? 0) > now
+    ) {
+      return null;
+    }
+    const page = await pageByUser(ctx, args.hostUserId);
+    if (!page) return null;
+    const operationId = booking.acceptOperationId ?? crypto.randomUUID();
+    const busy = await collectBusy(
+      ctx,
+      page,
+      booking.startMs,
+      booking.endMs,
+      booking._id,
+      googleEventIdForOperation(operationId),
+    );
+    if (
+      busy.some(
+        (span) =>
+          span.startMs < booking.endMs && span.endMs > booking.startMs,
+      )
+    ) {
+      throw new Error("That time is no longer free on your calendar");
+    }
+    const calendarId = booking.calendarId ?? args.calendarId;
+    await ctx.db.patch(booking._id, {
+      acceptOperationId: operationId,
+      acceptAttemptId: args.attemptId,
+      acceptLeaseExpiresAt: now + ACCEPT_LEASE_MS,
+      // Conservative until a known Google failure clears it. If this action
+      // disappears, rejection cannot contradict a possibly sent invitation.
+      acceptMayHaveSucceeded: true,
+      calendarId,
+    });
+    return { booking, page, operationId, calendarId };
+  },
+});
+
+export const releaseBookingAcceptance = internalMutation({
+  args: {
+    bookingId: v.id("bookings"),
+    hostUserId: v.string(),
+    attemptId: v.string(),
+    mayHaveSucceeded: v.boolean(),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const booking = await ctx.db.get(args.bookingId);
+    if (
+      booking?.hostUserId === args.hostUserId &&
+      booking.status === "pending" &&
+      booking.acceptAttemptId === args.attemptId
+    ) {
+      await ctx.db.patch(booking._id, {
+        acceptAttemptId: undefined,
+        acceptLeaseExpiresAt: undefined,
+        acceptMayHaveSucceeded: args.mayHaveSucceeded,
+      });
+    }
     return null;
   },
 });
@@ -799,27 +911,6 @@ export const acceptBooking = action({
       throw new Error("Not authenticated");
     }
 
-    const context = await ctx.runQuery(internal.booking.getBookingContext, {
-      bookingId: args.bookingId,
-      hostUserId: user._id,
-    });
-    if (!context) {
-      throw new Error("Request not found");
-    }
-    const { booking, page, conflict } = context;
-    if (booking.status === "expired") {
-      throw new Error("This request has expired");
-    }
-    if (booking.status !== "pending") {
-      throw new Error("This request has already been answered");
-    }
-    if (booking.endMs <= Date.now()) {
-      throw new Error("This request has expired");
-    }
-    if (conflict) {
-      throw new Error("That time is no longer free on your calendar");
-    }
-
     const { accessToken } = await createAuth(ctx).api.getAccessToken({
       body: { providerId: "google", userId: user._id },
     });
@@ -831,39 +922,103 @@ export const acceptBooking = action({
       (await ctx.runQuery(internal.calendar.getPrimaryCalendarId, {
         userId: user._id,
       })) ?? "primary";
+    const attemptId = crypto.randomUUID();
+    const claimed = await ctx.runMutation(
+      internal.booking.claimBookingAcceptance,
+      {
+        bookingId: args.bookingId,
+        hostUserId: user._id,
+        attemptId,
+        calendarId,
+      },
+    );
+    if (!claimed) {
+      const context = await ctx.runQuery(internal.booking.getBookingContext, {
+        bookingId: args.bookingId,
+        hostUserId: user._id,
+      });
+      if (context?.booking.status === "accepted") return null;
+      throw new Error("This request is unavailable or already being answered");
+    }
+    const {
+      booking,
+      page,
+      operationId,
+      calendarId: claimedCalendarId,
+    } = claimed;
 
     const label = page.title?.trim() || "Meeting";
-    const event = await insertCalendarEvent(
-      accessToken,
-      calendarId,
-      {
-        summary: `${label} with ${booking.requesterName}`,
-        description: booking.note
-          ? `Booked via qali.\n\n${booking.note}`
-          : "Booked via qali.",
-        start: toGoogleTime(booking.startMs, false, page.timeZone),
-        end: toGoogleTime(booking.endMs, false, page.timeZone),
-        attendees: [
+    const requestedGoogleEventId = googleEventIdForOperation(operationId);
+    let event;
+    try {
+      try {
+        event = await insertCalendarEvent(
+          accessToken,
+          claimedCalendarId,
           {
-            email: booking.requesterEmail,
-            displayName: booking.requesterName,
+            id: requestedGoogleEventId,
+            summary: `${label} with ${booking.requesterName}`,
+            description: booking.note
+              ? `Booked via qali.\n\n${booking.note}`
+              : "Booked via qali.",
+            start: toGoogleTime(booking.startMs, false, page.timeZone),
+            end: toGoogleTime(booking.endMs, false, page.timeZone),
+            attendees: [
+              {
+                email: booking.requesterEmail,
+                displayName: booking.requesterName,
+              },
+            ],
           },
-        ],
-      },
-      // Google owns the invitation email; this is what sends it.
-      "all",
-    );
+          // Google owns the invitation email; this is what sends it.
+          "all",
+        );
+      } catch (error) {
+        if (!(error instanceof GoogleApiError) || error.status !== 409) throw error;
+        event = mapGoogleEvent(
+          await getCalendarEvent(
+            accessToken,
+            claimedCalendarId,
+            requestedGoogleEventId,
+          ),
+          claimedCalendarId,
+        );
+      }
 
-    await ctx.runMutation(internal.calendar.upsertEvent, {
-      userId: user._id,
-      event,
-    });
-    await ctx.runMutation(internal.booking.markAccepted, {
-      bookingId: args.bookingId,
-      hostUserId: user._id,
-      googleEventId: event.googleEventId,
-      calendarId,
-    });
+      const marked = await ctx.runMutation(internal.booking.markAccepted, {
+        bookingId: args.bookingId,
+        hostUserId: user._id,
+        googleEventId: event.googleEventId,
+        calendarId: claimedCalendarId,
+        attemptId,
+      });
+      if (!marked) throw new Error("Booking acceptance claim was lost");
+    } catch (error) {
+      await ctx.runMutation(internal.booking.releaseBookingAcceptance, {
+        bookingId: args.bookingId,
+        hostUserId: user._id,
+        attemptId,
+        mayHaveSucceeded:
+          event !== undefined || error instanceof GoogleNetworkError,
+      });
+      if (event) {
+        throw new Error(
+          `Google accepted the booking, but local confirmation is pending. Retry acceptance to reconcile it safely. ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      throw error;
+    }
+
+    // The booking state and Google event are authoritative. A sync repairs this
+    // optional optimistic mirror if the local write is transiently unavailable.
+    try {
+      await ctx.runMutation(internal.calendar.upsertEvent, {
+        userId: user._id,
+        event,
+      });
+    } catch (error) {
+      console.error("[booking] Google accepted event; mirror pending", error);
+    }
     return null;
   },
 });
@@ -881,11 +1036,25 @@ export const rejectBooking = mutation({
     if (!booking || booking.hostUserId !== user._id) {
       throw new Error("Request not found");
     }
+    if (booking.status === "rejected") {
+      return null;
+    }
     if (booking.status === "expired") {
       throw new Error("This request has expired");
     }
     if (booking.status !== "pending") {
       throw new Error("This request has already been answered");
+    }
+    if (
+      booking.acceptAttemptId &&
+      (booking.acceptLeaseExpiresAt ?? 0) > Date.now()
+    ) {
+      throw new Error("This request is currently being accepted");
+    }
+    if (booking.acceptMayHaveSucceeded) {
+      throw new Error(
+        "A previous acceptance may have reached Google. Retry acceptance to reconcile it before rejecting.",
+      );
     }
     if (booking.endMs <= Date.now()) {
       throw new Error("This request has expired");

@@ -96,7 +96,7 @@ export function AssistantDock() {
     api.assistantData.monthlyQuota,
     assistantAvailable ? {} : "skip",
   );
-  // Tracks whether the panel is open so ⌘K can always close it — even from the
+  // Tracks whether the panel is open so ⌘J can always close it — even from the
   // composer, where the editable-target guard would otherwise swallow the key.
   const menuOpenRef = useRef(false);
 
@@ -114,7 +114,7 @@ export function AssistantDock() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  // ⌘K toggles the assistant from anywhere in the workspace. Registered only
+  // ⌘J toggles the assistant from anywhere in the workspace. Registered only
   // when there is an assistant to open, so on a deployment without an API key
   // the shortcut stays free for whatever the app wants next.
   useEffect(() => {
@@ -123,8 +123,8 @@ export function AssistantDock() {
       if (
         shouldOpenAssistantShortcut(e, {
           blocked: false,
-          // Only guard against hijacking ⌘K from a text field while the panel is
-          // closed; once open, ⌘K closes it from anywhere, its composer included.
+          // Only guard against hijacking ⌘J from a text field while the panel is
+          // closed; once open, ⌘J closes it from anywhere, its composer included.
           editableTarget:
             !menuOpenRef.current && isEditableAssistantShortcutTarget(e.target),
         })
@@ -164,7 +164,7 @@ export function AssistantDock() {
         ref={dropdownRef}
         className="pointer-events-auto !h-12"
         trigger={trigger}
-        triggerLabel="Assistant · ⌘K"
+        triggerLabel="Assistant · ⌘J"
         menuLabel="Assistant"
         panelContent={(close) => (
           // The notification panel inherits the goo surface's resolved colour.
@@ -188,7 +188,7 @@ export function AssistantDock() {
         onOpenChange={(o) => {
           menuOpenRef.current = o;
         }}
-        // Auto-closes on an outside click, Escape, ⌘K or the header close — but
+        // Auto-closes on an outside click, Escape, ⌘J or the header close — but
         // scrolling the calendar underneath it must not dismiss it.
         dismissOnScroll={false}
         triggerSound={false}

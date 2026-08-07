@@ -46,7 +46,7 @@ describe("assistant interactions", () => {
 
   test("respects consumed, editable, and blocked assistant shortcuts", () => {
     const event = {
-      key: "k",
+      key: "j",
       metaKey: true,
       ctrlKey: false,
       defaultPrevented: false,

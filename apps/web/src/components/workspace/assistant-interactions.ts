@@ -32,7 +32,7 @@ export function shouldOpenAssistantShortcut(
     !options.blocked &&
     !options.editableTarget &&
     (event.metaKey || event.ctrlKey) &&
-    event.key.toLowerCase() === "k"
+    event.key.toLowerCase() === "j"
   );
 }
 

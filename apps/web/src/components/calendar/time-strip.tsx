@@ -36,6 +36,7 @@ import {
   type NowIndicatorLayout,
 } from "./now-indicator";
 import { PanelHeader } from "./panel-header";
+import type { Reveal } from "./today-pulse";
 import { useEventDrag } from "./use-event-drag";
 
 /** Stable empty fallbacks: a fresh `[]` per render would give every day column
@@ -46,11 +47,22 @@ const NO_BOOKINGS: never[] = [];
 export interface TimeStripHandle {
   /** Scroll to a day column index. Use "smooth" for button nav. */
   scrollToIndex: (index: number, behavior: ScrollBehavior) => void;
-  /** Smooth-scroll a day column to the left edge and ease vertically to the
-   * current-time line — a real continuous scroll to Today when it's on-strip. */
+  /** Smooth-scroll a day column to the left edge and ease vertically to
+   * `topPct` (0–100 of the day height), or keep the current vertical position
+   * when `topPct` is null — a real continuous scroll to an on-strip target. */
+  scrollToColumn: (
+    index: number,
+    topPct: number | null,
+    onSettled: () => void,
+  ) => void;
+  /** Smooth-scroll to a day column and ease vertically to the current-time line
+   * — a real continuous scroll to Today when it's on-strip. */
   scrollToTodayColumn: (index: number, onSettled: () => void) => void;
-  /** Arm the next recenter to also position vertically at the current-time
-   * line (used when a Today view-transition rebuilds the strip off-buffer). */
+  /** Arm the next recenter to also position vertically at `topPct` (0–100), or
+   * at the current-time line when passed "now" — used when a reveal's view-
+   * transition rebuilds the strip off-buffer. */
+  primeCenterAt: (topPct: number | "now" | null) => void;
+  /** Arm the next recenter to position vertically at the current-time line. */
   primeCenterNow: () => void;
 }
 
@@ -65,8 +77,9 @@ interface TimeStripProps {
   events: CalendarEvent[];
   /** Fired once scrolling settles `deltaDays` away from the anchor. */
   onSettleDeltaDays: (deltaDays: number) => void;
-  /** Increments on each Today click; pulses today's date pill on change. */
-  pulseToken: number;
+  /** The active reveal target; pulses the matching date pill, event card, or
+   * request block once a scroll to it settles. */
+  reveal: Reveal;
 }
 
 /**
@@ -81,7 +94,7 @@ interface TimeStripProps {
  */
 export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
   function TimeStrip(
-    { days, anchorIndex, columns, events, onSettleDeltaDays, pulseToken },
+    { days, anchorIndex, columns, events, onSettleDeltaDays, reveal },
     ref,
   ) {
     const scrollerRef = useRef<HTMLDivElement>(null);
@@ -93,7 +106,12 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     /** Set once a scroll that should produce a settle has actually moved. */
     const settlePending = useRef(false);
     const didInitialNowScroll = useRef(false);
-    const centerNowRef = useRef(false);
+    // Arms the next recenter to also position vertically. `false` means don't;
+    // a primed value is a pct (0–100), null (keep current), or "now" (resolve
+    // against the current-time line at recenter time, after an off-buffer
+    // rebuild puts today on the strip).
+    const centerPrimedRef = useRef(false);
+    const centerAtPctRef = useRef<number | "now" | null>(null);
     const nowLayoutRef = useRef<NowIndicatorLayout | null>(null);
     const userInteractedRef = useRef(false);
     const [now, setNow] = useState(() => Date.now());
@@ -230,31 +248,35 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       [colWidth],
     );
 
-    // Vertical scroll offset that places the current-time line ~35% down the
-    // viewport. Falls back to the current position when today isn't on-strip.
-    const nowScrollTop = useCallback(() => {
+    // Vertical scroll offset that places a given day-fraction `pct` (0–100)
+    // ~35% down the viewport. `null` keeps the current position (used when the
+    // target has no time — e.g. an all-day item, or today off-strip).
+    const scrollTopForPct = useCallback((pct: number | null) => {
       const el = scrollerRef.current;
       const body = bodyRef.current;
-      const layout = nowLayoutRef.current;
       if (!el) return 0;
-      if (layout?.today && body) {
-        return Math.max(
-          0,
-          body.offsetTop +
-            body.clientHeight * (layout.topPct / 100) -
-            el.clientHeight * 0.35,
-        );
-      }
-      return el.scrollTop;
+      if (pct == null || !body) return el.scrollTop;
+      return Math.max(
+        0,
+        body.offsetTop +
+          body.clientHeight * (pct / 100) -
+          el.clientHeight * 0.35,
+      );
     }, []);
 
-    const scrollToTodayColumn = useCallback(
-      (index: number, onSettled: () => void) => {
+    // The current-time line's pct when today is on-strip, else null.
+    const nowPct = useCallback(() => {
+      const layout = nowLayoutRef.current;
+      return layout?.today ? layout.topPct : null;
+    }, []);
+
+    const scrollToColumn = useCallback(
+      (index: number, topPct: number | null, onSettled: () => void) => {
         const el = scrollerRef.current;
         if (!el) return;
         didInitialNowScroll.current = true;
         const left = index * colWidth();
-        const top = nowScrollTop();
+        const top = scrollTopForPct(topPct);
         // No movement means no scroll event and therefore no settle, so run the
         // pulse callback directly rather than waiting for one that never comes.
         if (
@@ -266,37 +288,63 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
           return;
         }
         todaySettleCallback.current = onSettled;
-        // This scroll may only move vertically (today's column already anchored),
-        // which `onScroll` deliberately ignores — so arm the settle here or the
-        // pulse would wait on one that never comes.
+        // This scroll may only move vertically (the target column already
+        // anchored), which `onScroll` deliberately ignores — so arm the settle
+        // here or the pulse would wait on one that never comes.
         settlePending.current = true;
         scheduleSettle();
         el.scrollTo({ left, top, behavior: "smooth" });
       },
-      [colWidth, nowScrollTop, scheduleSettle],
+      [colWidth, scrollTopForPct, scheduleSettle],
     );
 
-    const primeCenterNow = useCallback(() => {
+    const scrollToTodayColumn = useCallback(
+      (index: number, onSettled: () => void) =>
+        scrollToColumn(index, nowPct(), onSettled),
+      [scrollToColumn, nowPct],
+    );
+
+    const primeCenterAt = useCallback((topPct: number | "now" | null) => {
       clearTimeout(settleTimer.current);
       todaySettleCallback.current = undefined;
-      centerNowRef.current = true;
+      centerPrimedRef.current = true;
+      centerAtPctRef.current = topPct;
     }, []);
+
+    const primeCenterNow = useCallback(
+      () => primeCenterAt("now"),
+      [primeCenterAt],
+    );
 
     useImperativeHandle(
       ref,
-      () => ({ scrollToIndex, scrollToTodayColumn, primeCenterNow }),
-      [scrollToIndex, scrollToTodayColumn, primeCenterNow],
+      () => ({
+        scrollToIndex,
+        scrollToColumn,
+        scrollToTodayColumn,
+        primeCenterAt,
+        primeCenterNow,
+      }),
+      [
+        scrollToIndex,
+        scrollToColumn,
+        scrollToTodayColumn,
+        primeCenterAt,
+        primeCenterNow,
+      ],
     );
 
     // Recenter when the strip rebuilds (anchor/view change) or mounts. A primed
-    // Today jump also parks vertically at the current-time line so the freshly
-    // built (off-buffer) view is already centered on now under the transition.
+    // reveal also parks vertically (at the revealed time, or the current-time
+    // line for a Today jump) so the freshly built (off-buffer) view is already
+    // centered under the transition.
     //
     // Every dependency here must be stable across unrelated parent renders:
     // `days` changes identity only when the parent's layout memo recomputes,
-    // and `scrollToIndex`/`colWidth`/`nowScrollTop` are constant for a given
-    // view. If one of them starts churning, this effect resets `scrollLeft`
-    // mid-gesture and the strip visibly snaps back to a different week.
+    // and `scrollToIndex`/`colWidth`/`scrollTopForPct`/`nowPct` are constant for
+    // a given view. If one of them starts churning, this effect resets
+    // `scrollLeft` mid-gesture and the strip visibly snaps back to a different
+    // week.
     useLayoutEffect(() => {
       const el = scrollerRef.current;
       clearTimeout(settleTimer.current);
@@ -310,20 +358,25 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
         el.setAttribute("data-recenter", "");
         raf = requestAnimationFrame(() => el.removeAttribute("data-recenter"));
       }
-      if (centerNowRef.current && el) {
-        centerNowRef.current = false;
+      if (centerPrimedRef.current && el) {
+        const primed = centerAtPctRef.current;
+        centerPrimedRef.current = false;
+        centerAtPctRef.current = null;
         setVisibleStartIdx(anchorIndex);
         didInitialNowScroll.current = true;
+        // "now" resolves against the freshly-rebuilt layout, which now has today
+        // on the strip; a plain pct/null is used as-is.
+        const pct = primed === "now" ? nowPct() : primed;
         el.scrollTo({
           left: anchorIndex * colWidth(),
-          top: nowScrollTop(),
+          top: scrollTopForPct(pct),
           behavior: "auto",
         });
         return () => cancelAnimationFrame(raf);
       }
       scrollToIndex(anchorIndex, "auto");
       return () => cancelAnimationFrame(raf);
-    }, [days, anchorIndex, scrollToIndex, colWidth, nowScrollTop]);
+    }, [days, anchorIndex, scrollToIndex, colWidth, scrollTopForPct, nowPct]);
 
     // Keep the anchor centered only when the strip's width actually changes.
     // Height-only window resizes happen while mobile browser chrome collapses
@@ -493,7 +546,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
               allDayEvents={allDayLayout}
               allDayHeight={allDayHeight}
               allDayExpanded={allDayExpanded}
-              pulseToken={pulseToken}
+              reveal={reveal}
             />
           </div>
           <div
@@ -520,6 +573,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
                  laneLayout={columns === 1}
                  contactPhotos={contactPhotos}
                  bookings={bookingsByDay[i]}
+                 reveal={reveal}
                />
             ))}
             {nowLayout && <NowIndicator layout={nowLayout} />}

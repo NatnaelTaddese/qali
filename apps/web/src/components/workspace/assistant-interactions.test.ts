@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import {
   acknowledgedAssistantUserMessageId,
   isNearScrollBottom,
+  revealTargetForAction,
   safeAssistantLink,
   shouldOpenAssistantShortcut,
   shouldSendAssistantMessage,
@@ -109,5 +110,85 @@ describe("assistant interactions", () => {
         "Same prompt",
       ),
     ).toBe("new");
+  });
+
+  describe("reveal target for an applied proposal", () => {
+    test("created events flash by operationId at their start time", () => {
+      expect(
+        revealTargetForAction({
+          tool: "create_event",
+          operationId: "goog-abc",
+          input: JSON.stringify({
+            summary: "Sync",
+            time: { kind: "timed", startMs: 1_000, endMs: 2_000 },
+          }),
+        }),
+      ).toEqual({ flashId: "goog-abc", startMs: 1_000 });
+    });
+
+    test("a created all-day event flashes without a scroll target", () => {
+      expect(
+        revealTargetForAction({
+          tool: "create_event",
+          operationId: "goog-allday",
+          input: JSON.stringify({
+            time: { kind: "allDay", startDate: "2026-08-07", endDate: "2026-08-08" },
+          }),
+        }),
+      ).toEqual({ flashId: "goog-allday" });
+    });
+
+    test("a created event with no operationId has nothing to reveal", () => {
+      expect(
+        revealTargetForAction({
+          tool: "create_event",
+          input: JSON.stringify({
+            time: { kind: "timed", startMs: 1, endMs: 2 },
+          }),
+        }),
+      ).toBeNull();
+    });
+
+    test("moves and timed updates flash the event by id at the new time", () => {
+      expect(
+        revealTargetForAction({
+          tool: "move_event",
+          input: JSON.stringify({
+            eventId: "ev1",
+            time: { kind: "timed", startMs: 5_000, endMs: 6_000 },
+          }),
+        }),
+      ).toEqual({ flashId: "ev1", startMs: 5_000 });
+    });
+
+    test("an update with no new time pulses the card in place", () => {
+      expect(
+        revealTargetForAction({
+          tool: "update_event",
+          input: JSON.stringify({ eventId: "ev2", summary: "Renamed" }),
+        }),
+      ).toEqual({ flashId: "ev2" });
+    });
+
+    test("deletions and booking decisions reveal nothing", () => {
+      expect(
+        revealTargetForAction({
+          tool: "delete_event",
+          input: JSON.stringify({ eventId: "ev3" }),
+        }),
+      ).toBeNull();
+      expect(
+        revealTargetForAction({
+          tool: "decide_booking_request",
+          input: JSON.stringify({ bookingId: "b1", decision: "accept" }),
+        }),
+      ).toBeNull();
+    });
+
+    test("malformed input is handled gracefully", () => {
+      expect(
+        revealTargetForAction({ tool: "create_event", input: "not json" }),
+      ).toBeNull();
+    });
   });
 });

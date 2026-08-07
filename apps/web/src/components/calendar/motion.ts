@@ -59,9 +59,11 @@ export const dockVariantsReduced: Variants = {
   exit: { opacity: 0, transition: { duration: 0.14, ease: EASE_OUT_EXPO } },
 };
 
-// Background flash on today's marker once a Today jump settles. A soft double
-// pulse of a translucent overlay's opacity (theme/colour handled in CSS).
-export const TODAY_FLASH = {
+// Background flash on a revealed item once a scroll settles — today's marker on
+// a Today jump, or an event/request the notification or assistant panel reached
+// for. A soft double pulse of a translucent overlay's opacity (theme/colour
+// handled in CSS).
+export const REVEAL_FLASH = {
   keyframes: { opacity: [0, 1, 0, 1, 0] as number[] },
   transition: {
     duration: 1.0,

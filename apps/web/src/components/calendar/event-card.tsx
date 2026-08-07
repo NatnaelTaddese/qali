@@ -9,6 +9,7 @@ import { useEventColor } from "./colors";
 import { laneBox, type PositionedEvent, stackIndentPx } from "./lib";
 import { pressTransition } from "./motion";
 import { useEventCapabilities } from "./permissions";
+import { RevealFlash, type Reveal } from "./today-pulse";
 import type { DragMode } from "./use-event-drag";
 
 interface EventCardProps {
@@ -20,6 +21,8 @@ interface EventCardProps {
   laneLayout: boolean;
   /** Synced contact photos keyed by lower-cased email. */
   contactPhotos: ReadonlyMap<string, string>;
+  /** The active reveal target; pulses this card when it's the one reached for. */
+  reveal: Reveal;
   /** Begin a gesture; the mode is derived from where the press landed. */
   onDragStart: (mode: DragMode, e: React.PointerEvent) => void;
 }
@@ -38,6 +41,7 @@ export function EventCard({
   isDragging,
   laneLayout,
   contactPhotos,
+  reveal,
   onDragStart,
 }: EventCardProps) {
   const { event, topPct, heightPct, stackIndex, elevation, columnIndex, columnCount, columnSpan } =
@@ -93,6 +97,11 @@ export function EventCard({
         backgroundColor: `color-mix(in oklab, var(${colorVar}) 22%, var(--card))`,
       }}
     >
+      <RevealFlash
+        reveal={reveal}
+        targetId={[event._id, event.googleEventId]}
+        className="rounded-lg bg-[color-mix(in_oklab,var(--primary)_45%,transparent)]"
+      />
       <span
         aria-hidden
         className="absolute top-1 bottom-1 left-1 w-[3px] rounded-full"

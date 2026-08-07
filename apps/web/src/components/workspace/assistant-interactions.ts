@@ -59,6 +59,68 @@ export function safeAssistantLink(href: string | undefined): string | null {
   }
 }
 
+function eventIdOf(input: unknown): string | null {
+  if (input && typeof input === "object" && "eventId" in input) {
+    const id = (input as { eventId?: unknown }).eventId;
+    return typeof id === "string" ? id : null;
+  }
+  return null;
+}
+
+/** The start instant of a proposal's `time` argument, when it's a timed range.
+ * All-day ranges (calendar dates) and absent times return undefined — the
+ * reveal then flashes without a vertical scroll. */
+function timedStartMs(input: unknown): number | undefined {
+  if (!input || typeof input !== "object" || !("time" in input)) return undefined;
+  const time = (input as { time?: unknown }).time;
+  if (
+    time &&
+    typeof time === "object" &&
+    (time as { kind?: unknown }).kind === "timed"
+  ) {
+    const startMs = (time as { startMs?: unknown }).startMs;
+    return typeof startMs === "number" ? startMs : undefined;
+  }
+  return undefined;
+}
+
+/** Where the calendar should scroll and what it should pulse once an assistant
+ * proposal is applied. Returns null when there is nothing to reveal (a deletion,
+ * or a booking decision). `input` is the stored tool-argument JSON.
+ *
+ * - create_event: no id yet, so flash by `operationId` — Google's client-chosen
+ *   id, which is what the event syncs back in as (`googleEventId`).
+ * - move_event / update_event: flash by `eventId` (the Convex `_id`); a change
+ *   with no new time still pulses the card in place. */
+export function revealTargetForAction(action: {
+  tool: string;
+  input: string;
+  operationId?: string;
+}): { startMs?: number; flashId: string } | null {
+  let input: unknown;
+  try {
+    input = JSON.parse(action.input);
+  } catch {
+    return null;
+  }
+  const startMs = timedStartMs(input);
+  const withStart = (flashId: string) =>
+    startMs != null ? { flashId, startMs } : { flashId };
+
+  switch (action.tool) {
+    case "create_event":
+      return action.operationId ? withStart(action.operationId) : null;
+    case "move_event":
+    case "update_event": {
+      const eventId = eventIdOf(input);
+      return eventId ? withStart(eventId) : null;
+    }
+    default:
+      // delete_event / decide_booking_request: nothing to reach for.
+      return null;
+  }
+}
+
 export function acknowledgedAssistantUserMessageId<T extends string>(
   messages:
     | readonly {

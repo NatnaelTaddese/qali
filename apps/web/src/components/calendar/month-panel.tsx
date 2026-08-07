@@ -6,13 +6,14 @@ import { useDock } from "@/components/workspace/dock-context";
 
 import { useEventColor } from "./colors";
 import {
+  dayKey,
   MONTH_EVENT_ROW_HEIGHT,
   MS_PER_DAY,
   visibleMonthEventMetrics,
   WEEK_STARTS_ON,
   type CalendarEvent,
 } from "./lib";
-import { TodayFlash } from "./today-pulse";
+import { RevealFlash, type Reveal } from "./today-pulse";
 
 const WEEK_REF = startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_ON });
 const WEEKDAY_LABELS = Array.from({ length: 7 }, (_, i) =>
@@ -28,12 +29,13 @@ interface MonthPanelProps {
   events: CalendarEvent[];
   /** Open a specific day in day view. */
   onSelectDay: (day: Date) => void;
-  /** Increments on each Today click; pulses today's cell on change. */
-  pulseToken: number;
+  /** The active reveal target; pulses the day cell reached for (a Today jump or
+   * an event/request the panels reached for — month view flashes by day). */
+  reveal: Reveal;
 }
 
 /** A single month page: weekday labels over a 6×7 grid of day cells. */
-export function MonthPanel({ monthStart, days, events, onSelectDay, pulseToken }: MonthPanelProps) {
+export function MonthPanel({ monthStart, days, events, onSelectDay, reveal }: MonthPanelProps) {
   const { open } = useDock();
   const colorFor = useEventColor();
   const eventAreaRef = useRef<HTMLDivElement>(null);
@@ -94,12 +96,11 @@ export function MonthPanel({ monthStart, days, events, onSelectDay, pulseToken }
                 !inMonth && "bg-muted/30 text-muted-foreground",
               )}
             >
-              {today && (
-                <TodayFlash
-                  token={pulseToken}
-                  className="bg-[color-mix(in_oklab,var(--primary)_28%,transparent)]"
-                />
-              )}
+              <RevealFlash
+                reveal={reveal}
+                targetId={dayKey(day)}
+                className="bg-[color-mix(in_oklab,var(--primary)_28%,transparent)]"
+              />
               <span
                 className={cn(
                   "relative z-10 flex size-6 items-center justify-center self-start text-xs font-medium",

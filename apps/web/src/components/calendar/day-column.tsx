@@ -19,6 +19,7 @@ import {
   snappedMsFromOffsetY,
   type CalendarEvent,
 } from "./lib";
+import type { Reveal } from "./today-pulse";
 import type { DragMode } from "./use-event-drag";
 
 interface Draft {
@@ -55,6 +56,8 @@ interface DayColumnProps {
   contactPhotos: ReadonlyMap<string, string>;
   /** Pending booking requests overlapping this day, in their own lane. */
   bookings: Booking[];
+  /** The active reveal target; pulses the matching event card or request block. */
+  reveal: Reveal;
 }
 
 function DayColumnImpl({
@@ -66,6 +69,7 @@ function DayColumnImpl({
   laneLayout,
   contactPhotos,
   bookings,
+  reveal,
 }: DayColumnProps) {
   const dayStartMs = day.getTime();
   const dayEndMs = dayStartMs + MS_PER_DAY;
@@ -248,6 +252,7 @@ function DayColumnImpl({
             isDragging={draggingId === p.event._id}
             laneLayout={laneLayout}
             contactPhotos={contactPhotos}
+            reveal={reveal}
             onDragStart={(mode, e) =>
               beginDrag(p.event, mode, e, gridRef.current)
             }
@@ -258,6 +263,7 @@ function DayColumnImpl({
             key={booking._id}
             booking={booking}
             dayStartMs={dayStartMs}
+            reveal={reveal}
             onOpen={() => open({ kind: "booking", booking })}
           />
         ))}

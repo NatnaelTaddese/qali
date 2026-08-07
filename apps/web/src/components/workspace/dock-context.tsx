@@ -51,6 +51,12 @@ function slideDirection(prev: DockView | null, next: DockView): number {
  * timed events on it, so the dock can land "create" on the next free slot. */
 type CreateSeed = { dayStartMs: number; events: CalendarEvent[] };
 
+/** A request to scroll the calendar to an item and pulse it. `startMs` locates
+ * the day/time to scroll to (omitted for an item with no time — it only pulses
+ * if already on screen); `flashId` is the item's reveal key (an event `_id` or
+ * `googleEventId`, or a booking `_id`). */
+export type RevealInput = { startMs?: number; flashId: string };
+
 interface DockContextValue {
   view: DockView | null;
   viewId: string | null;
@@ -64,6 +70,12 @@ interface DockContextValue {
   /** Open a create view on the registered day's next free 30-min slot, falling
    * back to the next slot from now when the calendar hasn't registered one. */
   openCreate: () => void;
+  /** The calendar registers how to scroll-and-pulse an item; pass `null` to
+   * clear. Others (notification feed, assistant proposals) call `reveal`. */
+  registerReveal: (fn: ((input: RevealInput) => void) | null) => void;
+  /** Scroll the calendar to an item and pulse it. A no-op until the calendar
+   * has mounted and registered a handler. */
+  reveal: (input: RevealInput) => void;
 }
 
 const DockContext = createContext<DockContextValue | null>(null);
@@ -101,6 +113,19 @@ export function DockProvider({ children }: { children: ReactNode }) {
     open({ kind: "create", ...range });
   }, [open]);
 
+  // A ref, like the create seed: the calendar registers on mount and callers
+  // only read it when they fire, so no render needs to track it.
+  const revealRef = useRef<((input: RevealInput) => void) | null>(null);
+  const registerReveal = useCallback(
+    (fn: ((input: RevealInput) => void) | null) => {
+      revealRef.current = fn;
+    },
+    [],
+  );
+  const reveal = useCallback((input: RevealInput) => {
+    revealRef.current?.(input);
+  }, []);
+
   const value = useMemo<DockContextValue>(
     () => ({
       view: state.view,
@@ -110,8 +135,10 @@ export function DockProvider({ children }: { children: ReactNode }) {
       close,
       registerCreateSeed,
       openCreate,
+      registerReveal,
+      reveal,
     }),
-    [state, open, close, registerCreateSeed, openCreate],
+    [state, open, close, registerCreateSeed, openCreate, registerReveal, reveal],
   );
 
   return <DockContext value={value}>{children}</DockContext>;

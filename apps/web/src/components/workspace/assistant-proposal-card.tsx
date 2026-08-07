@@ -9,8 +9,11 @@ import type { Doc } from "@qali/backend/convex/_generated/dataModel";
 import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import { useAction } from "convex/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+
+import { revealTargetForAction } from "./assistant-interactions";
+import { useDock } from "./dock-context";
 
 export type AssistantAction = Doc<"assistantActions">;
 
@@ -27,7 +30,22 @@ export type AssistantAction = Doc<"assistantActions">;
  */
 export function AssistantProposalCard({ action }: { action: AssistantAction }) {
   const confirmAction = useAction(api.assistant.confirmAction);
+  const { reveal } = useDock();
   const [busy, setBusy] = useState<"confirm" | "discard" | null>(null);
+
+  // When the change lands, reach for what it touched on the grid. Only on the
+  // fresh pending→applied transition, so reopening a thread with an already-
+  // applied proposal doesn't yank the calendar. The event may still be syncing
+  // back from Google — the scroll uses the proposal's own start time, and the
+  // pulse plays when the synced card mounts.
+  const prevStatusRef = useRef(action.status);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = action.status;
+    if (action.status !== "applied" || prev === "applied") return;
+    const target = revealTargetForAction(action);
+    if (target) reveal(target);
+  }, [action, reveal]);
 
   const decide = async (decision: "confirm" | "discard") => {
     if (busy) return;

@@ -4,6 +4,7 @@ import { format } from "date-fns";
 import type { Booking } from "@/components/workspace/booking-request-panel";
 
 import { msToPct, MS_PER_MINUTE } from "./lib";
+import { RevealFlash, type Reveal } from "./today-pulse";
 
 /**
  * Below this the block gets one line instead of two.
@@ -29,10 +30,12 @@ const COMPACT_BELOW_MINUTES = 60;
 export function BookingBlock({
   booking,
   dayStartMs,
+  reveal,
   onOpen,
 }: {
   booking: Booking;
   dayStartMs: number;
+  reveal: Reveal;
   onOpen: () => void;
 }) {
   const topPct = msToPct(Math.max(booking.startMs, dayStartMs), dayStartMs);
@@ -64,6 +67,11 @@ export function BookingBlock({
         height: `${Math.max(bottomPct - topPct, 0)}%`,
       }}
     >
+      <RevealFlash
+        reveal={reveal}
+        targetId={booking._id}
+        className="rounded-md bg-primary/25"
+      />
       {compact ? (
         // `leading-tight`, not `leading-none`: `truncate` brings overflow:hidden
         // with it, and an 11px line box is shorter than the font's own glyph box,

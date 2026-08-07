@@ -55,7 +55,7 @@ export function NotificationBell() {
   const markAllRead = useMutation(api.notifications.markAllRead);
   const dismiss = useMutation(api.notifications.dismiss);
   const clearAll = useMutation(api.notifications.clearAll);
-  const { open } = useDock();
+  const { open, reveal } = useDock();
   // The badge lives outside the morphing panel's clip region, so it only renders
   // while the dropdown is closed — where it can't be cut off (and where a
   // primary-on-primary badge wouldn't be legible anyway).
@@ -99,6 +99,8 @@ export function NotificationBell() {
     if (booking && booking.status === "pending") {
       close();
       open({ kind: "booking", booking });
+      // Reach for the request on the grid so it's clear which slot this is.
+      reveal({ startMs: booking.startMs, flashId: booking._id });
     }
   };
 

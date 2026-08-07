@@ -21,7 +21,9 @@ import {
   addPages,
   calendarDisplayName,
   type CalendarView,
+  dayKey,
   eventQueryRange,
+  msToPct,
   pageDays,
   pageStart,
   STRIP_SIDE_DAYS,
@@ -34,6 +36,7 @@ import {
 import { MonthPanel } from "./month-panel";
 import { MonthPicker } from "./month-picker";
 import { TimeStrip, type TimeStripHandle } from "./time-strip";
+import { NO_REVEAL, type Reveal } from "./today-pulse";
 import { useStableQuery } from "./use-stable-query";
 import { useDock } from "@/components/workspace/dock-context";
 import { NotificationBell } from "@/components/workspace/notification-bell";
@@ -46,7 +49,7 @@ const NO_EVENTS: Doc<"events">[] = [];
 export function CalendarWeekView() {
   const [view, setView] = useState<CalendarView>("week");
   const [anchor, setAnchor] = useState(() => pageStart("week", new Date()));
-  const [pulseToken, setPulseToken] = useState(0);
+  const [reveal, setReveal] = useState<Reveal>(NO_REVEAL);
   const pagerRef = useRef<CalendarPagerHandle>(null);
   const stripRef = useRef<TimeStripHandle>(null);
   const reduce = useReducedMotion();
@@ -95,7 +98,7 @@ export function CalendarWeekView() {
   // Tell the dock which day its Create button should seed a new event on: today
   // when the current page shows it, otherwise the page's own start. The dock
   // reads this plus the events below to land on the next free slot.
-  const { registerCreateSeed } = useDock();
+  const { registerCreateSeed, registerReveal } = useDock();
   const focusDayMs = useMemo(() => {
     const today = startOfDay(new Date());
     const onPage = pageDays(view, anchor).some((day) => isSameDay(day, today));
@@ -170,57 +173,116 @@ export function CalendarWeekView() {
     [reduce],
   );
 
-  // Today: move today's marker to center, then pulse it. When today is already in
-  // the buffered window we scroll to it for real (continuous, through the actual
-  // days); otherwise the days between aren't rendered, so we rebuild centered on
-  // today under a directional slide transition. Day/week center today among the
-  // visible columns; month shows today's whole month.
-  const goToToday = () => {
-    const today = new Date();
-    const pulseToday = () => setPulseToken((token) => token + 1);
+  // Move a target day/time to center, then pulse the item there. When the day is
+  // already in the buffered window we scroll to it for real (continuous, through
+  // the actual days); otherwise the days between aren't rendered, so we rebuild
+  // centered on it under a directional slide transition. Day/week center the day
+  // among the visible columns and ease vertically to `vertical` (a pct of the
+  // day, "now" for the current-time line, or null to keep the position); month
+  // shows the whole month. `flashId` is the reveal key of the item to pulse.
+  const revealTarget = (spec: {
+    date: Date;
+    vertical: number | "now" | null;
+    flashId: string;
+  }) => {
+    const flash = () =>
+      setReveal((prev) => ({ id: spec.flashId, nonce: prev.nonce + 1 }));
+    const scrollColumn = (index: number) => {
+      if (spec.vertical === "now") {
+        stripRef.current?.scrollToTodayColumn(index, flash);
+      } else {
+        stripRef.current?.scrollToColumn(index, spec.vertical, flash);
+      }
+    };
 
     if (layout.mode === "strip") {
       const centerOffset = Math.floor(layout.columns / 2);
-      const todayIndex = layout.days.findIndex((d) => isSameDay(d, today));
-      const targetIndex = todayIndex - centerOffset;
+      const dayIndex = layout.days.findIndex((d) => isSameDay(d, spec.date));
+      const targetIndex = dayIndex - centerOffset;
+      const maxIndex = layout.days.length - layout.columns;
       // On-strip and fully scrollable to a centered position: real scroll.
-      if (
-        todayIndex !== -1 &&
-        targetIndex >= 0 &&
-        targetIndex <= layout.days.length - layout.columns
-      ) {
-        stripRef.current?.scrollToTodayColumn(targetIndex, pulseToday);
+      if (dayIndex !== -1 && targetIndex >= 0 && targetIndex <= maxIndex) {
+        scrollColumn(targetIndex);
         return;
       }
-      const target = addDays(startOfDay(today), -centerOffset);
+      const target = addDays(startOfDay(spec.date), -centerOffset);
       const dir = Math.sign(target.getTime() - anchor.getTime());
-      if (dir === 0) return;
-      stripRef.current?.primeCenterNow();
+      // Anchor can't move (the target sits at a short-buffer edge): scroll as
+      // far toward centered as the strip allows rather than rebuilding to the
+      // same place.
+      if (dir === 0) {
+        scrollColumn(Math.max(0, Math.min(targetIndex, maxIndex)));
+        return;
+      }
+      if (spec.vertical === "now") stripRef.current?.primeCenterNow();
+      else stripRef.current?.primeCenterAt(spec.vertical);
       runTransition(
         dir > 0 ? "slide-fwd" : "slide-back",
         () => setAnchor(target),
-        pulseToday,
+        flash,
       );
       return;
     }
 
     // Month.
-    const todayMonthIndex = layout.pageStarts.findIndex((s) =>
-      isSameMonth(s, today),
+    const monthIndex = layout.pageStarts.findIndex((s) =>
+      isSameMonth(s, spec.date),
     );
-    if (todayMonthIndex !== -1) {
-      pagerRef.current?.scrollToIndex(todayMonthIndex, "smooth", pulseToday);
+    if (monthIndex !== -1) {
+      pagerRef.current?.scrollToIndex(monthIndex, "smooth", flash);
       return;
     }
-    const target = pageStart("month", today);
+    const target = pageStart("month", spec.date);
     const dir = Math.sign(target.getTime() - anchor.getTime());
-    if (dir === 0) return;
+    if (dir === 0) {
+      flash();
+      return;
+    }
     runTransition(
       dir > 0 ? "slide-fwd" : "slide-back",
       () => setAnchor(target),
-      pulseToday,
+      flash,
     );
   };
+
+  // Today is just a reveal of today's date pill at the current-time line.
+  const goToToday = () =>
+    revealTarget({
+      date: new Date(),
+      vertical: "now",
+      flashId: dayKey(new Date()),
+    });
+
+  // The panels reach for an item by its start time and reveal key. In month
+  // view there is no time position, so we flash the whole day cell (keyed by
+  // day) instead of the item. Without a start time we can only pulse an item
+  // that is already on screen.
+  const revealItem = (input: { startMs?: number; flashId: string }) => {
+    if (input.startMs == null) {
+      setReveal((prev) => ({ id: input.flashId, nonce: prev.nonce + 1 }));
+      return;
+    }
+    const date = new Date(input.startMs);
+    if (layout.mode === "month") {
+      revealTarget({ date, vertical: null, flashId: dayKey(date) });
+    } else {
+      revealTarget({
+        date,
+        vertical: msToPct(input.startMs, startOfDay(date).getTime()),
+        flashId: input.flashId,
+      });
+    }
+  };
+
+  // Register with the dock through a ref so a single stable callback always runs
+  // the latest closure (which reads the current view/anchor), the way the create
+  // seed is registered — without re-registering on every scroll settle.
+  const revealItemRef = useRef(revealItem);
+  revealItemRef.current = revealItem;
+  useEffect(() => {
+    registerReveal((input) => revealItemRef.current(input));
+    return () => registerReveal(null);
+  }, [registerReveal]);
 
   const switchView = (next: CalendarView) => {
     const apply = () => {
@@ -316,7 +378,7 @@ export function CalendarWeekView() {
                 days={pageDays("month", start)}
                 events={events}
                 onSelectDay={openDay}
-                pulseToken={pulseToken}
+                reveal={reveal}
               />
             )}
           />
@@ -328,7 +390,7 @@ export function CalendarWeekView() {
             columns={layout.columns}
             events={events}
             onSettleDeltaDays={handleSettleDeltaDays}
-            pulseToken={pulseToken}
+            reveal={reveal}
           />
         )}
       </div>

@@ -463,6 +463,13 @@ export function msToPct(ms: number, dayStartMs: number): number {
   return ((ms - dayStartMs) / MS_PER_DAY) * 100;
 }
 
+/** Stable reveal key for a whole day (today's pill, a month cell). Events and
+ * requests reveal by their own id instead; a day is keyed by its local midnight
+ * so the same string is produced from a `Date` or an instant within the day. */
+export function dayKey(date: Date | number): string {
+  return `day:${startOfDay(date).getTime()}`;
+}
+
 /** Snap a pointer offset within a measured day column to the nearest 15-minute mark. */
 export function snappedMsFromOffsetY(
   offsetY: number,

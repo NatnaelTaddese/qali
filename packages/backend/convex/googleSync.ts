@@ -267,11 +267,12 @@ async function getGoogleAccessToken(
 // sync time are never fetched; incremental syncs afterwards are unbounded.
 export const CALENDAR_HISTORY_MS = 365 * 24 * 60 * 60 * 1000;
 
+/** Returns whether any calendar produced event changes this run. */
 async function syncCalendar(
   ctx: ActionCtx,
   userId: string,
   accessToken: string,
-): Promise<void> {
+): Promise<boolean> {
   // Enumerate the account's calendars and persist their metadata, then sync
   // each one independently (each has its own Google sync token).
   const calendars = await fetchCalendarList(accessToken);
@@ -299,21 +300,33 @@ async function syncCalendar(
       calendars,
     });
   const timeMinMs = Date.now() - CALENDAR_HISTORY_MS;
+  let changed = false;
   for (const cal of stored) {
-    await syncOneCalendar(ctx, userId, accessToken, cal, timeMinMs);
+    const calChanged = await syncOneCalendar(
+      ctx,
+      userId,
+      accessToken,
+      cal,
+      timeMinMs,
+    );
+    changed = changed || calChanged;
   }
+  return changed;
 }
 
+/** Returns whether any events were written (upserted or cleared) — the caller
+ * uses this to skip an engagement recompute when nothing on the calendar moved. */
 export async function syncOneCalendar(
   ctx: ActionCtx,
   userId: string,
   accessToken: string,
   cal: { googleCalendarId: string; syncToken?: string },
   timeMinMs: number,
-): Promise<void> {
+): Promise<boolean> {
   let syncToken = cal.syncToken;
   let fullResync = !syncToken;
   let preparedForFullResync = false;
+  let changed = false;
 
   // Retry once: if the sync token is expired (410) we restart as a full resync.
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -331,6 +344,7 @@ export async function syncOneCalendar(
           );
         } while (hasMoreEvents);
         preparedForFullResync = true;
+        changed = true;
       }
 
       let pageToken: string | undefined;
@@ -347,6 +361,7 @@ export async function syncOneCalendar(
             userId,
             events: page.events,
           });
+          changed = true;
         }
         pageToken = page.nextPageToken;
         newSyncToken = page.nextSyncToken ?? newSyncToken;
@@ -359,7 +374,7 @@ export async function syncOneCalendar(
           syncToken: newSyncToken,
         });
       }
-      return;
+      return changed;
     } catch (err) {
       if (err instanceof SyncTokenExpiredError) {
         if (attempt === 1) {
@@ -373,6 +388,7 @@ export async function syncOneCalendar(
       throw err;
     }
   }
+  return changed;
 }
 
 async function syncContacts(
@@ -481,11 +497,17 @@ async function runSyncForUser(ctx: ActionCtx, userId: string): Promise<void> {
   });
   try {
     const accessToken = await getGoogleAccessToken(ctx, userId);
-    await syncCalendar(ctx, userId, accessToken);
+    const eventsChanged = await syncCalendar(ctx, userId, accessToken);
     await syncContacts(ctx, userId, accessToken);
     await syncOtherContacts(ctx, userId, accessToken);
     // Rank the people directory by how much the user actually meets each person.
-    await recomputeEngagementForUser(ctx, userId);
+    // Skip the full rescan+rewrite when no events moved this sync: scores only
+    // shift on event changes (or as days pass — see the daily refresh cron), so
+    // an unchanged calendar needs no work and leaves `people` untouched, keeping
+    // the reactive listPeople query cached for connected clients.
+    if (eventsChanged) {
+      await recomputeEngagementForUser(ctx, userId);
+    }
     await ctx.runMutation(internal.googleSync.setSyncStatus, {
       userId,
       status: "idle",
@@ -603,6 +625,23 @@ export const backfillPeople = internalMutation({
       // Contacts done — move on to harvesting people from existing events.
       await ctx.scheduler.runAfter(0, internal.googleSync.backfillPeople, {
         phase: "events",
+      });
+    }
+    return null;
+  },
+});
+
+/** Re-rank every user's people directory on a slow cadence so recency decay and
+ * upcoming→past transitions settle even when a calendar sees no event changes.
+ * Event-driven recompute (in runSyncForUser) handles the common case; this is
+ * the safety net for idle calendars. */
+export const enqueueEngagementRefresh = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<null> => {
+    const rows = await ctx.db.query("syncState").collect();
+    for (const row of rows) {
+      await ctx.scheduler.runAfter(0, internal.googleSync.recomputeEngagement, {
+        userId: row.userId,
       });
     }
     return null;

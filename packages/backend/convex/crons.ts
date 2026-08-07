@@ -19,4 +19,14 @@ crons.interval(
   {},
 );
 
+// Slow re-rank so recency decay + upcoming→past transitions settle on calendars
+// that see no event changes. Event-driven recompute in runSyncForUser covers the
+// common case; this is the idle-calendar safety net.
+crons.interval(
+  "refresh people ranking",
+  { hours: 24 },
+  internal.googleSync.enqueueEngagementRefresh,
+  {},
+);
+
 export default crons;

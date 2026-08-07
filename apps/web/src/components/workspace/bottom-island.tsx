@@ -225,7 +225,10 @@ export function BottomIsland() {
         data-dock-view-transition="bottom-island"
         // Plain style, not `animate` — `layout` rewrites borderRadius each frame
         // to correct for the box scaling, and an animated value fights that.
-        style={{ borderRadius: editing ? 28 : cornerRadius(view) }}
+        style={{
+          borderRadius: editing ? 28 : cornerRadius(view),
+          willChange: "transform",
+        }}
         className={cn(
           "pointer-events-auto overflow-hidden border border-border bg-popover/90 shadow-lg backdrop-blur",
           // The edit bar is a pill sized to its own content, like the nav row.
@@ -242,6 +245,7 @@ export function BottomIsland() {
               initial="initial"
               animate="animate"
               exit="exit"
+              style={{ willChange: "transform, filter" }}
             >
               {editing ? (
                 <AvailabilityEditBar

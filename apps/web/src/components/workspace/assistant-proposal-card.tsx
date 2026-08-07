@@ -5,17 +5,35 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
-import type { Doc } from "@qali/backend/convex/_generated/dataModel";
+import type { Doc, Id } from "@qali/backend/convex/_generated/dataModel";
 import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
-import { useAction } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { useEventColor } from "../calendar/colors";
 import { revealTargetForAction } from "./assistant-interactions";
 import { useDock } from "./dock-context";
 
 export type AssistantAction = Doc<"assistantActions">;
+
+/** The Convex event id a proposal acts on, when it targets an existing event
+ * (update / move / delete). create_event has no id yet, so it returns null and
+ * the card falls back to the neutral accent. */
+function targetEventId(action: AssistantAction): Id<"events"> | null {
+  let input: unknown;
+  try {
+    input = JSON.parse(action.input);
+  } catch {
+    return null;
+  }
+  if (input && typeof input === "object" && "eventId" in input) {
+    const id = (input as { eventId?: unknown }).eventId;
+    if (typeof id === "string") return id as Id<"events">;
+  }
+  return null;
+}
 
 /**
  * The gate between the assistant and the user's calendar.
@@ -32,6 +50,17 @@ export function AssistantProposalCard({ action }: { action: AssistantAction }) {
   const confirmAction = useAction(api.assistant.confirmAction);
   const { reveal } = useDock();
   const [busy, setBusy] = useState<"confirm" | "discard" | null>(null);
+
+  // Tint the card to the event it touches, so a proposal reads as a preview of
+  // that card on the grid. Existing events resolve through the same color logic
+  // the calendar uses; a create (or an id we can't load yet) stays neutral.
+  const eventId = targetEventId(action);
+  const targetEvent = useQuery(
+    api.calendar.getEventById,
+    eventId ? { eventId } : "skip",
+  );
+  const colorFor = useEventColor();
+  const colorVar = targetEvent ? colorFor(targetEvent) : "--event-neutral";
 
   // When the change lands, reach for what it touched on the grid. Only on the
   // fresh pending→applied transition, so reopening a thread with an already-
@@ -72,8 +101,16 @@ export function AssistantProposalCard({ action }: { action: AssistantAction }) {
   return (
     <article
       aria-label="Proposed calendar change"
-      className="rounded-2xl border border-border bg-muted/50 px-3 py-2.5"
+      className="relative overflow-hidden rounded-lg py-2.5 pr-3 pl-4 shadow-sm ring-1 ring-border/60 inset-ring inset-ring-black/10 dark:inset-ring-white/10"
+      style={{
+        backgroundColor: `color-mix(in oklab, var(${colorVar}) 22%, var(--card))`,
+      }}
     >
+      <span
+        aria-hidden
+        className="absolute top-1.5 bottom-1.5 left-1.5 w-[3px] rounded-full"
+        style={{ backgroundColor: `var(${colorVar})` }}
+      />
       <p className="text-sm leading-5">{action.preview}</p>
 
       {pending && !applying && (

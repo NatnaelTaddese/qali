@@ -180,13 +180,17 @@ export function CalendarWeekView() {
   // among the visible columns and ease vertically to `vertical` (a pct of the
   // day, "now" for the current-time line, or null to keep the position); month
   // shows the whole month. `flashId` is the reveal key of the item to pulse.
+  // Bump the reveal so the matching item pulses; `at` lets a late-mounting card
+  // (an assistant change still syncing back) know the reveal is fresh.
+  const bumpReveal = (flashId: string) =>
+    setReveal((prev) => ({ id: flashId, nonce: prev.nonce + 1, at: Date.now() }));
+
   const revealTarget = (spec: {
     date: Date;
     vertical: number | "now" | null;
     flashId: string;
   }) => {
-    const flash = () =>
-      setReveal((prev) => ({ id: spec.flashId, nonce: prev.nonce + 1 }));
+    const flash = () => bumpReveal(spec.flashId);
     const scrollColumn = (index: number) => {
       if (spec.vertical === "now") {
         stripRef.current?.scrollToTodayColumn(index, flash);
@@ -259,7 +263,7 @@ export function CalendarWeekView() {
   // that is already on screen.
   const revealItem = (input: { startMs?: number; flashId: string }) => {
     if (input.startMs == null) {
-      setReveal((prev) => ({ id: input.flashId, nonce: prev.nonce + 1 }));
+      bumpReveal(input.flashId);
       return;
     }
     const date = new Date(input.startMs);

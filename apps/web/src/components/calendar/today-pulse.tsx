@@ -6,14 +6,22 @@ import { REVEAL_FLASH } from "./motion";
 
 /** A destination the calendar has been asked to reach for. `id` is the target
  * item's key (an event `_id`/`googleEventId`, a booking `_id`, or a day key);
- * `nonce` increments on every reveal so the same target can flash again. */
+ * `nonce` increments on every reveal so the same target can flash again; `at`
+ * is when it was issued, used to decide whether a late-mounting card should
+ * still play (see {@link RevealFlash}). */
 export interface Reveal {
   id: string | null;
   nonce: number;
+  at: number;
 }
 
 /** The quiet initial state: nothing revealed yet. */
-export const NO_REVEAL: Reveal = { id: null, nonce: 0 };
+export const NO_REVEAL: Reveal = { id: null, nonce: 0, at: 0 };
+
+/** How long after a reveal a freshly-mounted matching card still flashes. Long
+ * enough for an assistant change to sync back from Google and mount, short
+ * enough that scrolling a long-since-revealed item back into view stays quiet. */
+const REVEAL_FRESH_MS = 4_000;
 
 interface RevealFlashProps {
   /** The active reveal, threaded down from the calendar. */
@@ -38,8 +46,9 @@ export function RevealFlash({ reveal, targetId, className }: RevealFlashProps) {
   const controls = useAnimationControls();
   const reduce = useReducedMotion();
   // The last nonce this item played. Starts below any real nonce (which are
-  // >= 1) so a mount that already matches an unplayed reveal fires once.
+  // >= 1) so a mount that matches a fresh, unplayed reveal fires once.
   const lastPlayed = useRef(-1);
+  const mounted = useRef(false);
 
   // -1 when this item isn't the target, so it never matches `lastPlayed` and
   // never plays; a matching reveal carries a nonce >= 1.
@@ -51,7 +60,16 @@ export function RevealFlash({ reveal, targetId, className }: RevealFlashProps) {
   const active = matches ? reveal.nonce : -1;
 
   useEffect(() => {
+    const isMount = !mounted.current;
+    mounted.current = true;
     if (active < 0 || active === lastPlayed.current) return;
+    // On (re)mount, only fire for a reveal issued just now — otherwise a card
+    // scrolled off and back into view would replay a long-settled reveal. A
+    // genuine new reveal while already mounted always plays.
+    if (isMount && Date.now() - reveal.at > REVEAL_FRESH_MS) {
+      lastPlayed.current = active;
+      return;
+    }
     lastPlayed.current = active;
     if (reduce) return;
     controls.set({ opacity: 0 });
@@ -59,7 +77,7 @@ export function RevealFlash({ reveal, targetId, className }: RevealFlashProps) {
       ...REVEAL_FLASH.keyframes,
       transition: REVEAL_FLASH.transition,
     });
-  }, [active, reduce, controls]);
+  }, [active, reveal.at, reduce, controls]);
 
   return (
     <motion.span

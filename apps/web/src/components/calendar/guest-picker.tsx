@@ -149,7 +149,7 @@ export function GuestPicker({
   /** The organiser hid the guest list from other guests. */
   hidden?: boolean;
 }) {
-  const contacts = useQuery(api.contacts.listContacts) ?? [];
+  const people = useQuery(api.people.listPeople) ?? [];
   const { data: session } = authClient.useSession();
   const organizer = session?.user;
   const reduce = useReducedMotion();
@@ -169,19 +169,17 @@ export function GuestPicker({
     const q = query.trim().toLowerCase();
     const out: Suggestion[] = [];
     const seen = new Set<string>();
-    for (const c of contacts) {
-      for (const email of c.emails) {
-        const key = email.toLowerCase();
-        if (added.has(key) || seen.has(key)) continue;
-        const hay = `${c.displayName ?? ""} ${email}`.toLowerCase();
-        if (q && !hay.includes(q)) continue;
-        seen.add(key);
-        out.push({ email, displayName: c.displayName, photoUrl: c.photoUrl });
-        if (out.length >= MAX_SUGGESTIONS) return out;
-      }
+    for (const p of people) {
+      const key = p.email.toLowerCase();
+      if (added.has(key) || seen.has(key)) continue;
+      const hay = `${p.displayName ?? ""} ${p.email}`.toLowerCase();
+      if (q && !hay.includes(q)) continue;
+      seen.add(key);
+      out.push({ email: p.email, displayName: p.displayName, photoUrl: p.photoUrl });
+      if (out.length >= MAX_SUGGESTIONS) return out;
     }
     return out;
-  }, [contacts, query, added]);
+  }, [people, query, added]);
 
   const typed = query.trim();
   // Offer to add a raw email only when it's plausible and not already a guest or

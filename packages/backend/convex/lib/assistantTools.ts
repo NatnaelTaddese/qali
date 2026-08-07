@@ -427,23 +427,24 @@ const findFreeTime = readTool({
 const searchContacts = readTool({
   name: "search_contacts",
   description:
-    "Look up a person's email address among the user's Google contacts by " +
-    "name or partial email. Call this before adding a guest the user referred " +
-    "to by first name only — never invent or guess an email address.",
+    "Look up a person's email address among the people the user knows — saved " +
+    "Google contacts plus anyone they've met on their calendar — by name or " +
+    "partial email. Call this before adding a guest the user referred to by " +
+    "first name only — never invent or guess an email address.",
   schema: z.object({
     query: z.string().min(1).describe("Name or partial email to match."),
   }),
   async run(tc, args) {
     const needle = args.query.trim().toLowerCase();
-    const rows = await tc.ctx.runQuery(api.contacts.listContacts, {});
+    const rows = await tc.ctx.runQuery(api.people.listPeople, {});
     return rows
       .filter(
-        (c) =>
-          c.displayName?.toLowerCase().includes(needle) ||
-          c.emails.some((e) => e.toLowerCase().includes(needle)),
+        (p) =>
+          p.displayName?.toLowerCase().includes(needle) ||
+          p.email.toLowerCase().includes(needle),
       )
       .slice(0, 10)
-      .map((c) => ({ name: c.displayName, emails: c.emails }));
+      .map((p) => ({ name: p.displayName, email: p.email }));
   },
 });
 

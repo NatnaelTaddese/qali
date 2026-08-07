@@ -116,17 +116,15 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     const userInteractedRef = useRef(false);
     const [now, setNow] = useState(() => Date.now());
     const [visibleStartIdx, setVisibleStartIdx] = useState(anchorIndex);
-    const contacts = useQuery(api.contacts.listContacts) ?? NO_CONTACTS;
+    const people = useQuery(api.people.listPeople) ?? NO_CONTACTS;
     const contactPhotos = useMemo(() => {
       const photos = new Map<string, string>();
-      for (const contact of contacts) {
-        if (!contact.photoUrl) continue;
-        for (const email of contact.emails) {
-          photos.set(email.toLowerCase(), contact.photoUrl);
-        }
+      for (const person of people) {
+        if (!person.photoUrl) continue;
+        photos.set(person.email.toLowerCase(), person.photoUrl);
       }
       return photos;
-    }, [contacts]);
+    }, [people]);
 
     // Keep the clock aligned to minute boundaries, and recover immediately
     // when background-tab throttling or system sleep makes a timer stale.

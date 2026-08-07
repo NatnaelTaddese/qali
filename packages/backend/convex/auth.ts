@@ -30,6 +30,9 @@ function createAuth(ctx: GenericCtx<DataModel>) {
         scope: [
           "https://www.googleapis.com/auth/calendar",
           "https://www.googleapis.com/auth/contacts.readonly",
+          // Read auto-collected "Other contacts" — the source of avatars for
+          // people the user has interacted with but never saved.
+          "https://www.googleapis.com/auth/contacts.other.readonly",
         ],
       },
     },

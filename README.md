@@ -1,9 +1,12 @@
 # qali
 
 A fast, keyboard-friendly calendar client for Google Calendar. qali syncs your
-Google calendars and contacts, then gives you a focused day and month view for
-creating, editing, and rescheduling events with recurring events, guests,
-free/busy, and Google Meet links handled the way Google does.
+Google calendars and builds a unified people directory from your saved contacts,
+Google's auto-collected "Other contacts", and everyone you meet with on your
+calendar — so guests show a real name and avatar even when you never saved them.
+It then gives you a focused day and month view for creating, editing, and
+rescheduling events with recurring events, guests, free/busy, and Google Meet
+links handled the way Google does.
 
 Built as a TypeScript monorepo: a React + TanStack Router frontend, a reactive
 Convex backend, Better Auth for Google OAuth, and a shared shadcn/ui package.

@@ -34,11 +34,14 @@ Never commit `.env` or `.env.local` files.
 ## 3. Configure Google OAuth
 
 qali signs in with Google and syncs Calendar and Contacts, so a plain sign-in
-client isn't enough — you need the APIs and scopes below.
+client isn't enough — you need the APIs and scopes below. Beyond your saved
+contacts, qali also enriches guests from Google's auto-collected "Other contacts"
+(for avatars) and from the attendees on your own calendar events.
 
 **Enable APIs** — in the [Google Cloud Console](https://console.cloud.google.com/),
 open **APIs & Services > Library** and enable the **Google Calendar API** and
-the **People API**.
+the **People API** (the People API also serves Other Contacts — nothing extra to
+enable).
 
 **Add scopes** — under **Google Auth Platform > Data Access**, add:
 
@@ -48,10 +51,12 @@ the **People API**.
 | `.../auth/userinfo.email` | Read the user's email |
 | `.../auth/userinfo.profile` | Read the user's basic profile |
 | `.../auth/calendar` | Read and manage calendars and events |
-| `.../auth/contacts.readonly` | Read contacts for guest suggestions |
+| `.../auth/contacts.readonly` | Read saved contacts for guest suggestions |
+| `.../auth/contacts.other.readonly` | Read auto-saved "Other contacts" for names + avatars |
 
 While publishing status is **Testing**, add every account that will sign in
-under **Audience > Test users**.
+under **Audience > Test users**. Existing users must sign out and back in after a
+scope change to re-consent, or the new Other Contacts sync returns a 403.
 
 **Create the OAuth client** — under **APIs & Services > Credentials**, create an
 **OAuth client ID** of type **Web application** and add this redirect URI

@@ -140,20 +140,20 @@ function GuestSection({
   const [expanded, setExpanded] = useState(false);
   const guestListRef = useRef<HTMLDivElement>(null);
   const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
-  const contacts = useQuery(api.contacts.listContacts) ?? [];
+  const people = useQuery(api.people.listPeople) ?? [];
 
-  // Attendees carry no photo, so fill them in from synced contacts by email.
+  // Attendees carry no photo, so fill them in from the people directory by email.
   const enriched = useMemo(() => {
     const photos = new Map<string, string>();
-    for (const c of contacts) {
-      if (!c.photoUrl) continue;
-      for (const email of c.emails) photos.set(email.toLowerCase(), c.photoUrl);
+    for (const p of people) {
+      if (!p.photoUrl) continue;
+      photos.set(p.email.toLowerCase(), p.photoUrl);
     }
     return guests.map((g) => ({
       ...g,
       photoUrl: g.photoUrl ?? photos.get(g.email.toLowerCase()),
     }));
-  }, [guests, contacts]);
+  }, [guests, people]);
 
   const updateScrollFade = () => {
     const list = guestListRef.current;

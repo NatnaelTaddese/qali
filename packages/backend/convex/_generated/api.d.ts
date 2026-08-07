@@ -28,6 +28,7 @@ import type * as lib_notifications from "../lib/notifications.js";
 import type * as lib_permissions from "../lib/permissions.js";
 import type * as lib_slug from "../lib/slug.js";
 import type * as notifications from "../notifications.js";
+import type * as people from "../people.js";
 import type * as privateData from "../privateData.js";
 
 import type {
@@ -57,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   "lib/permissions": typeof lib_permissions;
   "lib/slug": typeof lib_slug;
   notifications: typeof notifications;
+  people: typeof people;
   privateData: typeof privateData;
 }>;
 

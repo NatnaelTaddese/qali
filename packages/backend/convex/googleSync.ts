@@ -2,7 +2,7 @@ import type { GenericCtx } from "@convex-dev/better-auth";
 import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
-import type { DataModel } from "./_generated/dataModel";
+import type { DataModel, Doc } from "./_generated/dataModel";
 import {
   action,
   internalAction,
@@ -16,6 +16,7 @@ import {
   fetchCalendarList,
   fetchCalendarPage,
   fetchContactsPage,
+  fetchOtherContactsPage,
   SyncTokenExpiredError,
 } from "./lib/google";
 import { googleEventValidator } from "./schema";
@@ -44,6 +45,121 @@ const calendarValidator = v.object({
 });
 
 const EVENT_CLEANUP_BATCH_SIZE = 100;
+
+// ---------------------------------------------------------------------------
+// People directory — the email-keyed union of saved connections, Other
+// Contacts, and calendar attendees. Every feeder funnels through
+// `upsertPeopleRows` so the merge rule lives in one place.
+// ---------------------------------------------------------------------------
+type PersonSource = "connection" | "other" | "attendee";
+
+type PersonInput = { email: string; displayName?: string; photoUrl?: string };
+
+/** One event's people (attendees + organizer + creator), minus the user
+ * themselves. Shared by the live event upsert and the backfill so both harvest
+ * the same set. `self` is Google's authoritative "this is you" flag. */
+function collectEventPeople(e: {
+  attendees?: { email: string; displayName?: string; self?: boolean }[];
+  organizer?: { email?: string; displayName?: string; self?: boolean };
+  creator?: { email?: string; displayName?: string; self?: boolean };
+}): PersonInput[] {
+  const rows: PersonInput[] = [];
+  for (const a of e.attendees ?? []) {
+    if (!a.self && a.email) {
+      rows.push({ email: a.email, displayName: a.displayName });
+    }
+  }
+  for (const p of [e.organizer, e.creator]) {
+    if (p && !p.self && p.email) {
+      rows.push({ email: p.email, displayName: p.displayName });
+    }
+  }
+  return rows;
+}
+
+/** Merge people rows into the `people` table, keyed by lowercased email.
+ *
+ * Merge rule: "connection" and "other" are authoritative Google records, so
+ * they refresh the name and photo when they carry one; "attendee" only fills
+ * blanks and never touches the photo (calendar data has none) — so harvesting a
+ * guest can never wipe a real photo a contact sync provided. Idempotent. */
+async function upsertPeopleRows(
+  ctx: MutationCtx,
+  userId: string,
+  source: PersonSource,
+  rows: PersonInput[],
+): Promise<void> {
+  const authoritative = source !== "attendee";
+  // Collapse duplicate emails within the page (same guest across many events).
+  const byEmail = new Map<string, PersonInput>();
+  for (const r of rows) {
+    const email = r.email.trim().toLowerCase();
+    if (!email) {
+      continue;
+    }
+    const prev = byEmail.get(email);
+    byEmail.set(email, {
+      email,
+      displayName: r.displayName ?? prev?.displayName,
+      photoUrl: r.photoUrl ?? prev?.photoUrl,
+    });
+  }
+  const now = Date.now();
+  for (const r of byEmail.values()) {
+    const existing = await ctx.db
+      .query("people")
+      .withIndex("by_user_and_email", (q) =>
+        q.eq("userId", userId).eq("email", r.email),
+      )
+      .unique();
+    if (existing) {
+      const sources = existing.sources.includes(source)
+        ? existing.sources
+        : [...existing.sources, source];
+      await ctx.db.patch(existing._id, {
+        displayName: authoritative
+          ? (r.displayName ?? existing.displayName)
+          : (existing.displayName ?? r.displayName),
+        photoUrl: authoritative
+          ? (r.photoUrl ?? existing.photoUrl)
+          : existing.photoUrl,
+        sources,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.insert("people", {
+        userId,
+        email: r.email,
+        displayName: r.displayName,
+        photoUrl: r.photoUrl,
+        sources: [source],
+        updatedAt: now,
+      });
+    }
+  }
+}
+
+/** Fan a mapped-contact page (connections or Other Contacts) into people rows,
+ * skipping tombstones. */
+function contactsToPeople(
+  contacts: {
+    deleted: boolean;
+    displayName?: string;
+    emails: string[];
+    photoUrl?: string;
+  }[],
+): PersonInput[] {
+  const rows: PersonInput[] = [];
+  for (const c of contacts) {
+    if (c.deleted) {
+      continue;
+    }
+    for (const email of c.emails) {
+      rows.push({ email, displayName: c.displayName, photoUrl: c.photoUrl });
+    }
+  }
+  return rows;
+}
 
 async function deleteCalendarEventsBatch(
   ctx: MutationCtx,
@@ -242,6 +358,57 @@ async function syncContacts(
   }
 }
 
+/** Sync the People API "Other contacts" list into the people directory. Mirrors
+ * `syncContacts`: incremental via `otherContactsSyncToken`, restarting a full
+ * resync when Google expires the token. This is the source of avatars for people
+ * the user has interacted with but never saved. */
+async function syncOtherContacts(
+  ctx: ActionCtx,
+  userId: string,
+  accessToken: string,
+): Promise<void> {
+  const state = await ctx.runQuery(internal.googleSync.getSyncState, { userId });
+  let syncToken = state?.otherContactsSyncToken;
+  let fullResync = !syncToken;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      let pageToken: string | undefined;
+      let newSyncToken: string | undefined;
+      do {
+        const page = await fetchOtherContactsPage(accessToken, {
+          syncToken: fullResync ? undefined : syncToken,
+          pageToken,
+          requestSyncToken: fullResync ? true : undefined,
+        });
+        if (page.contacts.length > 0) {
+          await ctx.runMutation(internal.googleSync.upsertOtherContactsPage, {
+            userId,
+            contacts: page.contacts,
+          });
+        }
+        pageToken = page.nextPageToken;
+        newSyncToken = page.nextSyncToken ?? newSyncToken;
+      } while (pageToken);
+
+      if (newSyncToken) {
+        await ctx.runMutation(internal.googleSync.setOtherContactsSync, {
+          userId,
+          syncToken: newSyncToken,
+        });
+      }
+      return;
+    } catch (err) {
+      if (err instanceof SyncTokenExpiredError) {
+        fullResync = true;
+        syncToken = undefined;
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 async function runSyncForUser(ctx: ActionCtx, userId: string): Promise<void> {
   await ctx.runMutation(internal.googleSync.ensureSyncState, { userId });
   await ctx.runMutation(internal.googleSync.setSyncStatus, {
@@ -252,6 +419,7 @@ async function runSyncForUser(ctx: ActionCtx, userId: string): Promise<void> {
     const accessToken = await getGoogleAccessToken(ctx, userId);
     await syncCalendar(ctx, userId, accessToken);
     await syncContacts(ctx, userId, accessToken);
+    await syncOtherContacts(ctx, userId, accessToken);
     await ctx.runMutation(internal.googleSync.setSyncStatus, {
       userId,
       status: "idle",
@@ -318,6 +486,58 @@ export const forceFullResync = internalAction({
         { googleCalendarId: cal.googleCalendarId },
         timeMinMs,
       );
+    }
+    return null;
+  },
+});
+
+/** One-time backfill of the `people` directory from data already stored.
+ *
+ * Contacts and events sync incrementally, so neither re-emits rows that haven't
+ * changed since the `people` table was introduced — connections and existing
+ * attendees would never reach the new directory on their own. This walks the
+ * `contacts` and then the `events` table in batches (self-scheduling across
+ * transactions) and funnels each through the same idempotent `upsertPeopleRows`
+ * merge, so it is safe to re-run. Other Contacts need no backfill: their first
+ * sync is a full resync. Run by hand from the dashboard after deploying. */
+export const backfillPeople = internalMutation({
+  args: {
+    phase: v.optional(v.union(v.literal("contacts"), v.literal("events"))),
+    cursor: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const phase = args.phase ?? "contacts";
+    const BATCH = 100;
+    const page = await ctx.db
+      .query(phase === "contacts" ? "contacts" : "events")
+      .paginate({ cursor: args.cursor ?? null, numItems: BATCH });
+
+    if (phase === "contacts") {
+      for (const c of page.page as Doc<"contacts">[]) {
+        await upsertPeopleRows(ctx, c.userId, "connection", [
+          ...c.emails.map((email) => ({
+            email,
+            displayName: c.displayName,
+            photoUrl: c.photoUrl,
+          })),
+        ]);
+      }
+    } else {
+      for (const e of page.page as Doc<"events">[]) {
+        await upsertPeopleRows(ctx, e.userId, "attendee", collectEventPeople(e));
+      }
+    }
+
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.googleSync.backfillPeople, {
+        phase,
+        cursor: page.continueCursor,
+      });
+    } else if (phase === "contacts") {
+      // Contacts done — move on to harvesting people from existing events.
+      await ctx.scheduler.runAfter(0, internal.googleSync.backfillPeople, {
+        phase: "events",
+      });
     }
     return null;
   },
@@ -578,9 +798,27 @@ export const setContactsSync = internalMutation({
   },
 });
 
+export const setOtherContactsSync = internalMutation({
+  args: { userId: v.string(), syncToken: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db
+      .query("syncState")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .unique();
+    if (row) {
+      await ctx.db.patch(row._id, {
+        otherContactsSyncToken: args.syncToken,
+        lastOtherContactsSyncAt: Date.now(),
+      });
+    }
+    return null;
+  },
+});
+
 export const upsertEventsPage = internalMutation({
   args: { userId: v.string(), events: v.array(googleEventValidator) },
   handler: async (ctx, args): Promise<null> => {
+    const harvested: PersonInput[] = [];
     for (const e of args.events) {
       const existing = await ctx.db
         .query("events")
@@ -604,7 +842,11 @@ export const upsertEventsPage = internalMutation({
       } else {
         await ctx.db.insert("events", { userId: args.userId, ...e });
       }
+      harvested.push(...collectEventPeople(e));
     }
+    // Harvest guests/organizers into the people directory so anyone the user
+    // meets with becomes a known contact (name only — calendar carries no photo).
+    await upsertPeopleRows(ctx, args.userId, "attendee", harvested);
     return null;
   },
 });
@@ -632,6 +874,29 @@ export const upsertContactsPage = internalMutation({
         await ctx.db.insert("contacts", { userId: args.userId, ...rest });
       }
     }
+    // Mirror saved connections into the email-keyed people directory.
+    await upsertPeopleRows(
+      ctx,
+      args.userId,
+      "connection",
+      contactsToPeople(args.contacts),
+    );
+    return null;
+  },
+});
+
+/** Merge a page of People API "Other contacts" into the people directory. These
+ * never land in the `contacts` table (they aren't saved contacts); they exist
+ * only to enrich attendees with a name + avatar. */
+export const upsertOtherContactsPage = internalMutation({
+  args: { userId: v.string(), contacts: v.array(contactValidator) },
+  handler: async (ctx, args): Promise<null> => {
+    await upsertPeopleRows(
+      ctx,
+      args.userId,
+      "other",
+      contactsToPeople(args.contacts),
+    );
     return null;
   },
 });

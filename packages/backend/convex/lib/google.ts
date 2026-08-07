@@ -644,3 +644,44 @@ export async function fetchContactsPage(
     nextSyncToken: data.nextSyncToken,
   };
 }
+
+// "Other contacts" are addresses Google auto-collected from the user's activity
+// (people they've emailed but never saved). Unlike `connections`, this endpoint
+// takes `readMask` (not `personFields`) and only returns profile fields — notably
+// photos — when `sources` includes READ_SOURCE_TYPE_PROFILE. We request both the
+// contact and profile sources so people with a public Google photo carry one.
+export async function fetchOtherContactsPage(
+  accessToken: string,
+  opts: { syncToken?: string; pageToken?: string; requestSyncToken?: boolean },
+): Promise<ContactsPage> {
+  const params = new URLSearchParams({
+    readMask: "names,emailAddresses,phoneNumbers,photos",
+    pageSize: "200",
+  });
+  params.append("sources", "READ_SOURCE_TYPE_CONTACT");
+  params.append("sources", "READ_SOURCE_TYPE_PROFILE");
+  if (opts.pageToken) {
+    params.set("pageToken", opts.pageToken);
+  }
+  if (opts.syncToken) {
+    params.set("syncToken", opts.syncToken);
+  }
+  if (opts.requestSyncToken) {
+    params.set("requestSyncToken", "true");
+  }
+
+  const data = (await googleFetch(
+    `${PEOPLE_BASE}/otherContacts?${params.toString()}`,
+    accessToken,
+  )) as {
+    otherContacts?: RawPerson[];
+    nextPageToken?: string;
+    nextSyncToken?: string;
+  };
+
+  return {
+    contacts: (data.otherContacts ?? []).map(mapGoogleContact),
+    nextPageToken: data.nextPageToken,
+    nextSyncToken: data.nextSyncToken,
+  };
+}

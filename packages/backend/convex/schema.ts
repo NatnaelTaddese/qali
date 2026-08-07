@@ -130,6 +130,11 @@ export default defineSchema({
     userId: v.string(),
     contactsSyncToken: v.optional(v.string()),
     lastContactsSyncAt: v.optional(v.number()),
+    // Incremental sync token for the People API "Other contacts" list — the
+    // auto-collected addresses that back avatars for people the user has only
+    // interacted with, never saved. Tracked separately from contactsSyncToken.
+    otherContactsSyncToken: v.optional(v.string()),
+    lastOtherContactsSyncAt: v.optional(v.number()),
     status: v.union(
       v.literal("idle"),
       v.literal("syncing"),
@@ -320,6 +325,29 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_user_and_resourceName", ["userId", "resourceName"]),
+
+  // A unified, email-keyed people directory: the union of three feeders —
+  // saved Google connections ("connection"), auto-collected Other Contacts
+  // ("other"), and people harvested from calendar events ("attendee"). This is
+  // what the client joins attendee emails against for names + avatars, so a
+  // guest the user has met but never saved still gets a real photo. One row per
+  // (userId, lowercased email); `sources` records which feeders have seen it.
+  people: defineTable({
+    userId: v.string(),
+    email: v.string(),
+    displayName: v.optional(v.string()),
+    photoUrl: v.optional(v.string()),
+    sources: v.array(
+      v.union(
+        v.literal("connection"),
+        v.literal("other"),
+        v.literal("attendee"),
+      ),
+    ),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_and_email", ["userId", "email"]),
 
   // --- AI assistant ---------------------------------------------------------
   // These tables stay empty when no DEEPSEEK_API_KEY is configured; the

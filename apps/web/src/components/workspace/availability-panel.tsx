@@ -231,7 +231,7 @@ function AvailabilityForm({
   const [horizonDays, setHorizonDays] = useState(
     () => initial?.horizonDays ?? 60,
   );
-  const [enabled, setEnabled] = useState(() => page?.enabled ?? true);
+  const [enabled, setEnabled] = useState(() => page?.enabled ?? false);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [screen, setScreen] = useState<"main" | "requests">("main");
@@ -261,7 +261,7 @@ function AvailabilityForm({
     setSlotMinutes(initial.slotMinutes);
     setNoticeHours(Math.round(initial.minNoticeMinutes / 60));
     setHorizonDays(initial.horizonDays);
-    setEnabled(page?.enabled ?? true);
+    setEnabled(page?.enabled ?? false);
   }, [initial, page, defaults]);
 
   useEffect(() => {

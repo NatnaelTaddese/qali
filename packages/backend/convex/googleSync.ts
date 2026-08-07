@@ -139,6 +139,70 @@ async function upsertPeopleRows(
   }
 }
 
+// --- Engagement scoring ----------------------------------------------------
+// A person's rank in the guest picker: a recency- and intimacy-weighted count
+// of the events you share with them. Recomputed from `events` on each sync
+// (materialized onto `people`) because the recency decay needs the wall clock,
+// which queries may not read.
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Only score events within the synced window; older ones contribute ~nothing
+// after decay anyway. Matches CALENDAR_HISTORY_MS (declared below) so nothing in
+// range is missed.
+const ENGAGEMENT_WINDOW_MS = 365 * DAY_MS;
+// How fast an event's weight halves as it recedes into the past (or future).
+const ENGAGEMENT_HALF_LIFE_DAYS = 30;
+// Upcoming meetings signal current relevance, so they outweigh an equally-recent
+// past one.
+const ENGAGEMENT_UPCOMING_BOOST = 1.6;
+
+type Engagement = {
+  score: number;
+  meetingCount: number;
+  lastMetMs?: number;
+  nextMeetingMs?: number;
+};
+
+/** One event's contribution to a shared person's engagement. `size` is the
+ * event's guest count — smaller meetings imply a closer relationship. */
+function eventEngagementWeight(startMs: number, size: number, now: number): number {
+  const ageDays = Math.abs(now - startMs) / DAY_MS;
+  const recency = 2 ** (-ageDays / ENGAGEMENT_HALF_LIFE_DAYS);
+  const intimacy = 1 / Math.log2(Math.max(size, 2) + 1);
+  const boost = startMs > now ? ENGAGEMENT_UPCOMING_BOOST : 1;
+  return recency * intimacy * boost;
+}
+
+/** Fold one event into the running per-email engagement map. */
+function accumulateEventEngagement(
+  byEmail: Map<string, Engagement>,
+  event: { startMs: number; status: string; attendees?: { email: string; self?: boolean }[] },
+  now: number,
+): void {
+  if (event.status === "cancelled") {
+    return;
+  }
+  const attendees = event.attendees ?? [];
+  const weight = eventEngagementWeight(event.startMs, attendees.length, now);
+  for (const a of attendees) {
+    if (a.self || !a.email) {
+      continue;
+    }
+    const email = a.email.trim().toLowerCase();
+    if (!email) {
+      continue;
+    }
+    const agg = byEmail.get(email) ?? { score: 0, meetingCount: 0 };
+    agg.score += weight;
+    agg.meetingCount += 1;
+    if (event.startMs <= now) {
+      agg.lastMetMs = Math.max(agg.lastMetMs ?? 0, event.startMs);
+    } else {
+      agg.nextMeetingMs = Math.min(agg.nextMeetingMs ?? Infinity, event.startMs);
+    }
+    byEmail.set(email, agg);
+  }
+}
+
 /** Fan a mapped-contact page (connections or Other Contacts) into people rows,
  * skipping tombstones. */
 function contactsToPeople(
@@ -420,6 +484,8 @@ async function runSyncForUser(ctx: ActionCtx, userId: string): Promise<void> {
     await syncCalendar(ctx, userId, accessToken);
     await syncContacts(ctx, userId, accessToken);
     await syncOtherContacts(ctx, userId, accessToken);
+    // Rank the people directory by how much the user actually meets each person.
+    await recomputeEngagementForUser(ctx, userId);
     await ctx.runMutation(internal.googleSync.setSyncStatus, {
       userId,
       status: "idle",
@@ -897,6 +963,133 @@ export const upsertOtherContactsPage = internalMutation({
       "other",
       contactsToPeople(args.contacts),
     );
+    return null;
+  },
+});
+
+/** A page of events trimmed to just what engagement scoring reads. Keeping the
+ * projection narrow keeps the action's bytes-read bounded on large calendars. */
+type EngagementEventPage = {
+  page: {
+    startMs: number;
+    status: string;
+    attendees?: { email: string; self?: boolean }[];
+  }[];
+  isDone: boolean;
+  continueCursor: string;
+};
+
+export const listEventsPageForEngagement = internalQuery({
+  args: {
+    userId: v.string(),
+    sinceMs: v.number(),
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
+  },
+  handler: async (ctx, args): Promise<EngagementEventPage> => {
+    const page = await ctx.db
+      .query("events")
+      .withIndex("by_user_and_start", (q) =>
+        q.eq("userId", args.userId).gte("startMs", args.sinceMs),
+      )
+      .paginate({ cursor: args.cursor, numItems: args.numItems });
+    return {
+      page: page.page.map((e) => ({
+        startMs: e.startMs,
+        status: e.status,
+        attendees: e.attendees,
+      })),
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
+  },
+});
+
+export const applyEngagementScores = internalMutation({
+  args: {
+    userId: v.string(),
+    scores: v.array(
+      v.object({
+        email: v.string(),
+        score: v.number(),
+        meetingCount: v.number(),
+        lastMetMs: v.optional(v.number()),
+        nextMeetingMs: v.optional(v.number()),
+      }),
+    ),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const now = Date.now();
+    for (const s of args.scores) {
+      const row = await ctx.db
+        .query("people")
+        .withIndex("by_user_and_email", (q) =>
+          q.eq("userId", args.userId).eq("email", s.email),
+        )
+        .unique();
+      if (row) {
+        await ctx.db.patch(row._id, {
+          score: s.score,
+          meetingCount: s.meetingCount,
+          lastMetMs: s.lastMetMs,
+          nextMeetingMs: s.nextMeetingMs,
+          updatedAt: now,
+        });
+      }
+    }
+    return null;
+  },
+});
+
+/** Recompute every known person's engagement score from the user's events and
+ * write it back onto their `people` row. Reads events in pages and aggregates in
+ * the action (the recency decay needs the wall clock), then flushes scores in
+ * bounded mutation batches. Idempotent — a re-run overwrites, never accumulates.
+ */
+async function recomputeEngagementForUser(
+  ctx: ActionCtx,
+  userId: string,
+): Promise<void> {
+  const now = Date.now();
+  const sinceMs = now - ENGAGEMENT_WINDOW_MS;
+  const byEmail = new Map<string, Engagement>();
+  let cursor: string | null = null;
+  for (;;) {
+    const page: EngagementEventPage = await ctx.runQuery(
+      internal.googleSync.listEventsPageForEngagement,
+      { userId, sinceMs, cursor, numItems: 200 },
+    );
+    for (const e of page.page) {
+      accumulateEventEngagement(byEmail, e, now);
+    }
+    if (page.isDone) {
+      break;
+    }
+    cursor = page.continueCursor;
+  }
+
+  const scores = [...byEmail.entries()].map(([email, agg]) => ({
+    email,
+    score: agg.score,
+    meetingCount: agg.meetingCount,
+    lastMetMs: agg.lastMetMs,
+    nextMeetingMs: agg.nextMeetingMs,
+  }));
+  const BATCH = 200;
+  for (let i = 0; i < scores.length; i += BATCH) {
+    await ctx.runMutation(internal.googleSync.applyEngagementScores, {
+      userId,
+      scores: scores.slice(i, i + BATCH),
+    });
+  }
+}
+
+/** Standalone entry point for engagement recompute (dashboard / backfill). The
+ * sync path calls the helper directly. */
+export const recomputeEngagement = internalAction({
+  args: { userId: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    await recomputeEngagementForUser(ctx, args.userId);
     return null;
   },
 });

@@ -344,6 +344,15 @@ export default defineSchema({
         v.literal("attendee"),
       ),
     ),
+    // Engagement ranking, recomputed from the user's events on each sync (see
+    // recomputeEngagement in googleSync.ts). A recency- + intimacy-weighted
+    // frequency score orders the guest picker toward frequent, recent meeting
+    // partners. The count/timestamps back tiebreaks and future UI hints. Absent
+    // until the first recompute; treat missing as 0 / never.
+    score: v.optional(v.number()),
+    meetingCount: v.optional(v.number()),
+    lastMetMs: v.optional(v.number()),
+    nextMeetingMs: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index("by_user", ["userId"])

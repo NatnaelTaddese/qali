@@ -29,4 +29,23 @@ crons.interval(
   {},
 );
 
+// Cap the events table: delete events older than the sync horizon (365 days) so
+// past events don't accumulate without bound. Daily is ample for a slow horizon.
+crons.interval(
+  "prune aged-out events",
+  { hours: 24 },
+  internal.maintenance.enqueueEventPrune,
+  {},
+);
+
+// Cap the assistant tables: delete conversations untouched for 30 days. The
+// user-driven "new chat discards the prior" path handles the common case; this
+// catches threads left behind rather than replaced.
+crons.interval(
+  "prune old assistant threads",
+  { hours: 24 },
+  internal.assistantMaintenance.pruneAgedThreads,
+  {},
+);
+
 export default crons;

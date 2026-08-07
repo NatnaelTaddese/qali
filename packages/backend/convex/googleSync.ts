@@ -46,6 +46,16 @@ const calendarValidator = v.object({
 
 const EVENT_CLEANUP_BATCH_SIZE = 100;
 
+// Adaptive background-sync cadence. A run that changes nothing doubles the poll
+// interval from the floor toward the cap; a change or a user-initiated sync
+// resets it to the floor. Idle users (app closed) drift to SYNC_MAX_MS between
+// Google polls; an open app stays fresh because the client calls syncNow itself.
+const SYNC_MIN_MS = 15 * 60 * 1000; // active/floor: every 15 min
+const SYNC_MAX_MS = 60 * 60 * 1000; // idle cap: at most once an hour
+// How many due users one cron tick schedules per transaction before continuing
+// in a fresh one — keeps the fan-out bounded regardless of user count.
+const SYNC_FANOUT_BATCH = 100;
+
 // ---------------------------------------------------------------------------
 // People directory — the email-keyed union of saved connections, Other
 // Contacts, and calendar attendees. Every feeder funnels through
@@ -489,7 +499,11 @@ async function syncOtherContacts(
   }
 }
 
-async function runSyncForUser(ctx: ActionCtx, userId: string): Promise<void> {
+async function runSyncForUser(
+  ctx: ActionCtx,
+  userId: string,
+  initiatedByUser: boolean,
+): Promise<void> {
   await ctx.runMutation(internal.googleSync.ensureSyncState, { userId });
   await ctx.runMutation(internal.googleSync.setSyncStatus, {
     userId,
@@ -508,15 +522,20 @@ async function runSyncForUser(ctx: ActionCtx, userId: string): Promise<void> {
     if (eventsChanged) {
       await recomputeEngagementForUser(ctx, userId);
     }
-    await ctx.runMutation(internal.googleSync.setSyncStatus, {
+    // Set the next background poll: reset to the floor when the user is active
+    // (open app) or something changed; otherwise back off toward the cap.
+    await ctx.runMutation(internal.googleSync.recordSyncOutcome, {
       userId,
       status: "idle",
+      active: initiatedByUser || eventsChanged,
     });
   } catch (err) {
-    await ctx.runMutation(internal.googleSync.setSyncStatus, {
+    await ctx.runMutation(internal.googleSync.recordSyncOutcome, {
       userId,
       status: "error",
       lastError: err instanceof Error ? err.message : String(err),
+      // A failed run shouldn't hammer Google; back off like an idle run.
+      active: false,
     });
     throw err;
   }
@@ -534,7 +553,8 @@ export const syncNow = action({
     if (!user) {
       throw new Error("Not authenticated");
     }
-    await runSyncForUser(ctx, user._id);
+    // User-initiated: keep them on the fast cadence while the app is open.
+    await runSyncForUser(ctx, user._id, true);
     return null;
   },
 });
@@ -543,7 +563,7 @@ export const syncNow = action({
 export const syncUser = internalAction({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
-    await runSyncForUser(ctx, args.userId);
+    await runSyncForUser(ctx, args.userId, false);
     return null;
   },
 });
@@ -636,26 +656,46 @@ export const backfillPeople = internalMutation({
  * Event-driven recompute (in runSyncForUser) handles the common case; this is
  * the safety net for idle calendars. */
 export const enqueueEngagementRefresh = internalMutation({
-  args: {},
-  handler: async (ctx): Promise<null> => {
-    const rows = await ctx.db.query("syncState").collect();
-    for (const row of rows) {
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, args): Promise<null> => {
+    const page = await ctx.db
+      .query("syncState")
+      .paginate({ cursor: args.cursor ?? null, numItems: SYNC_FANOUT_BATCH });
+    for (const row of page.page) {
       await ctx.scheduler.runAfter(0, internal.googleSync.recomputeEngagement, {
         userId: row.userId,
       });
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.googleSync.enqueueEngagementRefresh,
+        { cursor: page.continueCursor },
+      );
     }
     return null;
   },
 });
 
-/** Fan out a sync for every registered user (called by the cron). */
+/** Fan out a sync for every user whose adaptive interval has elapsed (called by
+ * the cron every 15 min). Only due users are scheduled, and the scan is
+ * paginated + self-continued so the fan-out stays bounded at any user count. */
 export const enqueueSyncs = internalMutation({
-  args: {},
-  handler: async (ctx): Promise<null> => {
-    const rows = await ctx.db.query("syncState").collect();
-    for (const row of rows) {
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, args): Promise<null> => {
+    const now = Date.now();
+    const page = await ctx.db
+      .query("syncState")
+      .withIndex("by_nextSyncDueAt", (q) => q.lte("nextSyncDueAt", now))
+      .paginate({ cursor: args.cursor ?? null, numItems: SYNC_FANOUT_BATCH });
+    for (const row of page.page) {
       await ctx.scheduler.runAfter(0, internal.googleSync.syncUser, {
         userId: row.userId,
+      });
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.googleSync.enqueueSyncs, {
+        cursor: page.continueCursor,
       });
     }
     return null;
@@ -680,7 +720,18 @@ export const ensureSyncState = internalMutation({
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .unique();
     if (!existing) {
-      await ctx.db.insert("syncState", { userId: args.userId, status: "idle" });
+      await ctx.db.insert("syncState", {
+        userId: args.userId,
+        status: "idle",
+        nextSyncDueAt: 0,
+        syncIntervalMs: SYNC_MIN_MS,
+      });
+    } else if (existing.nextSyncDueAt === undefined) {
+      // Lazily backfill cadence fields on rows created before adaptive sync.
+      await ctx.db.patch(existing._id, {
+        nextSyncDueAt: 0,
+        syncIntervalMs: SYNC_MIN_MS,
+      });
     }
     return null;
   },
@@ -707,6 +758,39 @@ export const setSyncStatus = internalMutation({
         lastError: args.status === "error" ? args.lastError : undefined,
       });
     }
+    return null;
+  },
+});
+
+/** Finalize a sync run: set status and schedule the next background poll. An
+ * `active` run (user-initiated, or something changed) resets the interval to the
+ * floor; an idle run backs it off toward the cap so quiet users poll Google far
+ * less often. */
+export const recordSyncOutcome = internalMutation({
+  args: {
+    userId: v.string(),
+    status: v.union(v.literal("idle"), v.literal("error")),
+    active: v.boolean(),
+    lastError: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db
+      .query("syncState")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .unique();
+    if (!row) {
+      return null;
+    }
+    const prev = row.syncIntervalMs ?? SYNC_MIN_MS;
+    const interval = args.active
+      ? SYNC_MIN_MS
+      : Math.min(prev * 2, SYNC_MAX_MS);
+    await ctx.db.patch(row._id, {
+      status: args.status,
+      lastError: args.status === "error" ? args.lastError : undefined,
+      syncIntervalMs: interval,
+      nextSyncDueAt: Date.now() + interval,
+    });
     return null;
   },
 });

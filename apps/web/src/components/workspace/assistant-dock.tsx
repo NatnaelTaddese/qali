@@ -8,7 +8,7 @@ import {
   GooDropdown,
   type GooDropdownHandle,
 } from "@qali/ui/components/ui/goo-dropdown";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import {
   Component,
@@ -142,10 +142,17 @@ export function AssistantDock() {
     setStartingFresh(false);
   }, []);
 
+  const deleteThread = useMutation(api.assistantMaintenance.deleteThread);
   const startNewChat = useCallback(() => {
+    // Starting fresh discards the conversation just left: at most a handful of
+    // threads ever accumulate, and the 30-day cron mops up any stragglers.
+    const prior = threadId;
     setThreadId(null);
     setStartingFresh(true);
-  }, []);
+    if (prior) {
+      void deleteThread({ threadId: prior });
+    }
+  }, [threadId, deleteThread]);
 
   if (!assistantAvailable) return null;
 

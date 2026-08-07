@@ -141,7 +141,16 @@ export default defineSchema({
       v.literal("error"),
     ),
     lastError: v.optional(v.string()),
-  }).index("by_user", ["userId"]),
+    // Adaptive background-sync cadence. The 15-min cron only enqueues users whose
+    // `nextSyncDueAt` has passed; a run that finds no changes doubles the
+    // interval (up to a cap), and any change — or a user-initiated syncNow —
+    // resets it to the floor. Idle users (app closed) thus poll Google far less,
+    // while an open app stays fresh because it calls syncNow directly.
+    nextSyncDueAt: v.optional(v.number()),
+    syncIntervalMs: v.optional(v.number()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_nextSyncDueAt", ["nextSyncDueAt"]),
 
   // One row per Google calendar in the user's CalendarList. Holds display
   // metadata, the user's visibility choice, and the per-calendar sync token.
@@ -356,7 +365,10 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_user", ["userId"])
-    .index("by_user_and_email", ["userId", "email"]),
+    .index("by_user_and_email", ["userId", "email"])
+    // Ranked reads for the guest picker: query descending to get top scorers
+    // without loading and JS-sorting the whole directory per client.
+    .index("by_user_and_score", ["userId", "score"]),
 
   // --- AI assistant ---------------------------------------------------------
   // These tables stay empty when no DEEPSEEK_API_KEY is configured; the

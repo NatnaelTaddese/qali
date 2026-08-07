@@ -10,6 +10,7 @@
 
 import type * as assistant from "../assistant.js";
 import type * as assistantData from "../assistantData.js";
+import type * as assistantMaintenance from "../assistantMaintenance.js";
 import type * as auth from "../auth.js";
 import type * as booking from "../booking.js";
 import type * as calendar from "../calendar.js";
@@ -27,6 +28,7 @@ import type * as lib_google from "../lib/google.js";
 import type * as lib_notifications from "../lib/notifications.js";
 import type * as lib_permissions from "../lib/permissions.js";
 import type * as lib_slug from "../lib/slug.js";
+import type * as maintenance from "../maintenance.js";
 import type * as notifications from "../notifications.js";
 import type * as people from "../people.js";
 import type * as privateData from "../privateData.js";
@@ -40,6 +42,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   assistant: typeof assistant;
   assistantData: typeof assistantData;
+  assistantMaintenance: typeof assistantMaintenance;
   auth: typeof auth;
   booking: typeof booking;
   calendar: typeof calendar;
@@ -57,6 +60,7 @@ declare const fullApi: ApiFromModules<{
   "lib/notifications": typeof lib_notifications;
   "lib/permissions": typeof lib_permissions;
   "lib/slug": typeof lib_slug;
+  maintenance: typeof maintenance;
   notifications: typeof notifications;
   people: typeof people;
   privateData: typeof privateData;

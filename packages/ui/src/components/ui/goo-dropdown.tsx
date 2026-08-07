@@ -571,9 +571,10 @@ export const GooDropdown = forwardRef<GooDropdownHandle, GooDropdownProps>(
       close: () => closeMenu(),
       toggle: () => (open ? closeMenu() : openMenu()),
     }),
-    // `open` is read in `toggle`; the menu helpers are stable enough for the
-    // rest. Re-derive the handle when the open state flips so `toggle` sees it.
-    [open],
+    // `openMenu`/`closeMenu` are re-created each render and close over the
+    // current geometry props, so include them: a resize-while-closed followed
+    // by an imperative `open()` must use the latest, not a stale, closure.
+    [open, openMenu, closeMenu],
   )
 
   const select = (item: DropdownItem) => {

@@ -147,7 +147,9 @@ export const listMessages = query({
   },
 });
 
-/** Writes the assistant has proposed in this thread and is waiting on. */
+/** All proposed writes in this thread, in any state (pending, applying,
+ * applied, rejected, failed). The panel uses these to resolve `proposal`
+ * blocks across the whole thread, not just the ones awaiting the user. */
 export const listPendingActions = query({
   args: { threadId: v.id("assistantThreads") },
   handler: async (ctx, args) => {

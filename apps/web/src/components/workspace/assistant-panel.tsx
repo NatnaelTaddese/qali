@@ -97,6 +97,7 @@ export function AssistantPanel({
   threads,
   messages,
   actions,
+  quota,
 }: {
   onClose: () => void;
   threadId: Id<"assistantThreads"> | null;
@@ -111,6 +112,9 @@ export function AssistantPanel({
     | undefined;
   actions:
     | FunctionReturnType<typeof api.assistantData.listPendingActions>
+    | undefined;
+  quota:
+    | FunctionReturnType<typeof api.assistantData.monthlyQuota>
     | undefined;
 }) {
   const [draft, setDraft] = useState("");
@@ -204,6 +208,10 @@ export function AssistantPanel({
       (!threadId && (threads?.length ?? 0) > 0) ||
       (Boolean(threadId) && messages === undefined));
   const composerBusy = sending || turnInProgress || conversationLoading;
+  // Once the rolling-30-day allowance is spent, sending is blocked client-side
+  // (the backend enforces it too). `undefined` means the quota hasn't loaded —
+  // treat that as not-yet-blocked so the composer never flickers disabled.
+  const limitReached = quota !== undefined && quota.remaining <= 0;
   const wasComposerBusyRef = useRef(composerBusy);
 
   useEffect(() => {
@@ -219,7 +227,7 @@ export function AssistantPanel({
 
   const send = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || composerBusy) return;
+    if (!trimmed || composerBusy || limitReached) return;
     let previousUserMessageId: Id<"assistantMessages"> | null = null;
     for (let index = (messages?.length ?? 0) - 1; index >= 0; index -= 1) {
       const message = messages?.[index];
@@ -273,6 +281,14 @@ export function AssistantPanel({
       onThreadChange(result.threadId);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : undefined;
+      if (message?.includes("ASSISTANT_MONTHLY_LIMIT")) {
+        // A race (a second tab, or the quota refreshing mid-send) can slip past
+        // the client-side block. Keep the draft so nothing is lost.
+        toast.error("You've reached your 10 messages for this month.");
+        setDraft(trimmed);
+        setPendingSend(null);
+        return;
+      }
       toast.error("The assistant couldn't reply", {
         description: message?.includes("ASSISTANT_UNCONFIGURED")
           ? "No DeepSeek API key is configured on this deployment."
@@ -400,7 +416,8 @@ export function AssistantPanel({
               key={suggestion}
               type="button"
               onClick={() => send(suggestion)}
-              className="rounded-2xl border border-border px-3 py-2 text-left text-sm text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              disabled={limitReached}
+              className="rounded-2xl border border-border px-3 py-2 text-left text-sm text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
             >
               {suggestion}
             </button>
@@ -485,6 +502,17 @@ export function AssistantPanel({
         </div>
       )}
 
+      {/* Monthly allowance: nothing while messages remain, a clear blocked
+        * notice only once the allowance is spent. */}
+      {limitReached && quota !== undefined && (
+        <p
+          role="status"
+          className="px-1 pb-1.5 text-xs font-medium text-destructive"
+        >
+          You've used all {quota.limit} messages this month.
+        </p>
+      )}
+
       {/* The composer reads as one of the dock's own cards: same border and
         * radius as the panels around it, a muted fill that lifts on focus, and
         * a filled circular send that mirrors the nav's primary affordances. */}
@@ -520,9 +548,13 @@ export function AssistantPanel({
                 void send(draft);
               }
             }}
-            placeholder="Ask about your calendar…"
+            placeholder={
+              limitReached
+                ? "You're out of messages for this month"
+                : "Ask about your calendar…"
+            }
             rows={1}
-            disabled={composerBusy}
+            disabled={composerBusy || limitReached}
           />
           <InputGroupAddon align="inline-end">
             <InputGroupButton
@@ -531,7 +563,7 @@ export function AssistantPanel({
               variant="default"
               aria-label="Send"
               className="rounded-full"
-              disabled={composerBusy || draft.trim().length === 0}
+              disabled={composerBusy || limitReached || draft.trim().length === 0}
               onClick={() => void send(draft)}
             >
               {composerBusy ? (

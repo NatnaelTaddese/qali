@@ -343,6 +343,9 @@ export default defineSchema({
     userId: v.string(),
     windowStartMs: v.number(),
     requestCount: v.number(),
+    // Rolling monthly quota, independent of the 5-minute burst window above.
+    monthWindowStartMs: v.optional(v.number()),
+    monthCount: v.optional(v.number()),
     activeMessageId: v.optional(v.id("assistantMessages")),
     activeThreadId: v.optional(v.id("assistantThreads")),
     leaseExpiresAt: v.optional(v.number()),

@@ -35,6 +35,8 @@ const MAX_BLOCKS_PER_MESSAGE = 64;
 const MAX_BLOCK_TEXT = 8_000;
 const RATE_WINDOW_MS = 5 * 60 * 1000;
 const MAX_TURNS_PER_WINDOW = 20;
+const MONTH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // rolling 30 days
+const MAX_TURNS_PER_MONTH = 10;
 const TURN_LEASE_MS = 10 * 60 * 1000;
 const MAX_ACTION_ATTEMPTS = 5;
 const ACTION_LEASE_MS = 12 * 60 * 1000;
@@ -73,6 +75,37 @@ export const isAvailable = query({
   args: {},
   handler: async (): Promise<boolean> => {
     return env.DEEPSEEK_API_KEY !== undefined;
+  },
+});
+
+/**
+ * The signed-in user's rolling-30-day message allowance. The composer
+ * subscribes to this to show remaining messages and block sending when spent.
+ * Mirrors the window logic in `startTurn` so the two never disagree.
+ */
+export const monthlyQuota = query({
+  args: {},
+  handler: async (
+    ctx,
+  ): Promise<{ used: number; limit: number; remaining: number }> => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    if (!user) {
+      return { used: 0, limit: MAX_TURNS_PER_MONTH, remaining: MAX_TURNS_PER_MONTH };
+    }
+    const state = await ctx.db
+      .query("assistantUserState")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .unique();
+    const now = Date.now();
+    const inMonthWindow =
+      state?.monthWindowStartMs !== undefined &&
+      now - state.monthWindowStartMs < MONTH_WINDOW_MS;
+    const used = inMonthWindow ? (state?.monthCount ?? 0) : 0;
+    return {
+      used,
+      limit: MAX_TURNS_PER_MONTH,
+      remaining: Math.max(0, MAX_TURNS_PER_MONTH - used),
+    };
   },
 });
 
@@ -195,6 +228,14 @@ export const startTurn = internalMutation({
       throw new ConvexError({ code: "ASSISTANT_RATE_LIMIT" });
     }
 
+    const inMonthWindow =
+      state?.monthWindowStartMs !== undefined &&
+      now - state.monthWindowStartMs < MONTH_WINDOW_MS;
+    const monthCount = inMonthWindow ? (state.monthCount ?? 0) : 0;
+    if (monthCount >= MAX_TURNS_PER_MONTH) {
+      throw new ConvexError({ code: "ASSISTANT_MONTHLY_LIMIT" });
+    }
+
     let threadId = args.threadId;
     if (threadId) {
       const thread = await ownedThread(ctx, threadId, args.userId);
@@ -248,6 +289,11 @@ export const startTurn = internalMutation({
     const stateValue = {
       windowStartMs: inCurrentWindow && state ? state.windowStartMs : now,
       requestCount: requestCount + 1,
+      monthWindowStartMs:
+        inMonthWindow && state?.monthWindowStartMs !== undefined
+          ? state.monthWindowStartMs
+          : now,
+      monthCount: monthCount + 1,
       activeMessageId: assistantMessageId,
       activeThreadId: threadId,
       leaseExpiresAt: now + TURN_LEASE_MS,

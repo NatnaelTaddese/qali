@@ -31,6 +31,7 @@ import {
 type Threads = FunctionReturnType<typeof api.assistantData.listThreads>;
 type Messages = FunctionReturnType<typeof api.assistantData.listMessages>;
 type Actions = FunctionReturnType<typeof api.assistantData.listPendingActions>;
+type Quota = FunctionReturnType<typeof api.assistantData.monthlyQuota>;
 
 /**
  * The assistant is its own dock, pinned bottom-right, opening with the gooey
@@ -88,6 +89,12 @@ export function AssistantDock() {
   const actions = useQuery(
     api.assistantData.listPendingActions,
     assistantAvailable && threadId ? { threadId } : "skip",
+  );
+  // The rolling-30-day message allowance, so the composer can show what's left
+  // and block sending once it's spent. Cheap enough to keep warm with the rest.
+  const quota = useQuery(
+    api.assistantData.monthlyQuota,
+    assistantAvailable ? {} : "skip",
   );
   // Tracks whether the panel is open so ⌘K can always close it — even from the
   // composer, where the editable-target guard would otherwise swallow the key.
@@ -173,6 +180,7 @@ export function AssistantDock() {
               threads={threads}
               messages={messages}
               actions={actions}
+              quota={quota}
             />
           </div>
         )}
@@ -213,6 +221,7 @@ function AssistantPanelLoader({
   threads,
   messages,
   actions,
+  quota,
 }: {
   threadId: Id<"assistantThreads"> | null;
   onThreadChange: (threadId: Id<"assistantThreads">) => void;
@@ -222,6 +231,7 @@ function AssistantPanelLoader({
   threads: Threads | undefined;
   messages: Messages | undefined;
   actions: Actions | undefined;
+  quota: Quota | undefined;
 }) {
   const [attempt, setAttempt] = useState(0);
   const Panel = useMemo(
@@ -255,6 +265,7 @@ function AssistantPanelLoader({
           threads={threads}
           messages={messages}
           actions={actions}
+          quota={quota}
         />
       </Suspense>
     </AssistantPanelErrorBoundary>

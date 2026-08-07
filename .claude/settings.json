@@ -1,0 +1,5 @@
+{
+  "enabledPlugins": {
+    "convex@claude-plugins-official": true
+  }
+}

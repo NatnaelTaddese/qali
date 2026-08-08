@@ -23,16 +23,17 @@ function LandingPage() {
 
 function Hero() {
   return (
-    <section className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-6 pt-24 pb-16 text-center sm:pt-32">
-      <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
-        For Google Calendar
-      </span>
-      <h1 className="font-heading text-4xl font-medium tracking-tight text-balance sm:text-6xl">
-        A fast, keyboard-friendly calendar
+    <section className="mx-auto flex h-[738px] max-w-3xl flex-col items-center justify-center gap-6 px-6 py-16 text-center">
+      {/*<span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
+        AI-native · for Google Calendar
+      </span>*/}
+      <h1 className="chroma-text chroma-text-animate font-display text-4xl font-medium tracking-tight text-balance sm:text-6xl">
+        The calendar that runs itself
       </h1>
       <p className="max-w-xl text-lg text-muted-foreground text-balance">
-        qali syncs your Google calendars and builds a unified people directory,
-        then gets out of your way so you can schedule at the speed of thought.
+        qali is an AI-native calendar for Google Calendar. Just say what you
+        need — “move my 2pm,” “find an hour with Sam this week” — and it
+        schedules, reschedules, and protects your time for you.
       </p>
       <div className="flex flex-wrap items-center justify-center gap-3">
         <Button size="lg" onClick={() => scrollToId("waitlist")}>

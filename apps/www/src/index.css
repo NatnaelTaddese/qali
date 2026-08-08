@@ -1,1 +1,53 @@
 @import "@qali/ui/globals.css";
+
+/* Chroma band palette — the saturated hues that sweep across the hero title.
+ * Kept as tokens (like the app's --chart-* / --event-*) so the gradient reads
+ * from one source of truth and the palette can be retuned in one place. */
+:root {
+  --chroma-1: #c679c4;
+  --chroma-2: #fa3d1d;
+  --chroma-3: #ffb005;
+  --chroma-4: #e1e1fe;
+  --chroma-5: #0358f7;
+}
+
+/* Chroma sweep: the title reveals from a blurred, transparent state as the
+ * --chroma-* band sweeps left-to-right across the letters, settling on the
+ * theme's foreground colour. The solid stops use --foreground so the title
+ * stays legible in both light and dark. */
+.chroma-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--foreground) 0,
+    var(--foreground) 33.33%,
+    var(--chroma-1) 40%,
+    var(--chroma-2) 45%,
+    var(--chroma-3) 50%,
+    var(--chroma-4) 55%,
+    var(--chroma-5) 60%,
+    transparent 66.67%,
+    transparent
+  );
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  will-change: background-position;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.chroma-text-animate {
+  animation: chroma-sweep 2s ease-in-out 0.1s forwards;
+  filter: blur(1px);
+}
+
+@keyframes chroma-sweep {
+  0% {
+    background-position: 100% 0;
+    filter: blur(1px);
+  }
+  100% {
+    background-position: 0 0;
+    filter: blur(0);
+  }
+}

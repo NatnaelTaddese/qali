@@ -1,11 +1,5 @@
 import { api } from "@qali/backend/convex/_generated/api";
 import { Button } from "@qali/ui/components/button";
-import {
-  Card,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@qali/ui/components/card";
 import { Input } from "@qali/ui/components/input";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
@@ -17,29 +11,10 @@ export const Route = createFileRoute("/")({
   component: LandingPage,
 });
 
-const FEATURES = [
-  {
-    title: "Google Calendar, faster",
-    description:
-      "Syncs your Google calendars and gives you focused day and month views for creating, editing, and rescheduling — recurring events, guests, free/busy, and Google Meet links handled the way Google does.",
-  },
-  {
-    title: "A unified people directory",
-    description:
-      "Built from your saved contacts, Google's auto-collected “Other contacts,” and everyone you meet with — so guests show a real name and avatar even when you never saved them.",
-  },
-  {
-    title: "Keyboard-friendly by design",
-    description:
-      "Move through your week without reaching for the mouse. qali is built for speed, so scheduling stays out of your way.",
-  },
-];
-
 function LandingPage() {
   return (
     <main className="min-h-svh bg-background text-foreground">
       <Hero />
-      <Features />
       <Waitlist />
       <Footer />
     </main>
@@ -63,34 +38,7 @@ function Hero() {
         <Button size="lg" onClick={() => scrollToId("waitlist")}>
           Join the waitlist
         </Button>
-        <Button
-          size="lg"
-          variant="outline"
-          onClick={() => scrollToId("features")}
-        >
-          See features
-        </Button>
       </div>
-    </section>
-  );
-}
-
-function Features() {
-  return (
-    <section
-      id="features"
-      className="mx-auto grid max-w-5xl gap-4 px-6 py-16 sm:grid-cols-3"
-    >
-      {FEATURES.map((feature) => (
-        <Card key={feature.title} className="h-full">
-          <CardHeader>
-            <CardTitle className="text-lg">{feature.title}</CardTitle>
-            <CardDescription className="mt-2 leading-relaxed">
-              {feature.description}
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      ))}
     </section>
   );
 }

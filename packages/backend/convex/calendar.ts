@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
 import {
   action,
   internalMutation,
@@ -11,6 +12,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { authComponent } from "./auth";
+import { isSharedPublicCalendar } from "./lib/calendars";
 import { googleEventValidator } from "./schema";
 import { getCalendarEvent, type MappedEvent } from "./lib/google";
 import {
@@ -35,6 +37,81 @@ async function selectedCalendarIds(
     calendars.filter((c) => c.selected).map((c) => c.googleCalendarId),
   );
 }
+
+/** Present a shared (public-calendar) event as a normal `events` doc so the
+ * client sees one uniform event type. The stored `_id` really belongs to
+ * `sharedEvents`, but Convex ids are self-describing, so passing it back to
+ * `getEventById`/`getEventRecurrence` (which accept either id) still resolves the
+ * right row. `userId` is stamped to the reader purely to satisfy the shape;
+ * these events are read-only, so nothing writes back through it. */
+function sharedAsEvent(
+  row: Doc<"sharedEvents">,
+  userId: string,
+): Doc<"events"> {
+  return { ...row, userId } as unknown as Doc<"events">;
+}
+
+/** Selected public calendars' events overlapping [gteStart, ltStart). These live
+ * once in `sharedEvents` (not per-user), so we read them by calendar id and merge
+ * into the caller's own events. Cancelled shared events are never stored. */
+async function readSharedEventsInRange(
+  ctx: QueryCtx,
+  userId: string,
+  publicCalendarIds: string[],
+  gteStart: number,
+  ltStart: number,
+): Promise<Doc<"events">[]> {
+  const out: Doc<"events">[] = [];
+  for (const calendarId of publicCalendarIds) {
+    const rows = await ctx.db
+      .query("sharedEvents")
+      .withIndex("by_calendar_and_start", (q) =>
+        q
+          .eq("calendarId", calendarId)
+          .gte("startMs", gteStart)
+          .lt("startMs", ltStart),
+      )
+      .collect();
+    out.push(...rows.map((r) => sharedAsEvent(r, userId)));
+  }
+  return out;
+}
+
+/** The assistant's view of shared public-calendar (holiday/birthday) events in a
+ * range, for the selected calendars. Mirrors `listEventsForAssistant` but over
+ * `sharedEvents`; the assistant merges these with the user's own events so it can
+ * answer "is that a holiday?" and see holidays when checking a day. Normalized to
+ * the events shape (with an `eventId` the assistant can echo back). */
+export const listSharedEventsForAssistant = internalQuery({
+  args: { userId: v.string(), startMs: v.number(), endMs: v.number() },
+  handler: async (ctx, args): Promise<Doc<"events">[]> => {
+    const calendars = await ctx.db
+      .query("calendars")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+    const publicIds = calendars
+      .filter((c) => c.selected && isSharedPublicCalendar(c.googleCalendarId))
+      .map((c) => c.googleCalendarId);
+
+    const out: Doc<"events">[] = [];
+    for (const calendarId of publicIds) {
+      const rows = await ctx.db
+        .query("sharedEvents")
+        .withIndex("by_calendar_and_end", (q) =>
+          q.eq("calendarId", calendarId).gt("endMs", args.startMs),
+        )
+        .take(ASSISTANT_SHARED_EVENT_LIMIT);
+      for (const r of rows) {
+        if (r.startMs < args.endMs) out.push(sharedAsEvent(r, args.userId));
+      }
+    }
+    return out.sort((a, b) => a.startMs - b.startMs);
+  },
+});
+
+// Public calendars are small (a year of holidays is well under this), so a flat
+// cap per calendar is enough to stay bounded without a density error.
+const ASSISTANT_SHARED_EVENT_LIMIT = 400;
 
 /** The user's connected calendars, for the visibility list in the header. */
 export const listCalendars = query({
@@ -78,14 +155,30 @@ export const listEvents = query({
     }
     const selected = await selectedCalendarIds(ctx, user._id);
     const now = Date.now();
-    const rows = await ctx.db
-      .query("events")
-      .withIndex("by_user_and_start", (q) =>
-        q.eq("userId", user._id).gte("startMs", now),
-      )
-      .order("asc")
-      .take(50);
-    return rows.filter((e) => selected.has(e.calendarId));
+    const personal = (
+      await ctx.db
+        .query("events")
+        .withIndex("by_user_and_start", (q) =>
+          q.eq("userId", user._id).gte("startMs", now),
+        )
+        .order("asc")
+        .take(50)
+    ).filter((e) => selected.has(e.calendarId));
+    const publicIds = [...selected].filter(isSharedPublicCalendar);
+    const shared: Doc<"events">[] = [];
+    for (const calendarId of publicIds) {
+      const rows = await ctx.db
+        .query("sharedEvents")
+        .withIndex("by_calendar_and_start", (q) =>
+          q.eq("calendarId", calendarId).gte("startMs", now),
+        )
+        .order("asc")
+        .take(50);
+      shared.push(...rows.map((r) => sharedAsEvent(r, user._id)));
+    }
+    return [...personal, ...shared]
+      .sort((a, b) => a.startMs - b.startMs)
+      .slice(0, 50);
   },
 });
 
@@ -102,22 +195,29 @@ export const listEventsInRange = query({
     // before the window but overlap into it. Timed events longer than 24h that
     // start earlier than the lookback are an accepted limitation.
     const LOOKBACK_MS = 24 * 60 * 60 * 1000;
-    const rows = await ctx.db
-      .query("events")
-      .withIndex("by_user_and_start", (q) =>
-        q
-          .eq("userId", user._id)
-          .gte("startMs", startMs - LOOKBACK_MS)
-          .lt("startMs", endMs),
-      )
-      .order("asc")
-      .collect();
-    return rows.filter(
-      (e) =>
-        e.endMs > startMs &&
-        e.status !== "cancelled" &&
-        selected.has(e.calendarId),
+    const personal = (
+      await ctx.db
+        .query("events")
+        .withIndex("by_user_and_start", (q) =>
+          q
+            .eq("userId", user._id)
+            .gte("startMs", startMs - LOOKBACK_MS)
+            .lt("startMs", endMs),
+        )
+        .order("asc")
+        .collect()
+    ).filter((e) => selected.has(e.calendarId));
+    const publicIds = [...selected].filter(isSharedPublicCalendar);
+    const shared = await readSharedEventsInRange(
+      ctx,
+      user._id,
+      publicIds,
+      startMs - LOOKBACK_MS,
+      endMs,
     );
+    return [...personal, ...shared]
+      .filter((e) => e.endMs > startMs && e.status !== "cancelled")
+      .sort((a, b) => a.startMs - b.startMs);
   },
 });
 
@@ -127,28 +227,42 @@ export const listEventsInRange = query({
  * moment anything mutates the event. Subscribing here means an edit or an RSVP
  * shows up in the open panel instead of only after closing and reopening it. */
 export const getEventById = query({
-  args: { eventId: v.id("events") },
+  args: { eventId: v.union(v.id("events"), v.id("sharedEvents")) },
   handler: async (ctx, { eventId }) => {
     const user = await authComponent.safeGetAuthUser(ctx);
     if (!user) {
       return null;
     }
     const row = await ctx.db.get(eventId);
-    return row && row.userId === user._id ? row : null;
+    if (!row) {
+      return null;
+    }
+    // A shared (public-calendar) event belongs to no user; it's readable by
+    // anyone who has that calendar, and is normalized to the events shape so the
+    // client sees one type. A personal event is guarded by ownership.
+    if ("userId" in row) {
+      return row.userId === user._id ? row : null;
+    }
+    return sharedAsEvent(row, user._id);
   },
 });
 
 /** The cached rule for an expanded recurring instance. `null` is a cache miss
  * (or stale cache); the client can ask refreshEventRecurrence to fill it. */
 export const getEventRecurrence = query({
-  args: { eventId: v.id("events") },
+  args: { eventId: v.union(v.id("events"), v.id("sharedEvents")) },
   handler: async (ctx, { eventId }): Promise<string[] | null> => {
     const user = await authComponent.safeGetAuthUser(ctx);
     if (!user) {
       return null;
     }
     const event = await ctx.db.get(eventId);
-    if (!event || event.userId !== user._id || !event.recurringEventId) {
+    // Shared public-calendar events are read-only and carry no editable series
+    // (no `userId`); the recurrence panel doesn't apply to them.
+    if (!event || !("userId" in event)) {
+      return null;
+    }
+    if (event.userId !== user._id || !event.recurringEventId) {
       return null;
     }
     const recurringEventId = event.recurringEventId;
@@ -214,10 +328,15 @@ export const createEvent = action({
  * needs, in one round trip. The join is on the Google id, since `events` stores
  * its calendar as that string rather than as a document reference. */
 export const getEventContext = internalQuery({
-  args: { eventId: v.id("events"), userId: v.string() },
+  args: {
+    eventId: v.union(v.id("events"), v.id("sharedEvents")),
+    userId: v.string(),
+  },
   handler: async (ctx, args) => {
     const event = await ctx.db.get(args.eventId);
-    if (!event || event.userId !== args.userId) {
+    // Read-only shared (public-calendar) events have no owner and no capabilities
+    // to compute; callers treat a null context as "not editable".
+    if (!event || !("userId" in event) || event.userId !== args.userId) {
       return null;
     }
     const calendar = await ctx.db
@@ -232,7 +351,7 @@ export const getEventContext = internalQuery({
 
 /** Fill or refresh the Convex series cache from Google's recurring master. */
 export const refreshEventRecurrence = action({
-  args: { eventId: v.id("events") },
+  args: { eventId: v.union(v.id("events"), v.id("sharedEvents")) },
   handler: async (ctx, { eventId }): Promise<null> => {
     const user = await authComponent.safeGetAuthUser(ctx);
     if (!user) {

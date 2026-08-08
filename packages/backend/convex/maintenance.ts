@@ -2,6 +2,8 @@ import { internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
+import { isSharedPublicCalendar } from "./lib/calendars";
+
 // Storage maintenance: one-shot cleanups and the recurring prune that keeps
 // the `events` table from growing without bound. All mutations here are
 // internal — never reachable from a client — and self-reschedule in batches so
@@ -82,5 +84,98 @@ export const pruneUserEvents = internalMutation({
       });
     }
     return null;
+  },
+});
+
+// --- Recurring: prune the shared public-calendar table the same way ---------
+// `sharedEvents` is user-independent (one copy of each holiday/birthday), so it
+// fans out per shared calendar and prunes via the by_calendar_and_start index.
+
+export const enqueueSharedEventPrune = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const page = await ctx.db
+      .query("sharedCalendars")
+      .paginate({ cursor: args.cursor ?? null, numItems: USER_FANOUT_BATCH });
+    for (const row of page.page) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.maintenance.pruneSharedCalendarEvents,
+        { calendarId: row.googleCalendarId },
+      );
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.maintenance.enqueueSharedEventPrune,
+        { cursor: page.continueCursor },
+      );
+    }
+    return null;
+  },
+});
+
+export const pruneSharedCalendarEvents = internalMutation({
+  args: { calendarId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const cutoff = Date.now() - EVENT_RETENTION_MS;
+    const rows = await ctx.db
+      .query("sharedEvents")
+      .withIndex("by_calendar_and_start", (q) =>
+        q.eq("calendarId", args.calendarId).lt("startMs", cutoff),
+      )
+      .take(BATCH_SIZE);
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+    if (rows.length === BATCH_SIZE) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.maintenance.pruneSharedCalendarEvents,
+        { calendarId: args.calendarId },
+      );
+    }
+    return null;
+  },
+});
+
+// --- One-shot: migrate existing per-user public-calendar events to shared ---
+// Deletes every per-user copy of a Google public calendar's events (they now
+// live once in `sharedEvents`), then kicks each user's sync so the shared copy
+// is populated promptly rather than only on the next 15-min cron tick.
+export const migratePublicCalendarsToShared = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.object({ deleted: v.number(), done: v.boolean() }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ deleted: number; done: boolean }> => {
+    const page = await ctx.db
+      .query("events")
+      .paginate({ cursor: args.cursor ?? null, numItems: BATCH_SIZE });
+    let deleted = 0;
+    for (const row of page.page) {
+      if (isSharedPublicCalendar(row.calendarId)) {
+        await ctx.db.delete(row._id);
+        deleted++;
+      }
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.maintenance.migratePublicCalendarsToShared,
+        { cursor: page.continueCursor },
+      );
+      return { deleted, done: false };
+    }
+    // Final page: fan out a sync for every user so `sharedEvents` fills in now.
+    for await (const state of ctx.db.query("syncState")) {
+      await ctx.scheduler.runAfter(0, internal.googleSync.syncUser, {
+        userId: state.userId,
+      });
+    }
+    return { deleted, done: true };
   },
 });

@@ -38,6 +38,14 @@ crons.interval(
   {},
 );
 
+// Same 180-day cap for the shared public-calendar events (holidays/birthdays).
+crons.interval(
+  "prune aged-out shared events",
+  { hours: 24 },
+  internal.maintenance.enqueueSharedEventPrune,
+  {},
+);
+
 // Cap the assistant tables: delete conversations untouched for 30 days. The
 // user-driven "new chat discards the prior" path handles the common case; this
 // catches threads left behind rather than replaced.

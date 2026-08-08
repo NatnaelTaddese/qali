@@ -285,11 +285,22 @@ const listEvents = readTool({
     "literal startDate and exclusive endDate values.",
   schema: listEventsSchema,
   async run(tc, args) {
-    const rows = await tc.ctx.runQuery(internal.assistantData.listEventsForAssistant, {
-      userId: tc.userId,
-      startMs: args.fromMs,
-      endMs: args.toMs,
-    });
+    // Personal events plus shared public-calendar events (holidays/birthdays),
+    // which live in a separate deduplicated table. Merged so the assistant sees
+    // holidays alongside the user's own events.
+    const [personal, shared] = await Promise.all([
+      tc.ctx.runQuery(internal.assistantData.listEventsForAssistant, {
+        userId: tc.userId,
+        startMs: args.fromMs,
+        endMs: args.toMs,
+      }),
+      tc.ctx.runQuery(internal.calendar.listSharedEventsForAssistant, {
+        userId: tc.userId,
+        startMs: args.fromMs,
+        endMs: args.toMs,
+      }),
+    ]);
+    const rows = [...personal, ...shared].sort((a, b) => a.startMs - b.startMs);
     return rows.map((e) => ({
       eventId: e._id,
       summary: e.summary ?? "(No title)",
@@ -353,8 +364,13 @@ const findFreeTime = readTool({
     }
     const durationMs = args.durationMinutes * MS_PER_MINUTE;
 
-    const [rows, bookings] = await Promise.all([
+    const [personal, shared, bookings] = await Promise.all([
       tc.ctx.runQuery(internal.assistantData.listEventsForAssistant, {
+        userId: tc.userId,
+        startMs: args.fromMs,
+        endMs: args.toMs,
+      }),
+      tc.ctx.runQuery(internal.calendar.listSharedEventsForAssistant, {
         userId: tc.userId,
         startMs: args.fromMs,
         endMs: args.toMs,
@@ -365,6 +381,9 @@ const findFreeTime = readTool({
         endMs: args.toMs,
       }),
     ]);
+    // Holidays are transparency:"transparent", so isBusy drops them and they
+    // never block a slot — but a holiday marked busy correctly would.
+    const rows = [...personal, ...shared];
     const busy = mergeIntervals(
       [
         ...rows.filter(isBusy).map((e) =>

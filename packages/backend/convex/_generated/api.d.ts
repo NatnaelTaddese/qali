@@ -24,6 +24,7 @@ import type * as lib_assistantLogic from "../lib/assistantLogic.js";
 import type * as lib_assistantTools from "../lib/assistantTools.js";
 import type * as lib_availability from "../lib/availability.js";
 import type * as lib_calendarOps from "../lib/calendarOps.js";
+import type * as lib_calendars from "../lib/calendars.js";
 import type * as lib_google from "../lib/google.js";
 import type * as lib_notifications from "../lib/notifications.js";
 import type * as lib_permissions from "../lib/permissions.js";
@@ -56,6 +57,7 @@ declare const fullApi: ApiFromModules<{
   "lib/assistantTools": typeof lib_assistantTools;
   "lib/availability": typeof lib_availability;
   "lib/calendarOps": typeof lib_calendarOps;
+  "lib/calendars": typeof lib_calendars;
   "lib/google": typeof lib_google;
   "lib/notifications": typeof lib_notifications;
   "lib/permissions": typeof lib_permissions;

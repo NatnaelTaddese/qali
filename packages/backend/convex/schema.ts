@@ -187,6 +187,30 @@ export default defineSchema({
       "googleEventId",
     ]),
 
+  // One physical copy of a Google *public* calendar's events (holidays,
+  // birthdays — IDs ending "@group.v.calendar.google.com"), shared across every
+  // user who selects that calendar. Google generates this content identically
+  // for all viewers, so storing it once instead of per-user removes duplication
+  // that otherwise grows linearly with the user count. No `userId`: the row
+  // belongs to the calendar, not a person. See isSharedPublicCalendar in
+  // lib/calendars.ts and readVisibleEvents in calendar.ts.
+  sharedEvents: defineTable(googleEventValidator)
+    .index("by_calendar_and_start", ["calendarId", "startMs"])
+    .index("by_calendar_and_end", ["calendarId", "endMs"])
+    .index("by_calendar_and_googleEventId", ["calendarId", "googleEventId"]),
+
+  // One row per shared public calendar: its user-independent sync token plus a
+  // lease so exactly one user's sync refreshes it at a time. The per-user
+  // `calendars` row still holds display metadata and the `selected` toggle; only
+  // the events and their sync cursor are shared.
+  sharedCalendars: defineTable({
+    googleCalendarId: v.string(),
+    syncToken: v.optional(v.string()),
+    lastSyncAt: v.optional(v.number()),
+    // Held while a sync runs; a second user finding a live lease skips its run.
+    syncLeaseExpiresAt: v.optional(v.number()),
+  }).index("by_googleCalendarId", ["googleCalendarId"]),
+
   // One row per recurring master. Expanded event instances share this rule;
   // keeping it separately avoids duplicating it across every occurrence.
   recurringSeries: defineTable({

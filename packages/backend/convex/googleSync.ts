@@ -12,6 +12,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { authComponent, createAuth } from "./auth";
+import { isSharedPublicCalendar } from "./lib/calendars";
 import {
   fetchCalendarList,
   fetchCalendarPage,
@@ -316,6 +317,20 @@ async function syncCalendar(
   const timeMinMs = Date.now() - CALENDAR_HISTORY_MS;
   let changed = false;
   for (const cal of stored) {
+    // Public calendars (holidays/birthdays) are identical for everyone, so their
+    // events live once in `sharedEvents`, not per-user. Refresh the shared copy
+    // on a cadence (any user's token can read a public calendar) instead of
+    // syncing it into this user's `events`. `changed` stays false for these so a
+    // shared refresh never triggers this user's engagement recompute.
+    if (isSharedPublicCalendar(cal.googleCalendarId)) {
+      await ensureSharedCalendarSynced(
+        ctx,
+        accessToken,
+        cal.googleCalendarId,
+        timeMinMs,
+      );
+      continue;
+    }
     const calChanged = await syncOneCalendar(
       ctx,
       userId,
@@ -326,6 +341,114 @@ async function syncCalendar(
     changed = changed || calChanged;
   }
   return changed;
+}
+
+// How often a shared public calendar is re-fetched. Holidays/birthdays change
+// rarely, so a daily refresh (by whichever user syncs first past the interval)
+// is ample. The lease below caps concurrent refreshes to one.
+const SHARED_CALENDAR_REFRESH_MS = 24 * 60 * 60 * 1000;
+const SHARED_SYNC_LEASE_MS = 5 * 60 * 1000;
+
+/**
+ * Refresh a shared public calendar at most once per cadence, by at most one
+ * user at a time. Reads the shared row, and if it is stale and unleased, claims
+ * the lease and syncs into `sharedEvents`; otherwise returns immediately because
+ * another user's sync already covered it. Best-effort: a failure here must never
+ * fail the calling user's own calendar sync, so it swallows errors after logging.
+ */
+async function ensureSharedCalendarSynced(
+  ctx: ActionCtx,
+  accessToken: string,
+  googleCalendarId: string,
+  timeMinMs: number,
+): Promise<void> {
+  const claim = await ctx.runMutation(
+    internal.googleSync.claimSharedCalendarSync,
+    { googleCalendarId, refreshIntervalMs: SHARED_CALENDAR_REFRESH_MS },
+  );
+  if (!claim.claimed) {
+    return;
+  }
+  try {
+    await syncOneSharedCalendar(
+      ctx,
+      accessToken,
+      { googleCalendarId, syncToken: claim.syncToken },
+      timeMinMs,
+    );
+  } catch (err) {
+    console.error(
+      `Shared calendar sync failed for ${googleCalendarId}:`,
+      err instanceof Error ? err.message : err,
+    );
+    await ctx.runMutation(internal.googleSync.releaseSharedCalendarLease, {
+      googleCalendarId,
+    });
+  }
+}
+
+/**
+ * The `sharedEvents` twin of `syncOneCalendar`: same incremental/full-resync
+ * dance, but writing to the user-independent shared table and storing its cursor
+ * on `sharedCalendars`. No people-harvest — a public calendar has no guests the
+ * user knows.
+ */
+export async function syncOneSharedCalendar(
+  ctx: ActionCtx,
+  accessToken: string,
+  cal: { googleCalendarId: string; syncToken?: string },
+  timeMinMs: number,
+): Promise<void> {
+  let syncToken = cal.syncToken;
+  let fullResync = !syncToken;
+  let preparedForFullResync = false;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      if (fullResync && !preparedForFullResync) {
+        let hasMore: boolean;
+        do {
+          hasMore = await ctx.runMutation(
+            internal.googleSync.clearSharedCalendarEventsBatch,
+            { googleCalendarId: cal.googleCalendarId },
+          );
+        } while (hasMore);
+        preparedForFullResync = true;
+      }
+
+      let pageToken: string | undefined;
+      let newSyncToken: string | undefined;
+      do {
+        const page = await fetchCalendarPage(accessToken, {
+          calendarId: cal.googleCalendarId,
+          syncToken: fullResync ? undefined : syncToken,
+          pageToken,
+          timeMinMs: fullResync ? timeMinMs : undefined,
+        });
+        if (page.events.length > 0) {
+          await ctx.runMutation(internal.googleSync.upsertSharedEventsPage, {
+            events: page.events,
+          });
+        }
+        pageToken = page.nextPageToken;
+        newSyncToken = page.nextSyncToken ?? newSyncToken;
+      } while (pageToken);
+
+      await ctx.runMutation(internal.googleSync.setSharedCalendarSynced, {
+        googleCalendarId: cal.googleCalendarId,
+        syncToken: newSyncToken,
+      });
+      return;
+    } catch (err) {
+      if (err instanceof SyncTokenExpiredError && attempt === 0) {
+        fullResync = true;
+        syncToken = undefined;
+        preparedForFullResync = false;
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 /** Returns whether any events were written (upserted or cleared) — the caller
@@ -969,6 +1092,149 @@ export const setCalendarSyncToken = internalMutation({
         syncToken: args.syncToken,
         lastSyncAt: Date.now(),
       });
+    }
+    return null;
+  },
+});
+
+// --- Shared public-calendar sync state ------------------------------------
+
+const SHARED_EVENT_CLEANUP_BATCH_SIZE = EVENT_CLEANUP_BATCH_SIZE;
+
+async function deleteSharedCalendarEventsBatch(
+  ctx: MutationCtx,
+  googleCalendarId: string,
+): Promise<boolean> {
+  const rows = await ctx.db
+    .query("sharedEvents")
+    .withIndex("by_calendar_and_start", (q) =>
+      q.eq("calendarId", googleCalendarId),
+    )
+    .take(SHARED_EVENT_CLEANUP_BATCH_SIZE);
+  for (const row of rows) {
+    await ctx.db.delete(row._id);
+  }
+  return rows.length === SHARED_EVENT_CLEANUP_BATCH_SIZE;
+}
+
+/**
+ * Claim the right to refresh a shared calendar. Returns `claimed: true` (with
+ * the current sync token) only when the calendar is due for a refresh and not
+ * already leased by another in-flight sync; otherwise `claimed: false`. Creates
+ * the `sharedCalendars` row on first sight. This is the transaction that makes
+ * "synced once, by one user" true.
+ */
+export const claimSharedCalendarSync = internalMutation({
+  args: { googleCalendarId: v.string(), refreshIntervalMs: v.number() },
+  returns: v.object({
+    claimed: v.boolean(),
+    syncToken: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const row = await ctx.db
+      .query("sharedCalendars")
+      .withIndex("by_googleCalendarId", (q) =>
+        q.eq("googleCalendarId", args.googleCalendarId),
+      )
+      .unique();
+    if (!row) {
+      await ctx.db.insert("sharedCalendars", {
+        googleCalendarId: args.googleCalendarId,
+        syncLeaseExpiresAt: now + SHARED_SYNC_LEASE_MS,
+      });
+      return { claimed: true, syncToken: undefined };
+    }
+    const leaseLive =
+      row.syncLeaseExpiresAt !== undefined && row.syncLeaseExpiresAt > now;
+    const fresh =
+      row.lastSyncAt !== undefined &&
+      now - row.lastSyncAt < args.refreshIntervalMs;
+    if (leaseLive || fresh) {
+      return { claimed: false, syncToken: row.syncToken };
+    }
+    await ctx.db.patch(row._id, { syncLeaseExpiresAt: now + SHARED_SYNC_LEASE_MS });
+    return { claimed: true, syncToken: row.syncToken };
+  },
+});
+
+export const releaseSharedCalendarLease = internalMutation({
+  args: { googleCalendarId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db
+      .query("sharedCalendars")
+      .withIndex("by_googleCalendarId", (q) =>
+        q.eq("googleCalendarId", args.googleCalendarId),
+      )
+      .unique();
+    if (row) {
+      await ctx.db.patch(row._id, { syncLeaseExpiresAt: undefined });
+    }
+    return null;
+  },
+});
+
+export const clearSharedCalendarEventsBatch = internalMutation({
+  args: { googleCalendarId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    return await deleteSharedCalendarEventsBatch(ctx, args.googleCalendarId);
+  },
+});
+
+/** Record a completed shared sync: store the new cursor, stamp the refresh time,
+ * and drop the lease. Called on the success path of syncOneSharedCalendar. */
+export const setSharedCalendarSynced = internalMutation({
+  args: {
+    googleCalendarId: v.string(),
+    syncToken: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db
+      .query("sharedCalendars")
+      .withIndex("by_googleCalendarId", (q) =>
+        q.eq("googleCalendarId", args.googleCalendarId),
+      )
+      .unique();
+    if (row) {
+      await ctx.db.patch(row._id, {
+        // A full resync returns no token on its first page set; keep the old one
+        // rather than clearing a still-valid cursor.
+        syncToken: args.syncToken ?? row.syncToken,
+        lastSyncAt: Date.now(),
+        syncLeaseExpiresAt: undefined,
+      });
+    }
+    return null;
+  },
+});
+
+/** The `sharedEvents` twin of `upsertEventsPage`: keyed by (calendarId,
+ * googleEventId), no `userId`, no people harvest. */
+export const upsertSharedEventsPage = internalMutation({
+  args: { events: v.array(googleEventValidator) },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    for (const e of args.events) {
+      const existing = await ctx.db
+        .query("sharedEvents")
+        .withIndex("by_calendar_and_googleEventId", (q) =>
+          q.eq("calendarId", e.calendarId).eq("googleEventId", e.googleEventId),
+        )
+        .unique();
+      if (e.status === "cancelled") {
+        if (existing) {
+          await ctx.db.delete(existing._id);
+        }
+        continue;
+      }
+      if (existing) {
+        await ctx.db.replace(existing._id, { ...e });
+      } else {
+        await ctx.db.insert("sharedEvents", { ...e });
+      }
     }
     return null;
   },

@@ -6,6 +6,12 @@
       "runtimeExecutable": "bun",
       "runtimeArgs": ["run", "dev:web"],
       "port": 3001
+    },
+    {
+      "name": "www",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "dev:www"],
+      "port": 3002
     }
   ]
 }

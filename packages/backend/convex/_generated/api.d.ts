@@ -33,6 +33,7 @@ import type * as maintenance from "../maintenance.js";
 import type * as notifications from "../notifications.js";
 import type * as people from "../people.js";
 import type * as privateData from "../privateData.js";
+import type * as waitlist from "../waitlist.js";
 
 import type {
   ApiFromModules,
@@ -66,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   notifications: typeof notifications;
   people: typeof people;
   privateData: typeof privateData;
+  waitlist: typeof waitlist;
 }>;
 
 /**

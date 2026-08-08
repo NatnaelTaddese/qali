@@ -490,4 +490,18 @@ export default defineSchema({
   })
     .index("by_thread", ["threadId", "createdAt"])
     .index("by_user_and_status", ["userId", "status"]),
+
+  // Email signups from the public marketing site. No account, no auth — anyone
+  // can add their address once. `by_email` both serves the dedupe check on the
+  // one public mutation that writes here and keeps a second signup from creating
+  // a duplicate row.
+  waitlist: defineTable({
+    // Stored trimmed and lowercased so the dedupe check can't be fooled by case
+    // or surrounding whitespace.
+    email: v.string(),
+    // Where the signup came from, e.g. "www". Optional so future entry points
+    // don't force a schema change.
+    source: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_email", ["email"]),
 });

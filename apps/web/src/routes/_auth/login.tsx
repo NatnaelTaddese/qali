@@ -2,6 +2,7 @@ import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import { cn } from "@qali/ui/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
+import { usePostHog } from "posthog-js/react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { svg as googleSvg } from "thesvg/google";
@@ -29,9 +30,11 @@ function GoogleIcon() {
 
 function LoginComponent() {
   const [isLoading, setIsLoading] = useState(false);
+  const posthog = usePostHog();
 
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
+    posthog.capture("google_sign_in_started");
     await authClient.signIn.social(
       {
         provider: "google",

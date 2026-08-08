@@ -26,6 +26,7 @@ import { useMutation, useQuery } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { usePostHog } from "posthog-js/react";
 
 import {
   dockVariants,
@@ -205,6 +206,7 @@ function AvailabilityForm({
   page: BookingPage;
 }) {
   const upsert = useMutation(api.booking.upsertBookingPage);
+  const posthog = usePostHog();
   const { setEditing } = useAvailabilityEdit();
   const reduce = useReducedMotion();
   const initial = page ?? defaults;
@@ -382,6 +384,11 @@ function AvailabilityForm({
         dirty.current = false;
       }
       if (showSuccess) {
+        posthog.capture("booking_page_saved", {
+          booking_page_enabled: enabled,
+          open_day_count: rules.length,
+          slot_minutes: slotMinutes,
+        });
         toast.success(enabled ? "Booking link is live" : "Booking link saved");
       }
       return true;

@@ -8,6 +8,7 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
+import { usePostHog } from "posthog-js/react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -23,6 +24,7 @@ const themeOptions = [
 
 export function AccountPanel({ onClose }: { onClose: () => void }) {
   const { data: session } = authClient.useSession();
+  const posthog = usePostHog();
   const { theme, setTheme } = useTheme();
   const [isSigningOut, setIsSigningOut] = useState(false);
   const user = session?.user;
@@ -33,7 +35,10 @@ export function AccountPanel({ onClose }: { onClose: () => void }) {
 
     try {
       const { error } = await authClient.signOut();
-      if (!error) return;
+      if (!error) {
+        posthog.reset();
+        return;
+      }
 
       setIsSigningOut(false);
       toast.error("Couldn't sign out", { description: error.message });

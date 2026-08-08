@@ -7,6 +7,7 @@ import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useQuery } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { usePostHog } from "posthog-js/react";
 
 import {
   EventForm,
@@ -115,6 +116,7 @@ export function EventEdit({
   onSaved: () => void;
 }) {
   const updateEvent = useAction(api.calendar.updateEvent);
+  const posthog = usePostHog();
   const calendars = useQuery(api.calendar.listCalendars) ?? [];
   const capabilities = useEventCapabilities()(event);
   // Captured once: the baseline every save diffs against. Re-seeding it from
@@ -148,7 +150,13 @@ export function EventEdit({
           }
         : patch;
     updateEvent({ eventId: event._id, ...finalPatch, scope })
-      .then(onSaved)
+      .then(() => {
+        posthog.capture("calendar_event_updated", {
+          update_scope: scope,
+          changed_field_count: Object.keys(patch).length,
+        });
+        onSaved();
+      })
       .catch((error: unknown) => {
         setSaving(false);
         toast.error("Couldn't save event", {

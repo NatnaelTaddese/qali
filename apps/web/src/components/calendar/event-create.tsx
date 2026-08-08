@@ -5,6 +5,7 @@ import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useQuery } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { usePostHog } from "posthog-js/react";
 
 import {
   EventForm,
@@ -50,6 +51,7 @@ export function EventCreate({
   onCreated: () => void;
 }) {
   const createEvent = useAction(api.calendar.createEvent);
+  const posthog = usePostHog();
   const calendars = useQuery(api.calendar.listCalendars) ?? [];
   const [submitting, setSubmitting] = useState(false);
   // Everything but the range. All three "inherit" defaults mean the same thing:
@@ -116,7 +118,15 @@ export function EventCreate({
         : undefined,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     })
-      .then(onCreated)
+      .then(() => {
+        posthog.capture("calendar_event_created", {
+          all_day: value.allDay,
+          has_guests: value.guests.length > 0,
+          has_recurrence: value.recurrence !== null,
+          has_video_conference: value.meet,
+        });
+        onCreated();
+      })
       .catch((error: unknown) => {
         setSubmitting(false);
         toast.error("Couldn't create event", {

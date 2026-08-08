@@ -11,6 +11,7 @@ import { format } from "date-fns";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { usePostHog } from "posthog-js/react";
 
 import { Avatar } from "@/components/calendar/avatar";
 import { EASE_OUT_EXPO, SPRING_DOCK } from "@/components/calendar/motion";
@@ -56,6 +57,7 @@ export function BookingPage({
       : "skip",
   );
   const requestBooking = useMutation(api.booking.requestBooking);
+  const posthog = usePostHog();
 
   const reduceMotion = useReducedMotion();
   const [use24Hour, setUse24Hour] = useState(storedUse24Hour);
@@ -112,6 +114,9 @@ export function BookingPage({
       // live availability update — resetting `submitting` here would briefly
       // re-arm the stolen-slot guard against the slot we ourselves booked and
       // fire a false "just taken" toast.
+      posthog.capture("booking_request_submitted", {
+        slot_duration_minutes: page?.slotMinutes,
+      });
       onTokenChange(newToken);
     } catch (error: unknown) {
       setSubmitting(false);

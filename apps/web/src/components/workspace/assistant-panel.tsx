@@ -29,6 +29,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
+import { usePostHog } from "posthog-js/react";
 
 import {
   acknowledgedAssistantUserMessageId,
@@ -121,6 +122,7 @@ export function AssistantPanel({
   const [sending, setSending] = useState(false);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
   const sendMessage = useAction(api.assistant.sendMessage);
+  const posthog = usePostHog();
   const reduceMotion = useReducedMotion();
   const sendGooFilterId = useId().replace(/[:]/g, "");
 
@@ -263,6 +265,9 @@ export function AssistantPanel({
       };
     }
     shouldFollowRef.current = true;
+    posthog.capture("assistant_message_sent", {
+      is_new_conversation: threadId === null,
+    });
     setDraft("");
     setPendingSend(nextPending);
     setSending(true);

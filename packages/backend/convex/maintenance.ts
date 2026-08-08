@@ -34,11 +34,11 @@ export const clearEventAttendees = internalMutation({
 
 // --- Recurring: prune events that have aged out of the sync window ---------
 // Incremental sync is unbounded, so without this past events accumulate
-// forever. We keep the same horizon a first-time resync reaches back to
-// (CALENDAR_HISTORY_MS = 365 days in googleSync.ts); anything older is data no
-// feature reads. Fans out per user (events are indexed under userId) so each
-// deletion pass uses the by_user_and_start index instead of a table scan.
-const EVENT_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
+// forever. We keep the same 180-day horizon a first-time resync reaches back to
+// (CALENDAR_HISTORY_MS in googleSync.ts); anything older is data no feature
+// reads. Fans out per user (events are indexed under userId) so each deletion
+// pass uses the by_user_and_start index instead of a table scan.
+const EVENT_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
 const USER_FANOUT_BATCH = 50;
 
 export const enqueueEventPrune = internalMutation({

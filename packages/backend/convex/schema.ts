@@ -177,7 +177,9 @@ export default defineSchema({
   // One row per synced Google Calendar event. See eventDocValidator above.
   events: defineTable(eventDocValidator)
     .index("by_user_and_start", ["userId", "startMs"])
-    .index("by_user_and_calendar", ["userId", "calendarId"])
+    // A dedicated (userId, calendarId) index would be redundant: every query
+    // that only constrains those two reuses by_user_and_calendar_and_end by
+    // prefix. Dropping it cuts a full index copy of the largest table.
     .index("by_user_and_calendar_and_end", ["userId", "calendarId", "endMs"])
     .index("by_user_and_calendar_and_googleEventId", [
       "userId",

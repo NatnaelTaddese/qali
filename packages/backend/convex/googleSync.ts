@@ -158,7 +158,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // Only score events within the synced window; older ones contribute ~nothing
 // after decay anyway. Matches CALENDAR_HISTORY_MS (declared below) so nothing in
 // range is missed.
-const ENGAGEMENT_WINDOW_MS = 365 * DAY_MS;
+const ENGAGEMENT_WINDOW_MS = 180 * DAY_MS;
 // How fast an event's weight halves as it recedes into the past (or future).
 const ENGAGEMENT_HALF_LIFE_DAYS = 30;
 // Upcoming meetings signal current relevance, so they outweigh an equally-recent
@@ -242,7 +242,10 @@ async function deleteCalendarEventsBatch(
 ): Promise<boolean> {
   const rows = await ctx.db
     .query("events")
-    .withIndex("by_user_and_calendar", (q) =>
+    // Prefix of by_user_and_calendar_and_end — the dedicated (userId, calendarId)
+    // index was redundant with this one and was dropped to cut events index
+    // storage. Order is irrelevant for a batch delete.
+    .withIndex("by_user_and_calendar_and_end", (q) =>
       q.eq("userId", userId).eq("calendarId", googleCalendarId),
     )
     .take(EVENT_CLEANUP_BATCH_SIZE);
@@ -274,8 +277,9 @@ async function getGoogleAccessToken(
 // Sync orchestration (plain helpers run inside actions).
 // ---------------------------------------------------------------------------
 // How far back a full (first-time) resync reaches. Events older than this at
-// sync time are never fetched; incremental syncs afterwards are unbounded.
-export const CALENDAR_HISTORY_MS = 365 * 24 * 60 * 60 * 1000;
+// sync time are never fetched. Matches EVENT_RETENTION_MS (maintenance.ts) so a
+// first sync never fetches events the retention prune would immediately delete.
+export const CALENDAR_HISTORY_MS = 180 * 24 * 60 * 60 * 1000;
 
 /** Returns whether any calendar produced event changes this run. */
 async function syncCalendar(

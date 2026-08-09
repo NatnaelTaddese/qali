@@ -1,5 +1,6 @@
-import { internalMutation } from "./_generated/server";
+import { internalMutation, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Id, TableNames } from "./_generated/dataModel";
 import { v } from "convex/values";
 
 import { isSharedPublicCalendar } from "./lib/calendars";
@@ -182,6 +183,35 @@ export const pruneSharedCalendarEvents = internalMutation({
   },
 });
 
+// --- Recurring: prune stale rate-limit counters ----------------------------
+// The `bookingRateLimits` table gains one row per distinct key (email/page slug,
+// waitlist keys). Once a key's window has long elapsed its row is dead weight, so
+// drop rows untouched for a day — well past any active window, so a later request
+// for that key just re-inserts a fresh counter.
+const RATE_LIMIT_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+export const pruneRateLimits = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const cutoff = Date.now() - RATE_LIMIT_RETENTION_MS;
+    const page = await ctx.db
+      .query("bookingRateLimits")
+      .paginate({ cursor: args.cursor ?? null, numItems: BATCH_SIZE });
+    for (const row of page.page) {
+      if (row.windowStartMs < cutoff) {
+        await ctx.db.delete(row._id);
+      }
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.maintenance.pruneRateLimits, {
+        cursor: page.continueCursor,
+      });
+    }
+    return null;
+  },
+});
+
 // --- One-shot: migrate existing per-user public-calendar events to shared ---
 // Deletes every per-user copy of a Google public calendar's events (they now
 // live once in `sharedEvents`), then kicks each user's sync so the shared copy
@@ -263,5 +293,120 @@ export const purgeNonSharedSharedEvents = internalMutation({
       });
     }
     return { deleted, done: true };
+  },
+});
+
+// --- Account deletion: erase all of a user's data ---------------------------
+// The cleanup primitive to run when an account goes away, so no per-user PII
+// outlives it. Invoke it by hand (dashboard/CLI) with the user's id, or wire it
+// to the Better Auth user-delete trigger later — it takes only a userId (+ the
+// account email) and is safe to re-run. Each call deletes a bounded batch from
+// every user-scoped table and reschedules itself until all are empty; deletes
+// shrink the indexes, so repeated `.take` batches always make progress and the
+// run terminates. Passing the account's `email` also clears its marketing
+// waitlist row, which is keyed by email rather than userId.
+const PURGE_BATCH = 100;
+
+export const purgeUserData = internalMutation({
+  args: { userId: v.string(), email: v.optional(v.string()) },
+  returns: v.object({ done: v.boolean() }),
+  handler: async (ctx, args): Promise<{ done: boolean }> => {
+    const userId = args.userId;
+    let more = false;
+    const drain = async (rows: { _id: Id<TableNames> }[]): Promise<void> => {
+      for (const row of rows) {
+        await ctx.db.delete(row._id);
+      }
+      if (rows.length === PURGE_BATCH) {
+        more = true;
+      }
+    };
+    const byUser = (
+      table:
+        | "syncState"
+        | "calendars"
+        | "bookingPages"
+        | "contacts"
+        | "people"
+        | "assistantUserState"
+        | "assistantMessages",
+    ) =>
+      ctx.db
+        .query(table)
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .take(PURGE_BATCH);
+
+    await drain(await byUser("syncState"));
+    await drain(await byUser("calendars"));
+    await drain(await byUser("bookingPages"));
+    await drain(await byUser("contacts"));
+    await drain(await byUser("people"));
+    await drain(await byUser("assistantUserState"));
+    await drain(await byUser("assistantMessages"));
+    await drain(
+      await ctx.db
+        .query("events")
+        .withIndex("by_user_and_start", (q) => q.eq("userId", userId))
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("recurringSeries")
+        .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+          q.eq("userId", userId),
+        )
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("availabilityOverrides")
+        .withIndex("by_user_and_date", (q) => q.eq("userId", userId))
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("notifications")
+        .withIndex("by_user_and_created", (q) => q.eq("userId", userId))
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("assistantThreads")
+        .withIndex("by_user_and_lastMessage", (q) => q.eq("userId", userId))
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("assistantActions")
+        .withIndex("by_user_and_status", (q) => q.eq("userId", userId))
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("bookings")
+        .withIndex("by_host_and_start", (q) => q.eq("hostUserId", userId))
+        .take(PURGE_BATCH),
+    );
+
+    // Waitlist is keyed by email, and holds at most one row per address.
+    if (args.email) {
+      const email = args.email.trim().toLowerCase();
+      const row = await ctx.db
+        .query("waitlist")
+        .withIndex("by_email", (q) => q.eq("email", email))
+        .unique();
+      if (row) {
+        await ctx.db.delete(row._id);
+      }
+    }
+
+    if (more) {
+      // Waitlist is one row and already handled, so don't pass email again.
+      await ctx.scheduler.runAfter(0, internal.maintenance.purgeUserData, {
+        userId,
+      });
+      return { done: false };
+    }
+    return { done: true };
   },
 });

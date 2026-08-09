@@ -182,6 +182,12 @@ export const listEvents = query({
   },
 });
 
+// The window is caller-supplied, so bound it: the widest legitimate view (a
+// 7-month month-grid, see QUERY_SIDE_MONTHS on the client) is ~214 days, so 400
+// days leaves headroom while stopping a forged range from scanning years of rows
+// in one unpaginated read.
+const MAX_EVENT_RANGE_MS = 400 * 24 * 60 * 60 * 1000;
+
 /** Events overlapping [startMs, endMs) for the current user, e.g. a week window. */
 export const listEventsInRange = query({
   args: { startMs: v.number(), endMs: v.number() },
@@ -189,6 +195,9 @@ export const listEventsInRange = query({
     const user = await authComponent.safeGetAuthUser(ctx);
     if (!user) {
       return [];
+    }
+    if (endMs <= startMs || endMs - startMs > MAX_EVENT_RANGE_MS) {
+      throw new Error("Requested calendar range is too large");
     }
     const selected = await selectedCalendarIds(ctx, user._id);
     // The index is on startMs, so scan back a day to catch events that begin

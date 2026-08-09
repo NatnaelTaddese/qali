@@ -103,8 +103,17 @@ async function upsertPeopleRows(
   userId: string,
   source: PersonSource,
   rows: PersonInput[],
+  // Full-resync generation for the "other" feeder; stamped onto touched rows so
+  // the post-resync sweep can drop "other" from people it no longer sees. Ignored
+  // for other sources and on incremental writes (undefined preserves the prior
+  // stamp). See sweepStaleOtherPeopleBatch.
+  otherGeneration?: number,
 ): Promise<void> {
   const authoritative = source !== "attendee";
+  const stampOther =
+    source === "other" && otherGeneration !== undefined
+      ? { otherSyncGeneration: otherGeneration }
+      : {};
   // Collapse duplicate emails within the page (same guest across many events).
   const byEmail = new Map<string, PersonInput>();
   for (const r of rows) {
@@ -140,6 +149,7 @@ async function upsertPeopleRows(
           : existing.photoUrl,
         sources,
         updatedAt: now,
+        ...stampOther,
       });
     } else {
       await ctx.db.insert("people", {
@@ -149,8 +159,40 @@ async function upsertPeopleRows(
         photoUrl: r.photoUrl,
         sources: [source],
         updatedAt: now,
+        ...stampOther,
       });
     }
+  }
+}
+
+/** Remove one feeder's claim on a person, keyed by lowercased email. When that
+ * was the person's only source the row is deleted; otherwise the tag is dropped
+ * and the row kept (a guest who is also a calendar attendee stays visible).
+ * Idempotent — a no-op if the person or source is already gone. */
+async function removePersonSource(
+  ctx: MutationCtx,
+  userId: string,
+  email: string,
+  source: PersonSource,
+): Promise<void> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) {
+    return;
+  }
+  const existing = await ctx.db
+    .query("people")
+    .withIndex("by_user_and_email", (q) =>
+      q.eq("userId", userId).eq("email", normalized),
+    )
+    .unique();
+  if (!existing || !existing.sources.includes(source)) {
+    return;
+  }
+  const sources = existing.sources.filter((s) => s !== source);
+  if (sources.length === 0) {
+    await ctx.db.delete(existing._id);
+  } else {
+    await ctx.db.patch(existing._id, { sources, updatedAt: Date.now() });
   }
 }
 
@@ -581,6 +623,17 @@ async function syncContacts(
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
+      // A full resync stamps every re-fetched connection with a fresh generation,
+      // then sweeps those left behind — reconciling contacts (and their people
+      // rows) that were deleted while the sync token was expired, which the People
+      // API's incremental tombstones would otherwise never report.
+      let generation: number | undefined;
+      if (fullResync) {
+        generation = await ctx.runMutation(
+          internal.googleSync.beginContactsFullResync,
+          { userId, feeder: "connection" },
+        );
+      }
       let pageToken: string | undefined;
       let newSyncToken: string | undefined;
       do {
@@ -593,13 +646,33 @@ async function syncContacts(
           await ctx.runMutation(internal.googleSync.upsertContactsPage, {
             userId,
             contacts: page.contacts,
+            syncGeneration: generation,
           });
         }
         pageToken = page.nextPageToken;
         newSyncToken = page.nextSyncToken ?? newSyncToken;
       } while (pageToken);
 
-      if (newSyncToken) {
+      if (fullResync && generation !== undefined) {
+        // Sweep first, then commit token+generation — a crash mid-sweep leaves the
+        // token unset so the next run redoes the full resync (self-healing).
+        let cursor: string | null = null;
+        let done = false;
+        while (!done) {
+          const res: { cursor: string | null; done: boolean } =
+            await ctx.runMutation(
+              internal.googleSync.sweepStaleContactsBatch,
+              { userId, keepGeneration: generation, cursor },
+            );
+          cursor = res.cursor;
+          done = res.done;
+        }
+        await ctx.runMutation(internal.googleSync.setContactsSync, {
+          userId,
+          syncToken: newSyncToken,
+          syncGeneration: generation,
+        });
+      } else if (newSyncToken) {
         await ctx.runMutation(internal.googleSync.setContactsSync, {
           userId,
           syncToken: newSyncToken,
@@ -632,6 +705,16 @@ async function syncOtherContacts(
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
+      // A full resync stamps every re-seen Other Contact's people row with a fresh
+      // generation, then drops the "other" source from people it no longer sees —
+      // reconciling auto-collected addresses removed while the token was expired.
+      let generation: number | undefined;
+      if (fullResync) {
+        generation = await ctx.runMutation(
+          internal.googleSync.beginContactsFullResync,
+          { userId, feeder: "other" },
+        );
+      }
       let pageToken: string | undefined;
       let newSyncToken: string | undefined;
       do {
@@ -644,13 +727,31 @@ async function syncOtherContacts(
           await ctx.runMutation(internal.googleSync.upsertOtherContactsPage, {
             userId,
             contacts: page.contacts,
+            syncGeneration: generation,
           });
         }
         pageToken = page.nextPageToken;
         newSyncToken = page.nextSyncToken ?? newSyncToken;
       } while (pageToken);
 
-      if (newSyncToken) {
+      if (fullResync && generation !== undefined) {
+        let cursor: string | null = null;
+        let done = false;
+        while (!done) {
+          const res: { cursor: string | null; done: boolean } =
+            await ctx.runMutation(
+              internal.googleSync.sweepStaleOtherPeopleBatch,
+              { userId, keepGeneration: generation, cursor },
+            );
+          cursor = res.cursor;
+          done = res.done;
+        }
+        await ctx.runMutation(internal.googleSync.setOtherContactsSync, {
+          userId,
+          syncToken: newSyncToken,
+          syncGeneration: generation,
+        });
+      } else if (newSyncToken) {
         await ctx.runMutation(internal.googleSync.setOtherContactsSync, {
           userId,
           syncToken: newSyncToken,
@@ -1361,7 +1462,12 @@ export const upsertSharedEventsPage = internalMutation({
 });
 
 export const setContactsSync = internalMutation({
-  args: { userId: v.string(), syncToken: v.string() },
+  args: {
+    userId: v.string(),
+    syncToken: v.optional(v.string()),
+    // Persisted on a full-resync commit so the next full resync bumps past it.
+    syncGeneration: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db
       .query("syncState")
@@ -1369,8 +1475,12 @@ export const setContactsSync = internalMutation({
       .unique();
     if (row) {
       await ctx.db.patch(row._id, {
-        contactsSyncToken: args.syncToken,
-        lastContactsSyncAt: Date.now(),
+        ...(args.syncToken !== undefined
+          ? { contactsSyncToken: args.syncToken, lastContactsSyncAt: Date.now() }
+          : {}),
+        ...(args.syncGeneration !== undefined
+          ? { contactsSyncGeneration: args.syncGeneration }
+          : {}),
       });
     }
     return null;
@@ -1378,7 +1488,11 @@ export const setContactsSync = internalMutation({
 });
 
 export const setOtherContactsSync = internalMutation({
-  args: { userId: v.string(), syncToken: v.string() },
+  args: {
+    userId: v.string(),
+    syncToken: v.optional(v.string()),
+    syncGeneration: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db
       .query("syncState")
@@ -1386,11 +1500,103 @@ export const setOtherContactsSync = internalMutation({
       .unique();
     if (row) {
       await ctx.db.patch(row._id, {
-        otherContactsSyncToken: args.syncToken,
-        lastOtherContactsSyncAt: Date.now(),
+        ...(args.syncToken !== undefined
+          ? {
+              otherContactsSyncToken: args.syncToken,
+              lastOtherContactsSyncAt: Date.now(),
+            }
+          : {}),
+        ...(args.syncGeneration !== undefined
+          ? { otherContactsSyncGeneration: args.syncGeneration }
+          : {}),
       });
     }
     return null;
+  },
+});
+
+/** Reserve the next full-resync generation for one contact feeder without
+ * persisting it (persisted on commit via set{Contacts,OtherContacts}Sync). A
+ * crashed resync reuses the same number next time, which is safe: re-stamping the
+ * present records with it is idempotent and the sweep keeps exactly that set. */
+export const beginContactsFullResync = internalMutation({
+  args: {
+    userId: v.string(),
+    feeder: v.union(v.literal("connection"), v.literal("other")),
+  },
+  handler: async (ctx, args): Promise<number> => {
+    const row = await ctx.db
+      .query("syncState")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .unique();
+    const current =
+      args.feeder === "connection"
+        ? row?.contactsSyncGeneration
+        : row?.otherContactsSyncGeneration;
+    return (current ?? 0) + 1;
+  },
+});
+
+/** Delete one bounded batch of the user's `contacts` whose generation is not
+ * `keepGeneration` (connections absent from the latest full snapshot), cascading
+ * each into the people directory. Cursor-walked so it always terminates. */
+export const sweepStaleContactsBatch = internalMutation({
+  args: {
+    userId: v.string(),
+    keepGeneration: v.number(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ cursor: string | null; done: boolean }> => {
+    const page = await ctx.db
+      .query("contacts")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .paginate({ cursor: args.cursor, numItems: EVENT_CLEANUP_BATCH_SIZE });
+    for (const row of page.page) {
+      if (row.syncGeneration !== args.keepGeneration) {
+        for (const email of row.emails) {
+          await removePersonSource(ctx, args.userId, email, "connection");
+        }
+        await ctx.db.delete(row._id);
+      }
+    }
+    return { cursor: page.continueCursor, done: page.isDone };
+  },
+});
+
+/** Drop the "other" source from one bounded batch of people whose Other Contacts
+ * generation is stale (they weren't in the latest full snapshot). The person row
+ * is deleted only if "other" was its last source. */
+export const sweepStaleOtherPeopleBatch = internalMutation({
+  args: {
+    userId: v.string(),
+    keepGeneration: v.number(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ cursor: string | null; done: boolean }> => {
+    const page = await ctx.db
+      .query("people")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .paginate({ cursor: args.cursor, numItems: EVENT_CLEANUP_BATCH_SIZE });
+    for (const row of page.page) {
+      if (
+        row.sources.includes("other") &&
+        row.otherSyncGeneration !== args.keepGeneration
+      ) {
+        const sources = row.sources.filter((s) => s !== "other");
+        if (sources.length === 0) {
+          await ctx.db.delete(row._id);
+        } else {
+          await ctx.db.patch(row._id, { sources, updatedAt: Date.now() });
+        }
+      }
+    }
+    return { cursor: page.continueCursor, done: page.isDone };
   },
 });
 
@@ -1445,7 +1651,13 @@ export const upsertEventsPage = internalMutation({
 });
 
 export const upsertContactsPage = internalMutation({
-  args: { userId: v.string(), contacts: v.array(contactValidator) },
+  args: {
+    userId: v.string(),
+    contacts: v.array(contactValidator),
+    // Set on the full-resync path so re-fetched contacts carry the new generation
+    // and survive the sweep; omitted (and preserved) on incremental writes.
+    syncGeneration: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<null> => {
     for (const c of args.contacts) {
       const existing = await ctx.db
@@ -1456,15 +1668,28 @@ export const upsertContactsPage = internalMutation({
         .unique();
       if (c.deleted) {
         if (existing) {
+          // Cascade the tombstone into the people directory before removing the
+          // contact, so its saved name/photo can't linger there as an orphan.
+          for (const email of existing.emails) {
+            await removePersonSource(ctx, args.userId, email, "connection");
+          }
           await ctx.db.delete(existing._id);
         }
         continue;
       }
       const { deleted: _deleted, ...rest } = c;
+      const stampGen =
+        args.syncGeneration !== undefined
+          ? { syncGeneration: args.syncGeneration }
+          : {};
       if (existing) {
-        await ctx.db.patch(existing._id, rest);
+        await ctx.db.patch(existing._id, { ...rest, ...stampGen });
       } else {
-        await ctx.db.insert("contacts", { userId: args.userId, ...rest });
+        await ctx.db.insert("contacts", {
+          userId: args.userId,
+          ...rest,
+          ...stampGen,
+        });
       }
     }
     // Mirror saved connections into the email-keyed people directory.
@@ -1482,13 +1707,29 @@ export const upsertContactsPage = internalMutation({
  * never land in the `contacts` table (they aren't saved contacts); they exist
  * only to enrich attendees with a name + avatar. */
 export const upsertOtherContactsPage = internalMutation({
-  args: { userId: v.string(), contacts: v.array(contactValidator) },
+  args: {
+    userId: v.string(),
+    contacts: v.array(contactValidator),
+    // Set on the full-resync path so touched people carry the new "other"
+    // generation and survive the sweep; omitted (preserved) on incremental.
+    syncGeneration: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<null> => {
+    // Other Contacts have no backing table, so a tombstone can only be cascaded
+    // straight into the people directory by dropping the "other" source.
+    for (const c of args.contacts) {
+      if (c.deleted) {
+        for (const email of c.emails) {
+          await removePersonSource(ctx, args.userId, email, "other");
+        }
+      }
+    }
     await upsertPeopleRows(
       ctx,
       args.userId,
       "other",
       contactsToPeople(args.contacts),
+      args.syncGeneration,
     );
     return null;
   },

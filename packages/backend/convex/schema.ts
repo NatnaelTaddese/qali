@@ -142,6 +142,13 @@ export default defineSchema({
     // interacted with, never saved. Tracked separately from contactsSyncToken.
     otherContactsSyncToken: v.optional(v.string()),
     lastOtherContactsSyncAt: v.optional(v.number()),
+    // Full-resync reconcile generations for the two contact feeders. A full
+    // resync stamps every re-fetched record with a fresh generation, then removes
+    // records still carrying an older one — so a contact deleted while the sync
+    // token was expired (People API returns no tombstone for it) is reconciled
+    // away instead of lingering. See syncContacts / syncOtherContacts.
+    contactsSyncGeneration: v.optional(v.number()),
+    otherContactsSyncGeneration: v.optional(v.number()),
     status: v.union(
       v.literal("idle"),
       v.literal("syncing"),
@@ -374,6 +381,8 @@ export default defineSchema({
     phones: v.array(v.string()),
     photoUrl: v.optional(v.string()),
     googleEtag: v.optional(v.string()),
+    // Full-resync reconcile marker (see syncState.contactsSyncGeneration).
+    syncGeneration: v.optional(v.number()),
   })
     .index("by_user", ["userId"])
     .index("by_user_and_resourceName", ["userId", "resourceName"]),
@@ -406,6 +415,11 @@ export default defineSchema({
     lastMetMs: v.optional(v.number()),
     nextMeetingMs: v.optional(v.number()),
     updatedAt: v.number(),
+    // Last full-resync generation of the Other Contacts feeder that saw this
+    // person. Only meaningful when `sources` includes "other"; used to reconcile
+    // away the "other" source when an Other Contact disappears across a full
+    // resync (that feeder has no backing table). See syncOtherContacts.
+    otherSyncGeneration: v.optional(v.number()),
   })
     .index("by_user", ["userId"])
     .index("by_user_and_email", ["userId", "email"])
@@ -465,7 +479,11 @@ export default defineSchema({
     // clickable chips under the latest reply.
     suggestions: v.optional(v.array(v.string())),
     createdAt: v.number(),
-  }).index("by_thread", ["threadId", "createdAt"]),
+  })
+    .index("by_thread", ["threadId", "createdAt"])
+    // userId is denormalized here for user-scoped reads; the index also lets
+    // account-deletion cleanup remove a user's messages without a thread join.
+    .index("by_user", ["userId"]),
 
   // A write the assistant wants to make, held until the user confirms it.
   //

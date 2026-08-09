@@ -28,6 +28,7 @@ import type * as lib_calendars from "../lib/calendars.js";
 import type * as lib_google from "../lib/google.js";
 import type * as lib_notifications from "../lib/notifications.js";
 import type * as lib_permissions from "../lib/permissions.js";
+import type * as lib_rateLimit from "../lib/rateLimit.js";
 import type * as lib_slug from "../lib/slug.js";
 import type * as maintenance from "../maintenance.js";
 import type * as notifications from "../notifications.js";
@@ -62,6 +63,7 @@ declare const fullApi: ApiFromModules<{
   "lib/google": typeof lib_google;
   "lib/notifications": typeof lib_notifications;
   "lib/permissions": typeof lib_permissions;
+  "lib/rateLimit": typeof lib_rateLimit;
   "lib/slug": typeof lib_slug;
   maintenance: typeof maintenance;
   notifications: typeof notifications;

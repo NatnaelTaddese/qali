@@ -35,58 +35,134 @@ export class GoogleNetworkError extends Error {
   }
 }
 
+// Bounded retry policy for transient Google failures. Without it, a fan-out sync
+// turns every 429/5xx/network blip into a synchronized failure (and, across
+// users, a synchronized retry burst). Retries use full jitter so concurrent
+// callers don't re-hit Google in lockstep.
+const MAX_FETCH_ATTEMPTS = 3;
+const BASE_BACKOFF_MS = 500;
+const MAX_BACKOFF_MS = 8_000;
+// Cap on how long we'll honor a Retry-After, so a single call can't tie up an
+// action for minutes.
+const MAX_RETRY_AFTER_MS = 30_000;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Whether a method is safe to retry after an ambiguous failure (a network drop
+ * or 5xx that may have applied). Non-idempotent writes (POST/PATCH) are not — a
+ * retry could duplicate a create or re-send invitations. A 429 / rate-limit
+ * rejection is handled separately: it was refused before applying, so retrying it
+ * is safe for any method. */
+function isIdempotentMethod(init?: RequestInit): boolean {
+  const method = (init?.method ?? "GET").toUpperCase();
+  return (
+    method === "GET" ||
+    method === "HEAD" ||
+    method === "PUT" ||
+    method === "DELETE"
+  );
+}
+
+/** Full-jitter exponential backoff: a random delay in [0, min(cap, base·2^n)]. */
+function backoffDelayMs(attempt: number): number {
+  const ceiling = Math.min(BASE_BACKOFF_MS * 2 ** attempt, MAX_BACKOFF_MS);
+  return Math.random() * ceiling;
+}
+
+/** Google's `Retry-After` as ms (seconds or HTTP-date form), clamped to a sane
+ * ceiling. Returns undefined when absent or unparseable. */
+function parseRetryAfterMs(res: Response): number | undefined {
+  const header = res.headers.get("retry-after");
+  if (!header) {
+    return undefined;
+  }
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) {
+    return Math.min(Math.max(seconds, 0) * 1000, MAX_RETRY_AFTER_MS);
+  }
+  const dateMs = Date.parse(header);
+  if (!Number.isNaN(dateMs)) {
+    return Math.min(Math.max(dateMs - Date.now(), 0), MAX_RETRY_AFTER_MS);
+  }
+  return undefined;
+}
+
 async function googleFetch(
   url: string,
   accessToken: string,
   init?: RequestInit,
 ): Promise<unknown> {
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        ...init?.headers,
-      },
-    });
-  } catch (error) {
-    throw new GoogleNetworkError(error);
-  }
+  const idempotent = isIdempotentMethod(init);
 
-  if (!res.ok) {
-    let body = "<response body unavailable>";
+  for (let attempt = 0; ; attempt++) {
+    const lastAttempt = attempt >= MAX_FETCH_ATTEMPTS - 1;
+    let res: Response;
     try {
-      body = await res.text();
-    } catch {
-      // The HTTP status is authoritative for a non-success response even when
-      // its diagnostic body cannot be read.
+      res = await fetch(url, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          ...init?.headers,
+        },
+      });
+    } catch (error) {
+      // The request never got a response. Retry only idempotent methods — a
+      // write may have committed before the connection dropped.
+      if (idempotent && !lastAttempt) {
+        await sleep(backoffDelayMs(attempt));
+        continue;
+      }
+      throw new GoogleNetworkError(error);
     }
-    // Expired sync token: the Calendar API signals this with HTTP 410, while the
-    // People API returns HTTP 400 with reason "EXPIRED_SYNC_TOKEN". Both should
-    // drop the stored token and restart a full sync.
-    if (
-      res.status === 410 ||
-      (res.status === 400 && body.includes("EXPIRED_SYNC_TOKEN"))
-    ) {
-      throw new SyncTokenExpiredError();
+
+    if (!res.ok) {
+      let body = "<response body unavailable>";
+      try {
+        body = await res.text();
+      } catch {
+        // The HTTP status is authoritative for a non-success response even when
+        // its diagnostic body cannot be read.
+      }
+      // Expired sync token: the Calendar API signals this with HTTP 410, while
+      // the People API returns HTTP 400 with reason "EXPIRED_SYNC_TOKEN". Both
+      // should drop the stored token and restart a full sync — never retried.
+      if (
+        res.status === 410 ||
+        (res.status === 400 && body.includes("EXPIRED_SYNC_TOKEN"))
+      ) {
+        throw new SyncTokenExpiredError();
+      }
+      // A rate-limit rejection (429, or Google's 403 rateLimitExceeded) was
+      // refused before applying, so it's safe to retry for any method. A 5xx is
+      // ambiguous, so only retry it for idempotent methods.
+      const rateLimited =
+        res.status === 429 ||
+        (res.status === 403 && body.includes("ateLimitExceeded"));
+      const serverError = res.status >= 500 && res.status < 600;
+      const retryable = rateLimited || (serverError && idempotent);
+      if (retryable && !lastAttempt) {
+        await sleep(parseRetryAfterMs(res) ?? backoffDelayMs(attempt));
+        continue;
+      }
+      throw new GoogleApiError(
+        res.status,
+        `Google API ${res.status} ${res.statusText}: ${body}`,
+      );
     }
-    throw new GoogleApiError(
-      res.status,
-      `Google API ${res.status} ${res.statusText}: ${body}`,
-    );
-  }
-  // DELETE answers 204 with an empty body, which res.json() would choke on.
-  if (res.status === 204) {
-    return null;
-  }
-  try {
-    return await res.json();
-  } catch (error) {
-    // A successful write may already be committed when the response stream is
-    // interrupted, so callers must reconcile rather than treat this as a known
-    // pre-commit failure.
-    throw new GoogleNetworkError(error);
+    // DELETE answers 204 with an empty body, which res.json() would choke on.
+    if (res.status === 204) {
+      return null;
+    }
+    try {
+      return await res.json();
+    } catch (error) {
+      // A successful write may already be committed when the response stream is
+      // interrupted, so callers must reconcile rather than treat this as a known
+      // pre-commit failure.
+      throw new GoogleNetworkError(error);
+    }
   }
 }
 

@@ -26,6 +26,7 @@ import {
 } from "./_generated/server";
 import { authComponent, createAuth } from "./auth";
 import {
+  addDaysToDateKey,
   allDayBusyInterval,
   generateSlotGrid,
   isValidDayInterval,
@@ -33,6 +34,7 @@ import {
   type Interval,
   MS_PER_DAY,
   type SlotOption,
+  utcToZoned,
 } from "./lib/availability";
 import {
   getCalendarEvent,
@@ -43,6 +45,7 @@ import {
   toGoogleTime,
 } from "./lib/google";
 import { googleEventIdForOperation } from "./lib/assistantLogic";
+import { consumeRateLimit } from "./lib/rateLimit";
 import { normalizeSlug, slugError } from "./lib/slug";
 import { clearBookingNotifications } from "./notifications";
 
@@ -187,9 +190,21 @@ async function slotGrid(
   fromMs: number,
   toMs: number,
 ): Promise<SlotOption[]> {
+  // Only the overrides whose date falls in the rendered window matter, and the
+  // window is capped at MAX_SLOT_RANGE_MS — so bound the scan to that date range
+  // instead of collecting every override the host has ever set. dateKeys are ISO
+  // "YYYY-MM-DD" strings, so lexical index order is chronological; the ±1 day pad
+  // matches generateSlotGrid's own firstKey/lastKey so nothing rendered is missed.
+  const firstKey = addDaysToDateKey(
+    utcToZoned(fromMs, page.timeZone).dateKey,
+    -1,
+  );
+  const lastKey = addDaysToDateKey(utcToZoned(toMs, page.timeZone).dateKey, 1);
   const overrides = await ctx.db
     .query("availabilityOverrides")
-    .withIndex("by_user_and_date", (q) => q.eq("userId", page.userId))
+    .withIndex("by_user_and_date", (q) =>
+      q.eq("userId", page.userId).gte("dateKey", firstKey).lte("dateKey", lastKey),
+    )
     .collect();
 
   return generateSlotGrid({
@@ -574,44 +589,6 @@ export const listSlots = query({
 });
 
 /**
- * Fixed-window counter. Returns false when `key` has already used up `limit`
- * requests in the current hour.
- *
- * Rough by design: a Convex mutation sees no client IP, so the keys available
- * are the requester's email and the page itself. Moving `requestBooking` behind
- * an `httpAction` would add an IP key if that ever proves too weak.
- */
-async function consumeRateLimit(
-  ctx: MutationCtx,
-  key: string,
-  limit: number,
-): Promise<boolean> {
-  const now = Date.now();
-  const row = await ctx.db
-    .query("bookingRateLimits")
-    .withIndex("by_key", (q) => q.eq("key", key))
-    .unique();
-
-  if (!row) {
-    await ctx.db.insert("bookingRateLimits", {
-      key,
-      windowStartMs: now,
-      count: 1,
-    });
-    return true;
-  }
-  if (now - row.windowStartMs >= RATE_WINDOW_MS) {
-    await ctx.db.patch(row._id, { windowStartMs: now, count: 1 });
-    return true;
-  }
-  if (row.count >= limit) {
-    return false;
-  }
-  await ctx.db.patch(row._id, { count: row.count + 1 });
-  return true;
-}
-
-/**
  * Request one of the host's open slots. Anonymous callers reach this, so the
  * slot is re-derived here and `startMs` has to match one the server itself
  * offers — the visitor's list is only a suggestion.
@@ -667,10 +644,24 @@ export const requestBooking = mutation({
       throw new Error("Please shorten your message");
     }
 
-    if (!(await consumeRateLimit(ctx, `page:${page.slug}`, MAX_REQUESTS_PER_PAGE))) {
+    if (
+      !(await consumeRateLimit(
+        ctx,
+        `page:${page.slug}`,
+        MAX_REQUESTS_PER_PAGE,
+        RATE_WINDOW_MS,
+      ))
+    ) {
       throw new ConvexError({ code: "PAGE_RATE_LIMIT" });
     }
-    if (!(await consumeRateLimit(ctx, `email:${email}`, MAX_REQUESTS_PER_EMAIL))) {
+    if (
+      !(await consumeRateLimit(
+        ctx,
+        `email:${email}`,
+        MAX_REQUESTS_PER_EMAIL,
+        RATE_WINDOW_MS,
+      ))
+    ) {
       throw new ConvexError({ code: "EMAIL_RATE_LIMIT" });
     }
 

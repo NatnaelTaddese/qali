@@ -237,11 +237,17 @@ export const getEventById = query({
     if (!row) {
       return null;
     }
-    // A shared (public-calendar) event belongs to no user; it's readable by
-    // anyone who has that calendar, and is normalized to the events shape so the
-    // client sees one type. A personal event is guarded by ownership.
+    // A personal event is guarded by ownership.
     if ("userId" in row) {
       return row.userId === user._id ? row : null;
+    }
+    // A shared (public-calendar) event belongs to no user, but it must only be
+    // returned to a caller who actually has that calendar selected — otherwise
+    // any authenticated user could read any sharedEvents row by guessing its id.
+    // We gate on the same selected-calendar set the range reads use.
+    const selected = await selectedCalendarIds(ctx, user._id);
+    if (!selected.has(row.calendarId)) {
+      return null;
     }
     return sharedAsEvent(row, user._id);
   },
@@ -313,6 +319,11 @@ export const createEvent = action({
     timeZone: v.optional(v.string()),
     /** Ask Google to mint a Google Meet link; the URL comes back as `hangoutLink`. */
     addConference: v.optional(v.boolean()),
+    /** Idempotency key, stable across retries of the same user intent. A retry
+     * with the same id reuses the already-created Google event (via a
+     * derived stable event id + duplicate-409-as-success) instead of creating a
+     * second event and re-emailing guests. See googleEventIdForOperation. */
+    operationId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<MappedEvent> => {
     const user = await authComponent.safeGetAuthUser(ctx);
@@ -485,6 +496,11 @@ export const updateEvent = action({
         v.literal("allEvents"),
       ),
     ),
+    /** Idempotency key, stable across retries of the same user intent. Used by
+     * the `thisAndFollowing` split, whose tail insert creates a new series: a
+     * retry with the same id reuses that series (derived stable id + 409-as-
+     * success) instead of duplicating it and re-emailing guests. */
+    operationId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<MappedEvent> => {
     const { userId, accessToken } = await authedWrite(ctx);

@@ -85,6 +85,13 @@ export const googleEventValidator = v.object({
  * to. `userId` is ours alone — it never round-trips to Google. */
 export const eventDocValidator = googleEventValidator.extend({
   userId: v.string(),
+  // Monotonic per-calendar full-resync marker. A full resync stamps every
+  // re-fetched row with a fresh generation, then deletes the rows still carrying
+  // an older one — so the previous snapshot stays live for booking conflict
+  // detection until the new one is fully written (see syncOneCalendar). Left
+  // absent on incrementally-written rows; the next full resync re-stamps any that
+  // still exist in Google, so absence never causes a wrongful sweep.
+  syncGeneration: v.optional(v.number()),
 });
 
 /** One piece of an assistant turn, in the order it happened.
@@ -148,6 +155,12 @@ export default defineSchema({
     // while an open app stays fresh because it calls syncNow directly.
     nextSyncDueAt: v.optional(v.number()),
     syncIntervalMs: v.optional(v.number()),
+    // A run claims this lease before touching Google, so a manual `syncNow`, a
+    // cron-scheduled run, and a workspace-mount sync for the same user cannot
+    // overlap and race each other's token updates. Released in recordSyncOutcome;
+    // a stale lease past its expiry can be reclaimed. See runSyncForUser.
+    syncLeaseExpiresAt: v.optional(v.number()),
+    syncAttemptId: v.optional(v.string()),
   })
     .index("by_user", ["userId"])
     .index("by_nextSyncDueAt", ["nextSyncDueAt"]),
@@ -170,6 +183,10 @@ export default defineSchema({
     selected: v.boolean(),
     syncToken: v.optional(v.string()),
     lastSyncAt: v.optional(v.number()),
+    // Current full-resync generation for this calendar's `events` rows. Bumped
+    // at the start of each full resync; the run stamps re-fetched rows with it
+    // and sweeps rows carrying an older value. See syncOneCalendar.
+    syncGeneration: v.optional(v.number()),
   })
     .index("by_user", ["userId"])
     .index("by_user_and_googleCalendarId", ["userId", "googleCalendarId"]),

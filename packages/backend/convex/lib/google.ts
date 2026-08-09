@@ -384,6 +384,7 @@ export async function fetchCalendarPage(
     syncToken?: string;
     pageToken?: string;
     timeMinMs?: number;
+    timeMaxMs?: number;
   },
 ): Promise<CalendarPage> {
   const params = new URLSearchParams({
@@ -395,10 +396,17 @@ export async function fetchCalendarPage(
     params.set("pageToken", opts.pageToken);
   }
   if (opts.syncToken) {
-    // syncToken cannot be combined with timeMin.
+    // syncToken cannot be combined with timeMin/timeMax.
     params.set("syncToken", opts.syncToken);
-  } else if (opts.timeMinMs !== undefined) {
-    params.set("timeMin", new Date(opts.timeMinMs).toISOString());
+  } else {
+    if (opts.timeMinMs !== undefined) {
+      params.set("timeMin", new Date(opts.timeMinMs).toISOString());
+    }
+    if (opts.timeMaxMs !== undefined) {
+      // Bounds recurrence expansion so an open-ended series doesn't yield an
+      // unbounded initial sync (singleEvents=true expands every instance).
+      params.set("timeMax", new Date(opts.timeMaxMs).toISOString());
+    }
   }
 
   const data = (await googleFetch(

@@ -3,7 +3,7 @@ import type { EventCapabilities } from "@qali/backend/convex/lib/permissions";
 import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useQuery } from "convex/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -52,6 +52,10 @@ export function EventCreate({
   const createEvent = useAction(api.calendar.createEvent);
   const calendars = useQuery(api.calendar.listCalendars) ?? [];
   const [submitting, setSubmitting] = useState(false);
+  // Idempotency key for this create intent: minted once and reused across retries
+  // (a lost response / re-submit) so the backend dedupes to one Google event
+  // instead of creating a duplicate. Cleared only on success. See createEvent.
+  const operationIdRef = useRef<string | null>(null);
   // Everything but the range. All three "inherit" defaults mean the same thing:
   // no colour override, the primary calendar (resolved server-side when unset),
   // and the calendar's own visibility.
@@ -92,7 +96,11 @@ export function EventCreate({
     if (!valid || submitting) return;
     setSubmitting(true);
     const times = toEventTimes(value);
+    if (!operationIdRef.current) {
+      operationIdRef.current = crypto.randomUUID();
+    }
     createEvent({
+      operationId: operationIdRef.current,
       summary: value.summary.trim() || "New event",
       startMs: times.startMs,
       endMs: times.endMs,
@@ -116,7 +124,10 @@ export function EventCreate({
         : undefined,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     })
-      .then(onCreated)
+      .then(() => {
+        operationIdRef.current = null;
+        onCreated();
+      })
       .catch((error: unknown) => {
         setSubmitting(false);
         toast.error("Couldn't create event", {

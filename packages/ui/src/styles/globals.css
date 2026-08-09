@@ -69,6 +69,15 @@
   --event-6: oklch(0.72 0.14 240);
   --event-7: oklch(0.7 0.15 285);
   --event-8: oklch(0.7 0.16 325);
+  /* Chroma band — the saturated hues that sweep across text on reveal (the
+   * marketing hero title and the assistant panel's streaming chunks). Kept as
+   * tokens so the gradient reads from one source of truth and can be retuned in
+   * one place. */
+  --chroma-1: #c679c4;
+  --chroma-2: #fa3d1d;
+  --chroma-3: #ffb005;
+  --chroma-4: #e1e1fe;
+  --chroma-5: #0358f7;
   --radius: 0.625rem;
   --sidebar: oklch(97% 0 0);
   --sidebar-foreground: oklch(13% 0 0);
@@ -436,6 +445,113 @@
   }
 }
 
+/* Chroma sweep: text reveals from a blurred, transparent state as the
+ * --chroma-* band sweeps left-to-right across the glyphs, settling on the
+ * theme's foreground colour. The solid stops use --foreground so text stays
+ * legible in both light and dark. Shared by the marketing hero (a slow 2s
+ * sweep, see apps/www) and `.chroma-stream` below (a snappy per-chunk reveal
+ * in the assistant panel). */
+@keyframes chroma-sweep {
+  0% {
+    background-position: 100% 0;
+    filter: blur(1px);
+  }
+  100% {
+    background-position: 0 0;
+    filter: blur(0);
+  }
+}
+
+/* Chat-tuned chroma reveal: each streamed chunk (`StreamingText` in
+ * packages/ui/src/components/ai/text-streaming.tsx) mounts with this class so a
+ * quick ~0.6s band sweeps across the new words and settles to foreground. */
+.chroma-stream {
+  background-image: linear-gradient(
+    90deg,
+    var(--foreground) 0,
+    var(--foreground) 33.33%,
+    var(--chroma-1) 40%,
+    var(--chroma-2) 45%,
+    var(--chroma-3) 50%,
+    var(--chroma-4) 55%,
+    var(--chroma-5) 60%,
+    transparent 66.67%,
+    transparent
+  );
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  will-change: background-position, filter;
+  animation: chroma-sweep 0.6s ease-out both;
+  filter: blur(1px);
+}
+
+/* Loading screen (shared by apps/www and apps/web via <LoadingScreen />): a
+ * single "Q" in the display font with the --chroma-* band sweeping across it on
+ * an infinite loop (unlike the hero's one-shot reveal). Two mirrored chroma
+ * bands per tile keep colour continuously present as it travels — the
+ * foreground stops sit only at the seams (0/50/100%), which line up under a
+ * one-tile translation for a seamless loop. */
+.chroma-loop {
+  background-image: linear-gradient(
+    90deg,
+    var(--foreground) 0,
+    var(--chroma-1) 10%,
+    var(--chroma-2) 18%,
+    var(--chroma-3) 25%,
+    var(--chroma-4) 32%,
+    var(--chroma-5) 40%,
+    var(--foreground) 50%,
+    var(--chroma-1) 60%,
+    var(--chroma-2) 68%,
+    var(--chroma-3) 75%,
+    var(--chroma-4) 82%,
+    var(--chroma-5) 90%,
+    var(--foreground) 100%
+  );
+  /* A wide container spreads the gradient tile over more px, so the glyph in
+   * the middle samples a broader, smoother slice of the sweep rather than the
+   * whole rainbow crammed into one small letter. */
+  display: inline-block;
+  width: min(72vmin, 360px);
+  text-align: center;
+  background-size: 200% 100%;
+  background-position: 0 0;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  will-change: background-position;
+  animation: chroma-loop-sweep 3s linear infinite;
+}
+
+@keyframes chroma-loop-sweep {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* Exit: once fonts and assets are ready the overlay dissolves — fading while
+ * scaling up and blurring, so the "Q" appears to expand into the page rather
+ * than just switching off. Durations match so onTransitionEnd (which unmounts
+ * the overlay) fires when the whole animation has finished, not partway. */
+.loading-screen {
+  transition:
+    opacity 0.55s ease,
+    transform 0.55s cubic-bezier(0.4, 0, 0.2, 1),
+    filter 0.55s ease;
+}
+.loading-screen[data-hidden="true"] {
+  opacity: 0;
+  transform: scale(1.12);
+  filter: blur(6px);
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* Freeze the shimmer/pixel loops to their resting state; entrances resolve
    * instantly rather than sliding. The elapsed timer still ticks (it's JS). */
@@ -445,6 +561,29 @@
   }
   [style*="pixel-on"] {
     animation: none !important;
+  }
+  /* Without the sweep, .chroma-stream's resting state (transparent gradient
+   * end over the glyphs) would render invisible — so drop the effect entirely
+   * and show plain foreground text. */
+  .chroma-stream {
+    animation: none !important;
+    background: none !important;
+    -webkit-text-fill-color: currentColor;
+    color: var(--foreground);
+    filter: none !important;
+  }
+  /* Loading "Q": freeze the sweep at a resting position, and exit with a plain
+   * fade — no scale/blur — while still cleanly handing off to the app. */
+  .chroma-loop {
+    animation: none;
+    background-position: 50% 0;
+  }
+  .loading-screen {
+    transition: opacity 0.3s ease;
+  }
+  .loading-screen[data-hidden="true"] {
+    transform: none;
+    filter: none;
   }
 }
 

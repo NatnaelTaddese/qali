@@ -13,6 +13,7 @@
     "check-types": "vite build && tsc --noEmit"
   },
   "dependencies": {
+    "@paper-design/shaders-react": "0.0.78",
     "@qali/backend": "workspace:*",
     "@qali/env": "workspace:*",
     "@qali/ui": "workspace:*",

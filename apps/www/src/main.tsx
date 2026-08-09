@@ -1,4 +1,5 @@
 import { env } from "@qali/env/web";
+import { waitForFraunces } from "@qali/ui/lib/wait-for-fraunces";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { ConvexProvider, ConvexReactClient } from "convex/react";
 import ReactDOM from "react-dom/client";
@@ -29,7 +30,13 @@ if (!rootElement) {
   throw new Error("Root element not found");
 }
 
-if (!rootElement.innerHTML) {
-  const root = ReactDOM.createRoot(rootElement);
-  root.render(<RouterProvider router={router} />);
+async function bootstrap() {
+  await waitForFraunces();
+
+  if (!rootElement!.innerHTML) {
+    const root = ReactDOM.createRoot(rootElement!);
+    root.render(<RouterProvider router={router} />);
+  }
 }
+
+void bootstrap();

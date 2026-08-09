@@ -1,20 +1,10 @@
 @import "@qali/ui/globals.css";
 
-/* Chroma band palette — the saturated hues that sweep across the hero title.
- * Kept as tokens (like the app's --chart-* / --event-*) so the gradient reads
- * from one source of truth and the palette can be retuned in one place. */
-:root {
-  --chroma-1: #c679c4;
-  --chroma-2: #fa3d1d;
-  --chroma-3: #ffb005;
-  --chroma-4: #e1e1fe;
-  --chroma-5: #0358f7;
-}
-
-/* Chroma sweep: the title reveals from a blurred, transparent state as the
- * --chroma-* band sweeps left-to-right across the letters, settling on the
- * theme's foreground colour. The solid stops use --foreground so the title
- * stays legible in both light and dark. */
+/* The --chroma-* tokens and the `chroma-sweep` keyframe live in the shared
+ * @qali/ui globals so the assistant panel can reuse them; the hero applies them
+ * through the two classes below. Chroma sweep: the title reveals from a blurred,
+ * transparent state as the band sweeps left-to-right across the letters,
+ * settling on the theme's foreground colour. */
 .chroma-text {
   background-image: linear-gradient(
     90deg,
@@ -41,13 +31,13 @@
   filter: blur(1px);
 }
 
-@keyframes chroma-sweep {
-  0% {
-    background-position: 100% 0;
-    filter: blur(1px);
-  }
-  100% {
-    background-position: 0 0;
-    filter: blur(0);
-  }
+/* The loading-screen styles (.chroma-loop, its keyframe, and the .loading-screen
+ * exit) live in the shared @qali/ui globals so apps/web reuses them too. */
+
+/* Hero shader fade: the HalftoneCmyk backdrop is fully opaque along the bottom
+ * of the hero and fades to transparent toward the top, so it reads as ground
+ * rising into the page background rather than a hard-edged panel. */
+.hero-shader-mask {
+  -webkit-mask-image: linear-gradient(to top, black 0%, transparent 100%);
+  mask-image: linear-gradient(to top, black 0%, transparent 100%);
 }

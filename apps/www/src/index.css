@@ -35,9 +35,97 @@
  * exit) live in the shared @qali/ui globals so apps/web reuses them too. */
 
 /* Hero shader fade: the HalftoneCmyk backdrop is fully opaque along the bottom
- * of the hero and fades to transparent toward the top, so it reads as ground
- * rising into the page background rather than a hard-edged panel. */
-.hero-shader-mask {
-  -webkit-mask-image: linear-gradient(to top, black 0%, transparent 100%);
-  mask-image: linear-gradient(to top, black 0%, transparent 100%);
+ * of the section and fades into the page background toward the top, so it reads
+ * as ground rising into the page rather than a hard-edged panel.
+ *
+ * This is painted as an ordinary gradient OVERLAY rather than a CSS `mask-image`
+ * on purpose. A mask forces the WebGL layer through an offscreen alpha-composite
+ * pass, and in Chromium that pass is colour-managed differently depending on the
+ * layer's compositing state. The mascot animating over the backdrop flipped that
+ * state on and off, so the sky visibly gained blue saturation for the duration
+ * of each interaction (a Chromium-only artifact). Fading with a plain overlay
+ * keeps the shader on a single stable layer, so its colour never shifts. The
+ * overlay lives inside each backdrop container, so the waitlist's `rotate-180`
+ * flips it exactly as it did the old mask. */
+.hero-shader-fade {
+  background-image: linear-gradient(
+    to top,
+    transparent 0%,
+    var(--background) 100%
+  );
+}
+
+/* The homepage character uses the same chroma tokens as the title and the same
+ * soft, low-bounce visual language as the app's goo dropdown. Its expensive
+ * SVG filter is restricted to the body's small viewBox; all live pointer work
+ * stays on compositor-friendly transforms. */
+.mascot {
+  width: clamp(140px, 18vw, 224px);
+  aspect-ratio: 10 / 9;
+  cursor: default;
+  isolation: isolate;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mascot__idle {
+  animation: mascot-idle 6.8s ease-in-out 2.25s infinite alternate;
+  transform-origin: 50% 55%;
+  will-change: transform;
+}
+
+.mascot__blink {
+  animation: mascot-blink 6s 2.9s infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.mascot[data-paused="true"] .mascot__idle,
+.mascot[data-paused="true"] .mascot__blink {
+  animation-play-state: paused;
+}
+
+@keyframes mascot-idle {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  52% {
+    transform: translateY(-5px) scale(1.008, 0.994);
+  }
+  100% {
+    transform: translateY(-2px) scale(0.996, 1.008);
+  }
+}
+
+/* A blink reads as alive when the lids fall faster than they lift: the close
+ * accelerates in, barely rests shut, then the open decelerates out with a
+ * whisker of overshoot before settling. Per-keyframe timing functions carry
+ * that asymmetry so it never feels like a linear on/off. */
+@keyframes mascot-blink {
+  0%,
+  20% {
+    transform: scaleY(1);
+    animation-timing-function: cubic-bezier(0.4, 0, 0.85, 0.3);
+  }
+  22.5% {
+    transform: scaleY(0.05);
+    animation-timing-function: cubic-bezier(0.2, 0.75, 0.3, 1);
+  }
+  26% {
+    transform: scaleY(1.06);
+    animation-timing-function: ease-out;
+  }
+  28.5% {
+    transform: scaleY(1);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot__idle,
+  .mascot__blink {
+    animation: none;
+  }
 }

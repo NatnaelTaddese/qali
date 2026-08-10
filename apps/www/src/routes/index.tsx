@@ -8,6 +8,8 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
+import { Mascot } from "@/components/mascot";
+
 export const Route = createFileRoute("/")({
   component: LandingPage,
 });
@@ -27,9 +29,10 @@ function Hero() {
     <section className="relative flex min-h-svh flex-col bg-background items-center justify-end overflow-hidden px-6 py-16 text-center">
       <div
         aria-hidden
-        className="hero-shader-mask pointer-events-none absolute inset-0 z-0 bg-background"
+        className="pointer-events-none absolute inset-0 z-0 bg-background"
       >
         <HalftoneCmyk
+          speed={0}
           size={0.08}
           gridNoise={0.16}
           type="ink"
@@ -54,7 +57,9 @@ function Hero() {
           colorK="#231F20"
           style={{ width: "100%", height: "100%", backgroundColor: "#FBFAF5" }}
         />
+        <div className="hero-shader-fade absolute inset-0" />
       </div>
+      <Mascot className="relative z-10 mb-5 shrink-0 sm:mb-7" />
       <div className="relative z-10 mx-auto flex max-w-3xl flex-col items-center gap-4">
         <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10">
           Currently in beta
@@ -109,9 +114,10 @@ function Waitlist() {
     >
       <div
         aria-hidden
-        className="hero-shader-mask min-h-svh pointer-events-none absolute inset-0 z-0 bg-background rotate-180"
+        className="min-h-svh pointer-events-none absolute inset-0 z-0 bg-background rotate-180"
       >
         <HalftoneCmyk
+          speed={0}
           size={0.08}
           gridNoise={0.16}
           type="ink"
@@ -136,6 +142,7 @@ function Waitlist() {
           colorK="#231F20"
           style={{ width: "100%", height: "100%", backgroundColor: "#FBFAF5" }}
         />
+        <div className="hero-shader-fade absolute inset-0" />
       </div>
       <h2 className="font-heading text-3xl font-medium tracking-tight">
         Get early access

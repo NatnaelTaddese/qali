@@ -72,6 +72,61 @@
   animation: mascot-idle 6.8s ease-in-out 2.25s infinite alternate;
   transform-origin: 50% 55%;
   will-change: transform;
+  /* Gives the peel wrapper below its 3D depth. Lives here (the peel's parent)
+   * because the idle transform on this same element would otherwise flatten a
+   * perspective set further up. */
+  perspective: 1000px;
+  perspective-origin: 50% 62%;
+}
+
+/* Reverse sticker peel-in: the character lands like a sticker pressed onto the
+ * page — hinged from its lower edge, tipped back and lifted, it rolls forward,
+ * slaps a touch past flat, and settles as its cast shadow tightens to the
+ * ground. Runs once on entry, before the idle float takes over. */
+.mascot__peel {
+  /* Hinges from the lower-left corner — the last point of a sticker still stuck
+   * to the page — so the sheet lifts from one corner rather than tilting like a
+   * card on a hinge. */
+  transform-origin: 30% 95%;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  /* Paper decelerates and stops; it does not spring. A single monotonic
+   * ease-out (no overshoot keyframe) keeps the settle soft. */
+  animation: mascot-peel 1.3s cubic-bezier(0.17, 0.72, 0.24, 1) 0.15s both;
+  will-change: transform, opacity, filter;
+}
+
+/* Foil shimmer that sweeps across the silhouette as it settles — the
+ * holographic finish. Swept in the body's local SVG space, so fill-box keeps
+ * the rotation centred on the band. */
+.mascot__holo {
+  transform-box: fill-box;
+  transform-origin: center;
+  /* Starts once the sheet is mostly down, so it reads as a foil finish settling
+   * over flat paper rather than a second glint fighting the curl. */
+  animation: mascot-holo 1s ease-in-out 0.8s both;
+  will-change: transform, opacity;
+}
+
+/* Paper-surface light. The curl is a bright crest trailed by a shaded
+ * underside, swept diagonally across the sheet as it unrolls — a moving bend of
+ * light and shadow, the way a real sheet of paper catches light as it lifts.
+ * The crease is a contact shadow that pulses along the lower edge at the instant
+ * the sticker presses onto the page. Both are synced to the peel. */
+.mascot__curl,
+.mascot__crease {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.mascot__curl {
+  animation: mascot-curl 1.3s cubic-bezier(0.17, 0.72, 0.24, 1) 0.15s both;
+  will-change: transform, opacity;
+}
+
+.mascot__crease {
+  animation: mascot-crease 1.3s cubic-bezier(0.17, 0.72, 0.24, 1) 0.15s both;
+  will-change: opacity;
 }
 
 .mascot__blink {
@@ -83,6 +138,81 @@
 .mascot[data-paused="true"] .mascot__idle,
 .mascot[data-paused="true"] .mascot__blink {
   animation-play-state: paused;
+}
+
+@keyframes mascot-peel {
+  0% {
+    opacity: 0;
+    /* Lifted from the far (upper-right) corner: a diagonal-axis tilt with a
+     * little in-plane twist, squashed shorter as a curled sheet would read. The
+     * cast shadow is thrown down and to the side of the lift. */
+    transform: rotateX(44deg) rotateY(20deg) rotateZ(4deg) translateY(-8px) scale(0.9);
+    filter: drop-shadow(-6px 30px 26px rgba(33, 27, 50, 0.3));
+  }
+  22% {
+    opacity: 1;
+  }
+  60% {
+    transform: rotateX(15deg) rotateY(6deg) rotateZ(1.4deg) scale(0.975);
+    filter: drop-shadow(-3px 17px 18px rgba(33, 27, 50, 0.23));
+  }
+  100% {
+    opacity: 1;
+    transform: rotateX(0) rotateY(0) rotateZ(0) translateY(0) scale(1);
+    filter: drop-shadow(0 7px 9px rgba(33, 27, 50, 0.15));
+  }
+}
+
+/* The rolling curl: a bright crest with a shaded underside just behind it,
+ * swept diagonally from the lifted corner toward the hinge as the sheet
+ * unrolls. This travelling highlight/shadow pair is what reads as a bending
+ * sheet of paper rather than a rigid plane catching light. */
+@keyframes mascot-curl {
+  0% {
+    opacity: 0;
+    transform: rotate(-32deg) translate(120px, -120px);
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(-32deg) translate(-140px, 150px);
+  }
+}
+
+/* Contact shadow pulsing along the lower edge as the sheet touches down. */
+@keyframes mascot-crease {
+  0%,
+  50% {
+    opacity: 0;
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes mascot-holo {
+  0% {
+    opacity: 0;
+    transform: rotate(-15deg) translateX(-170px);
+  }
+  16% {
+    opacity: 1;
+  }
+  84% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(-15deg) translateX(300px);
+  }
 }
 
 @keyframes mascot-idle {
@@ -125,7 +255,16 @@
 
 @media (prefers-reduced-motion: reduce) {
   .mascot__idle,
-  .mascot__blink {
+  .mascot__blink,
+  .mascot__peel {
     animation: none;
+  }
+  /* No animation means these entry-only light passes would sit frozen over the
+   * body, so drop them entirely rather than leave static slabs. */
+  .mascot__holo,
+  .mascot__curl,
+  .mascot__crease {
+    animation: none;
+    opacity: 0;
   }
 }

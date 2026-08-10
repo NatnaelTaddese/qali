@@ -104,6 +104,10 @@ export function Mascot({ className, proximity = 220 }: MascotProps) {
   const faceShadowId = `${id}-face-shadow`;
   const eyeShadowId = `${id}-eye-shadow`;
   const eyeGlossId = `${id}-eye-gloss`;
+  const bodyClipId = `${id}-body-clip`;
+  const holoId = `${id}-holo`;
+  const curlId = `${id}-curl`;
+  const creaseId = `${id}-crease`;
 
   const targetX = useMotionValue(0);
   const targetY = useMotionValue(0);
@@ -298,6 +302,7 @@ export function Mascot({ className, proximity = 220 }: MascotProps) {
       onPointerDown={reactToTap}
     >
       <div className="mascot__idle h-full w-full">
+        <div className="mascot__peel h-full w-full">
         <motion.div
           className="h-full w-full"
           style={{ x, y, rotate, scaleX, scaleY }}
@@ -376,6 +381,39 @@ export function Mascot({ className, proximity = 220 }: MascotProps) {
                     <stop offset="0.55" stopColor="white" stopOpacity="0.12" />
                     <stop offset="1" stopColor="white" stopOpacity="0" />
                   </linearGradient>
+                  {/* Holographic sweep band: a translucent rainbow with a bright
+                      specular core, swept across the body silhouette once on
+                      entry so the sticker settles with a foil-like shimmer. */}
+                  <linearGradient id={holoId} x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" stopColor="var(--chroma-5)" stopOpacity="0" />
+                    <stop offset="0.18" stopColor="var(--chroma-5)" stopOpacity="0.5" />
+                    <stop offset="0.34" stopColor="var(--chroma-1)" stopOpacity="0.55" />
+                    <stop offset="0.5" stopColor="white" stopOpacity="0.9" />
+                    <stop offset="0.66" stopColor="var(--chroma-3)" stopOpacity="0.55" />
+                    <stop offset="0.82" stopColor="var(--chroma-2)" stopOpacity="0.5" />
+                    <stop offset="1" stopColor="var(--chroma-2)" stopOpacity="0" />
+                  </linearGradient>
+                  {/* Curl light: a shaded underside (the paper bending away
+                      from the light) immediately followed by a bright crest (the
+                      lit ridge of the bend). Swept across, this pair reads as a
+                      rolling curl. Horizontal here; the rect's rotation angles
+                      it to the peel's diagonal. */}
+                  <linearGradient id={curlId} x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" stopColor="#181126" stopOpacity="0" />
+                    <stop offset="0.32" stopColor="#181126" stopOpacity="0.34" />
+                    <stop offset="0.47" stopColor="white" stopOpacity="0.96" />
+                    <stop offset="0.55" stopColor="white" stopOpacity="0.4" />
+                    <stop offset="0.68" stopColor="white" stopOpacity="0" />
+                  </linearGradient>
+                  {/* Contact crease: a low shade that deepens along the lower
+                      edge at the moment the paper presses onto the page. */}
+                  <linearGradient id={creaseId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0.5" stopColor="#1e1630" stopOpacity="0" />
+                    <stop offset="1" stopColor="#1e1630" stopOpacity="0.24" />
+                  </linearGradient>
+                  <clipPath id={bodyClipId}>
+                    <path d={BODY_PATH} />
+                  </clipPath>
                 </defs>
 
                 {/* Soft chroma halo bleeding out from behind the bold edge. */}
@@ -451,9 +489,45 @@ export function Mascot({ className, proximity = 220 }: MascotProps) {
                     </g>
                   </motion.g>
                 </g>
+
+                {/* Foil shimmer, clipped to the body and swept once on entry. */}
+                <g clipPath={`url(#${bodyClipId})`}>
+                  <rect
+                    className="mascot__holo"
+                    x="-20"
+                    y="-40"
+                    width="150"
+                    height="320"
+                    fill={`url(#${holoId})`}
+                  />
+                </g>
+
+                {/* Paper-surface light: a curl of shadow-then-highlight sweeping
+                    diagonally across the face as the sheet unrolls, plus a
+                    contact crease that pulses along the lower edge as it presses
+                    onto the page. */}
+                <g clipPath={`url(#${bodyClipId})`}>
+                  <rect
+                    className="mascot__curl"
+                    x="70"
+                    y="-72"
+                    width="96"
+                    height="380"
+                    fill={`url(#${curlId})`}
+                  />
+                  <rect
+                    className="mascot__crease"
+                    x="0"
+                    y="0"
+                    width="236"
+                    height="236"
+                    fill={`url(#${creaseId})`}
+                  />
+                </g>
               </svg>
             </motion.div>
           </motion.div>
+        </div>
       </div>
     </div>
   );

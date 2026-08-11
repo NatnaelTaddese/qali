@@ -189,6 +189,22 @@ export function FeaturePreview() {
   const [confirmation, setConfirmation] = useState<string | null>(null);
   const title = useInViewOnce<HTMLHeadingElement>();
 
+  // The pill's width is intrinsic (message length + the Reset button toggling),
+  // and `auto` widths don't transition. Measure the content's natural width and
+  // drive the shell's explicit `width` from it, so it can tween between states.
+  const pillContentRef = useRef<HTMLDivElement>(null);
+  const [pillWidth, setPillWidth] = useState<number>();
+  useEffect(() => {
+    const el = pillContentRef.current;
+    if (!el) return;
+    const measure = () =>
+      setPillWidth(Math.ceil(el.getBoundingClientRect().width));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const nowMinutes = useMemo(() => {
     const now = new Date();
     return now.getHours() * 60 + now.getMinutes();
@@ -238,7 +254,7 @@ export function FeaturePreview() {
   const hasChanges = applied.size > 0;
 
   return (
-    <section className="relative overflow-hidden bg-background px-6 pb-20 pt-10 sm:pb-28 sm:pt-14">
+    <section className="relative overflow-hidden bg-background px-6 pb-14 pt-10 sm:pb-20 sm:pt-14">
       <div
         aria-hidden
         className="min-h-svh pointer-events-none absolute inset-0 z-0 bg-background rotate-180"
@@ -338,8 +354,8 @@ export function FeaturePreview() {
             })}
           </div>
 
-          {/* Time grid, faded toward the bottom. */}
-          <div className="feature-screen-fade relative flex h-[460px] sm:h-[540px]">
+          {/* Time grid. */}
+          <div className="relative flex h-[460px] sm:h-[540px]">
             {/* Time gutter */}
             <div className="relative w-11 shrink-0 sm:w-14">
               {HOUR_LINES.slice(0, -1).map((hour) => (
@@ -416,9 +432,9 @@ export function FeaturePreview() {
           </div>
         </div>
 
-        {/* Floating assistant, hovering over the faded lower edge. */}
-        <div className="pointer-events-none absolute inset-x-0 -bottom-6 flex flex-col items-center gap-3 px-4">
-          <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2">
+        {/* The qali assistant sits below the calendar as its own element. */}
+        <div className="mt-8 flex flex-col items-center gap-3 px-4">
+          <div className="flex flex-wrap items-center justify-center gap-2">
             {SCENES.map((scene) => {
               const done = applied.has(scene.id);
               return (
@@ -439,8 +455,15 @@ export function FeaturePreview() {
             })}
           </div>
 
-          <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-primary px-3 py-2 text-primary-foreground shadow-lg ring-1 ring-black/10">
-            <MascotSpark />
+          <div
+            className="overflow-hidden rounded-full bg-primary text-primary-foreground shadow-lg ring-1 ring-black/10 transition-[width] duration-300 ease-out"
+            style={pillWidth != null ? { width: pillWidth } : undefined}
+          >
+            <div
+              ref={pillContentRef}
+              className="flex w-fit items-center gap-2 whitespace-nowrap py-2 pl-3 pr-4"
+            >
+              <MascotSpark />
             <div className="min-w-[13rem] text-left text-sm sm:min-w-[15rem]">
               {/* A single key-remounted line: changing the key replays the CSS
                   slide-in (`feature-line-in`), so each message rises into place.
@@ -480,11 +503,12 @@ export function FeaturePreview() {
               <button
                 type="button"
                 onClick={reset}
-                className="ml-1 rounded-full bg-primary-foreground/15 px-2.5 py-1 text-xs font-medium text-primary-foreground transition hover:bg-primary-foreground/25"
+                className="ml-1 rounded-full bg-primary-foreground/15 px-2.5 py-1 -my-8 -mr-2 text-xs font-medium text-primary-foreground transition hover:bg-primary-foreground/25"
               >
                 Reset
               </button>
             )}
+            </div>
           </div>
         </div>
       </div>

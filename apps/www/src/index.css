@@ -92,21 +92,6 @@
   );
 }
 
-/* Feature preview screen fade: the mini week-view grid is fully opaque along its
- * top and dissolves into the page toward the bottom edge, so the calendar reads
- * as rising out of the page rather than sitting in a hard-edged box. Painted as
- * a mask on the grid body only (not the day header), so the header stays crisp
- * while the assistant pill floats over the faded lower edge. */
-.feature-screen-fade {
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    #000 0%,
-    #000 60%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(to bottom, #000 0%, #000 60%, transparent 100%);
-}
-
 /* Feature-preview micro-animations. Deliberately transform-only (never animate
  * opacity from 0): the resting state is always fully visible, so content can
  * never be left invisible if the animation is throttled or disabled — the slide

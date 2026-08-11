@@ -122,14 +122,16 @@ function Waitlist() {
   return (
     <section
       id="waitlist"
-      className="relative flex flex-col bg-background items-center justify-end overflow-hidden px-6 py-16 text-center"
+      className="relative flex flex-col items-center gap-6 overflow-hidden bg-background px-6 pb-16 pt-10 text-center sm:gap-8 sm:pb-24 sm:pt-14"
     >
-      <h2 className="font-heading text-3xl font-medium tracking-tight">
-        Get early access
-      </h2>
-      <p className="text-muted-foreground text-balance">
-        Join the waitlist and be the first to know when qali is ready.
-      </p>
+      <div className="flex max-w-xl flex-col items-center gap-3">
+        <h2 className="font-heading text-3xl font-medium tracking-tight sm:text-4xl">
+          Get early access
+        </h2>
+        <p className="text-base text-muted-foreground text-balance sm:text-lg">
+          Join the waitlist and be the first to know when qali is ready.
+        </p>
+      </div>
       {joined ? (
         <p className="text-sm font-medium text-foreground">
           Thanks — you're on the list. 🎉
@@ -146,13 +148,13 @@ function Waitlist() {
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             aria-label="Email address"
-            className="h-10"
+            className="h-11 flex-1"
           />
           <Button
             type="submit"
             size="lg"
             disabled={submitting}
-            className="shrink-0"
+            className="h-11 shrink-0"
           >
             {submitting ? "Joining…" : "Join waitlist"}
           </Button>
@@ -164,8 +166,39 @@ function Waitlist() {
 
 function Footer() {
   return (
-    <footer className="border-t border-border/50 px-6 py-8 text-center text-sm text-muted-foreground">
-      © {new Date().getFullYear()} qali
+    <footer className="border-t border-border/50 px-6 py-10">
+      <div className="mx-auto flex max-w-4xl flex-col items-center gap-4 text-center sm:flex-row sm:justify-between sm:text-left">
+        <div className="flex items-center gap-2">
+          <svg
+            viewBox="0 0 236 236"
+            className="size-6 shrink-0 text-foreground"
+            fill="none"
+            aria-hidden
+            focusable="false"
+          >
+            <path
+              d="M40 118 C36 66 74 30 122 32 C172 34 202 74 196 122 C193 147 181 158 176 176 C171 195 176 214 156 216 C141 217 137 201 128 199 C119 197 113 208 101 209 C86 210 80 197 73 180 C67 165 51 158 45 141 C41 129 40 124 40 118 Z"
+              fill="currentColor"
+            />
+            <rect x="80" y="88" width="28" height="54" rx="14" fill="var(--background)" />
+            <rect x="128" y="92" width="28" height="54" rx="14" fill="var(--background)" />
+          </svg>
+          <span className=" -ml-3 font-display text-xl font-bold tracking-tight text-foreground">
+            ali
+          </span>
+        </div>
+        <div className="flex flex-col items-center gap-3 text-sm text-muted-foreground sm:flex-row sm:gap-6">
+          <nav className="flex items-center gap-6">
+            <a href="/privacy" className="transition-colors hover:text-foreground">
+              Privacy
+            </a>
+            <a href="/terms" className="transition-colors hover:text-foreground">
+              Terms
+            </a>
+          </nav>
+          <span>© {new Date().getFullYear()} qali</span>
+        </div>
+      </div>
     </footer>
   );
 }

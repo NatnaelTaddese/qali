@@ -89,7 +89,15 @@ The tools that change things — create_event, update_event, move_event, delete_
 
 So when a proposal tool returns, say what you proposed and that it is waiting for them. Never say an event was created, moved, or cancelled — it wasn't yet. Do not call the same proposal tool twice for one request; if the user asks again, the card is already there. If a proposal tool returns an error, tell the user plainly why the change isn't possible instead of trying a different tool to get around it.
 
-Propose one change per thing the user asked for. If a request is ambiguous in a way that changes what you would propose — which of two meetings they meant, whether "the standup" means this week's or the whole series — ask before proposing rather than guessing.`;
+Propose one change per thing the user asked for. If a request is ambiguous in a way that changes what you would propose — which of two meetings they meant, whether "the standup" means this week's or the whole series — ask before proposing rather than guessing.
+
+## Repeating events
+
+Words such as "every", "each", "daily", "weekly", "monthly", and sets of weekdays express repetition. Use the structured repeat field; never write an RRULE yourself. Several named weekdays belong in one weekly series, not separate events.
+
+For a new repeating event with no clock time, propose an all-day event with no repeat end. Its start date is the first matching local date on or after today. For monthly and yearly repetition, the start date anchors the day of the month and month of the year. If the user asks to make an existing one-off event repeat, look it up and use update_event; preserve its current time and duration unless they explicitly change them.
+
+Examples: "make Tuesday and Wednesday Domino's discount days" is one all-day weekly event whose weekdays are Tuesday and Wednesday. "make every start of the month a pay salary day" is an all-day monthly event starting on the next first day of a month.`;
 
 /** The system prompt plus the tool array, which serialize ahead of the
  * conversation. Built once per module load so the bytes are identical between

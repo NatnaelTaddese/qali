@@ -491,6 +491,9 @@ export const updateEvent = action({
         }),
       ),
     ),
+    /** Convert a single event into a recurring master. Existing series rules
+     * are intentionally edited through neither this action nor the UI. */
+    recurrence: v.optional(v.array(v.string())),
     /** Client IANA time zone; Google needs it to anchor a timed instant. */
     timeZone: v.optional(v.string()),
     /** `"meet"` mints a Google Meet link, `null` clears the existing one, and
@@ -615,6 +618,10 @@ export const upsertRecurringSeries = internalMutation({
     googleEventId: v.string(),
     recurrence: v.array(v.string()),
     sourceUpdatedMs: v.number(),
+    /** Existing single-event mirror replaced when that Google id becomes a
+     * hidden recurring master. Kept in this mutation so cache + removal commit
+     * together before expanded instances are synced. */
+    replacedEventId: v.optional(v.id("events")),
   },
   handler: async (ctx, args): Promise<null> => {
     const existing = await ctx.db
@@ -639,6 +646,16 @@ export const upsertRecurringSeries = internalMutation({
         googleEventId: args.googleEventId,
         ...value,
       });
+    }
+    if (args.replacedEventId) {
+      const replaced = await ctx.db.get(args.replacedEventId);
+      if (
+        replaced?.userId === args.userId &&
+        replaced.calendarId === args.calendarId &&
+        replaced.googleEventId === args.googleEventId
+      ) {
+        await ctx.db.delete(args.replacedEventId);
+      }
     }
     return null;
   },

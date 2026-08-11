@@ -37,8 +37,11 @@ import {
 } from "./availability";
 import { subtractBusy } from "./assistantHistory";
 import {
+  ASSISTANT_WEEKDAYS,
   assistantRangeToEventTime,
+  assistantRepeatToRRule,
   formatAssistantAllDayRange,
+  formatAssistantRepeat,
   isDateKey,
   type AssistantEventRange,
 } from "./assistantLogic";
@@ -527,6 +530,73 @@ const allDayRangeSchema = z
 
 const eventRangeSchema = z.union([timedRangeSchema, allDayRangeSchema]);
 
+const repeatEndSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("never") }),
+  z.object({
+    kind: z.literal("onDate"),
+    date: dateKeySchema.describe("Inclusive final local calendar date."),
+  }),
+  z.object({
+    kind: z.literal("count"),
+    count: z.number().int().min(1).max(10_000),
+  }),
+]);
+
+const repeatFields = {
+  interval: z
+    .number()
+    .int()
+    .min(1)
+    .max(1_000)
+    .optional()
+    .describe("Repeat every N periods. Omit for every 1 period."),
+  end: repeatEndSchema
+    .optional()
+    .describe('When repetition stops. Omit or use {"kind":"never"} for no end.'),
+};
+
+const repeatSchema = z
+  .discriminatedUnion("frequency", [
+    z.object({ frequency: z.literal("daily"), ...repeatFields }),
+    z.object({
+      frequency: z.literal("weekly"),
+      weekdays: z
+        .array(z.enum(ASSISTANT_WEEKDAYS))
+        .min(1)
+        .max(7)
+        .describe(
+          "Every weekday in this one weekly series. Use full lowercase names.",
+        ),
+      ...repeatFields,
+    }),
+    z.object({ frequency: z.literal("monthly"), ...repeatFields }),
+    z.object({ frequency: z.literal("yearly"), ...repeatFields }),
+  ])
+  .describe(
+    "Structured recurrence. The event's start is the first occurrence and anchors monthly/yearly rules.",
+  );
+
+const recurrenceLinesSchema = z.array(z.string().max(500)).max(10);
+
+function rowRange(row: Doc<"events">): AssistantEventRange {
+  return row.allDay
+    ? {
+        kind: "allDay",
+        startDate: new Date(row.startMs).toISOString().slice(0, 10),
+        endDate: new Date(row.endMs).toISOString().slice(0, 10),
+      }
+    : { kind: "timed", startMs: row.startMs, endMs: row.endMs };
+}
+
+function storedRecurrence(raw: unknown, key: string): string[] | undefined {
+  if (typeof raw !== "object" || raw === null || !(key in raw)) return undefined;
+  const parsed = recurrenceLinesSchema.safeParse(
+    (raw as Record<string, unknown>)[key],
+  );
+  if (!parsed.success) throw new Error("Stored recurrence is invalid");
+  return parsed.data;
+}
+
 const createEventSchema = z.object({
   summary: z.string().min(1).max(500).describe("Event title."),
   time: eventRangeSchema.describe(
@@ -547,11 +617,7 @@ const createEventSchema = z.object({
     .boolean()
     .optional()
     .describe("Attach a Google Meet link."),
-  recurrence: z
-    .array(z.string().max(500))
-    .max(10)
-    .optional()
-    .describe('RFC5545 lines, e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO"].'),
+  repeat: repeatSchema.optional(),
 });
 
 const createEvent = writeTool({
@@ -579,12 +645,9 @@ const createEvent = writeTool({
     if (args.addConference !== undefined) {
       parts.push(args.addConference ? "add Google Meet" : "no conference");
     }
-    if (args.recurrence !== undefined) {
-      parts.push(
-        args.recurrence.length
-          ? `recurrence ${args.recurrence.join("; ")}`
-          : "non-recurring",
-      );
+    if (args.repeat !== undefined) {
+      assistantRepeatToRRule(args.repeat, args.time, tc.timeZone);
+      parts.push(`repeat ${formatAssistantRepeat(args.repeat, args.time, tc.timeZone)}`);
     }
     return `Create “${args.summary}”: ${parts.join(" · ")}`;
   },
@@ -603,6 +666,9 @@ const updateEventSchema = z.object({
     .max(200)
     .optional()
     .describe("Replaces the guest list wholesale — anyone omitted is uninvited."),
+  repeat: repeatSchema
+    .optional()
+    .describe("Turn a single, non-repeating event into a recurring series."),
   scope: z
     .enum(["thisEvent", "thisAndFollowing", "allEvents"])
     .optional()
@@ -628,8 +694,9 @@ const updateEvent = writeTool({
   name: "update_event",
   description:
     "Propose changing an existing event's title, description, location, guest " +
-    "list, or times. Requires an eventId from list_events. Nothing changes and " +
-    "no guest is notified until the user confirms.",
+    "list, times, or turn a non-repeating event into a recurring series. " +
+    "Requires an eventId from list_events. Nothing changes and no guest is " +
+    "notified until the user confirms.",
   schema: updateEventSchema,
   async preview(tc, args) {
     const { row, capabilities } = await resolveEventForWrite(
@@ -640,6 +707,9 @@ const updateEvent = writeTool({
     );
     if (args.guestEmails !== undefined && !capabilities.canInviteOthers) {
       throw new Error("The organiser does not allow you to invite or remove guests");
+    }
+    if (args.repeat !== undefined && !capabilities.canChangeRecurrence) {
+      throw new Error("This event is already part of a recurring series");
     }
     const parts: string[] = [];
     if (args.summary !== undefined) parts.push(`title → “${args.summary}”`);
@@ -659,6 +729,13 @@ const updateEvent = writeTool({
           : "all guests removed",
       );
     }
+    if (args.repeat !== undefined) {
+      const range = args.time ?? rowRange(row);
+      assistantRepeatToRRule(args.repeat, range, tc.timeZone);
+      parts.push(
+        `repeat → ${formatAssistantRepeat(args.repeat, range, tc.timeZone)}`,
+      );
+    }
     const scope =
       row.recurringEventId && args.scope && args.scope !== "thisEvent"
         ? args.scope === "allEvents"
@@ -668,8 +745,11 @@ const updateEvent = writeTool({
     return `Update “${row.summary ?? "(No title)"}”${scope}: ${parts.join(", ") || "no changes"}`;
   },
   async storedArgs(tc, args) {
-    if (args.guestEmails === undefined) return {};
+    if (args.guestEmails === undefined && args.repeat === undefined) return {};
     const row = await requireEditable(tc, args.eventId);
+    if (args.repeat !== undefined && row.recurringEventId !== undefined) {
+      throw new Error("This event is already part of a recurring series");
+    }
     const editsSeries =
       row.recurringEventId !== undefined &&
       args.scope !== undefined &&
@@ -687,6 +767,15 @@ const updateEvent = writeTool({
     }
     return {
       expectedGoogleUpdatedMs: row.googleUpdatedMs,
+      ...(args.repeat === undefined
+        ? {}
+        : {
+            compiledRecurrence: assistantRepeatToRRule(
+              args.repeat,
+              args.time ?? rowRange(row),
+              tc.timeZone,
+            ),
+          }),
       ...(expectedSeriesUpdatedMs === null ? {} : { expectedSeriesUpdatedMs }),
     };
   },
@@ -826,11 +915,25 @@ export async function applyProposal(
     if (!accessToken) throw new Error("Google access token is required");
     return accessToken;
   };
+  const proposalTimeZone = () => {
+    if (!timeZone) throw new Error("The proposal is missing its time zone");
+    return timeZone;
+  };
 
   switch (action.tool) {
     case "create_event": {
       const args = createEventSchema.parse(raw);
       const time = assistantRangeToEventTime(args.time);
+      // Proposals created before the structured repeat contract stored raw
+      // recurrence lines. Keep those confirmable while hiding RRULE from all
+      // newly generated tool definitions.
+      const recurrence = args.repeat
+        ? assistantRepeatToRRule(
+            args.repeat,
+            args.time,
+            proposalTimeZone(),
+          )
+        : storedRecurrence(raw, "recurrence");
       const event = await createEventOp(ctx, userId, token(), {
         summary: args.summary,
         ...time,
@@ -838,7 +941,7 @@ export async function applyProposal(
         location: args.location,
         attendees: args.guestEmails?.map((email) => ({ email })),
         addConference: args.addConference,
-        recurrence: args.recurrence,
+        recurrence,
         timeZone,
         operationId,
       });
@@ -847,6 +950,12 @@ export async function applyProposal(
     case "update_event": {
       const args = updateEventSchema.parse(raw);
       const time = args.time ? assistantRangeToEventTime(args.time) : undefined;
+      const recurrence = args.repeat
+        ? storedRecurrence(raw, "compiledRecurrence")
+        : undefined;
+      if (args.repeat && !recurrence) {
+        throw new Error("The recurring-event proposal is incomplete");
+      }
       const expectedGoogleUpdatedMs =
         typeof raw === "object" &&
         raw !== null &&
@@ -870,6 +979,7 @@ export async function applyProposal(
         endMs: time?.endMs,
         allDay: time?.allDay,
         attendees: args.guestEmails?.map((email) => ({ email })),
+        recurrence,
         scope: args.scope,
         timeZone,
         operationId,

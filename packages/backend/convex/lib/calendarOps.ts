@@ -114,6 +114,7 @@ type GoogleEventPatch = {
   attendees?: RawAttendee[];
   start?: RawCalendarDateTime;
   end?: RawCalendarDateTime;
+  recurrence?: string[];
 };
 
 function sameGoogleTime(
@@ -162,6 +163,12 @@ function googleEventMatchesPatch(
   if (!stringFieldMatches(event.transparency, patch.transparency)) return false;
   if (!sameGoogleTime(event.start, patch.start)) return false;
   if (!sameGoogleTime(event.end, patch.end)) return false;
+  if (
+    patch.recurrence !== undefined &&
+    JSON.stringify(event.recurrence ?? []) !== JSON.stringify(patch.recurrence)
+  ) {
+    return false;
+  }
   if (
     patch.attendees !== undefined &&
     attendeeKeys(event.attendees).join("\n") !== attendeeKeys(patch.attendees).join("\n")
@@ -449,6 +456,8 @@ export interface UpdateEventArgs {
   endMs?: number;
   allDay?: boolean;
   attendees?: RawAttendee[];
+  /** Set only when converting a single event into a recurring master. */
+  recurrence?: string[];
   timeZone?: string;
   conference?: "meet" | null;
   scope?: UpdateEventScope;
@@ -491,6 +500,23 @@ export async function updateEventOp(
   const { row, capabilities } = await resolveEventForWrite(ctx, userId, args.eventId, [
     "canEdit",
   ]);
+
+  if (args.recurrence !== undefined) {
+    if (args.recurrence.length === 0) {
+      throw new Error("A recurring event needs a recurrence rule");
+    }
+    if (!capabilities.canChangeRecurrence) {
+      throw new Error("This event is already part of a recurring series");
+    }
+    if (
+      args.expectedGoogleUpdatedMs !== undefined &&
+      row.googleUpdatedMs !== args.expectedGoogleUpdatedMs
+    ) {
+      throw new Error(
+        "The event changed after this recurring-event proposal was made. Please propose it again.",
+      );
+    }
+  }
 
   // A non-recurring event has no series, so any scope collapses to the one
   // event; only a recurring instance can reach the master.
@@ -570,6 +596,63 @@ export async function updateEventOp(
       : args.conference === null
         ? "remove"
         : "add";
+
+  if (args.recurrence !== undefined) {
+    const startMs = hasTimeChange ? args.startMs! : row.startMs;
+    const endMs = hasTimeChange ? args.endMs! : row.endMs;
+    if (!allDay && !args.timeZone) {
+      throw new Error("A time zone is required to make a timed event repeat");
+    }
+    const patch = {
+      start: toGoogleTime(startMs, allDay, args.timeZone),
+      end: toGoogleTime(endMs, allDay, args.timeZone),
+      ...fields,
+      recurrence: args.recurrence,
+    };
+    const live =
+      liveAttendeeSource ??
+      (await getCalendarEvent(accessToken, row.calendarId, row.googleEventId));
+    const liveUpdatedMs = live.updated
+      ? new Date(live.updated).getTime()
+      : undefined;
+    if (
+      args.expectedGoogleUpdatedMs !== undefined &&
+      liveUpdatedMs !== undefined &&
+      liveUpdatedMs !== args.expectedGoogleUpdatedMs &&
+      !googleEventMatchesPatch(live, patch, conference)
+    ) {
+      throw new Error(
+        "The event changed after this recurring-event proposal was made. Please propose it again.",
+      );
+    }
+
+    const master =
+      args.operationId && googleEventMatchesPatch(live, patch, conference)
+        ? mapGoogleEvent(live, row.calendarId)
+        : await patchCalendarEvent(
+            accessToken,
+            row.calendarId,
+            row.googleEventId,
+            patch,
+            sendUpdates,
+            conference,
+            args.operationId,
+          );
+    try {
+      await ctx.runMutation(internal.calendar.upsertRecurringSeries, {
+        userId,
+        calendarId: row.calendarId,
+        googleEventId: master.googleEventId,
+        recurrence: args.recurrence,
+        sourceUpdatedMs: master.googleUpdatedMs,
+        replacedEventId: row._id,
+      });
+      await resyncCalendar(ctx, userId, accessToken, row.calendarId);
+    } catch (error) {
+      throw new ExternalWriteCommittedError("Event made recurring.", error);
+    }
+    return master;
+  }
 
   if (scope === "thisEvent") {
     const times =

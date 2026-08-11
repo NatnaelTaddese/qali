@@ -17,6 +17,7 @@ import {
 } from "./event-form";
 import type { CalendarEvent } from "./lib";
 import { useEventCapabilities } from "./permissions";
+import { toRRule } from "./rrule";
 
 /** Args for `updateEvent`, minus the id — built by diffing the form against
  * what the event started as. */
@@ -24,6 +25,9 @@ type EventPatch = Omit<
   Parameters<ReturnType<typeof useAction<typeof api.calendar.updateEvent>>>[0],
   "eventId"
 >;
+
+/** How far a recurring-event edit reaches. Mirrors `updateEvent`'s `scope`. */
+export type SaveScope = "thisEvent" | "thisAndFollowing" | "allEvents";
 
 /**
  * Build the patch for a save: only the fields the user actually touched.
@@ -33,7 +37,7 @@ type EventPatch = Omit<
  * gives us both for free — untouched fields never appear, and a field the user
  * emptied appears as `null` rather than as `""`.
  */
-function diffEvent(
+export function diffEvent(
   initial: EventFormValue,
   next: EventFormValue,
   event: CalendarEvent,
@@ -78,6 +82,13 @@ function diffEvent(
     patch.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   }
 
+  if (
+    next.recurrence !== null &&
+    JSON.stringify(next.recurrence) !== JSON.stringify(initial.recurrence)
+  ) {
+    patch.recurrence = toRRule(next.recurrence);
+  }
+
   const guestsChanged =
     next.guests.length !== initial.guests.length ||
     next.guests.some((g, i) => g.email !== initial.guests[i]?.email);
@@ -100,6 +111,16 @@ function diffEvent(
   }
 
   return patch;
+}
+
+export function finalizeEventPatch(
+  patch: EventPatch,
+  scope: SaveScope,
+  timeZone: string,
+): EventPatch {
+  return scope !== "thisEvent" || patch.recurrence !== undefined
+    ? { timeZone, ...patch }
+    : patch;
 }
 
 /** Edit an existing event. The form is the same one used to create — what
@@ -144,13 +165,11 @@ export function EventEdit({
     // requires a time zone on a recurring event. `diffEvent` only sets one when
     // the times change, so guarantee a zone here; an explicitly-diffed one still
     // wins since `patch` is spread last.
-    const finalPatch =
-      scope !== "thisEvent"
-        ? {
-            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-            ...patch,
-          }
-        : patch;
+    const finalPatch = finalizeEventPatch(
+      patch,
+      scope,
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+    );
     if (!operationIdRef.current) {
       operationIdRef.current = crypto.randomUUID();
     }
@@ -229,9 +248,6 @@ export function EventEdit({
     />
   );
 }
-
-/** How far a recurring-event edit reaches. Mirrors `updateEvent`'s `scope`. */
-type SaveScope = "thisEvent" | "thisAndFollowing" | "allEvents";
 
 const SAVE_SCOPES: { scope: SaveScope; label: string }[] = [
   { scope: "thisEvent", label: "This event" },

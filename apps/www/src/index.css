@@ -31,6 +31,14 @@
   filter: blur(1px);
 }
 
+/* The feature-section title reuses the hero's chroma reveal, but the sweep is
+ * triggered when it scrolls into view (see FeaturePreview) rather than on load,
+ * and without the hero's entrance-sequencing delay. */
+.chroma-text-reveal {
+  animation: chroma-sweep 2s ease-in-out forwards;
+  filter: blur(1px);
+}
+
 /* Hero staggered entrance: the badge, subheadline and CTA fade+rise into place
  * in visual order, interleaved with the mascot peel (0.15s) and the headline
  * chroma sweep (0.5s). Each element sets its own `--hero-delay` inline so the

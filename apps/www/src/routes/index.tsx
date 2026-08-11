@@ -29,7 +29,7 @@ function LandingPage() {
 
 function Hero() {
   return (
-    <section className="relative flex min-h-svh flex-col bg-background items-center justify-end overflow-hidden px-6 py-16 text-center">
+    <section className="relative flex min-h-svh flex-col bg-background items-center justify-end overflow-hidden px-6 pt-16 pb-10 text-center">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 z-0 bg-background"
@@ -77,7 +77,7 @@ function Hero() {
           className="hero-reveal-blur max-w-xl text-lg text-muted-foreground text-balance"
           style={{ "--hero-delay": "0.7s" } as CSSProperties}
         >
-          let us sort out your meetings for you
+          Cursor for your daily schedules
         </p>
         <div
           className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"

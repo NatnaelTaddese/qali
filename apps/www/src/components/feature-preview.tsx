@@ -1,5 +1,5 @@
 import { HalftoneCmyk } from "@paper-design/shaders-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * A miniature, interactive slice of the app's week view for the landing page.
@@ -122,6 +122,31 @@ function useIsMobile() {
   return mobile;
 }
 
+/** Fires once when the element scrolls into view. The section title sits below
+ * the fold, so its chroma reveal is gated on this rather than playing on load
+ * (where the sweep would finish before the reader ever reaches it). The negative
+ * bottom `rootMargin` starts the sweep as the title clears the lower edge. */
+function useInViewOnce<T extends Element>() {
+  const ref = useRef<T | null>(null);
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || inView) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setInView(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: "0px 0px -15% 0px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [inView]);
+  return { ref, inView };
+}
+
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
 /** Day indices rendered per layout. Mobile shows Wed–Fri so every AI scene
@@ -162,6 +187,7 @@ export function FeaturePreview() {
   const [applied, setApplied] = useState<Set<SceneId>>(new Set());
   const [busy, setBusy] = useState<Scene | null>(null);
   const [confirmation, setConfirmation] = useState<string | null>(null);
+  const title = useInViewOnce<HTMLHeadingElement>();
 
   const nowMinutes = useMemo(() => {
     const now = new Date();
@@ -212,7 +238,7 @@ export function FeaturePreview() {
   const hasChanges = applied.size > 0;
 
   return (
-    <section className="relative overflow-hidden bg-background px-6 py-20 sm:py-28">
+    <section className="relative overflow-hidden bg-background px-6 pb-20 pt-10 sm:pb-28 sm:pt-14">
       <div
         aria-hidden
         className="min-h-svh pointer-events-none absolute inset-0 z-0 bg-background rotate-180"
@@ -262,12 +288,16 @@ export function FeaturePreview() {
         <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10">
           Your week, on autopilot
         </span>
-        <h2 className="font-display text-3xl font-medium tracking-tight text-balance sm:text-5xl">
+        <h2
+          ref={title.ref}
+          className={`chroma-text font-display text-3xl font-medium tracking-tight text-balance pb-[0.12em] -mb-[0.12em] sm:text-5xl${
+            title.inView ? " chroma-text-reveal" : ""
+          }`}
+        >
           Just tell it what you need
         </h2>
         <p className="max-w-lg text-lg text-muted-foreground text-balance">
-          qali reads your whole week and makes the change for you — moving
-          blocks, finding open time, clearing space. Try one below.
+          Qali reads your whole week and makes the change for you
         </p>
       </div>
 

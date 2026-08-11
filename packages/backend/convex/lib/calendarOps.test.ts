@@ -5,7 +5,9 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
 
 process.env.SKIP_ENV_VALIDATION = "1";
-const { updateEventOp } = await import("./calendarOps");
+const { deleteEventOp, truncateRecurrence, updateEventOp } = await import(
+  "./calendarOps"
+);
 
 const originalFetch = globalThis.fetch;
 
@@ -188,5 +190,384 @@ describe("single event recurrence conversion", () => {
       }),
     ).rejects.toThrow("read-only");
     expect(fetched).toBe(false);
+  });
+});
+
+describe("scoped recurring deletion", () => {
+  const recurring = (overrides: Partial<Doc<"events">> = {}) =>
+    eventRow({ recurringEventId: "series-master", ...overrides });
+
+  test("truncation replaces COUNT or UNTIL while retaining the rule", () => {
+    expect(
+      truncateRecurrence(
+        ["RRULE:FREQ=WEEKLY;COUNT=12;BYDAY=TU"],
+        Date.parse("2026-09-01T00:59:59.000Z"),
+        false,
+      ),
+    ).toEqual([
+      "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20260901T005959Z",
+    ]);
+    expect(
+      truncateRecurrence(
+        ["RRULE:FREQ=DAILY;UNTIL=20261231", "EXDATE:20260812"],
+        Date.parse("2026-09-01T00:00:00.000Z") - 1_000,
+        true,
+      ),
+    ).toEqual([
+      "RRULE:FREQ=DAILY;UNTIL=20260831",
+      "EXDATE:20260812",
+    ]);
+  });
+
+  test("deletes only the selected instance for thisEvent", async () => {
+    const row = recurring();
+    const { ctx, mutations } = actionContext(row);
+    const urls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      urls.push(String(input));
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    await deleteEventOp(ctx, row.userId, "access-token", {
+      eventId: row._id,
+      scope: "thisEvent",
+    });
+
+    expect(urls[0]).toContain("/events/google-event");
+    expect(mutations).toContainEqual(
+      expect.objectContaining({ eventId: row._id, userId: row.userId }),
+    );
+    expect(mutations.some((args) => "recurringEventId" in args)).toBe(false);
+  });
+
+  test("deletes the master and clears series state for allEvents", async () => {
+    const row = recurring();
+    const { ctx, mutations } = actionContext(row);
+    const urls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      urls.push(String(input));
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    await deleteEventOp(ctx, row.userId, "access-token", {
+      eventId: row._id,
+      scope: "allEvents",
+    });
+
+    expect(urls[0]).toContain("/events/series-master");
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        eventId: row._id,
+        userId: row.userId,
+        calendarId: row.calendarId,
+        recurringEventId: "series-master",
+      }),
+    );
+  });
+
+  test("notifies guests only when the organizer deletes the series", async () => {
+    const organizerRow = recurring({
+      attendees: [{ email: "guest@example.com" }],
+    });
+    const organizerContext = actionContext(organizerRow);
+    const organizerUrls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      organizerUrls.push(String(input));
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    await deleteEventOp(
+      organizerContext.ctx,
+      organizerRow.userId,
+      "access-token",
+      { eventId: organizerRow._id, scope: "allEvents" },
+    );
+    expect(organizerUrls[0]).toContain("sendUpdates=all");
+
+    const guestRow = recurring({
+      organizer: { self: false },
+      attendees: [{ email: "me@example.com", self: true }],
+    });
+    const guestContext = actionContext(guestRow, "writer");
+    const guestUrls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      guestUrls.push(String(input));
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    await deleteEventOp(guestContext.ctx, guestRow.userId, "access-token", {
+      eventId: guestRow._id,
+      scope: "allEvents",
+    });
+    expect(guestUrls[0]).toContain("sendUpdates=none");
+  });
+
+  test("truncates at a moved instance's original series position", async () => {
+    const row = recurring({
+      startMs: Date.parse("2026-09-03T01:00:00.000Z"),
+      endMs: Date.parse("2026-09-03T02:00:00.000Z"),
+    });
+    const { ctx, mutations } = actionContext(row);
+    const requests: { method: string; body?: Record<string, unknown> }[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const method = init?.method ?? "GET";
+      const body = init?.body
+        ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+        : undefined;
+      requests.push({ method, body });
+      const url = String(input);
+      if (method === "PATCH") {
+        return Response.json(
+          liveGoogleEvent(row, {
+            id: "series-master",
+            updated: "2026-08-11T00:01:00.000Z",
+            recurrence: [
+              "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20260901T005959Z",
+            ],
+          }),
+        );
+      }
+      if (url.includes("/events/series-master")) {
+        return Response.json(
+          liveGoogleEvent(row, {
+            id: "series-master",
+            start: {
+              dateTime: "2026-08-25T01:00:00.000Z",
+              timeZone: "Asia/Shanghai",
+            },
+            end: {
+              dateTime: "2026-08-25T02:00:00.000Z",
+              timeZone: "Asia/Shanghai",
+            },
+            recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU"],
+          }),
+        );
+      }
+      return Response.json(
+        liveGoogleEvent(row, {
+          originalStartTime: {
+            dateTime: "2026-09-01T01:00:00.000Z",
+            timeZone: "Asia/Shanghai",
+          },
+        }),
+      );
+    }) as typeof fetch;
+
+    await deleteEventOp(ctx, row.userId, "access-token", {
+      eventId: row._id,
+      scope: "thisAndFollowing",
+      expectedSeriesUpdatedMs: row.googleUpdatedMs,
+    });
+
+    expect(requests.map((request) => request.method)).toEqual([
+      "GET",
+      "GET",
+      "PATCH",
+    ]);
+    expect(requests[2]?.body).toEqual({
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20260901T005959Z"],
+    });
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        googleEventId: "series-master",
+        recurrence: [
+          "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20260901T005959Z",
+        ],
+      }),
+    );
+  });
+
+  test("does not patch or notify again when the master is already truncated", async () => {
+    const row = recurring();
+    const { ctx } = actionContext(row);
+    const methods: string[] = [];
+    const truncated = "RRULE:FREQ=WEEKLY;UNTIL=20260901T005959Z";
+    globalThis.fetch = (async (input, init) => {
+      methods.push(init?.method ?? "GET");
+      if (String(input).includes("/events/series-master")) {
+        return Response.json(
+          liveGoogleEvent(row, {
+            id: "series-master",
+            start: {
+              dateTime: "2026-08-25T01:00:00.000Z",
+              timeZone: "Asia/Shanghai",
+            },
+            end: {
+              dateTime: "2026-08-25T02:00:00.000Z",
+              timeZone: "Asia/Shanghai",
+            },
+            recurrence: [truncated],
+          }),
+        );
+      }
+      return Response.json(
+        liveGoogleEvent(row, {
+          originalStartTime: {
+            dateTime: "2026-09-01T01:00:00.000Z",
+            timeZone: "Asia/Shanghai",
+          },
+        }),
+      );
+    }) as typeof fetch;
+
+    await deleteEventOp(ctx, row.userId, "access-token", {
+      eventId: row._id,
+      scope: "thisAndFollowing",
+      expectedSeriesUpdatedMs: row.googleUpdatedMs - 1,
+    });
+
+    expect(methods).toEqual(["GET", "GET"]);
+  });
+
+  test("rejects a stale future-only proposal before patching", async () => {
+    const row = recurring();
+    const { ctx } = actionContext(row);
+    const methods: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      methods.push(init?.method ?? "GET");
+      if (String(input).includes("/events/series-master")) {
+        return Response.json(
+          liveGoogleEvent(row, {
+            id: "series-master",
+            updated: "2026-08-11T00:05:00.000Z",
+            start: {
+              dateTime: "2026-08-25T01:00:00.000Z",
+              timeZone: "Asia/Shanghai",
+            },
+            end: {
+              dateTime: "2026-08-25T02:00:00.000Z",
+              timeZone: "Asia/Shanghai",
+            },
+            recurrence: ["RRULE:FREQ=WEEKLY"],
+          }),
+        );
+      }
+      return Response.json(
+        liveGoogleEvent(row, {
+          originalStartTime: {
+            dateTime: "2026-09-01T01:00:00.000Z",
+            timeZone: "Asia/Shanghai",
+          },
+        }),
+      );
+    }) as typeof fetch;
+
+    await expect(
+      deleteEventOp(ctx, row.userId, "access-token", {
+        eventId: row._id,
+        scope: "thisAndFollowing",
+        expectedSeriesUpdatedMs: row.googleUpdatedMs,
+      }),
+    ).rejects.toThrow("changed after");
+    expect(methods).toEqual(["GET", "GET"]);
+  });
+
+  test("treats future deletion at the series head as allEvents", async () => {
+    const row = recurring();
+    const { ctx } = actionContext(row);
+    const methods: string[] = [];
+    const urls: string[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const method = init?.method ?? "GET";
+      methods.push(method);
+      urls.push(String(input));
+      if (method === "DELETE") return new Response(null, { status: 204 });
+      const master = String(input).includes("/events/series-master");
+      return Response.json(
+        liveGoogleEvent(row, {
+          id: master ? "series-master" : row.googleEventId,
+          originalStartTime: master
+            ? undefined
+            : {
+                dateTime: new Date(row.startMs).toISOString(),
+                timeZone: "Asia/Shanghai",
+              },
+          recurrence: master ? ["RRULE:FREQ=WEEKLY"] : undefined,
+        }),
+      );
+    }) as typeof fetch;
+
+    await deleteEventOp(ctx, row.userId, "access-token", {
+      eventId: row._id,
+      scope: "thisAndFollowing",
+    });
+
+    expect(methods).toEqual(["GET", "GET", "DELETE"]);
+    expect(urls[2]).toContain("/events/series-master");
+  });
+
+  test("rejects future-only removal by a guest before calling Google", async () => {
+    const row = recurring({
+      organizer: { self: false },
+      attendees: [{ email: "guest@example.com", self: true }],
+    });
+    const { ctx } = actionContext(row, "writer");
+    let fetched = false;
+    globalThis.fetch = (async () => {
+      fetched = true;
+      return Response.json({});
+    }) as typeof fetch;
+
+    await expect(
+      deleteEventOp(ctx, row.userId, "access-token", {
+        eventId: row._id,
+        scope: "thisAndFollowing",
+      }),
+    ).rejects.toThrow("Only the organizer");
+    expect(fetched).toBe(false);
+  });
+
+  test("cleans up a stale local occurrence when a future-only retry sees 404", async () => {
+    const row = recurring();
+    const { ctx, mutations } = actionContext(row);
+    globalThis.fetch = (async () =>
+      Response.json({ error: { message: "Not found" } }, { status: 404 })) as typeof fetch;
+
+    await deleteEventOp(ctx, row.userId, "access-token", {
+      eventId: row._id,
+      scope: "thisAndFollowing",
+    });
+
+    expect(mutations).toContainEqual({
+      eventId: row._id,
+      userId: row.userId,
+      calendarId: row.calendarId,
+    });
+  });
+
+  test("rejects a future-only delete when the master has no RRULE", async () => {
+    const row = recurring();
+    const { ctx } = actionContext(row);
+    globalThis.fetch = (async (input) => {
+      if (String(input).includes("/events/series-master")) {
+        return Response.json(
+          liveGoogleEvent(row, {
+            id: "series-master",
+            start: {
+              dateTime: "2026-08-25T01:00:00.000Z",
+              timeZone: "Asia/Shanghai",
+            },
+            end: {
+              dateTime: "2026-08-25T02:00:00.000Z",
+              timeZone: "Asia/Shanghai",
+            },
+            recurrence: ["EXDATE:20260908T010000Z"],
+          }),
+        );
+      }
+      return Response.json(
+        liveGoogleEvent(row, {
+          originalStartTime: {
+            dateTime: "2026-09-01T01:00:00.000Z",
+            timeZone: "Asia/Shanghai",
+          },
+        }),
+      );
+    }) as typeof fetch;
+
+    await expect(
+      deleteEventOp(ctx, row.userId, "access-token", {
+        eventId: row._id,
+        scope: "thisAndFollowing",
+      }),
+    ).rejects.toThrow("no recurrence rule");
   });
 });

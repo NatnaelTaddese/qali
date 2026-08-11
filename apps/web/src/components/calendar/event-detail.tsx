@@ -17,6 +17,7 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
+import { GooDropdown } from "@qali/ui/components/ui/goo-dropdown";
 import {
   Tooltip,
   TooltipContent,
@@ -387,6 +388,79 @@ function DeleteButton({
   );
 }
 
+export type DeleteScope = "thisEvent" | "thisAndFollowing" | "allEvents";
+
+const RECURRING_DELETE_SCOPES: {
+  scope: DeleteScope;
+  label: string;
+  organizerOnly?: boolean;
+}[] = [
+  { scope: "thisEvent", label: "This event" },
+  {
+    scope: "thisAndFollowing",
+    label: "This and following events",
+    organizerOnly: true,
+  },
+  { scope: "allEvents", label: "All events" },
+];
+
+export function recurringDeleteScopes(isOrganizer: boolean) {
+  return RECURRING_DELETE_SCOPES.filter(
+    (option) => !option.organizerOnly || isOrganizer,
+  );
+}
+
+/** The scope menu itself is the recurring event's destructive confirmation. */
+function RecurringDeleteControl({
+  label,
+  destructive,
+  isOrganizer,
+  onConfirm,
+}: {
+  label: string;
+  destructive: boolean;
+  isOrganizer: boolean;
+  onConfirm: (scope: DeleteScope) => Promise<unknown>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const options = recurringDeleteScopes(isOrganizer);
+  return (
+    <GooDropdown
+      trigger={
+        <>
+          {busy && <Spinner />}
+          {busy ? (destructive ? "Deleting…" : "Removing…") : label}
+        </>
+      }
+      disabled={busy}
+      side="top"
+      align="end"
+      gap={8}
+      width={224}
+      buttonRadius={16}
+      activeFill={
+        destructive
+          ? "color-mix(in oklch, var(--destructive) 10%, var(--popover))"
+          : undefined
+      }
+      activeForeground={destructive ? "var(--destructive)" : undefined}
+      activeHoverFill={
+        destructive
+          ? "color-mix(in oklch, var(--destructive) 20%, var(--popover))"
+          : undefined
+      }
+      menuLabel={`${label} recurring event`}
+      items={options.map((option) => ({
+        label: option.label,
+        onClick: () => {
+          setBusy(true);
+          void onConfirm(option.scope).catch(() => setBusy(false));
+        },
+      }))}
+    />
+  );
+}
+
 export function EventDetail({
   event: snapshot,
   onClose,
@@ -423,6 +497,10 @@ export function EventDetail({
   const [mainHeight, setMainHeight] = useState<number>();
   const [recurrenceRefreshFailedFor, setRecurrenceRefreshFailedFor] =
     useState<CalendarEvent["_id"]>();
+  const deleteOperationRef = useRef<{
+    scope: DeleteScope;
+    operationId: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!event.recurringEventId || recurrenceLines !== null) return;
@@ -453,8 +531,18 @@ export function EventDetail({
     organizer: a.organizer,
   }));
 
-  const remove = () =>
-    deleteEvent({ eventId: event._id })
+  const remove = (scope: DeleteScope) => {
+    if (deleteOperationRef.current?.scope !== scope) {
+      deleteOperationRef.current = {
+        scope,
+        operationId: crypto.randomUUID(),
+      };
+    }
+    return deleteEvent({
+      eventId: event._id,
+      scope,
+      operationId: deleteOperationRef.current.operationId,
+    })
       .then(onClose)
       .catch((error: unknown) => {
         toast.error("Couldn't remove event", {
@@ -462,6 +550,7 @@ export function EventDetail({
         });
         throw error;
       });
+  };
 
   const duplicate = () => {
     onDuplicate(
@@ -727,13 +816,28 @@ export function EventDetail({
 
             <div className="flex items-center gap-2 -mr-2">
               {(capabilities.canDelete || capabilities.canRemoveSelf) && (
-                <DeleteButton
-                  label={
-                    capabilities.canDelete ? "Delete" : "Remove from my calendar"
-                  }
-                  destructive={capabilities.canDelete}
-                  onConfirm={remove}
-                />
+                event.recurringEventId ? (
+                  <RecurringDeleteControl
+                    label={
+                      capabilities.canDelete
+                        ? "Delete"
+                        : "Remove from my calendar"
+                    }
+                    destructive={capabilities.canDelete}
+                    isOrganizer={capabilities.isOrganizer}
+                    onConfirm={remove}
+                  />
+                ) : (
+                  <DeleteButton
+                    label={
+                      capabilities.canDelete
+                        ? "Delete"
+                        : "Remove from my calendar"
+                    }
+                    destructive={capabilities.canDelete}
+                    onConfirm={() => remove("thisEvent")}
+                  />
+                )
               )}
               {capabilities.canEdit && (
                 <Button type="button" size="sm" onClick={onEdit}>

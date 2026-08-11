@@ -807,14 +807,21 @@ const moveEvent = writeTool({
 
 const deleteEventSchema = z.object({
   eventId: z.string().describe("The eventId from list_events."),
+  scope: z
+    .enum(["thisEvent", "thisAndFollowing", "allEvents"])
+    .describe(
+      "Required. For a recurring event, ask which scope the user means before proposing. Use thisEvent for a non-recurring event.",
+    ),
 });
 
 const deleteEvent = writeTool({
   name: "delete_event",
   description:
-    "Propose deleting an event. If the user organises it this cancels it for " +
-    "every guest and emails them; if they are only a guest it just removes " +
-    "their own copy. Nothing is deleted until the user confirms.",
+    "Propose deleting an event with an explicit scope. For a recurring event, " +
+    "ask whether the user means this occurrence, this and following, or the " +
+    "whole series before calling. A guest may use thisEvent or allEvents, but " +
+    "only the organizer may use thisAndFollowing. Nothing is deleted until " +
+    "the user confirms.",
   schema: deleteEventSchema,
   async preview(tc, args) {
     const { row, capabilities } = await resolveEventForWrite(
@@ -824,11 +831,47 @@ const deleteEvent = writeTool({
       ["canDelete", "canRemoveSelf"],
     );
     const guests = row.attendees?.length ?? 0;
-    const verb =
-      capabilities.isOrganizer && guests > 0
-        ? `Cancel “${row.summary ?? "(No title)"}” and notify ${guests} guest${guests === 1 ? "" : "s"}`
-        : `Remove “${row.summary ?? "(No title)"}” from your calendar`;
+    const recurring = row.recurringEventId !== undefined;
+    if (!recurring && args.scope !== "thisEvent") {
+      throw new Error("A non-recurring event only has one occurrence");
+    }
+    if (
+      recurring &&
+      args.scope === "thisAndFollowing" &&
+      !capabilities.isOrganizer
+    ) {
+      throw new Error(
+        "Only the organizer can remove this and following events from the series",
+      );
+    }
+    const scope = !recurring
+      ? ""
+      : args.scope === "thisEvent"
+        ? " (this occurrence)"
+        : args.scope === "thisAndFollowing"
+          ? " (this and following)"
+          : " (whole series)";
+    const title = `“${row.summary ?? "(No title)"}”${scope}`;
+    const verb = capabilities.isOrganizer
+      ? guests > 0
+        ? `Cancel ${title} and notify ${guests} guest${guests === 1 ? "" : "s"}`
+        : `Delete ${title}`
+      : `Remove ${title} from your calendar`;
     return `${verb} · ${formatRange(row.startMs, row.endMs, tc.timeZone, row.allDay)}`;
+  },
+  async storedArgs(tc, args) {
+    if (args.scope !== "thisAndFollowing") return {};
+    const row = await requireEditable(tc, args.eventId);
+    const expectedSeriesUpdatedMs = await tc.ctx.runQuery(
+      internal.assistantData.getRecurringSeriesVersion,
+      { userId: tc.userId, eventId: row._id },
+    );
+    if (expectedSeriesUpdatedMs === null) {
+      throw new Error(
+        "The recurring series is not fully synced yet. Refresh it before deleting future events.",
+      );
+    }
+    return { expectedSeriesUpdatedMs };
   },
 });
 
@@ -1001,8 +1044,18 @@ export async function applyProposal(
     }
     case "delete_event": {
       const args = deleteEventSchema.parse(raw);
+      const expectedSeriesUpdatedMs =
+        typeof raw === "object" &&
+        raw !== null &&
+        "expectedSeriesUpdatedMs" in raw &&
+        typeof raw.expectedSeriesUpdatedMs === "number"
+          ? raw.expectedSeriesUpdatedMs
+          : undefined;
       await deleteEventOp(ctx, userId, token(), {
         eventId: args.eventId as Id<"events">,
+        scope: args.scope,
+        operationId,
+        expectedSeriesUpdatedMs,
       });
       return "Event deleted.";
     }
@@ -1024,12 +1077,25 @@ export async function applyProposal(
 /** Pending proposals created before the date-only contract may still be on
  * screen. Normalize only those persisted shapes at apply time; newly generated
  * tool schemas expose the unambiguous `time` union exclusively. */
+export function normalizeLegacyDeleteScope(
+  tool: string,
+  raw: unknown,
+): unknown {
+  return tool === "delete_event" &&
+    typeof raw === "object" &&
+    raw !== null &&
+    !("scope" in raw)
+    ? { ...raw, scope: "thisEvent" }
+    : raw;
+}
+
 async function normalizeStoredProposal(
   ctx: ActionCtx,
   userId: string,
   tool: string,
   raw: unknown,
 ): Promise<unknown> {
+  raw = normalizeLegacyDeleteScope(tool, raw);
   if (
     typeof raw !== "object" ||
     raw === null ||

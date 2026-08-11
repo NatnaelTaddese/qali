@@ -544,19 +544,19 @@ export const respondToEvent = action({
   },
 });
 
-/**
- * Delete an event, meaning one of two different things.
- *
- * As its organizer, this cancels the event for everyone and mails them about
- * it. As a mere guest, the copy on your calendar is yours alone: deleting it
- * removes it from your view, leaves the organizer's copy untouched, and tells
- * nobody. The frontend labels the button accordingly ("Delete event" vs.
- * "Remove from my calendar") — the two are not the same act and shouldn't read
- * as though they were. Declining, if that's what the user means, is the RSVP
- * control; this deliberately doesn't decline on their behalf.
- */
+/** Delete one occurrence, this and following occurrences, or a whole series. */
 export const deleteEvent = action({
-  args: { eventId: v.id("events") },
+  args: {
+    eventId: v.id("events"),
+    scope: v.optional(
+      v.union(
+        v.literal("thisEvent"),
+        v.literal("thisAndFollowing"),
+        v.literal("allEvents"),
+      ),
+    ),
+    operationId: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<null> => {
     const { userId, accessToken } = await authedWrite(ctx);
     return await deleteEventOp(ctx, userId, accessToken, args);
@@ -566,11 +566,28 @@ export const deleteEvent = action({
 /** Drop the local row as soon as Google accepts the delete, so the card leaves
  * the grid now rather than whenever the next sync happens to run. */
 export const deleteEventRow = internalMutation({
-  args: { eventId: v.id("events"), userId: v.string() },
+  args: {
+    eventId: v.id("events"),
+    userId: v.string(),
+    calendarId: v.optional(v.string()),
+    recurringEventId: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db.get(args.eventId);
     if (row && row.userId === args.userId) {
       await ctx.db.delete(args.eventId);
+    }
+    if (args.recurringEventId) {
+      const series = await ctx.db
+        .query("recurringSeries")
+        .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+          q
+            .eq("userId", args.userId)
+            .eq("calendarId", args.calendarId ?? row?.calendarId ?? "")
+            .eq("googleEventId", args.recurringEventId!),
+        )
+        .unique();
+      if (series) await ctx.db.delete(series._id);
     }
     return null;
   },

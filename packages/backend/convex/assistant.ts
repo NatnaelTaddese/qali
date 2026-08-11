@@ -97,6 +97,8 @@ Words such as "every", "each", "daily", "weekly", "monthly", and sets of weekday
 
 For a new repeating event with no clock time, propose an all-day event with no repeat end. Its start date is the first matching local date on or after today. For monthly and yearly repetition, the start date anchors the day of the month and month of the year. If the user asks to make an existing one-off event repeat, look it up and use update_event; preserve its current time and duration unless they explicitly change them.
 
+Before deleting a recurring event, establish whether the user means this occurrence, this and following occurrences, or the whole series. Never assume a scope. Guests can remove one occurrence or their whole series copy, but cannot remove this and following because that would change the organizer's recurrence rule.
+
 Examples: "make Tuesday and Wednesday Domino's discount days" is one all-day weekly event whose weekdays are Tuesday and Wednesday. "make every start of the month a pay salary day" is an all-day monthly event starting on the next first day of a month.`;
 
 /** The system prompt plus the tool array, which serialize ahead of the

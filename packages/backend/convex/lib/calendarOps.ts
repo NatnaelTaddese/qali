@@ -288,7 +288,7 @@ function toRRuleUntil(ms: number, allDay: boolean): string {
  * `COUNT` or existing `UNTIL`; other recurrence lines (EXDATE/RDATE) pass
  * through untouched. This is how "this and following" ends the original series.
  */
-function truncateRecurrence(
+export function truncateRecurrence(
   recurrence: string[],
   untilMs: number,
   allDay: boolean,
@@ -443,6 +443,7 @@ export async function updateEventTimeOp(
 }
 
 export type UpdateEventScope = "thisEvent" | "thisAndFollowing" | "allEvents";
+export type DeleteEventScope = UpdateEventScope;
 
 export interface UpdateEventArgs {
   eventId: Id<"events">;
@@ -1029,21 +1030,34 @@ export async function respondToEventOp(
 }
 
 /**
- * Delete an event, meaning one of two different things.
+ * Delete one occurrence, a recurring tail, or an entire series.
  *
- * As its organizer, this cancels the event for everyone and mails them about
- * it. As a mere guest, the copy on your calendar is yours alone: deleting it
- * removes it from your view, leaves the organizer's copy untouched, and tells
- * nobody. The frontend labels the button accordingly ("Delete event" vs.
- * "Remove from my calendar") — the two are not the same act and shouldn't read
- * as though they were. Declining, if that's what the user means, is the RSVP
- * control; this deliberately doesn't decline on their behalf.
+ * Organizers cancel the selected scope for everyone and notify guests. Guests
+ * can remove one occurrence or their whole local series copy without sending
+ * notifications; only an organizer can truncate a series from an occurrence
+ * onward. Declining remains a separate RSVP operation.
  */
+export interface DeleteEventArgs {
+  eventId: Id<"events">;
+  scope?: DeleteEventScope;
+  operationId?: string;
+  /** Version of the recurring master cached when an assistant proposal was
+   * shown. Only future-only deletion depends on the rule remaining unchanged. */
+  expectedSeriesUpdatedMs?: number;
+}
+
+function googleTimeMs(value: RawCalendarDateTime | undefined): number | undefined {
+  const encoded = value?.dateTime ?? value?.date;
+  if (!encoded) return undefined;
+  const parsed = new Date(encoded).getTime();
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export async function deleteEventOp(
   ctx: ActionCtx,
   userId: string,
   accessToken: string,
-  args: { eventId: Id<"events"> },
+  args: DeleteEventArgs,
 ): Promise<null> {
   const { row, capabilities } = await resolveEventForWrite(
     ctx,
@@ -1052,14 +1066,152 @@ export async function deleteEventOp(
     ["canDelete", "canRemoveSelf"],
   );
 
+  const scope = row.recurringEventId
+    ? (args.scope ?? "thisEvent")
+    : "thisEvent";
+  if (scope === "thisAndFollowing" && !capabilities.isOrganizer) {
+    throw new Error(
+      "Only the organizer can remove this and following events from the series",
+    );
+  }
+
   const hasGuests = (row.attendees?.length ?? 0) > 0;
+  const sendUpdates =
+    capabilities.isOrganizer && hasGuests ? ("all" as const) : ("none" as const);
+
+  if (row.recurringEventId && scope === "thisAndFollowing") {
+    let rawInstance: RawEvent;
+    try {
+      rawInstance = await getCalendarEvent(
+        accessToken,
+        row.calendarId,
+        row.googleEventId,
+      );
+    } catch (error) {
+      // A retry after a successful truncation can no longer retrieve this
+      // occurrence. Drop a possibly stale local row before re-syncing.
+      if (!(error instanceof GoogleApiError) || error.status !== 404) throw error;
+      try {
+        await ctx.runMutation(internal.calendar.deleteEventRow, {
+          eventId: args.eventId,
+          userId,
+          calendarId: row.calendarId,
+        });
+        await resyncCalendar(ctx, userId, accessToken, row.calendarId);
+      } catch (syncError) {
+        throw new ExternalWriteCommittedError(
+          "This and following events deleted.",
+          syncError,
+        );
+      }
+      return null;
+    }
+
+    const rawMaster = await getCalendarEvent(
+      accessToken,
+      row.calendarId,
+      row.recurringEventId,
+    );
+    const master = mapGoogleEvent(rawMaster, row.calendarId);
+    const originalStartMs =
+      googleTimeMs(rawInstance.originalStartTime) ??
+      googleTimeMs(rawInstance.start) ??
+      row.startMs;
+
+    // Removing from the first occurrence onward is exactly a whole-series
+    // delete; an UNTIL before DTSTART would be invalid.
+    if (originalStartMs === master.startMs) {
+      try {
+        await deleteCalendarEvent(
+          accessToken,
+          row.calendarId,
+          row.recurringEventId,
+          sendUpdates,
+        );
+      } catch (error) {
+        if (!(error instanceof GoogleApiError) || error.status !== 404) throw error;
+      }
+      try {
+        await ctx.runMutation(internal.calendar.deleteEventRow, {
+          eventId: args.eventId,
+          userId,
+          calendarId: row.calendarId,
+          recurringEventId: row.recurringEventId,
+        });
+        await resyncCalendar(ctx, userId, accessToken, row.calendarId);
+      } catch (error) {
+        throw new ExternalWriteCommittedError("Event series deleted.", error);
+      }
+      return null;
+    }
+
+    const recurrence = rawMaster.recurrence ?? [];
+    if (!recurrence.some((line) => line.startsWith("RRULE:"))) {
+      throw new Error("The recurring series has no recurrence rule to truncate");
+    }
+    const truncated = truncateRecurrence(
+      recurrence,
+      originalStartMs - 1_000,
+      master.allDay,
+    );
+    const alreadyTruncated =
+      JSON.stringify(recurrence) === JSON.stringify(truncated);
+    const liveMasterUpdatedMs = rawMaster.updated
+      ? new Date(rawMaster.updated).getTime()
+      : undefined;
+    if (
+      !alreadyTruncated &&
+      args.expectedSeriesUpdatedMs !== undefined &&
+      liveMasterUpdatedMs !== undefined &&
+      liveMasterUpdatedMs !== args.expectedSeriesUpdatedMs
+    ) {
+      throw new Error(
+        "The recurring series changed after this deletion was proposed. Please propose it again.",
+      );
+    }
+
+    const updatedMaster = alreadyTruncated
+      ? master
+      : await patchCalendarEvent(
+          accessToken,
+          row.calendarId,
+          row.recurringEventId,
+          { recurrence: truncated },
+          sendUpdates,
+        );
+    try {
+      await ctx.runMutation(internal.calendar.upsertRecurringSeries, {
+        userId,
+        calendarId: row.calendarId,
+        googleEventId: row.recurringEventId,
+        recurrence: truncated,
+        sourceUpdatedMs: updatedMaster.googleUpdatedMs,
+      });
+      await ctx.runMutation(internal.calendar.deleteEventRow, {
+        eventId: args.eventId,
+        userId,
+        calendarId: row.calendarId,
+      });
+      await resyncCalendar(ctx, userId, accessToken, row.calendarId);
+    } catch (error) {
+      throw new ExternalWriteCommittedError(
+        "This and following events deleted.",
+        error,
+      );
+    }
+    return null;
+  }
+
+  const recurringEventId =
+    row.recurringEventId && scope === "allEvents"
+      ? row.recurringEventId
+      : undefined;
   try {
     await deleteCalendarEvent(
       accessToken,
       row.calendarId,
-      row.googleEventId,
-      // Only the organizer's delete is a cancellation worth emailing about.
-      capabilities.isOrganizer && hasGuests ? "all" : "none",
+      recurringEventId ?? row.googleEventId,
+      sendUpdates,
     );
   } catch (error) {
     // A retry after an uncertain response sees 404 once the first delete won.
@@ -1070,9 +1222,17 @@ export async function deleteEventOp(
     await ctx.runMutation(internal.calendar.deleteEventRow, {
       eventId: args.eventId,
       userId,
+      calendarId: row.calendarId,
+      ...(recurringEventId ? { recurringEventId } : {}),
     });
+    if (recurringEventId) {
+      await resyncCalendar(ctx, userId, accessToken, row.calendarId);
+    }
   } catch (error) {
-    throw new ExternalWriteCommittedError("Event deleted.", error);
+    throw new ExternalWriteCommittedError(
+      recurringEventId ? "Event series deleted." : "Event deleted.",
+      error,
+    );
   }
   return null;
 }

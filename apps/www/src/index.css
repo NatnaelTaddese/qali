@@ -27,8 +27,37 @@
 }
 
 .chroma-text-animate {
-  animation: chroma-sweep 2s ease-in-out 0.1s forwards;
+  animation: chroma-sweep 2s ease-in-out 0.5s forwards;
   filter: blur(1px);
+}
+
+/* Hero staggered entrance: the badge, subheadline and CTA fade+rise into place
+ * in visual order, interleaved with the mascot peel (0.15s) and the headline
+ * chroma sweep (0.5s). Each element sets its own `--hero-delay` inline so the
+ * whole column arrives top-to-bottom rather than all at once. `fade-up` is the
+ * shared keyframe from @qali/ui globals. */
+.hero-reveal {
+  animation: fade-up 0.5s ease-out both;
+  animation-delay: var(--hero-delay, 0s);
+}
+
+/* Blur-fade variant for the subheadline and CTA: same rise as `.hero-reveal`
+ * but the element also unblurs as it settles, for a softer arrival. */
+@keyframes hero-blur-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+.hero-reveal-blur {
+  animation: hero-blur-fade 0.6s ease-out both;
+  animation-delay: var(--hero-delay, 0s);
 }
 
 /* The loading-screen styles (.chroma-loop, its keyframe, and the .loading-screen
@@ -256,7 +285,9 @@
 @media (prefers-reduced-motion: reduce) {
   .mascot__idle,
   .mascot__blink,
-  .mascot__peel {
+  .mascot__peel,
+  .hero-reveal,
+  .hero-reveal-blur {
     animation: none;
   }
   /* No animation means these entry-only light passes would sit frozen over the

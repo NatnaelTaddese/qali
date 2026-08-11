@@ -5,6 +5,7 @@ import { Input } from "@qali/ui/components/input";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
 import { useState } from "react";
+import type { CSSProperties } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -61,16 +62,25 @@ function Hero() {
       </div>
       <Mascot className="relative z-10 mb-5 shrink-0 sm:mb-7" />
       <div className="relative z-10 mx-auto flex max-w-3xl flex-col items-center gap-4">
-        <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10">
+        <span
+          className="hero-reveal rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10"
+          style={{ "--hero-delay": "0.35s" } as CSSProperties}
+        >
           Currently in beta
         </span>
         <h1 className="chroma-text chroma-text-animate font-display text-4xl font-medium tracking-tight text-balance sm:text-6xl">
           The calendar that runs itself
         </h1>
-        <p className="max-w-xl text-lg text-muted-foreground text-balance">
+        <p
+          className="hero-reveal-blur max-w-xl text-lg text-muted-foreground text-balance"
+          style={{ "--hero-delay": "0.7s" } as CSSProperties}
+        >
           let us sort out your meetings for you
         </p>
-        <div className="flex flex-wrap items-center justify-center gap-3">
+        <div
+          className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"
+          style={{ "--hero-delay": "0.9s" } as CSSProperties}
+        >
           <Button size="lg" onClick={() => scrollToId("waitlist")}>
             Join the waitlist
           </Button>

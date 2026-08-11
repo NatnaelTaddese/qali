@@ -1,5 +1,3 @@
-import { AiMagicIcon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import type { Id } from "@qali/backend/convex/_generated/dataModel";
 import { Button } from "@qali/ui/components/button";
@@ -27,6 +25,7 @@ import {
   isEditableAssistantShortcutTarget,
   shouldOpenAssistantShortcut,
 } from "./assistant-interactions";
+import { MascotGlyph } from "./mascot-glyph";
 
 type Threads = FunctionReturnType<typeof api.assistantData.listThreads>;
 type Messages = FunctionReturnType<typeof api.assistantData.listMessages>;
@@ -99,6 +98,9 @@ export function AssistantDock() {
   // Tracks whether the panel is open so ⌘J can always close it — even from the
   // composer, where the editable-target guard would otherwise swallow the key.
   const menuOpenRef = useRef(false);
+  // A rendered mirror of the same flag: the trigger glyph fills in (from its
+  // resting outline) while the dock is open.
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // Warm the lazy panel as soon as the assistant exists, so opening it never
   // flashes the Suspense spinner.
@@ -156,9 +158,7 @@ export function AssistantDock() {
 
   if (!assistantAvailable) return null;
 
-  const trigger = (
-    <HugeiconsIcon icon={AiMagicIcon} strokeWidth={2} className="size-5" />
-  );
+  const trigger = <MascotGlyph className="size-6" active={menuOpen} />;
 
   return (
     // Named as its own layer only while a calendar view transition runs, so the
@@ -194,6 +194,7 @@ export function AssistantDock() {
         contentHeight={contentHeight}
         onOpenChange={(o) => {
           menuOpenRef.current = o;
+          setMenuOpen(o);
         }}
         // Auto-closes on an outside click, Escape, ⌘J or the header close — but
         // scrolling the calendar underneath it must not dismiss it.
@@ -213,7 +214,7 @@ export function AssistantDock() {
         activeFill="var(--primary)"
         activeForeground="var(--primary-foreground)"
         activeHoverFill="color-mix(in oklch, var(--primary-foreground) 14%, var(--primary))"
-        triggerClassName="!size-12 !px-0 rounded-full border border-border shadow-lg"
+        triggerClassName="mascot-trigger !size-12 !px-0 rounded-full border border-border shadow-lg"
       />
     </div>
   );

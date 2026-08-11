@@ -1,5 +1,5 @@
 import { cn } from "@qali/ui/lib/utils";
-import { addDays, format } from "date-fns";
+import { addDays, format, isToday } from "date-fns";
 import { memo, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAvailabilityEdit } from "@/components/workspace/availability-edit-context";
@@ -237,7 +237,15 @@ function DayColumnImpl({
         "relative border-l border-border",
         draft && "touch-none select-none",
       )}
-      style={{ scrollSnapAlign: "start" }}
+      style={{
+        scrollSnapAlign: "start",
+        // Subtle tint on today's column (matching the marketing week view) that
+        // fades to transparent toward the bottom rather than ending on a hard edge.
+        ...(isToday(day) && {
+          backgroundImage:
+            "linear-gradient(to bottom, color-mix(in oklab, var(--primary) 3%, transparent) 0%, color-mix(in oklab, var(--primary) 3%, transparent) 75%, transparent 100%)",
+        }),
+      }}
     >
       {/* While painting availability, events and requests drop back to inert
           context so a selection can start anywhere on the column. */}

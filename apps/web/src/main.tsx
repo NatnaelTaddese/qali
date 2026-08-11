@@ -1,6 +1,5 @@
 import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
 import { env } from "@qali/env/web";
-import { waitForFraunces } from "@qali/ui/lib/wait-for-fraunces";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { ConvexReactClient } from "convex/react";
 import ReactDOM from "react-dom/client";
@@ -38,15 +37,11 @@ if (!rootElement) {
   throw new Error("Root element not found");
 }
 
-// Block the first render until the Fraunces display font is ready, so nothing —
-// including the loading screen's "Q" — ever paints in a fallback serif.
-async function bootstrap() {
-  await waitForFraunces();
-
-  if (!rootElement!.innerHTML) {
-    const root = ReactDOM.createRoot(rootElement!);
-    root.render(<RouterProvider router={router} />);
-  }
+// Mount immediately so the branded loading screen (ChromaLoader) paints right
+// away instead of a blank #app. The loader shows its background at once and
+// waits internally for Fraunces before revealing the "Q" — so nothing ever
+// flashes a fallback serif, and there's no blank gap while fonts load.
+if (!rootElement.innerHTML) {
+  const root = ReactDOM.createRoot(rootElement);
+  root.render(<RouterProvider router={router} />);
 }
-
-void bootstrap();

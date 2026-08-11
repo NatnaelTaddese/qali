@@ -1,3 +1,4 @@
+import { LoadingScreen } from "@qali/ui/components/loading-screen";
 import { Toaster } from "@qali/ui/components/sonner";
 import { TooltipProvider } from "@qali/ui/components/tooltip";
 import { HeadContent, Outlet, createRootRouteWithContext } from "@tanstack/react-router";
@@ -67,6 +68,7 @@ function RootComponent() {
             <Outlet />
           </div>
         </TooltipProvider>
+        <LoadingScreen />
         <Toaster position="top-right" />
       </ThemeProvider>
       {/* Dev only: the booking page is public, and the devtools panel has no

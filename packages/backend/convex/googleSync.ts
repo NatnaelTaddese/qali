@@ -56,6 +56,10 @@ const SYNC_MAX_MS = 60 * 60 * 1000; // idle cap: at most once an hour
 // How many due users one cron tick schedules per transaction before continuing
 // in a fresh one — keeps the fan-out bounded regardless of user count.
 const SYNC_FANOUT_BATCH = 100;
+// How long a per-user sync lease is held. Comfortably longer than a normal run
+// (even a multi-calendar full resync) so a run never loses its own lease
+// mid-flight, but short enough that a crashed run's lease is reclaimable soon.
+const SYNC_LEASE_MS = 10 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // People directory — the email-keyed union of saved connections, Other
@@ -99,8 +103,17 @@ async function upsertPeopleRows(
   userId: string,
   source: PersonSource,
   rows: PersonInput[],
+  // Full-resync generation for the "other" feeder; stamped onto touched rows so
+  // the post-resync sweep can drop "other" from people it no longer sees. Ignored
+  // for other sources and on incremental writes (undefined preserves the prior
+  // stamp). See sweepStaleOtherPeopleBatch.
+  otherGeneration?: number,
 ): Promise<void> {
   const authoritative = source !== "attendee";
+  const stampOther =
+    source === "other" && otherGeneration !== undefined
+      ? { otherSyncGeneration: otherGeneration }
+      : {};
   // Collapse duplicate emails within the page (same guest across many events).
   const byEmail = new Map<string, PersonInput>();
   for (const r of rows) {
@@ -136,6 +149,7 @@ async function upsertPeopleRows(
           : existing.photoUrl,
         sources,
         updatedAt: now,
+        ...stampOther,
       });
     } else {
       await ctx.db.insert("people", {
@@ -145,8 +159,40 @@ async function upsertPeopleRows(
         photoUrl: r.photoUrl,
         sources: [source],
         updatedAt: now,
+        ...stampOther,
       });
     }
+  }
+}
+
+/** Remove one feeder's claim on a person, keyed by lowercased email. When that
+ * was the person's only source the row is deleted; otherwise the tag is dropped
+ * and the row kept (a guest who is also a calendar attendee stays visible).
+ * Idempotent — a no-op if the person or source is already gone. */
+async function removePersonSource(
+  ctx: MutationCtx,
+  userId: string,
+  email: string,
+  source: PersonSource,
+): Promise<void> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) {
+    return;
+  }
+  const existing = await ctx.db
+    .query("people")
+    .withIndex("by_user_and_email", (q) =>
+      q.eq("userId", userId).eq("email", normalized),
+    )
+    .unique();
+  if (!existing || !existing.sources.includes(source)) {
+    return;
+  }
+  const sources = existing.sources.filter((s) => s !== source);
+  if (sources.length === 0) {
+    await ctx.db.delete(existing._id);
+  } else {
+    await ctx.db.patch(existing._id, { sources, updatedAt: Date.now() });
   }
 }
 
@@ -281,6 +327,13 @@ async function getGoogleAccessToken(
 // sync time are never fetched. Matches EVENT_RETENTION_MS (maintenance.ts) so a
 // first sync never fetches events the retention prune would immediately delete.
 export const CALENDAR_HISTORY_MS = 180 * 24 * 60 * 60 * 1000;
+
+// How far forward a full resync fetches. Without a bound, expanding an open-ended
+// recurring series (singleEvents=true) can produce a very large — effectively
+// unbounded — initial sync and store instances no view will ever show. A year
+// comfortably exceeds the frontend's view ceiling; the retention prune trims any
+// far-future instances that drift in past this horizon over time.
+export const CALENDAR_FUTURE_MS = 365 * 24 * 60 * 60 * 1000;
 
 /** Returns whether any calendar produced event changes this run. */
 async function syncCalendar(
@@ -462,26 +515,27 @@ export async function syncOneCalendar(
 ): Promise<boolean> {
   let syncToken = cal.syncToken;
   let fullResync = !syncToken;
-  let preparedForFullResync = false;
   let changed = false;
+  // Bound the forward horizon so an open-ended recurring series can't expand into
+  // an effectively unbounded initial sync. Only applied on the full-resync path —
+  // an incremental sync is driven by the sync token, which forbids timeMin/timeMax.
+  const timeMaxMs = Date.now() + CALENDAR_FUTURE_MS;
 
   // Retry once: if the sync token is expired (410) we restart as a full resync.
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      if (fullResync && !preparedForFullResync) {
-        await ctx.runMutation(internal.googleSync.resetCalendarSyncState, {
-          userId,
-          googleCalendarId: cal.googleCalendarId,
-        });
-        let hasMoreEvents: boolean;
-        do {
-          hasMoreEvents = await ctx.runMutation(
-            internal.googleSync.clearCalendarEventsBatch,
-            { userId, googleCalendarId: cal.googleCalendarId },
-          );
-        } while (hasMoreEvents);
-        preparedForFullResync = true;
-        changed = true;
+      // A full resync SWAPS the snapshot rather than clearing it first: it fetches
+      // and upserts every current event stamped with a fresh generation, and only
+      // once the new snapshot is fully written does it delete the rows still
+      // carrying an older generation. The previous snapshot therefore stays live
+      // for booking conflict detection throughout — a mid-run Google failure
+      // leaves the old rows in place instead of blanking the calendar.
+      let generation: number | undefined;
+      if (fullResync) {
+        generation = await ctx.runMutation(
+          internal.googleSync.beginCalendarFullResync,
+          { userId, googleCalendarId: cal.googleCalendarId },
+        );
       }
 
       let pageToken: string | undefined;
@@ -492,11 +546,13 @@ export async function syncOneCalendar(
           syncToken: fullResync ? undefined : syncToken,
           pageToken,
           timeMinMs: fullResync ? timeMinMs : undefined,
+          timeMaxMs: fullResync ? timeMaxMs : undefined,
         });
         if (page.events.length > 0) {
           await ctx.runMutation(internal.googleSync.upsertEventsPage, {
             userId,
             events: page.events,
+            syncGeneration: generation,
           });
           changed = true;
         }
@@ -504,7 +560,36 @@ export async function syncOneCalendar(
         newSyncToken = page.nextSyncToken ?? newSyncToken;
       } while (pageToken);
 
-      if (newSyncToken) {
+      if (fullResync && generation !== undefined) {
+        // New snapshot is complete. Sweep the previous generation's leftovers in
+        // bounded batches, THEN persist the generation and token. Doing the sweep
+        // before the commit means a crash mid-sweep leaves the token unset, so the
+        // next run is another full resync that re-stamps and re-sweeps — the whole
+        // swap is self-healing and never sets a token over a half-swept snapshot.
+        let cursor: string | null = null;
+        let done = false;
+        while (!done) {
+          const res: { cursor: string | null; done: boolean } =
+            await ctx.runMutation(
+              internal.googleSync.sweepStaleCalendarEventsBatch,
+              {
+                userId,
+                googleCalendarId: cal.googleCalendarId,
+                keepGeneration: generation,
+                cursor,
+              },
+            );
+          cursor = res.cursor;
+          done = res.done;
+        }
+        await ctx.runMutation(internal.googleSync.commitCalendarFullResync, {
+          userId,
+          googleCalendarId: cal.googleCalendarId,
+          syncGeneration: generation,
+          syncToken: newSyncToken,
+        });
+        changed = true;
+      } else if (newSyncToken) {
         await ctx.runMutation(internal.googleSync.setCalendarSyncToken, {
           userId,
           googleCalendarId: cal.googleCalendarId,
@@ -519,7 +604,6 @@ export async function syncOneCalendar(
         }
         fullResync = true;
         syncToken = undefined;
-        preparedForFullResync = false;
         continue;
       }
       throw err;
@@ -539,6 +623,17 @@ async function syncContacts(
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
+      // A full resync stamps every re-fetched connection with a fresh generation,
+      // then sweeps those left behind — reconciling contacts (and their people
+      // rows) that were deleted while the sync token was expired, which the People
+      // API's incremental tombstones would otherwise never report.
+      let generation: number | undefined;
+      if (fullResync) {
+        generation = await ctx.runMutation(
+          internal.googleSync.beginContactsFullResync,
+          { userId, feeder: "connection" },
+        );
+      }
       let pageToken: string | undefined;
       let newSyncToken: string | undefined;
       do {
@@ -551,13 +646,33 @@ async function syncContacts(
           await ctx.runMutation(internal.googleSync.upsertContactsPage, {
             userId,
             contacts: page.contacts,
+            syncGeneration: generation,
           });
         }
         pageToken = page.nextPageToken;
         newSyncToken = page.nextSyncToken ?? newSyncToken;
       } while (pageToken);
 
-      if (newSyncToken) {
+      if (fullResync && generation !== undefined) {
+        // Sweep first, then commit token+generation — a crash mid-sweep leaves the
+        // token unset so the next run redoes the full resync (self-healing).
+        let cursor: string | null = null;
+        let done = false;
+        while (!done) {
+          const res: { cursor: string | null; done: boolean } =
+            await ctx.runMutation(
+              internal.googleSync.sweepStaleContactsBatch,
+              { userId, keepGeneration: generation, cursor },
+            );
+          cursor = res.cursor;
+          done = res.done;
+        }
+        await ctx.runMutation(internal.googleSync.setContactsSync, {
+          userId,
+          syncToken: newSyncToken,
+          syncGeneration: generation,
+        });
+      } else if (newSyncToken) {
         await ctx.runMutation(internal.googleSync.setContactsSync, {
           userId,
           syncToken: newSyncToken,
@@ -590,6 +705,16 @@ async function syncOtherContacts(
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
+      // A full resync stamps every re-seen Other Contact's people row with a fresh
+      // generation, then drops the "other" source from people it no longer sees —
+      // reconciling auto-collected addresses removed while the token was expired.
+      let generation: number | undefined;
+      if (fullResync) {
+        generation = await ctx.runMutation(
+          internal.googleSync.beginContactsFullResync,
+          { userId, feeder: "other" },
+        );
+      }
       let pageToken: string | undefined;
       let newSyncToken: string | undefined;
       do {
@@ -602,13 +727,31 @@ async function syncOtherContacts(
           await ctx.runMutation(internal.googleSync.upsertOtherContactsPage, {
             userId,
             contacts: page.contacts,
+            syncGeneration: generation,
           });
         }
         pageToken = page.nextPageToken;
         newSyncToken = page.nextSyncToken ?? newSyncToken;
       } while (pageToken);
 
-      if (newSyncToken) {
+      if (fullResync && generation !== undefined) {
+        let cursor: string | null = null;
+        let done = false;
+        while (!done) {
+          const res: { cursor: string | null; done: boolean } =
+            await ctx.runMutation(
+              internal.googleSync.sweepStaleOtherPeopleBatch,
+              { userId, keepGeneration: generation, cursor },
+            );
+          cursor = res.cursor;
+          done = res.done;
+        }
+        await ctx.runMutation(internal.googleSync.setOtherContactsSync, {
+          userId,
+          syncToken: newSyncToken,
+          syncGeneration: generation,
+        });
+      } else if (newSyncToken) {
         await ctx.runMutation(internal.googleSync.setOtherContactsSync, {
           userId,
           syncToken: newSyncToken,
@@ -632,10 +775,16 @@ async function runSyncForUser(
   initiatedByUser: boolean,
 ): Promise<void> {
   await ctx.runMutation(internal.googleSync.ensureSyncState, { userId });
-  await ctx.runMutation(internal.googleSync.setSyncStatus, {
-    userId,
-    status: "syncing",
-  });
+  // Claim the per-user lease before touching Google. If another run (manual,
+  // cron, or mount) already holds it, skip: a duplicate run would only race token
+  // updates, and the in-flight run's results surface reactively anyway.
+  const attemptId: string | null = await ctx.runMutation(
+    internal.googleSync.claimSyncLease,
+    { userId },
+  );
+  if (!attemptId) {
+    return;
+  }
   try {
     const accessToken = await getGoogleAccessToken(ctx, userId);
     const eventsChanged = await syncCalendar(ctx, userId, accessToken);
@@ -649,16 +798,18 @@ async function runSyncForUser(
     if (eventsChanged) {
       await recomputeEngagementForUser(ctx, userId);
     }
-    // Set the next background poll: reset to the floor when the user is active
-    // (open app) or something changed; otherwise back off toward the cap.
+    // Set the next background poll and release the lease: reset to the floor when
+    // the user is active (open app) or something changed; otherwise back off.
     await ctx.runMutation(internal.googleSync.recordSyncOutcome, {
       userId,
+      attemptId,
       status: "idle",
       active: initiatedByUser || eventsChanged,
     });
   } catch (err) {
     await ctx.runMutation(internal.googleSync.recordSyncOutcome, {
       userId,
+      attemptId,
       status: "error",
       lastError: err instanceof Error ? err.message : String(err),
       // A failed run shouldn't hammer Google; back off like an idle run.
@@ -702,8 +853,9 @@ export const syncUser = internalAction({
  * would sit there missing the new field forever, and the cron would not fix it.
  * Dropping the token is the only way to backfill. Run this by hand from the
  * dashboard after adding event fields; passing no `syncToken` puts
- * `syncOneCalendar` on its full-resync path, which clears each calendar's rows
- * before refetching (so the grid blanks briefly). */
+ * `syncOneCalendar` on its full-resync path, which swaps in the fresh snapshot
+ * under a new generation and only then sweeps the old rows — so the grid stays
+ * populated throughout instead of blanking. */
 export const forceFullResync = internalAction({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
@@ -816,6 +968,12 @@ export const enqueueSyncs = internalMutation({
       .withIndex("by_nextSyncDueAt", (q) => q.lte("nextSyncDueAt", now))
       .paginate({ cursor: args.cursor ?? null, numItems: SYNC_FANOUT_BATCH });
     for (const row of page.page) {
+      // Pre-advance the due time as we schedule, so a run still in flight when the
+      // next 15-min tick fires is not enqueued again. recordSyncOutcome resets it
+      // to the real next value on completion; the per-user lease is the hard guard.
+      await ctx.db.patch(row._id, {
+        nextSyncDueAt: now + (row.syncIntervalMs ?? SYNC_MIN_MS),
+      });
       await ctx.scheduler.runAfter(0, internal.googleSync.syncUser, {
         userId: row.userId,
       });
@@ -864,38 +1022,43 @@ export const ensureSyncState = internalMutation({
   },
 });
 
-export const setSyncStatus = internalMutation({
-  args: {
-    userId: v.string(),
-    status: v.union(
-      v.literal("idle"),
-      v.literal("syncing"),
-      v.literal("error"),
-    ),
-    lastError: v.optional(v.string()),
-  },
-  handler: async (ctx, args): Promise<null> => {
+/** Claim the per-user sync lease. Returns a fresh attempt id if the caller now
+ * holds the lease, or `null` if a live run already holds it (a stale lease past
+ * its expiry is reclaimable). The holder must pass the returned id back to
+ * recordSyncOutcome to release it. Marks the row `syncing` on a successful claim. */
+export const claimSyncLease = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args): Promise<string | null> => {
     const row = await ctx.db
       .query("syncState")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .unique();
-    if (row) {
-      await ctx.db.patch(row._id, {
-        status: args.status,
-        lastError: args.status === "error" ? args.lastError : undefined,
-      });
+    if (!row) {
+      return null;
     }
-    return null;
+    const now = Date.now();
+    if (row.syncAttemptId && (row.syncLeaseExpiresAt ?? 0) > now) {
+      return null;
+    }
+    const attemptId = crypto.randomUUID();
+    await ctx.db.patch(row._id, {
+      status: "syncing",
+      syncAttemptId: attemptId,
+      syncLeaseExpiresAt: now + SYNC_LEASE_MS,
+    });
+    return attemptId;
   },
 });
 
-/** Finalize a sync run: set status and schedule the next background poll. An
- * `active` run (user-initiated, or something changed) resets the interval to the
- * floor; an idle run backs it off toward the cap so quiet users poll Google far
- * less often. */
+/** Finalize a sync run: schedule the next background poll and release the lease.
+ * An `active` run (user-initiated, or something changed) resets the interval to
+ * the floor; an idle run backs it off toward the cap so quiet users poll Google
+ * far less often. No-op if the lease was reclaimed by a newer run (its attempt id
+ * no longer matches), so a slow run can't clobber the run that superseded it. */
 export const recordSyncOutcome = internalMutation({
   args: {
     userId: v.string(),
+    attemptId: v.string(),
     status: v.union(v.literal("idle"), v.literal("error")),
     active: v.boolean(),
     lastError: v.optional(v.string()),
@@ -905,7 +1068,7 @@ export const recordSyncOutcome = internalMutation({
       .query("syncState")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .unique();
-    if (!row) {
+    if (!row || row.syncAttemptId !== args.attemptId) {
       return null;
     }
     const prev = row.syncIntervalMs ?? SYNC_MIN_MS;
@@ -917,6 +1080,8 @@ export const recordSyncOutcome = internalMutation({
       lastError: args.status === "error" ? args.lastError : undefined,
       syncIntervalMs: interval,
       nextSyncDueAt: Date.now() + interval,
+      syncAttemptId: undefined,
+      syncLeaseExpiresAt: undefined,
     });
     return null;
   },
@@ -1053,21 +1218,77 @@ export const cleanupRemovedCalendarEvents = internalMutation({
 
 /** Drop an invalid/partial full-sync token before clearing and refetching that
  * calendar. */
-export const resetCalendarSyncState = internalMutation({
+/** Reserve the generation a full resync will stamp its rows with, without
+ * persisting it. Returns one past the calendar's current generation. Not
+ * persisted here so a crashed resync simply reuses the same number next time
+ * (re-stamping present events with it is idempotent). Committed only once the new
+ * snapshot is complete, in `commitCalendarFullResync`. */
+export const beginCalendarFullResync = internalMutation({
   args: { userId: v.string(), googleCalendarId: v.string() },
+  handler: async (ctx, args): Promise<number> => {
+    const row = await ctx.db
+      .query("calendars")
+      .withIndex("by_user_and_googleCalendarId", (q) =>
+        q.eq("userId", args.userId).eq("googleCalendarId", args.googleCalendarId),
+      )
+      .unique();
+    return (row?.syncGeneration ?? 0) + 1;
+  },
+});
+
+/** Delete one bounded batch of a calendar's `events` rows whose generation is not
+ * `keepGeneration` (i.e. leftovers from the previous full-resync snapshot). Walks
+ * the (userId, calendarId) prefix by cursor so kept rows are skipped exactly once
+ * and the sweep always terminates. Returns the next cursor and whether it's done. */
+export const sweepStaleCalendarEventsBatch = internalMutation({
+  args: {
+    userId: v.string(),
+    googleCalendarId: v.string(),
+    keepGeneration: v.number(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ cursor: string | null; done: boolean }> => {
+    const page = await ctx.db
+      .query("events")
+      .withIndex("by_user_and_calendar_and_end", (q) =>
+        q.eq("userId", args.userId).eq("calendarId", args.googleCalendarId),
+      )
+      .paginate({ cursor: args.cursor, numItems: EVENT_CLEANUP_BATCH_SIZE });
+    for (const row of page.page) {
+      if (row.syncGeneration !== args.keepGeneration) {
+        await ctx.db.delete(row._id);
+      }
+    }
+    return { cursor: page.continueCursor, done: page.isDone };
+  },
+});
+
+/** Persist the completed full-resync generation (and the fresh sync token, when
+ * Google returned one) on the calendar. Called only after the new snapshot is
+ * fully written and the previous generation swept. */
+export const commitCalendarFullResync = internalMutation({
+  args: {
+    userId: v.string(),
+    googleCalendarId: v.string(),
+    syncGeneration: v.number(),
+    syncToken: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db
       .query("calendars")
       .withIndex("by_user_and_googleCalendarId", (q) =>
-        q
-          .eq("userId", args.userId)
-          .eq("googleCalendarId", args.googleCalendarId),
+        q.eq("userId", args.userId).eq("googleCalendarId", args.googleCalendarId),
       )
       .unique();
     if (row) {
       await ctx.db.patch(row._id, {
-        syncToken: undefined,
-        lastSyncAt: undefined,
+        syncGeneration: args.syncGeneration,
+        ...(args.syncToken !== undefined
+          ? { syncToken: args.syncToken, lastSyncAt: Date.now() }
+          : {}),
       });
     }
     return null;
@@ -1241,7 +1462,12 @@ export const upsertSharedEventsPage = internalMutation({
 });
 
 export const setContactsSync = internalMutation({
-  args: { userId: v.string(), syncToken: v.string() },
+  args: {
+    userId: v.string(),
+    syncToken: v.optional(v.string()),
+    // Persisted on a full-resync commit so the next full resync bumps past it.
+    syncGeneration: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db
       .query("syncState")
@@ -1249,8 +1475,12 @@ export const setContactsSync = internalMutation({
       .unique();
     if (row) {
       await ctx.db.patch(row._id, {
-        contactsSyncToken: args.syncToken,
-        lastContactsSyncAt: Date.now(),
+        ...(args.syncToken !== undefined
+          ? { contactsSyncToken: args.syncToken, lastContactsSyncAt: Date.now() }
+          : {}),
+        ...(args.syncGeneration !== undefined
+          ? { contactsSyncGeneration: args.syncGeneration }
+          : {}),
       });
     }
     return null;
@@ -1258,7 +1488,11 @@ export const setContactsSync = internalMutation({
 });
 
 export const setOtherContactsSync = internalMutation({
-  args: { userId: v.string(), syncToken: v.string() },
+  args: {
+    userId: v.string(),
+    syncToken: v.optional(v.string()),
+    syncGeneration: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db
       .query("syncState")
@@ -1266,16 +1500,114 @@ export const setOtherContactsSync = internalMutation({
       .unique();
     if (row) {
       await ctx.db.patch(row._id, {
-        otherContactsSyncToken: args.syncToken,
-        lastOtherContactsSyncAt: Date.now(),
+        ...(args.syncToken !== undefined
+          ? {
+              otherContactsSyncToken: args.syncToken,
+              lastOtherContactsSyncAt: Date.now(),
+            }
+          : {}),
+        ...(args.syncGeneration !== undefined
+          ? { otherContactsSyncGeneration: args.syncGeneration }
+          : {}),
       });
     }
     return null;
   },
 });
 
+/** Reserve the next full-resync generation for one contact feeder without
+ * persisting it (persisted on commit via set{Contacts,OtherContacts}Sync). A
+ * crashed resync reuses the same number next time, which is safe: re-stamping the
+ * present records with it is idempotent and the sweep keeps exactly that set. */
+export const beginContactsFullResync = internalMutation({
+  args: {
+    userId: v.string(),
+    feeder: v.union(v.literal("connection"), v.literal("other")),
+  },
+  handler: async (ctx, args): Promise<number> => {
+    const row = await ctx.db
+      .query("syncState")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .unique();
+    const current =
+      args.feeder === "connection"
+        ? row?.contactsSyncGeneration
+        : row?.otherContactsSyncGeneration;
+    return (current ?? 0) + 1;
+  },
+});
+
+/** Delete one bounded batch of the user's `contacts` whose generation is not
+ * `keepGeneration` (connections absent from the latest full snapshot), cascading
+ * each into the people directory. Cursor-walked so it always terminates. */
+export const sweepStaleContactsBatch = internalMutation({
+  args: {
+    userId: v.string(),
+    keepGeneration: v.number(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ cursor: string | null; done: boolean }> => {
+    const page = await ctx.db
+      .query("contacts")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .paginate({ cursor: args.cursor, numItems: EVENT_CLEANUP_BATCH_SIZE });
+    for (const row of page.page) {
+      if (row.syncGeneration !== args.keepGeneration) {
+        for (const email of row.emails) {
+          await removePersonSource(ctx, args.userId, email, "connection");
+        }
+        await ctx.db.delete(row._id);
+      }
+    }
+    return { cursor: page.continueCursor, done: page.isDone };
+  },
+});
+
+/** Drop the "other" source from one bounded batch of people whose Other Contacts
+ * generation is stale (they weren't in the latest full snapshot). The person row
+ * is deleted only if "other" was its last source. */
+export const sweepStaleOtherPeopleBatch = internalMutation({
+  args: {
+    userId: v.string(),
+    keepGeneration: v.number(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ cursor: string | null; done: boolean }> => {
+    const page = await ctx.db
+      .query("people")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .paginate({ cursor: args.cursor, numItems: EVENT_CLEANUP_BATCH_SIZE });
+    for (const row of page.page) {
+      if (
+        row.sources.includes("other") &&
+        row.otherSyncGeneration !== args.keepGeneration
+      ) {
+        const sources = row.sources.filter((s) => s !== "other");
+        if (sources.length === 0) {
+          await ctx.db.delete(row._id);
+        } else {
+          await ctx.db.patch(row._id, { sources, updatedAt: Date.now() });
+        }
+      }
+    }
+    return { cursor: page.continueCursor, done: page.isDone };
+  },
+});
+
 export const upsertEventsPage = internalMutation({
-  args: { userId: v.string(), events: v.array(googleEventValidator) },
+  args: {
+    userId: v.string(),
+    events: v.array(googleEventValidator),
+    // Set on the full-resync path so re-fetched rows carry the new generation
+    // and survive the sweep. Omitted on incremental writes (see eventDocValidator).
+    syncGeneration: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<null> => {
     const harvested: PersonInput[] = [];
     for (const e of args.events) {
@@ -1297,9 +1629,17 @@ export const upsertEventsPage = internalMutation({
       if (existing) {
         // A mapped Google event is an authoritative snapshot. Replacing the row
         // also clears optional fields that Google removed from the event.
-        await ctx.db.replace(existing._id, { userId: args.userId, ...e });
+        await ctx.db.replace(existing._id, {
+          userId: args.userId,
+          ...e,
+          syncGeneration: args.syncGeneration,
+        });
       } else {
-        await ctx.db.insert("events", { userId: args.userId, ...e });
+        await ctx.db.insert("events", {
+          userId: args.userId,
+          ...e,
+          syncGeneration: args.syncGeneration,
+        });
       }
       harvested.push(...collectEventPeople(e));
     }
@@ -1311,7 +1651,13 @@ export const upsertEventsPage = internalMutation({
 });
 
 export const upsertContactsPage = internalMutation({
-  args: { userId: v.string(), contacts: v.array(contactValidator) },
+  args: {
+    userId: v.string(),
+    contacts: v.array(contactValidator),
+    // Set on the full-resync path so re-fetched contacts carry the new generation
+    // and survive the sweep; omitted (and preserved) on incremental writes.
+    syncGeneration: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<null> => {
     for (const c of args.contacts) {
       const existing = await ctx.db
@@ -1322,15 +1668,28 @@ export const upsertContactsPage = internalMutation({
         .unique();
       if (c.deleted) {
         if (existing) {
+          // Cascade the tombstone into the people directory before removing the
+          // contact, so its saved name/photo can't linger there as an orphan.
+          for (const email of existing.emails) {
+            await removePersonSource(ctx, args.userId, email, "connection");
+          }
           await ctx.db.delete(existing._id);
         }
         continue;
       }
       const { deleted: _deleted, ...rest } = c;
+      const stampGen =
+        args.syncGeneration !== undefined
+          ? { syncGeneration: args.syncGeneration }
+          : {};
       if (existing) {
-        await ctx.db.patch(existing._id, rest);
+        await ctx.db.patch(existing._id, { ...rest, ...stampGen });
       } else {
-        await ctx.db.insert("contacts", { userId: args.userId, ...rest });
+        await ctx.db.insert("contacts", {
+          userId: args.userId,
+          ...rest,
+          ...stampGen,
+        });
       }
     }
     // Mirror saved connections into the email-keyed people directory.
@@ -1348,13 +1707,29 @@ export const upsertContactsPage = internalMutation({
  * never land in the `contacts` table (they aren't saved contacts); they exist
  * only to enrich attendees with a name + avatar. */
 export const upsertOtherContactsPage = internalMutation({
-  args: { userId: v.string(), contacts: v.array(contactValidator) },
+  args: {
+    userId: v.string(),
+    contacts: v.array(contactValidator),
+    // Set on the full-resync path so touched people carry the new "other"
+    // generation and survive the sweep; omitted (preserved) on incremental.
+    syncGeneration: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<null> => {
+    // Other Contacts have no backing table, so a tombstone can only be cascaded
+    // straight into the people directory by dropping the "other" source.
+    for (const c of args.contacts) {
+      if (c.deleted) {
+        for (const email of c.emails) {
+          await removePersonSource(ctx, args.userId, email, "other");
+        }
+      }
+    }
     await upsertPeopleRows(
       ctx,
       args.userId,
       "other",
       contactsToPeople(args.contacts),
+      args.syncGeneration,
     );
     return null;
   },

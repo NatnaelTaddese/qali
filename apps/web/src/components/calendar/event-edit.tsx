@@ -5,7 +5,7 @@ import { Button } from "@qali/ui/components/button";
 import { GooDropdown } from "@qali/ui/components/ui/goo-dropdown";
 import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useQuery } from "convex/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -122,6 +122,10 @@ export function EventEdit({
   const [initial] = useState(() => formValueFromEvent(event));
   const [value, setValue] = useState<EventFormValue>(initial);
   const [saving, setSaving] = useState(false);
+  // Idempotency key for this save intent, reused across retries so a
+  // `thisAndFollowing` split (which creates a new tail series) can't duplicate it
+  // on a re-submit. Cleared on success. See updateEvent.
+  const operationIdRef = useRef<string | null>(null);
 
   const valid = isEventFormValid(value);
   // A recurring row is one expanded instance; saving it asks how far the edit
@@ -147,8 +151,19 @@ export function EventEdit({
             ...patch,
           }
         : patch;
-    updateEvent({ eventId: event._id, ...finalPatch, scope })
-      .then(onSaved)
+    if (!operationIdRef.current) {
+      operationIdRef.current = crypto.randomUUID();
+    }
+    updateEvent({
+      eventId: event._id,
+      ...finalPatch,
+      scope,
+      operationId: operationIdRef.current,
+    })
+      .then(() => {
+        operationIdRef.current = null;
+        onSaved();
+      })
       .catch((error: unknown) => {
         setSaving(false);
         toast.error("Couldn't save event", {

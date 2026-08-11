@@ -1,0 +1,359 @@
+@import "@qali/ui/globals.css";
+
+/* The --chroma-* tokens and the `chroma-sweep` keyframe live in the shared
+ * @qali/ui globals so the assistant panel can reuse them; the hero applies them
+ * through the two classes below. Chroma sweep: the title reveals from a blurred,
+ * transparent state as the band sweeps left-to-right across the letters,
+ * settling on the theme's foreground colour. */
+.chroma-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--foreground) 0,
+    var(--foreground) 33.33%,
+    var(--chroma-1) 40%,
+    var(--chroma-2) 45%,
+    var(--chroma-3) 50%,
+    var(--chroma-4) 55%,
+    var(--chroma-5) 60%,
+    transparent 66.67%,
+    transparent
+  );
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  will-change: background-position;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.chroma-text-animate {
+  animation: chroma-sweep 2s ease-in-out 0.5s forwards;
+  filter: blur(1px);
+}
+
+/* The feature-section title reuses the hero's chroma reveal, but the sweep is
+ * triggered when it scrolls into view (see FeaturePreview) rather than on load,
+ * and without the hero's entrance-sequencing delay. */
+.chroma-text-reveal {
+  animation: chroma-sweep 2s ease-in-out forwards;
+  filter: blur(1px);
+}
+
+/* Hero staggered entrance: the badge, subheadline and CTA fade+rise into place
+ * in visual order, interleaved with the mascot peel (0.15s) and the headline
+ * chroma sweep (0.5s). Each element sets its own `--hero-delay` inline so the
+ * whole column arrives top-to-bottom rather than all at once. `fade-up` is the
+ * shared keyframe from @qali/ui globals. */
+.hero-reveal {
+  animation: fade-up 0.5s ease-out both;
+  animation-delay: var(--hero-delay, 0s);
+}
+
+/* Blur-fade variant for the subheadline and CTA: same rise as `.hero-reveal`
+ * but the element also unblurs as it settles, for a softer arrival. */
+@keyframes hero-blur-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+.hero-reveal-blur {
+  animation: hero-blur-fade 0.6s ease-out both;
+  animation-delay: var(--hero-delay, 0s);
+}
+
+/* The loading-screen styles (.chroma-loop, its keyframe, and the .loading-screen
+ * exit) live in the shared @qali/ui globals so apps/web reuses them too. */
+
+/* Hero shader fade: the HalftoneCmyk backdrop is fully opaque along the bottom
+ * of the section and fades into the page background toward the top, so it reads
+ * as ground rising into the page rather than a hard-edged panel.
+ *
+ * This is painted as an ordinary gradient OVERLAY rather than a CSS `mask-image`
+ * on purpose. A mask forces the WebGL layer through an offscreen alpha-composite
+ * pass, and in Chromium that pass is colour-managed differently depending on the
+ * layer's compositing state. The mascot animating over the backdrop flipped that
+ * state on and off, so the sky visibly gained blue saturation for the duration
+ * of each interaction (a Chromium-only artifact). Fading with a plain overlay
+ * keeps the shader on a single stable layer, so its colour never shifts. The
+ * overlay lives inside each backdrop container, so the waitlist's `rotate-180`
+ * flips it exactly as it did the old mask. */
+.hero-shader-fade {
+  background-image: linear-gradient(
+    to top,
+    transparent 0%,
+    var(--background) 100%
+  );
+}
+
+/* Feature-preview micro-animations. Deliberately transform-only (never animate
+ * opacity from 0): the resting state is always fully visible, so content can
+ * never be left invisible if the animation is throttled or disabled — the slide
+ * is pure enhancement. `feature-line-in` replays each time its span is
+ * key-remounted with a new assistant message. */
+@keyframes feature-line-in {
+  from {
+    transform: translateY(4px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.feature-line-in {
+  animation: feature-line-in 0.28s ease-out both;
+}
+
+@keyframes feature-pop-in {
+  from {
+    transform: scale(0.92);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+.feature-pop-in {
+  animation: feature-pop-in 0.3s ease-out both;
+}
+
+@keyframes feature-dot {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.feature-dot {
+  animation: feature-dot 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feature-line-in,
+  .feature-pop-in,
+  .feature-dot {
+    animation: none;
+  }
+}
+
+/* The homepage character uses the same chroma tokens as the title and the same
+ * soft, low-bounce visual language as the app's goo dropdown. Its expensive
+ * SVG filter is restricted to the body's small viewBox; all live pointer work
+ * stays on compositor-friendly transforms. */
+.mascot {
+  width: clamp(140px, 18vw, 224px);
+  aspect-ratio: 10 / 9;
+  cursor: default;
+  isolation: isolate;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mascot__idle {
+  animation: mascot-idle 6.8s ease-in-out 2.25s infinite alternate;
+  transform-origin: 50% 55%;
+  will-change: transform;
+  /* Gives the peel wrapper below its 3D depth. Lives here (the peel's parent)
+   * because the idle transform on this same element would otherwise flatten a
+   * perspective set further up. */
+  perspective: 1000px;
+  perspective-origin: 50% 62%;
+}
+
+/* Reverse sticker peel-in: the character lands like a sticker pressed onto the
+ * page — hinged from its lower edge, tipped back and lifted, it rolls forward,
+ * slaps a touch past flat, and settles as its cast shadow tightens to the
+ * ground. Runs once on entry, before the idle float takes over. */
+.mascot__peel {
+  /* Hinges from the lower-left corner — the last point of a sticker still stuck
+   * to the page — so the sheet lifts from one corner rather than tilting like a
+   * card on a hinge. */
+  transform-origin: 30% 95%;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  /* Paper decelerates and stops; it does not spring. A single monotonic
+   * ease-out (no overshoot keyframe) keeps the settle soft. */
+  animation: mascot-peel 1.3s cubic-bezier(0.17, 0.72, 0.24, 1) 0.15s both;
+  will-change: transform, opacity, filter;
+}
+
+/* Foil shimmer that sweeps across the silhouette as it settles — the
+ * holographic finish. Swept in the body's local SVG space, so fill-box keeps
+ * the rotation centred on the band. */
+.mascot__holo {
+  transform-box: fill-box;
+  transform-origin: center;
+  /* Starts once the sheet is mostly down, so it reads as a foil finish settling
+   * over flat paper rather than a second glint fighting the curl. */
+  animation: mascot-holo 1s ease-in-out 0.8s both;
+  will-change: transform, opacity;
+}
+
+/* Paper-surface light. The curl is a bright crest trailed by a shaded
+ * underside, swept diagonally across the sheet as it unrolls — a moving bend of
+ * light and shadow, the way a real sheet of paper catches light as it lifts.
+ * The crease is a contact shadow that pulses along the lower edge at the instant
+ * the sticker presses onto the page. Both are synced to the peel. */
+.mascot__curl,
+.mascot__crease {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.mascot__curl {
+  animation: mascot-curl 1.3s cubic-bezier(0.17, 0.72, 0.24, 1) 0.15s both;
+  will-change: transform, opacity;
+}
+
+.mascot__crease {
+  animation: mascot-crease 1.3s cubic-bezier(0.17, 0.72, 0.24, 1) 0.15s both;
+  will-change: opacity;
+}
+
+.mascot__blink {
+  animation: mascot-blink 6s 2.9s infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.mascot[data-paused="true"] .mascot__idle,
+.mascot[data-paused="true"] .mascot__blink {
+  animation-play-state: paused;
+}
+
+@keyframes mascot-peel {
+  0% {
+    opacity: 0;
+    /* Lifted from the far (upper-right) corner: a diagonal-axis tilt with a
+     * little in-plane twist, squashed shorter as a curled sheet would read. The
+     * cast shadow is thrown down and to the side of the lift. */
+    transform: rotateX(44deg) rotateY(20deg) rotateZ(4deg) translateY(-8px) scale(0.9);
+    filter: drop-shadow(-6px 30px 26px rgba(33, 27, 50, 0.3));
+  }
+  22% {
+    opacity: 1;
+  }
+  60% {
+    transform: rotateX(15deg) rotateY(6deg) rotateZ(1.4deg) scale(0.975);
+    filter: drop-shadow(-3px 17px 18px rgba(33, 27, 50, 0.23));
+  }
+  100% {
+    opacity: 1;
+    transform: rotateX(0) rotateY(0) rotateZ(0) translateY(0) scale(1);
+    filter: drop-shadow(0 7px 9px rgba(33, 27, 50, 0.15));
+  }
+}
+
+/* The rolling curl: a bright crest with a shaded underside just behind it,
+ * swept diagonally from the lifted corner toward the hinge as the sheet
+ * unrolls. This travelling highlight/shadow pair is what reads as a bending
+ * sheet of paper rather than a rigid plane catching light. */
+@keyframes mascot-curl {
+  0% {
+    opacity: 0;
+    transform: rotate(-32deg) translate(120px, -120px);
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(-32deg) translate(-140px, 150px);
+  }
+}
+
+/* Contact shadow pulsing along the lower edge as the sheet touches down. */
+@keyframes mascot-crease {
+  0%,
+  50% {
+    opacity: 0;
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes mascot-holo {
+  0% {
+    opacity: 0;
+    transform: rotate(-15deg) translateX(-170px);
+  }
+  16% {
+    opacity: 1;
+  }
+  84% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(-15deg) translateX(300px);
+  }
+}
+
+@keyframes mascot-idle {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  52% {
+    transform: translateY(-5px) scale(1.008, 0.994);
+  }
+  100% {
+    transform: translateY(-2px) scale(0.996, 1.008);
+  }
+}
+
+/* A blink reads as alive when the lids fall faster than they lift: the close
+ * accelerates in, barely rests shut, then the open decelerates out with a
+ * whisker of overshoot before settling. Per-keyframe timing functions carry
+ * that asymmetry so it never feels like a linear on/off. */
+@keyframes mascot-blink {
+  0%,
+  20% {
+    transform: scaleY(1);
+    animation-timing-function: cubic-bezier(0.4, 0, 0.85, 0.3);
+  }
+  22.5% {
+    transform: scaleY(0.05);
+    animation-timing-function: cubic-bezier(0.2, 0.75, 0.3, 1);
+  }
+  26% {
+    transform: scaleY(1.06);
+    animation-timing-function: ease-out;
+  }
+  28.5% {
+    transform: scaleY(1);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot__idle,
+  .mascot__blink,
+  .mascot__peel,
+  .hero-reveal,
+  .hero-reveal-blur {
+    animation: none;
+  }
+  /* No animation means these entry-only light passes would sit frozen over the
+   * body, so drop them entirely rather than leave static slabs. */
+  .mascot__holo,
+  .mascot__curl,
+  .mascot__crease {
+    animation: none;
+    opacity: 0;
+  }
+}

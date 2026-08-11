@@ -69,6 +69,15 @@
   --event-6: oklch(0.72 0.14 240);
   --event-7: oklch(0.7 0.15 285);
   --event-8: oklch(0.7 0.16 325);
+  /* Chroma band — the saturated hues that sweep across text on reveal (the
+   * marketing hero title and the assistant panel's streaming chunks). Kept as
+   * tokens so the gradient reads from one source of truth and can be retuned in
+   * one place. */
+  --chroma-1: #c679c4;
+  --chroma-2: #fa3d1d;
+  --chroma-3: #ffb005;
+  --chroma-4: #e1e1fe;
+  --chroma-5: #0358f7;
   --radius: 0.625rem;
   --sidebar: oklch(97% 0 0);
   --sidebar-foreground: oklch(13% 0 0);
@@ -436,7 +445,209 @@
   }
 }
 
+/* Chroma sweep: text reveals from a blurred, transparent state as the
+ * --chroma-* band sweeps left-to-right across the glyphs, settling on the
+ * theme's foreground colour. The solid stops use --foreground so text stays
+ * legible in both light and dark. Shared by the marketing hero (a slow 2s
+ * sweep, see apps/www) and `.chroma-stream` below (a snappy per-chunk reveal
+ * in the assistant panel). */
+@keyframes chroma-sweep {
+  0% {
+    background-position: 100% 0;
+    filter: blur(1px);
+  }
+  100% {
+    background-position: 0 0;
+    filter: blur(0);
+  }
+}
+
+/* Chat-tuned chroma reveal: each streamed chunk (`StreamingText` in
+ * packages/ui/src/components/ai/text-streaming.tsx) mounts with this class so a
+ * quick ~0.6s band sweeps across the new words and settles to foreground. */
+.chroma-stream {
+  background-image: linear-gradient(
+    90deg,
+    var(--foreground) 0,
+    var(--foreground) 33.33%,
+    var(--chroma-1) 40%,
+    var(--chroma-2) 45%,
+    var(--chroma-3) 50%,
+    var(--chroma-4) 55%,
+    var(--chroma-5) 60%,
+    transparent 66.67%,
+    transparent
+  );
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  will-change: background-position, filter;
+  animation: chroma-sweep 0.6s ease-out both;
+  filter: blur(1px);
+}
+
+/* Loading screen (shared by apps/www and apps/web via <LoadingScreen />): a
+ * single "Q" in the display font with the --chroma-* band sweeping across it on
+ * an infinite loop (unlike the hero's one-shot reveal). Two mirrored chroma
+ * bands per tile keep colour continuously present as it travels — the
+ * foreground stops sit only at the seams (0/50/100%), which line up under a
+ * one-tile translation for a seamless loop. */
+.chroma-loop {
+  background-image: linear-gradient(
+    90deg,
+    var(--foreground) 0,
+    var(--chroma-1) 10%,
+    var(--chroma-2) 18%,
+    var(--chroma-3) 25%,
+    var(--chroma-4) 32%,
+    var(--chroma-5) 40%,
+    var(--foreground) 50%,
+    var(--chroma-1) 60%,
+    var(--chroma-2) 68%,
+    var(--chroma-3) 75%,
+    var(--chroma-4) 82%,
+    var(--chroma-5) 90%,
+    var(--foreground) 100%
+  );
+  /* A wide container spreads the gradient tile over more px, so the glyph in
+   * the middle samples a broader, smoother slice of the sweep rather than the
+   * whole rainbow crammed into one small letter. */
+  display: inline-block;
+  width: min(72vmin, 360px);
+  text-align: center;
+  background-size: 200% 100%;
+  background-position: 0 0;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  will-change: background-position;
+  animation: chroma-loop-sweep 3s linear infinite;
+}
+
+@keyframes chroma-loop-sweep {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* Exit: once fonts and assets are ready the overlay dissolves — fading while
+ * scaling up and blurring, so the "Q" appears to expand into the page rather
+ * than just switching off. Durations match so onTransitionEnd (which unmounts
+ * the overlay) fires when the whole animation has finished, not partway. */
+.loading-screen {
+  transition:
+    opacity 0.55s ease,
+    transform 0.55s cubic-bezier(0.4, 0, 0.2, 1),
+    filter 0.55s ease;
+}
+.loading-screen[data-hidden="true"] {
+  opacity: 0;
+  transform: scale(1.12);
+  filter: blur(6px);
+  pointer-events: none;
+}
+
+/* Assistant dock mascot glyph (apps/web MascotGlyph). An outlined ghost at rest;
+ * on hover / keyboard focus the hero's `--chroma-*` foil band sweeps across the
+ * silhouette on a loop over that same outline; toggled open it becomes a solid
+ * inverted silhouette. `.mascot-trigger` is the dock's FAB button; `[data-active]`
+ * is set by the glyph when the panel is open. The eyes blink on the hero mascot's
+ * exact cadence (apps/www index.css), frozen under reduced motion below. */
+.mascot-glyph {
+  overflow: visible;
+}
+.mascot-glyph__fill,
+.mascot-glyph__outline {
+  transition: opacity 0.28s ease;
+}
+.mascot-glyph__fill {
+  opacity: 0;
+}
+/* The foil band waits off to the side, invisible, until a hover starts it. */
+.mascot-glyph__sweep {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.mascot-trigger:hover .mascot-glyph__sweep,
+.mascot-trigger:focus-visible .mascot-glyph__sweep {
+  animation: mascot-glyph-sweep 1.6s ease-in-out infinite;
+}
+/* Toggled open: the solid inverted silhouette; the outline and any sweep drop. */
+.mascot-glyph[data-active="true"] .mascot-glyph__fill {
+  opacity: 1;
+}
+.mascot-glyph[data-active="true"] .mascot-glyph__outline {
+  opacity: 0;
+}
+.mascot-glyph[data-active="true"] .mascot-glyph__sweep {
+  animation: none;
+  opacity: 0;
+}
+
+/* The foil pass: fade in from the lifted side, travel across, fade out, then
+ * hold off-screen for the back half of the cycle so sweeps arrive in beats
+ * rather than as a continuous smear. */
+@keyframes mascot-glyph-sweep {
+  0% {
+    opacity: 0;
+    transform: rotate(-14deg) translateX(-150px);
+  }
+  12% {
+    opacity: 1;
+  }
+  42% {
+    opacity: 1;
+  }
+  54%,
+  100% {
+    opacity: 0;
+    transform: rotate(-14deg) translateX(230px);
+  }
+}
+/* Blink: the hero's asymmetric lid — a fast close, a beat shut, a whiskered
+ * open — applied to each eye group (mask holes and outline dots alike). */
+.mascot-glyph__eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mascot-glyph-blink 6s 2.9s infinite;
+}
+
+@keyframes mascot-glyph-blink {
+  0%,
+  20% {
+    transform: scaleY(1);
+    animation-timing-function: cubic-bezier(0.4, 0, 0.85, 0.3);
+  }
+  22.5% {
+    transform: scaleY(0.05);
+    animation-timing-function: cubic-bezier(0.2, 0.75, 0.3, 1);
+  }
+  26% {
+    transform: scaleY(1.06);
+    animation-timing-function: ease-out;
+  }
+  28.5% {
+    transform: scaleY(1);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  /* Freeze the blink and the hover foil sweep; the state crossfade stays (a
+   * gentle opacity change on interaction, not a looping animation). */
+  .mascot-glyph__eyes,
+  .mascot-glyph__sweep {
+    animation: none !important;
+    transform: none !important;
+  }
   /* Freeze the shimmer/pixel loops to their resting state; entrances resolve
    * instantly rather than sliding. The elapsed timer still ticks (it's JS). */
   [style*="shimmer-text"] {
@@ -445,6 +656,29 @@
   }
   [style*="pixel-on"] {
     animation: none !important;
+  }
+  /* Without the sweep, .chroma-stream's resting state (transparent gradient
+   * end over the glyphs) would render invisible — so drop the effect entirely
+   * and show plain foreground text. */
+  .chroma-stream {
+    animation: none !important;
+    background: none !important;
+    -webkit-text-fill-color: currentColor;
+    color: var(--foreground);
+    filter: none !important;
+  }
+  /* Loading "Q": freeze the sweep at a resting position, and exit with a plain
+   * fade — no scale/blur — while still cleanly handing off to the app. */
+  .chroma-loop {
+    animation: none;
+    background-position: 50% 0;
+  }
+  .loading-screen {
+    transition: opacity 0.3s ease;
+  }
+  .loading-screen[data-hidden="true"] {
+    transform: none;
+    filter: none;
   }
 }
 

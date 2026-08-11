@@ -2,10 +2,18 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "www",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3002,
+      "cwd": "apps/www"
+    },
+    {
       "name": "web",
       "runtimeExecutable": "bun",
-      "runtimeArgs": ["run", "dev:web"],
-      "port": 3001
+      "runtimeArgs": ["run", "dev"],
+      "port": 3001,
+      "cwd": "apps/web"
     }
   ]
 }

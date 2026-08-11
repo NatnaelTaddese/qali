@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { type Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /* ─────────────────────────────────────────────────────────
  * STREAMING TEXT
@@ -8,105 +8,170 @@ import { useEffect, useRef, useState } from "react";
  * Two small pieces the assistant panel drives with real data:
  *
  *   StreamingText — assistant prose while a turn is still
- *     streaming. The server flushes the reply in ~250ms bursts,
- *     so revealing exactly what has arrived looks chunky. Received
- *     words reserve their final wrapping immediately, then enter one
- *     at a time with a soft fade and rise. That avoids reflow on every
- *     character while preserving a continuous stream. A zero-width
- *     caret trails the visible end. Once the turn settles the panel
- *     swaps this for the markdown renderer.
+ *     streaming. The server flushes the reply in fast ~250ms bursts, so
+ *     rather than dumping each burst we meter the text out ourselves: a
+ *     few words per tick (word-snapped so nothing splits mid-word),
+ *     pacing that catches up only when a backlog builds. Each new chunk
+ *     mounts with the `.chroma-stream` class, so a chroma band sweeps
+ *     across it and settles on the foreground colour. Already-revealed
+ *     chunks stay static; only the newest one animates. A zero-width
+ *     caret glides to the live end (FLIP) as each chunk lands, instead
+ *     of teleporting. Once the turn settles the panel swaps this for the
+ *     markdown renderer.
  *
  *   FollowUps — suggested next prompts under a settled turn.
  *     Rendered only when the backend actually produced some.
  * ───────────────────────────────────────────────────────── */
 
-const SLOW_REVEAL_MS = 58;
-const FAST_REVEAL_MS = 26;
-
-function StreamingCaret() {
+function StreamingCaret({ ref }: { ref?: Ref<HTMLSpanElement> }) {
+  // A zero-width, line-height-tall box that exactly overlays the current line
+  // box (align-top + h-5 to match `leading-5`), with the bar flex-centred inside
+  // it — so the caret sits centred on the text rather than riding above the
+  // baseline. The wrapper carries the horizontal FLIP transform; the inner bar
+  // owns the vertical placement, so the two never fight.
   return (
     <span
+      ref={ref}
       aria-hidden
-      className="relative inline-block size-0 overflow-visible align-baseline leading-none"
+      className="relative inline-flex h-5 w-0 items-center overflow-visible align-top"
     >
-      <span className="pointer-events-none absolute bottom-[0.08em] left-0 h-[1.05em] w-0.5 rounded-full bg-foreground motion-safe:animate-pulse" />
+      <span className="pointer-events-none h-[1.05em] w-0.5 rounded-full bg-foreground motion-safe:animate-pulse" />
     </span>
   );
 }
 
+type Segment = { id: number; text: string };
+
+// Reveal pacing. The server delivers text in fast ~250ms bursts (or all at once
+// for a short reply), so we meter it out ourselves: a few words per tick with a
+// gentle gap between ticks, and catch up — shorter gaps, bigger chunks — only
+// when a backlog builds, so each chroma sweep stays visible without lagging far
+// behind a long reply.
+const REVEAL_MS = 150; // base gap between chunk reveals
+const REVEAL_MIN_MS = 55; // floor when catching up on a big backlog
+const BASE_CHUNK_WORDS = 2; // words revealed per chunk at rest
+const MAX_CHUNK_WORDS = 8; // cap when catching up
+
+// Grab up to `maxWords` whitespace-terminated words from the front of `pending`.
+// A trailing partial word (no whitespace after it yet) is left behind so nothing
+// splits mid-word. Returns "" when no whole word is available yet.
+function takeChunk(pending: string, maxWords: number): string {
+  const re = /\S+\s+/g;
+  let end = 0;
+  let words = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(pending)) !== null) {
+    end = match.index + match[0].length;
+    if (++words >= maxWords) break;
+  }
+  return pending.slice(0, end);
+}
+
 export function StreamingText({ text }: { text: string }) {
-  const tokens = text.match(/\s+|[^\s]+/g) ?? [];
-  const wordCount = tokens.reduce(
-    (count, token) => count + (token.trim() ? 1 : 0),
-    0,
-  );
-  const [shownWords, setShownWords] = useState(0);
-  const shownWordsRef = useRef(0);
-  const frameRef = useRef<number | null>(null);
+  // `text` always arrives as the whole reply so far. We meter it into small
+  // word-snapped chunks (see below) so each one can chroma-sweep in on its own.
+  const [segments, setSegments] = useState<Segment[]>([]);
+  const revealedRef = useRef(0);
+  const idRef = useRef(0);
+  const textRef = useRef(text);
+  textRef.current = text;
+  const caretRef = useRef<HTMLSpanElement | null>(null);
+  const caretPrevRef = useRef<{ left: number; top: number } | null>(null);
 
+  // Slide the caret from where it was to the new live end (FLIP) whenever a
+  // chunk commits, so the cursor tracks the reveal instead of jumping. Only
+  // glide along a line; on a wrap (line change) or with reduced motion, let it
+  // land directly.
+  useLayoutEffect(() => {
+    const el = caretRef.current;
+    if (!el) {
+      caretPrevRef.current = null;
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    const prev = caretPrevRef.current;
+    caretPrevRef.current = { left: rect.left, top: rect.top };
+    if (!prev) return;
+    const dx = prev.left - rect.left;
+    if (dx === 0 || Math.abs(prev.top - rect.top) > 2) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    // Paint at the old spot (this layout effect runs before paint), then
+    // release on the next frame so the transition carries it to the new end.
+    el.style.transition = "none";
+    el.style.transform = `translateX(${dx}px)`;
+    void el.offsetWidth;
+    requestAnimationFrame(() => {
+      el.style.transition = "transform 360ms cubic-bezier(0.22,1,0.36,1)";
+      el.style.transform = "";
+    });
+  }, [segments]);
+
+  // Metered reveal loop. Runs once for the component's life, reading the latest
+  // `text` from a ref, and commits one word-snapped chunk per tick. Pace and
+  // chunk size scale with the backlog so a fast/long reply catches up while a
+  // short one still gets a visible, unhurried sweep. Reduced motion drains the
+  // whole backlog immediately.
   useEffect(() => {
-    if (wordCount < shownWordsRef.current) {
-      shownWordsRef.current = 0;
-      setShownWords(0);
-    }
+    let raf = 0;
+    let last = performance.now();
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    let previous = performance.now();
     const tick = (now: number) => {
-      const remaining = wordCount - shownWordsRef.current;
-      if (remaining <= 0) {
-        frameRef.current = null;
-        return;
+      const full = textRef.current;
+      // New turn / regeneration: the accumulated text restarted. Start over.
+      if (full.length < revealedRef.current) {
+        revealedRef.current = 0;
+        idRef.current = 0;
+        setSegments([]);
       }
-      // Catch up gently after a large server chunk without dumping a whole
-      // sentence into one frame. Nearby words arrive at a more relaxed pace.
-      const interval = Math.max(
-        FAST_REVEAL_MS,
-        SLOW_REVEAL_MS - remaining * 2,
-      );
-      if (now - previous >= interval) {
-        shownWordsRef.current += 1;
-        setShownWords(shownWordsRef.current);
-        previous = now;
+
+      const pending = full.slice(revealedRef.current);
+      if (pending) {
+        const backlogWords = pending.match(/\S+/g)?.length ?? 0;
+        const interval = reduced
+          ? 0
+          : Math.max(REVEAL_MIN_MS, REVEAL_MS - backlogWords * 4);
+        if (now - last >= interval) {
+          const words = reduced
+            ? backlogWords
+            : Math.min(
+                MAX_CHUNK_WORDS,
+                BASE_CHUNK_WORDS + Math.floor(backlogWords / 10),
+              );
+          const commit = takeChunk(pending, words);
+          if (commit) {
+            revealedRef.current += commit.length;
+            const id = idRef.current++;
+            setSegments((prev) => [...prev, { id, text: commit }]);
+            last = now;
+          }
+        }
       }
-      frameRef.current = requestAnimationFrame(tick);
+      raf = requestAnimationFrame(tick);
     };
 
-    if (frameRef.current === null) {
-      frameRef.current = requestAnimationFrame(tick);
-    }
-    return () => {
-      if (frameRef.current !== null) {
-        cancelAnimationFrame(frameRef.current);
-        frameRef.current = null;
-      }
-    };
-  }, [wordCount]);
-
-  let wordIndex = -1;
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   return (
     <p className="text-sm leading-5 whitespace-pre-wrap text-foreground">
       <span className="sr-only">{text}</span>
       <span aria-hidden>
-        {shownWords === 0 && <StreamingCaret />}
-        {tokens.map((token, index) => {
-          if (!token.trim()) return <span key={index}>{token}</span>;
-          wordIndex += 1;
-          const visible = wordIndex < shownWords;
+        {segments.length === 0 && <StreamingCaret />}
+        {segments.map((segment, index) => {
+          // Only the newest chunk sweeps; earlier chunks have settled to plain
+          // foreground. Keying by id remounts each new chunk so its 0.6s chroma
+          // sweep runs exactly once.
+          const isNewest = index === segments.length - 1;
           return (
-            <span
-              key={index}
-              className={
-                visible
-                  ? "inline-block opacity-100 motion-safe:animate-[stream-word-in_260ms_cubic-bezier(0.16,1,0.3,1)_both]"
-                  : "inline-block opacity-0"
-              }
-            >
-              {token}
-              {wordIndex === shownWords - 1 && <StreamingCaret />}
+            <span key={segment.id} className={isNewest ? "chroma-stream" : undefined}>
+              {segment.text}
             </span>
           );
         })}
+        {segments.length > 0 && <StreamingCaret ref={caretRef} />}
       </span>
     </p>
   );

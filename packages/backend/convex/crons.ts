@@ -46,6 +46,15 @@ crons.interval(
   {},
 );
 
+// Drop rate-limit counter rows whose window elapsed long ago, so the
+// bookingRateLimits table doesn't accumulate a row per distinct key forever.
+crons.interval(
+  "prune stale rate limits",
+  { hours: 24 },
+  internal.maintenance.pruneRateLimits,
+  {},
+);
+
 // Cap the assistant tables: delete conversations untouched for 30 days. The
 // user-driven "new chat discards the prior" path handles the common case; this
 // catches threads left behind rather than replaced.

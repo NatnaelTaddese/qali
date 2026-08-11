@@ -85,6 +85,13 @@ export const googleEventValidator = v.object({
  * to. `userId` is ours alone — it never round-trips to Google. */
 export const eventDocValidator = googleEventValidator.extend({
   userId: v.string(),
+  // Monotonic per-calendar full-resync marker. A full resync stamps every
+  // re-fetched row with a fresh generation, then deletes the rows still carrying
+  // an older one — so the previous snapshot stays live for booking conflict
+  // detection until the new one is fully written (see syncOneCalendar). Left
+  // absent on incrementally-written rows; the next full resync re-stamps any that
+  // still exist in Google, so absence never causes a wrongful sweep.
+  syncGeneration: v.optional(v.number()),
 });
 
 /** One piece of an assistant turn, in the order it happened.
@@ -135,6 +142,13 @@ export default defineSchema({
     // interacted with, never saved. Tracked separately from contactsSyncToken.
     otherContactsSyncToken: v.optional(v.string()),
     lastOtherContactsSyncAt: v.optional(v.number()),
+    // Full-resync reconcile generations for the two contact feeders. A full
+    // resync stamps every re-fetched record with a fresh generation, then removes
+    // records still carrying an older one — so a contact deleted while the sync
+    // token was expired (People API returns no tombstone for it) is reconciled
+    // away instead of lingering. See syncContacts / syncOtherContacts.
+    contactsSyncGeneration: v.optional(v.number()),
+    otherContactsSyncGeneration: v.optional(v.number()),
     status: v.union(
       v.literal("idle"),
       v.literal("syncing"),
@@ -148,6 +162,12 @@ export default defineSchema({
     // while an open app stays fresh because it calls syncNow directly.
     nextSyncDueAt: v.optional(v.number()),
     syncIntervalMs: v.optional(v.number()),
+    // A run claims this lease before touching Google, so a manual `syncNow`, a
+    // cron-scheduled run, and a workspace-mount sync for the same user cannot
+    // overlap and race each other's token updates. Released in recordSyncOutcome;
+    // a stale lease past its expiry can be reclaimed. See runSyncForUser.
+    syncLeaseExpiresAt: v.optional(v.number()),
+    syncAttemptId: v.optional(v.string()),
   })
     .index("by_user", ["userId"])
     .index("by_nextSyncDueAt", ["nextSyncDueAt"]),
@@ -170,6 +190,10 @@ export default defineSchema({
     selected: v.boolean(),
     syncToken: v.optional(v.string()),
     lastSyncAt: v.optional(v.number()),
+    // Current full-resync generation for this calendar's `events` rows. Bumped
+    // at the start of each full resync; the run stamps re-fetched rows with it
+    // and sweeps rows carrying an older value. See syncOneCalendar.
+    syncGeneration: v.optional(v.number()),
   })
     .index("by_user", ["userId"])
     .index("by_user_and_googleCalendarId", ["userId", "googleCalendarId"]),
@@ -357,6 +381,8 @@ export default defineSchema({
     phones: v.array(v.string()),
     photoUrl: v.optional(v.string()),
     googleEtag: v.optional(v.string()),
+    // Full-resync reconcile marker (see syncState.contactsSyncGeneration).
+    syncGeneration: v.optional(v.number()),
   })
     .index("by_user", ["userId"])
     .index("by_user_and_resourceName", ["userId", "resourceName"]),
@@ -389,6 +415,11 @@ export default defineSchema({
     lastMetMs: v.optional(v.number()),
     nextMeetingMs: v.optional(v.number()),
     updatedAt: v.number(),
+    // Last full-resync generation of the Other Contacts feeder that saw this
+    // person. Only meaningful when `sources` includes "other"; used to reconcile
+    // away the "other" source when an Other Contact disappears across a full
+    // resync (that feeder has no backing table). See syncOtherContacts.
+    otherSyncGeneration: v.optional(v.number()),
   })
     .index("by_user", ["userId"])
     .index("by_user_and_email", ["userId", "email"])
@@ -448,7 +479,11 @@ export default defineSchema({
     // clickable chips under the latest reply.
     suggestions: v.optional(v.array(v.string())),
     createdAt: v.number(),
-  }).index("by_thread", ["threadId", "createdAt"]),
+  })
+    .index("by_thread", ["threadId", "createdAt"])
+    // userId is denormalized here for user-scoped reads; the index also lets
+    // account-deletion cleanup remove a user's messages without a thread join.
+    .index("by_user", ["userId"]),
 
   // A write the assistant wants to make, held until the user confirms it.
   //
@@ -490,4 +525,18 @@ export default defineSchema({
   })
     .index("by_thread", ["threadId", "createdAt"])
     .index("by_user_and_status", ["userId", "status"]),
+
+  // Email signups from the public marketing site. No account, no auth — anyone
+  // can add their address once. `by_email` both serves the dedupe check on the
+  // one public mutation that writes here and keeps a second signup from creating
+  // a duplicate row.
+  waitlist: defineTable({
+    // Stored trimmed and lowercased so the dedupe check can't be fooled by case
+    // or surrounding whitespace.
+    email: v.string(),
+    // Where the signup came from, e.g. "www". Optional so future entry points
+    // don't force a schema change.
+    source: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_email", ["email"]),
 });

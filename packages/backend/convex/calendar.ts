@@ -182,6 +182,12 @@ export const listEvents = query({
   },
 });
 
+// The window is caller-supplied, so bound it: the widest legitimate view (a
+// 7-month month-grid, see QUERY_SIDE_MONTHS on the client) is ~214 days, so 400
+// days leaves headroom while stopping a forged range from scanning years of rows
+// in one unpaginated read.
+const MAX_EVENT_RANGE_MS = 400 * 24 * 60 * 60 * 1000;
+
 /** Events overlapping [startMs, endMs) for the current user, e.g. a week window. */
 export const listEventsInRange = query({
   args: { startMs: v.number(), endMs: v.number() },
@@ -189,6 +195,9 @@ export const listEventsInRange = query({
     const user = await authComponent.safeGetAuthUser(ctx);
     if (!user) {
       return [];
+    }
+    if (endMs <= startMs || endMs - startMs > MAX_EVENT_RANGE_MS) {
+      throw new Error("Requested calendar range is too large");
     }
     const selected = await selectedCalendarIds(ctx, user._id);
     // The index is on startMs, so scan back a day to catch events that begin
@@ -237,11 +246,17 @@ export const getEventById = query({
     if (!row) {
       return null;
     }
-    // A shared (public-calendar) event belongs to no user; it's readable by
-    // anyone who has that calendar, and is normalized to the events shape so the
-    // client sees one type. A personal event is guarded by ownership.
+    // A personal event is guarded by ownership.
     if ("userId" in row) {
       return row.userId === user._id ? row : null;
+    }
+    // A shared (public-calendar) event belongs to no user, but it must only be
+    // returned to a caller who actually has that calendar selected — otherwise
+    // any authenticated user could read any sharedEvents row by guessing its id.
+    // We gate on the same selected-calendar set the range reads use.
+    const selected = await selectedCalendarIds(ctx, user._id);
+    if (!selected.has(row.calendarId)) {
+      return null;
     }
     return sharedAsEvent(row, user._id);
   },
@@ -313,6 +328,11 @@ export const createEvent = action({
     timeZone: v.optional(v.string()),
     /** Ask Google to mint a Google Meet link; the URL comes back as `hangoutLink`. */
     addConference: v.optional(v.boolean()),
+    /** Idempotency key, stable across retries of the same user intent. A retry
+     * with the same id reuses the already-created Google event (via a
+     * derived stable event id + duplicate-409-as-success) instead of creating a
+     * second event and re-emailing guests. See googleEventIdForOperation. */
+    operationId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<MappedEvent> => {
     const user = await authComponent.safeGetAuthUser(ctx);
@@ -485,6 +505,11 @@ export const updateEvent = action({
         v.literal("allEvents"),
       ),
     ),
+    /** Idempotency key, stable across retries of the same user intent. Used by
+     * the `thisAndFollowing` split, whose tail insert creates a new series: a
+     * retry with the same id reuses that series (derived stable id + 409-as-
+     * success) instead of duplicating it and re-emailing guests. */
+    operationId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<MappedEvent> => {
     const { userId, accessToken } = await authedWrite(ctx);

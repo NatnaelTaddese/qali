@@ -9,6 +9,7 @@ import type { CSSProperties } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
+import { FeaturePreview } from "@/components/feature-preview";
 import { Mascot } from "@/components/mascot";
 
 export const Route = createFileRoute("/")({
@@ -19,6 +20,7 @@ function LandingPage() {
   return (
     <main className="min-h-svh bg-background text-foreground">
       <Hero />
+      <FeaturePreview />
       <Waitlist />
       <Footer />
     </main>
@@ -122,38 +124,6 @@ function Waitlist() {
       id="waitlist"
       className="relative flex flex-col bg-background items-center justify-end overflow-hidden px-6 py-16 text-center"
     >
-      <div
-        aria-hidden
-        className="min-h-svh pointer-events-none absolute inset-0 z-0 bg-background rotate-180"
-      >
-        <HalftoneCmyk
-          speed={0}
-          size={0.08}
-          gridNoise={0.16}
-          type="ink"
-          softness={1}
-          contrast={1}
-          gainC={0.3}
-          gainM={0}
-          gainY={0.2}
-          gainK={0}
-          floodC={0.15}
-          floodM={0}
-          floodY={0}
-          floodK={0}
-          scale={1}
-          image="/hero-halftone.png"
-          grainSize={0.5}
-          fit="cover"
-          colorBack="#00000000"
-          colorC="#00B4FF"
-          colorM="#FC519F"
-          colorY="#FFD800"
-          colorK="#231F20"
-          style={{ width: "100%", height: "100%", backgroundColor: "#FBFAF5" }}
-        />
-        <div className="hero-shader-fade absolute inset-0" />
-      </div>
       <h2 className="font-heading text-3xl font-medium tracking-tight">
         Get early access
       </h2>

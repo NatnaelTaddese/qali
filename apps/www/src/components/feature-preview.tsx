@@ -306,8 +306,8 @@ export function FeaturePreview() {
         </span>
         <h2
           ref={title.ref}
-          className={`chroma-text font-display text-3xl font-medium tracking-tight text-balance pb-[0.12em] -mb-[0.12em] sm:text-5xl${
-            title.inView ? " chroma-text-reveal" : ""
+          className={`chroma-text font-display text-3xl font-medium tracking-tight text-balance pb-[0.12em] -mb-[0.12em] sm:text-5xl ${
+            title.inView ? "chroma-text-reveal" : ""
           }`}
         >
           Just tell it what you need

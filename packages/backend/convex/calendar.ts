@@ -13,6 +13,12 @@ import {
 } from "./_generated/server";
 import { authComponent } from "./auth";
 import { isSharedPublicCalendar } from "./lib/calendars";
+import {
+  MAX_EVENT_SPAN_MS,
+  newRowBudget,
+  type RowBudget,
+  spendRowBudget,
+} from "./lib/eventReads";
 import { googleEventValidator } from "./schema";
 import { getCalendarEvent, type MappedEvent } from "./lib/google";
 import {
@@ -51,28 +57,34 @@ function sharedAsEvent(
   return { ...row, userId } as unknown as Doc<"events">;
 }
 
-/** Selected public calendars' events overlapping [gteStart, ltStart). These live
- * once in `sharedEvents` (not per-user), so we read them by calendar id and merge
- * into the caller's own events. Cancelled shared events are never stored. */
+/** Selected public calendars' events overlapping [fromMs, toMs). These live once
+ * in `sharedEvents` (not per-user), so we read them by calendar id and merge into
+ * the caller's own events. Cancelled shared events are never stored.
+ *
+ * Ranged on `endMs` (not `startMs`) so a multi-day holiday that began before the
+ * window is still returned; the far side is bounded by `MAX_EVENT_SPAN_MS` and the
+ * combined row `budget` guards against a pathological range. */
 async function readSharedEventsInRange(
   ctx: QueryCtx,
   userId: string,
   publicCalendarIds: string[],
-  gteStart: number,
-  ltStart: number,
+  fromMs: number,
+  toMs: number,
+  budget: RowBudget,
 ): Promise<Doc<"events">[]> {
+  const spanEnd = toMs + MAX_EVENT_SPAN_MS;
   const out: Doc<"events">[] = [];
   for (const calendarId of publicCalendarIds) {
-    const rows = await ctx.db
+    const page = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_start", (q) =>
-        q
-          .eq("calendarId", calendarId)
-          .gte("startMs", gteStart)
-          .lt("startMs", ltStart),
+      .withIndex("by_calendar_and_end", (q) =>
+        q.eq("calendarId", calendarId).gt("endMs", fromMs).lte("endMs", spanEnd),
       )
-      .collect();
-    out.push(...rows.map((r) => sharedAsEvent(r, userId)));
+      .take(budget.remaining + 1);
+    spendRowBudget(budget, page.length);
+    for (const r of page) {
+      if (r.startMs < toMs) out.push(sharedAsEvent(r, userId));
+    }
   }
   return out;
 }
@@ -200,33 +212,40 @@ export const listEventsInRange = query({
       throw new Error("Requested calendar range is too large");
     }
     const selected = await selectedCalendarIds(ctx, user._id);
-    // The index is on startMs, so scan back a day to catch events that begin
-    // before the window but overlap into it. Timed events longer than 24h that
-    // start earlier than the lookback are an accepted limitation.
-    const LOOKBACK_MS = 24 * 60 * 60 * 1000;
-    const personal = (
-      await ctx.db
+    // Overlap is `endMs > startMs && startMs < endMs`. Range each calendar's
+    // `by_..._end` index on endMs so a multi-day event that began before the
+    // window is caught (the old startMs lookback missed those), bound the far
+    // side with MAX_EVENT_SPAN_MS, and cap the combined read with one row budget.
+    const budget = newRowBudget();
+    const spanEnd = endMs + MAX_EVENT_SPAN_MS;
+    const personalIds = [...selected].filter((id) => !isSharedPublicCalendar(id));
+    const publicIds = [...selected].filter(isSharedPublicCalendar);
+    const personal: Doc<"events">[] = [];
+    for (const calendarId of personalIds) {
+      const page = await ctx.db
         .query("events")
-        .withIndex("by_user_and_start", (q) =>
+        .withIndex("by_user_and_calendar_and_end", (q) =>
           q
             .eq("userId", user._id)
-            .gte("startMs", startMs - LOOKBACK_MS)
-            .lt("startMs", endMs),
+            .eq("calendarId", calendarId)
+            .gt("endMs", startMs)
+            .lte("endMs", spanEnd),
         )
-        .order("asc")
-        .collect()
-    ).filter((e) => selected.has(e.calendarId));
-    const publicIds = [...selected].filter(isSharedPublicCalendar);
+        .take(budget.remaining + 1);
+      spendRowBudget(budget, page.length);
+      for (const e of page) {
+        if (e.startMs < endMs && e.status !== "cancelled") personal.push(e);
+      }
+    }
     const shared = await readSharedEventsInRange(
       ctx,
       user._id,
       publicIds,
-      startMs - LOOKBACK_MS,
+      startMs,
       endMs,
+      budget,
     );
-    return [...personal, ...shared]
-      .filter((e) => e.endMs > startMs && e.status !== "cancelled")
-      .sort((a, b) => a.startMs - b.startMs);
+    return [...personal, ...shared].sort((a, b) => a.startMs - b.startMs);
   },
 });
 

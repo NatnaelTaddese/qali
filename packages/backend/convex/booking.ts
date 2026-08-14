@@ -47,6 +47,11 @@ import {
 import { googleEventIdForOperation } from "./lib/assistantLogic";
 import { consumeRateLimit } from "./lib/rateLimit";
 import { normalizeSlug, slugError } from "@qali/domain/slug";
+import {
+  MAX_EVENT_SPAN_MS,
+  newRowBudget,
+  spendRowBudget,
+} from "./lib/eventReads";
 import { clearBookingNotifications } from "./notifications";
 
 /** Settings a new page starts on: business hours, half-hour slots, two hours'
@@ -67,11 +72,6 @@ const DEFAULT_PAGE = {
  * is more than any picker shows, and the cap keeps the public query from being
  * turned into a long scan of the host's events. */
 const MAX_SLOT_RANGE_MS = 35 * MS_PER_DAY;
-
-/** The `events` index is on `startMs`, so scan back a day to catch events that
- * begin before the window and overlap into it. Same trade-off (and same
- * accepted limitation for events longer than a day) as `calendar.listEventsInRange`. */
-const LOOKBACK_MS = MS_PER_DAY;
 
 const RATE_WINDOW_MS = 60 * 60 * 1000;
 const MAX_REQUESTS_PER_EMAIL = 3;
@@ -129,50 +129,55 @@ async function collectBusy(
     .query("calendars")
     .withIndex("by_user", (q) => q.eq("userId", page.userId))
     .collect();
-  const visible = new Set(
-    calendars.filter((c) => c.selected).map((c) => c.googleCalendarId),
-  );
+  const visible = calendars
+    .filter((c) => c.selected)
+    .map((c) => c.googleCalendarId);
 
-  const events = await ctx.db
-    .query("events")
-    .withIndex("by_user_and_start", (q) =>
-      q
-        .eq("userId", page.userId)
-        .gte("startMs", fromMs - LOOKBACK_MS)
-        .lt("startMs", toMs),
-    )
-    .collect();
-
+  // Overlap is `endMs > fromMs && startMs < toMs`. Range each visible calendar's
+  // end index on endMs so a multi-day event that began before the window still
+  // withholds the time (the old startMs lookback missed those); bound the far
+  // side by MAX_EVENT_SPAN_MS and the combined read by one row budget.
+  const budget = newRowBudget();
+  const spanEnd = toMs + MAX_EVENT_SPAN_MS;
   const busy: Interval[] = [];
-  for (const event of events) {
-    if (event.googleEventId === excludeGoogleEventId) continue;
-    if (event.status === "cancelled") continue;
-    // The host marked this one "free" in their own calendar, so it is not a
-    // reason to withhold the time.
-    if (event.transparency === "transparent") continue;
-    if (!visible.has(event.calendarId)) continue;
-    if (event.endMs <= fromMs) continue;
-    busy.push(
-      event.allDay
-        ? allDayBusyInterval(event.startMs, event.endMs, page.timeZone)
-        : { startMs: event.startMs, endMs: event.endMs },
-    );
+  for (const calendarId of visible) {
+    const events = await ctx.db
+      .query("events")
+      .withIndex("by_user_and_calendar_and_end", (q) =>
+        q
+          .eq("userId", page.userId)
+          .eq("calendarId", calendarId)
+          .gt("endMs", fromMs)
+          .lte("endMs", spanEnd),
+      )
+      .take(budget.remaining + 1);
+    spendRowBudget(budget, events.length);
+    for (const event of events) {
+      if (event.startMs >= toMs) continue;
+      if (event.googleEventId === excludeGoogleEventId) continue;
+      if (event.status === "cancelled") continue;
+      // The host marked this one "free" in their own calendar, so it is not a
+      // reason to withhold the time.
+      if (event.transparency === "transparent") continue;
+      busy.push(
+        event.allDay
+          ? allDayBusyInterval(event.startMs, event.endMs, page.timeZone)
+          : { startMs: event.startMs, endMs: event.endMs },
+      );
+    }
   }
 
   const bookings = await ctx.db
     .query("bookings")
-    .withIndex("by_host_and_start", (q) =>
-      q
-        .eq("hostUserId", page.userId)
-        .gte("startMs", fromMs - LOOKBACK_MS)
-        .lt("startMs", toMs),
+    .withIndex("by_host_and_end", (q) =>
+      q.eq("hostUserId", page.userId).gt("endMs", fromMs).lte("endMs", spanEnd),
     )
-    .collect();
-
+    .take(budget.remaining + 1);
+  spendRowBudget(budget, bookings.length);
   for (const booking of bookings) {
+    if (booking.startMs >= toMs) continue;
     if (booking.status === "rejected" || booking.status === "expired") continue;
     if (booking._id === excludeBookingId) continue;
-    if (booking.endMs <= fromMs) continue;
     busy.push({ startMs: booking.startMs, endMs: booking.endMs });
   }
 
@@ -441,17 +446,20 @@ export const listMyBookings = query({
     if (!user) {
       return [];
     }
+    const budget = newRowBudget();
     const rows = await ctx.db
       .query("bookings")
-      .withIndex("by_host_and_start", (q) =>
+      .withIndex("by_host_and_end", (q) =>
         q
           .eq("hostUserId", user._id)
-          .gte("startMs", args.startMs - LOOKBACK_MS)
-          .lt("startMs", args.endMs),
+          .gt("endMs", args.startMs)
+          .lte("endMs", args.endMs + MAX_EVENT_SPAN_MS),
       )
-      .order("asc")
-      .collect();
-    return rows.filter((b) => b.endMs > args.startMs);
+      .take(budget.remaining + 1);
+    spendRowBudget(budget, rows.length);
+    return rows
+      .filter((b) => b.startMs < args.endMs)
+      .sort((a, b) => a.startMs - b.startMs);
   },
 });
 

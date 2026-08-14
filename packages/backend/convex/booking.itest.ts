@@ -316,4 +316,27 @@ describe("booking context conflict detection", () => {
     });
     expect(busy!.conflict).toBe(true);
   });
+
+  test("detects a multi-day event that began well before the window", async () => {
+    const t = convexTest(schema, modules);
+    await seedHost(t);
+    const start = future();
+    const end = start + 30 * 60_000;
+    // A vacation that started three days before the slot and runs past it. The
+    // old startMs-based 24h lookback missed events beginning earlier than a day
+    // ago; the endMs overlap scan catches it and withholds the slot.
+    const bookingId = await t.run(async (ctx) => {
+      await ctx.db.insert(
+        "events",
+        eventDoc(HOST, start - 3 * 24 * 60 * 60_000, end + 60_000, "vacation"),
+      );
+      return ctx.db.insert("bookings", bookingDoc(HOST, start, end));
+    });
+
+    const ctxRow = await t.query(internal.booking.getBookingContext, {
+      bookingId,
+      hostUserId: HOST,
+    });
+    expect(ctxRow!.conflict).toBe(true);
+  });
 });

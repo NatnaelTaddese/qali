@@ -10,7 +10,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
-import { normalizeSlug } from "@qali/backend/convex/lib/slug";
+import { normalizeSlug } from "@qali/domain/slug";
 import { Button } from "@qali/ui/components/button";
 import { Input } from "@qali/ui/components/input";
 import { Switch } from "@qali/ui/components/switch";

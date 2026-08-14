@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@convex-dev/better-auth": "catalog:",
+    "@qali/domain": "workspace:*",
     "@qali/env": "workspace:*",
     "better-auth": "catalog:",
     "convex": "catalog:",

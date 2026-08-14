@@ -5,7 +5,7 @@ import {
   MS_PER_DAY,
   utcToZoned,
   zonedToUtcMs,
-} from "./availability";
+} from "@qali/domain/availability";
 
 export interface AssistantTimedRange {
   kind: "timed";

@@ -1,5 +1,5 @@
 import { api } from "@qali/backend/convex/_generated/api";
-import type { EventCapabilities } from "@qali/backend/convex/lib/permissions";
+import type { EventCapabilities } from "@qali/domain/permissions";
 import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useQuery } from "convex/react";

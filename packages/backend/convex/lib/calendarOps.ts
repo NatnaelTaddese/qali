@@ -37,7 +37,7 @@ import {
   mergeLiveAttendees,
   shiftRecurringMasterRange,
 } from "./assistantLogic";
-import { eventCapabilities, type EventCapabilities } from "./permissions";
+import { eventCapabilities, type EventCapabilities } from "@qali/domain/permissions";
 
 export type EventCapabilityName =
   | "canEdit"

@@ -2,7 +2,7 @@ import { api } from "@qali/backend/convex/_generated/api";
 import {
   eventCapabilities,
   type EventCapabilities,
-} from "@qali/backend/convex/lib/permissions";
+} from "@qali/domain/permissions";
 import { useQuery } from "convex/react";
 import { useCallback, useMemo } from "react";
 

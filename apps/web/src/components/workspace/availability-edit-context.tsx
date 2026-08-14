@@ -3,7 +3,7 @@ import type { Doc, Id } from "@qali/backend/convex/_generated/dataModel";
 import {
   type DayInterval,
   mergeDayIntervals,
-} from "@qali/backend/convex/lib/availability";
+} from "@qali/domain/availability";
 import { useMutation, useQuery } from "convex/react";
 import { format } from "date-fns";
 import {

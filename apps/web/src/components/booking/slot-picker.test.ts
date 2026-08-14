@@ -2,7 +2,7 @@
 // TypeScript config intentionally includes browser globals only.
 import { describe, expect, test } from "bun:test";
 
-import type { SlotOption } from "@qali/backend/convex/lib/availability";
+import type { SlotOption } from "@qali/domain/availability";
 
 import { groupByTimeOfDay, timeOfDay } from "./slot-picker";
 

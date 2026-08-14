@@ -34,7 +34,7 @@ import {
   allDayBusyInterval,
   utcToZoned,
   zonedToUtcMs,
-} from "./availability";
+} from "@qali/domain/availability";
 import { subtractBusy } from "./assistantHistory";
 import {
   ASSISTANT_WEEKDAYS,

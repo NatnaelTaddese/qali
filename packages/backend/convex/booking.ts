@@ -35,7 +35,7 @@ import {
   MS_PER_DAY,
   type SlotOption,
   utcToZoned,
-} from "./lib/availability";
+} from "@qali/domain/availability";
 import {
   getCalendarEvent,
   GoogleApiError,
@@ -46,7 +46,7 @@ import {
 } from "./lib/google";
 import { googleEventIdForOperation } from "./lib/assistantLogic";
 import { consumeRateLimit } from "./lib/rateLimit";
-import { normalizeSlug, slugError } from "./lib/slug";
+import { normalizeSlug, slugError } from "@qali/domain/slug";
 import { clearBookingNotifications } from "./notifications";
 
 /** Settings a new page starts on: business hours, half-hour slots, two hours'

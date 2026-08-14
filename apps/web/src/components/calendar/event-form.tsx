@@ -9,7 +9,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { Doc } from "@qali/backend/convex/_generated/dataModel";
-import type { EventCapabilities } from "@qali/backend/convex/lib/permissions";
+import type { EventCapabilities } from "@qali/domain/permissions";
 import { WheelPicker } from "@qali/ui/components/motion/wheel-picker";
 import {
   Tooltip,

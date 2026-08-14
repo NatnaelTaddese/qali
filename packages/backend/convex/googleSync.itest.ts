@@ -187,3 +187,149 @@ describe("contact deletion cascade", () => {
     expect(people[0].sources).toEqual(["attendee"]);
   });
 });
+
+describe("sync lease recovery", () => {
+  test("an expired lease is reclaimable by a new attempt, stranding the old one", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_recover";
+    await t.mutation(internal.googleSync.ensureSyncState, { userId });
+
+    const stale = await t.mutation(internal.googleSync.claimSyncLease, {
+      userId,
+    });
+    expect(typeof stale).toBe("string");
+
+    // Simulate the holder dying: its lease lapses without ever being released.
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query("syncState")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .unique();
+      await ctx.db.patch(row!._id, { syncLeaseExpiresAt: Date.now() - 1 });
+    });
+
+    const fresh = await t.mutation(internal.googleSync.claimSyncLease, {
+      userId,
+    });
+    expect(typeof fresh).toBe("string");
+    expect(fresh).not.toBe(stale);
+
+    // The stranded original attempt can no longer release or clobber the lease.
+    await t.mutation(internal.googleSync.recordSyncOutcome, {
+      userId,
+      attemptId: stale as string,
+      status: "idle",
+      active: false,
+    });
+    expect(
+      await t.mutation(internal.googleSync.claimSyncLease, { userId }),
+    ).toBeNull();
+  });
+});
+
+describe("adaptive sync cadence", () => {
+  test("an idle run backs the interval off; an active run resets it to the floor", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_cadence";
+    await t.mutation(internal.googleSync.ensureSyncState, { userId });
+
+    const readState = () =>
+      t.run(async (ctx) =>
+        ctx.db
+          .query("syncState")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .unique(),
+      );
+    const floor = (await readState())!.syncIntervalMs!;
+
+    // A quiet run doubles the interval and schedules the next poll further out.
+    let attempt = await t.mutation(internal.googleSync.claimSyncLease, {
+      userId,
+    });
+    await t.mutation(internal.googleSync.recordSyncOutcome, {
+      userId,
+      attemptId: attempt as string,
+      status: "idle",
+      active: false,
+    });
+    let state = (await readState())!;
+    expect(state.syncIntervalMs).toBe(floor * 2);
+    expect(state.status).toBe("idle");
+    expect(state.syncAttemptId).toBeUndefined();
+    expect(state.nextSyncDueAt).toBeGreaterThan(Date.now());
+
+    // Any change (or a user-initiated sync) snaps the interval back to the floor.
+    attempt = await t.mutation(internal.googleSync.claimSyncLease, { userId });
+    await t.mutation(internal.googleSync.recordSyncOutcome, {
+      userId,
+      attemptId: attempt as string,
+      status: "idle",
+      active: true,
+    });
+    expect((await readState())!.syncIntervalMs).toBe(floor);
+  });
+});
+
+describe("full-resync generation vs cursor", () => {
+  test("generation advances independently of the sync token so an incomplete run withholds the cursor", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_commit";
+    const googleCalendarId = "cal_commit";
+    await t.run((ctx) =>
+      ctx.db.insert("calendars", {
+        userId,
+        googleCalendarId,
+        selected: true,
+        syncToken: "old",
+        syncGeneration: 1,
+      }),
+    );
+
+    const readCal = () =>
+      t.run(async (ctx) =>
+        ctx.db
+          .query("calendars")
+          .withIndex("by_user_and_googleCalendarId", (q) =>
+            q.eq("userId", userId).eq("googleCalendarId", googleCalendarId),
+          )
+          .unique(),
+      );
+
+    expect(
+      await t.mutation(internal.googleSync.beginCalendarFullResync, {
+        userId,
+        googleCalendarId,
+      }),
+    ).toBe(2);
+
+    // Committing without a token (an incomplete/failed page) bumps the generation
+    // but keeps the old cursor, so the next run redoes the full resync.
+    await t.mutation(internal.googleSync.commitCalendarFullResync, {
+      userId,
+      googleCalendarId,
+      syncGeneration: 2,
+    });
+    let cal = (await readCal())!;
+    expect(cal.syncGeneration).toBe(2);
+    expect(cal.syncToken).toBe("old");
+
+    // A complete run commits both generation and the fresh cursor.
+    await t.mutation(internal.googleSync.commitCalendarFullResync, {
+      userId,
+      googleCalendarId,
+      syncGeneration: 3,
+      syncToken: "new",
+    });
+    cal = (await readCal())!;
+    expect(cal.syncGeneration).toBe(3);
+    expect(cal.syncToken).toBe("new");
+
+    // Incremental sync just advances the cursor in place.
+    await t.mutation(internal.googleSync.setCalendarSyncToken, {
+      userId,
+      googleCalendarId,
+      syncToken: "incr",
+    });
+    expect((await readCal())!.syncToken).toBe("incr");
+  });
+});

@@ -262,7 +262,9 @@ function previewValue(value: string, max = 120): string {
  * cancelled one doesn't, and neither does one they've declined — that last
  * case is the difference between an honest answer and offering a slot the user
  * already said no to. */
-function isBusy(event: Doc<"events">): boolean {
+function isBusy(
+  event: Pick<Doc<"events">, "status" | "transparency" | "attendees">,
+): boolean {
   if (event.status === "cancelled") return false;
   if (event.transparency === "transparent") return false;
   const self = event.attendees?.find((a) => a.self);

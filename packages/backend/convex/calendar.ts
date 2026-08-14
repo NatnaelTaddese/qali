@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   action,
   internalMutation,
@@ -44,17 +44,25 @@ async function selectedCalendarIds(
   );
 }
 
-/** Present a shared (public-calendar) event as a normal `events` doc so the
- * client sees one uniform event type. The stored `_id` really belongs to
- * `sharedEvents`, but Convex ids are self-describing, so passing it back to
- * `getEventById`/`getEventRecurrence` (which accept either id) still resolves the
- * right row. `userId` is stamped to the reader purely to satisfy the shape;
- * these events are read-only, so nothing writes back through it. */
-function sharedAsEvent(
-  row: Doc<"sharedEvents">,
-  userId: string,
-): Doc<"events"> {
-  return { ...row, userId } as unknown as Doc<"events">;
+/**
+ * A calendar event as the client sees it: either a synced `events` row or a
+ * public `sharedEvents` row (holidays, birthdays) presented in the same shape.
+ *
+ * The id is honestly the union of both tables rather than a cast to `Id<"events">`.
+ * A shared row is read-only, so its `Id<"sharedEvents">` must never be handed to
+ * an events-only mutation — the union makes the compiler enforce what the old
+ * `as unknown as Doc<"events">` cast silently defeated. The read queries that do
+ * accept a shared id already validate `v.union(v.id("events"), v.id("sharedEvents"))`.
+ */
+export type EventView = Omit<Doc<"events">, "_id"> & {
+  _id: Id<"events"> | Id<"sharedEvents">;
+};
+
+/** Present a shared (public-calendar) row in the unified {@link EventView} shape.
+ * `sharedEvents` has every field `events` does except `userId` (stamped here to
+ * the reader) and the id brand — so no cast is needed. */
+function sharedAsEvent(row: Doc<"sharedEvents">, userId: string): EventView {
+  return { ...row, userId };
 }
 
 /** Selected public calendars' events overlapping [fromMs, toMs). These live once
@@ -71,9 +79,9 @@ async function readSharedEventsInRange(
   fromMs: number,
   toMs: number,
   budget: RowBudget,
-): Promise<Doc<"events">[]> {
+): Promise<EventView[]> {
   const spanEnd = toMs + MAX_EVENT_SPAN_MS;
-  const out: Doc<"events">[] = [];
+  const out: EventView[] = [];
   for (const calendarId of publicCalendarIds) {
     const page = await ctx.db
       .query("sharedEvents")
@@ -96,7 +104,7 @@ async function readSharedEventsInRange(
  * the events shape (with an `eventId` the assistant can echo back). */
 export const listSharedEventsForAssistant = internalQuery({
   args: { userId: v.string(), startMs: v.number(), endMs: v.number() },
-  handler: async (ctx, args): Promise<Doc<"events">[]> => {
+  handler: async (ctx, args): Promise<EventView[]> => {
     const calendars = await ctx.db
       .query("calendars")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
@@ -105,7 +113,7 @@ export const listSharedEventsForAssistant = internalQuery({
       .filter((c) => c.selected && isSharedPublicCalendar(c.googleCalendarId))
       .map((c) => c.googleCalendarId);
 
-    const out: Doc<"events">[] = [];
+    const out: EventView[] = [];
     for (const calendarId of publicIds) {
       const rows = await ctx.db
         .query("sharedEvents")
@@ -177,7 +185,7 @@ export const listEvents = query({
         .take(50)
     ).filter((e) => selected.has(e.calendarId));
     const publicIds = [...selected].filter(isSharedPublicCalendar);
-    const shared: Doc<"events">[] = [];
+    const shared: EventView[] = [];
     for (const calendarId of publicIds) {
       const rows = await ctx.db
         .query("sharedEvents")
@@ -220,7 +228,7 @@ export const listEventsInRange = query({
     const spanEnd = endMs + MAX_EVENT_SPAN_MS;
     const personalIds = [...selected].filter((id) => !isSharedPublicCalendar(id));
     const publicIds = [...selected].filter(isSharedPublicCalendar);
-    const personal: Doc<"events">[] = [];
+    const personal: EventView[] = [];
     for (const calendarId of personalIds) {
       const page = await ctx.db
         .query("events")

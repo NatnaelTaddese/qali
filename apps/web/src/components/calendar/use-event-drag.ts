@@ -6,7 +6,7 @@ import { toast } from "sonner";
 
 import { useDock } from "@/components/workspace/dock-context";
 
-import { type CalendarEvent, MS_PER_DAY, SNAP_MS } from "./lib";
+import { type CalendarEvent, editableEventId, MS_PER_DAY, SNAP_MS } from "./lib";
 import { useEventCapabilities } from "./permissions";
 
 /** How a card is being manipulated: relocated whole, or one edge dragged. */
@@ -236,7 +236,7 @@ export function useEventDrag(
         }, PENDING_TIMEOUT_MS),
       );
       updateEventTime({
-        eventId: id as CalendarEvent["_id"],
+        eventId: editableEventId(id),
         startMs: times.startMs,
         endMs: times.endMs,
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,

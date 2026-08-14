@@ -15,7 +15,7 @@ import {
   toEventTimes,
   type EventFormValue,
 } from "./event-form";
-import type { CalendarEvent } from "./lib";
+import { editableEventId, type CalendarEvent } from "./lib";
 import { useEventCapabilities } from "./permissions";
 import { toRRule } from "./rrule";
 
@@ -174,7 +174,7 @@ export function EventEdit({
       operationIdRef.current = crypto.randomUUID();
     }
     updateEvent({
-      eventId: event._id,
+      eventId: editableEventId(event._id),
       ...finalPatch,
       scope,
       operationId: operationIdRef.current,

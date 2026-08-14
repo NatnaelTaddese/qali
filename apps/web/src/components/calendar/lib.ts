@@ -1,4 +1,5 @@
-import type { Doc } from "@qali/backend/convex/_generated/dataModel";
+import type { Id } from "@qali/backend/convex/_generated/dataModel";
+import type { EventView } from "@qali/backend/convex/calendar";
 import {
   addDays,
   addMonths,
@@ -11,7 +12,20 @@ import {
   startOfWeek,
 } from "date-fns";
 
-export type CalendarEvent = Doc<"events">;
+/** An event as the grid renders it: a synced `events` row, or a public
+ * `sharedEvents` row (holiday/birthday) in the same shape. Its `_id` is the
+ * honest union of both tables, so an edit path must narrow to `Id<"events">`
+ * (guarded by the capability check that already gates editing). */
+export type CalendarEvent = EventView;
+
+/** Assert a calendar id refers to an editable `events` row. Call only from a path
+ * already gated by a capability check (canEdit / canRespond / canDelete): a public
+ * `sharedEvents` row is read-only and never reaches an edit mutation, so narrowing
+ * the {@link CalendarEvent} id union to `Id<"events">` is sound here. This is the
+ * one place that narrowing happens, instead of a bare cast scattered per call. */
+export function editableEventId(id: string): Id<"events"> {
+  return id as Id<"events">;
+}
 
 /** User-facing Google calendar name, including a per-user override when one
  * exists. */

@@ -42,7 +42,7 @@ import {
   rsvpSummary,
   type Guest,
 } from "./guest-picker";
-import { calendarDisplayName, type CalendarEvent } from "./lib";
+import { calendarDisplayName, editableEventId, type CalendarEvent } from "./lib";
 import { dockVariants, dockVariantsReduced, press, SPRING_DOCK } from "./motion";
 import { useEventCapabilities } from "./permissions";
 import { RichTextView } from "./rich-text/rich-text-view";
@@ -298,7 +298,7 @@ function RsvpControl({
   const choose = (status: (typeof RSVP_CHOICES)[number]["status"]) => {
     if (status === active) return;
     setOptimistic(status);
-    respond({ eventId: event._id, responseStatus: status }).catch(
+    respond({ eventId: editableEventId(event._id), responseStatus: status }).catch(
       (error: unknown) => {
         setOptimistic(undefined);
         toast.error("Couldn't send your reply", {
@@ -539,7 +539,7 @@ export function EventDetail({
       };
     }
     return deleteEvent({
-      eventId: event._id,
+      eventId: editableEventId(event._id),
       scope,
       operationId: deleteOperationRef.current.operationId,
     })

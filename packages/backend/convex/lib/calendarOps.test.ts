@@ -5,9 +5,13 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
 
 process.env.SKIP_ENV_VALIDATION = "1";
-const { deleteEventOp, truncateRecurrence, updateEventOp } = await import(
-  "./calendarOps"
-);
+const {
+  createEventOp,
+  deleteEventOp,
+  respondToEventOp,
+  truncateRecurrence,
+  updateEventOp,
+} = await import("./calendarOps");
 
 const originalFetch = globalThis.fetch;
 
@@ -75,6 +79,184 @@ function liveGoogleEvent(row: Doc<"events">, overrides: Record<string, unknown> 
     ...overrides,
   };
 }
+
+/** A context for createEventOp: an explicit calendar id is always passed, so
+ * getPrimaryCalendarId must never be consulted; only the mirror mutation runs. */
+function createContext() {
+  const mutations: Record<string, unknown>[] = [];
+  const ctx = {
+    runQuery: async () => {
+      throw new Error("getPrimaryCalendarId should not be called");
+    },
+    runMutation: async (_reference: unknown, args: Record<string, unknown>) => {
+      mutations.push(args);
+      return null;
+    },
+  } as unknown as ActionCtx;
+  return { ctx, mutations };
+}
+
+function createdGoogleEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "new-google-id",
+    summary: "Sync review",
+    status: "confirmed",
+    updated: "2026-08-11T00:00:00.000Z",
+    start: { dateTime: "2026-09-01T01:00:00.000Z", timeZone: "UTC" },
+    end: { dateTime: "2026-09-01T02:00:00.000Z", timeZone: "UTC" },
+    ...overrides,
+  };
+}
+
+const CREATE_ARGS = {
+  calendarId: "primary@example.com",
+  summary: "Sync review",
+  startMs: Date.parse("2026-09-01T01:00:00.000Z"),
+  endMs: Date.parse("2026-09-01T02:00:00.000Z"),
+};
+
+describe("event creation", () => {
+  test("emails invitations only when the event has guests", async () => {
+    const withGuests = createContext();
+    let url = "";
+    globalThis.fetch = (async (input) => {
+      url = String(input);
+      return Response.json(createdGoogleEvent());
+    }) as typeof fetch;
+    const event = await createEventOp(withGuests.ctx, "user-1", "token", {
+      ...CREATE_ARGS,
+      attendees: [{ email: "guest@example.com" }],
+    });
+    expect(url).toContain("sendUpdates=all");
+    expect(event.googleEventId).toBe("new-google-id");
+    // The freshly created event is mirrored into the local table right away.
+    expect(withGuests.mutations.length).toBeGreaterThan(0);
+
+    const soloUrls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      soloUrls.push(String(input));
+      return Response.json(createdGoogleEvent());
+    }) as typeof fetch;
+    await createEventOp(createContext().ctx, "user-1", "token", CREATE_ARGS);
+    expect(soloUrls[0]).not.toContain("sendUpdates");
+  });
+
+  test("treats a duplicate-id 409 as confirmation and re-reads the event", async () => {
+    const { ctx } = createContext();
+    const methods: string[] = [];
+    globalThis.fetch = (async (_input, init) => {
+      const method = init?.method ?? "GET";
+      methods.push(method);
+      // A prior attempt with this operation id already created the event; the
+      // client-selected id makes Google answer the retry with a 409, which is
+      // positive confirmation rather than a failed create.
+      if (method === "POST") {
+        return Response.json({ error: { message: "duplicate" } }, { status: 409 });
+      }
+      return Response.json(createdGoogleEvent({ id: "op-derived-id" }));
+    }) as typeof fetch;
+
+    const event = await createEventOp(ctx, "user-1", "token", {
+      ...CREATE_ARGS,
+      operationId: "operation-1",
+    });
+    expect(methods).toEqual(["POST", "GET"]);
+    expect(event.googleEventId).toBe("op-derived-id");
+  });
+});
+
+describe("invitation response", () => {
+  const guestRow = () =>
+    eventRow({
+      organizer: { self: false },
+      attendees: [
+        { email: "me@example.com", self: true, responseStatus: "needsAction" },
+      ],
+    });
+
+  test("refuses to respond on a read-only calendar before calling Google", async () => {
+    const { ctx } = actionContext(guestRow(), "reader");
+    let fetched = false;
+    globalThis.fetch = (async () => {
+      fetched = true;
+      return Response.json({});
+    }) as typeof fetch;
+
+    await expect(
+      respondToEventOp(ctx, "user-1", "token", {
+        eventId: "event-row" as Id<"events">,
+        responseStatus: "accepted",
+      }),
+    ).rejects.toThrow(/not a guest/i);
+    expect(fetched).toBe(false);
+  });
+
+  test("a guest RSVP patches only the self attendee and notifies the organizer", async () => {
+    const row = guestRow();
+    const { ctx } = actionContext(row, "writer");
+    const requests: { method: string; url: string; body?: Record<string, unknown> }[] = [];
+    globalThis.fetch = (async (input, init) => {
+      const method = init?.method ?? "GET";
+      const body = init?.body
+        ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+        : undefined;
+      requests.push({ method, url: String(input), body });
+      return Response.json(
+        liveGoogleEvent(row, {
+          attendees: [
+            { email: "me@example.com", self: true, responseStatus: "needsAction" },
+            { email: "other@example.com" },
+          ],
+        }),
+      );
+    }) as typeof fetch;
+
+    await respondToEventOp(ctx, "user-1", "token", {
+      eventId: row._id,
+      responseStatus: "accepted",
+    });
+
+    expect(requests.map((r) => r.method)).toEqual(["GET", "PATCH"]);
+    const patch = requests[1]!;
+    // A non-organizer answering tells the organizer.
+    expect(patch.url).toContain("sendUpdates=all");
+    const attendees = patch.body!.attendees as {
+      email: string;
+      self?: boolean;
+      responseStatus?: string;
+    }[];
+    expect(attendees.find((a) => a.self)?.responseStatus).toBe("accepted");
+    // The other guest's entry is preserved untouched (patch replaces the array).
+    expect(attendees.find((a) => a.email === "other@example.com")).toBeTruthy();
+  });
+
+  test("the organizer answering their own event sends no guest mail", async () => {
+    const row = eventRow({
+      organizer: { self: true },
+      attendees: [
+        { email: "me@example.com", self: true, responseStatus: "needsAction" },
+      ],
+    });
+    const { ctx } = actionContext(row, "owner");
+    const urls: string[] = [];
+    globalThis.fetch = (async (input) => {
+      urls.push(String(input));
+      return Response.json(
+        liveGoogleEvent(row, {
+          attendees: [
+            { email: "me@example.com", self: true, responseStatus: "needsAction" },
+          ],
+        }),
+      );
+    }) as typeof fetch;
+
+    await respondToEventOp(ctx, "user-1", "token", {
+      eventId: row._id,
+      responseStatus: "tentative",
+    });
+    expect(urls[1]).toContain("sendUpdates=none");
+  });
+});
 
 describe("single event recurrence conversion", () => {
   test("patches the event into a master and records the series", async () => {

@@ -24,7 +24,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
-import { authComponent, createAuth } from "./auth";
+import { authComponent } from "./auth";
 import {
   addDaysToDateKey,
   allDayBusyInterval,
@@ -52,6 +52,7 @@ import {
   newRowBudget,
   spendRowBudget,
 } from "./lib/eventReads";
+import { getGoogleAccessToken } from "./lib/googleCredentials";
 import { clearBookingNotifications } from "./notifications";
 
 /** Settings a new page starts on: business hours, half-hour slots, two hours'
@@ -910,12 +911,7 @@ export const acceptBooking = action({
       throw new Error("Not authenticated");
     }
 
-    const { accessToken } = await createAuth(ctx).api.getAccessToken({
-      body: { providerId: "google", userId: user._id },
-    });
-    if (!accessToken) {
-      throw new Error("No Google access token available for user");
-    }
+    const accessToken = await getGoogleAccessToken(ctx, user._id);
 
     const calendarId =
       (await ctx.runQuery(internal.calendar.getPrimaryCalendarId, {

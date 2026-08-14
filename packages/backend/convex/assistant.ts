@@ -26,9 +26,9 @@ import { action, type ActionCtx } from "./_generated/server";
 import { authComponent } from "./auth";
 import {
   ExternalWriteCommittedError,
-  getGoogleAccessToken,
   isDefinitiveGoogleFailure,
 } from "./lib/calendarOps";
+import { getGoogleAccessToken } from "./lib/googleCredentials";
 import {
   ASSISTANT_TOOLS,
   TOOLS_BY_NAME,

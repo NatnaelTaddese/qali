@@ -1,8 +1,7 @@
-import type { GenericCtx } from "@convex-dev/better-auth";
 import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
-import type { DataModel, Doc } from "./_generated/dataModel";
+import type { Doc } from "./_generated/dataModel";
 import {
   action,
   internalAction,
@@ -11,8 +10,9 @@ import {
   type ActionCtx,
   type MutationCtx,
 } from "./_generated/server";
-import { authComponent, createAuth } from "./auth";
+import { authComponent } from "./auth";
 import { isSharedPublicCalendar } from "./lib/calendars";
+import { getGoogleAccessToken } from "./lib/googleCredentials";
 import {
   fetchCalendarList,
   fetchCalendarPage,
@@ -300,24 +300,6 @@ async function deleteCalendarEventsBatch(
     await ctx.db.delete(row._id);
   }
   return rows.length === EVENT_CLEANUP_BATCH_SIZE;
-}
-
-// ---------------------------------------------------------------------------
-// Token helper — resolves a fresh (auto-refreshed) Google access token for a
-// user via better-auth. Passing no `headers` makes better-auth resolve by
-// `userId` (works from both authenticated actions and session-less crons).
-// ---------------------------------------------------------------------------
-async function getGoogleAccessToken(
-  ctx: GenericCtx<DataModel>,
-  userId: string,
-): Promise<string> {
-  const { accessToken } = await createAuth(ctx).api.getAccessToken({
-    body: { providerId: "google", userId },
-  });
-  if (!accessToken) {
-    throw new Error("No Google access token available for user");
-  }
-  return accessToken;
 }
 
 // ---------------------------------------------------------------------------

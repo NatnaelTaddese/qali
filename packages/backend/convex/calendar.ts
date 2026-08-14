@@ -24,11 +24,11 @@ import { getCalendarEvent, type MappedEvent } from "./lib/google";
 import {
   createEventOp,
   deleteEventOp,
-  getGoogleAccessToken,
   respondToEventOp,
   updateEventOp,
   updateEventTimeOp,
 } from "./lib/calendarOps";
+import { getGoogleAccessToken } from "./lib/googleCredentials";
 
 /** The set of `googleCalendarId`s the user has toggled visible. */
 async function selectedCalendarIds(

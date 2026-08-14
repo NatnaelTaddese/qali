@@ -17,7 +17,6 @@
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
-import { createAuth } from "../auth";
 import { CALENDAR_HISTORY_MS, syncOneCalendar } from "../googleSync";
 import {
   deleteCalendarEvent,
@@ -179,21 +178,6 @@ function googleEventMatchesPatch(
   if (conference === "add" && !hasConference) return false;
   if (conference === "remove" && hasConference) return false;
   return true;
-}
-
-/** A Google OAuth access token for `userId`, or a thrown error. Better Auth's
- * component owns the refresh, so this is always fetched at use time. */
-export async function getGoogleAccessToken(
-  ctx: ActionCtx,
-  userId: string,
-): Promise<string> {
-  const { accessToken } = await createAuth(ctx).api.getAccessToken({
-    body: { providerId: "google", userId },
-  });
-  if (!accessToken) {
-    throw new Error("No Google access token available for user");
-  }
-  return accessToken;
 }
 
 /**

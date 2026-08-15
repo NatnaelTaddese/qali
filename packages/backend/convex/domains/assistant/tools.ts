@@ -17,15 +17,15 @@
 
 import { z } from "zod";
 
-import { api, internal } from "../_generated/api";
-import type { Doc, Id } from "../_generated/dataModel";
-import type { ActionCtx } from "../_generated/server";
+import { api, internal } from "../../_generated/api";
+import type { Doc, Id } from "../../_generated/dataModel";
+import type { ActionCtx } from "../../_generated/server";
 import {
   createEventOp,
   deleteEventOp,
   resolveEventForWrite,
   updateEventOp,
-} from "../domains/calendar/service";
+} from "../calendar/service";
 import {
   MS_PER_MINUTE,
   addDaysToDateKey,
@@ -35,7 +35,7 @@ import {
   utcToZoned,
   zonedToUtcMs,
 } from "@qali/domain/availability";
-import { subtractBusy } from "./assistantHistory";
+import { subtractBusy } from "./history";
 import {
   ASSISTANT_WEEKDAYS,
   assistantRangeToEventTime,
@@ -44,7 +44,7 @@ import {
   formatAssistantRepeat,
   isDateKey,
   type AssistantEventRange,
-} from "./assistantLogic";
+} from "../../lib/assistantLogic";
 
 // --- Plumbing --------------------------------------------------------------
 

@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 
 process.env.SKIP_ENV_VALIDATION = "1";
 const { ASSISTANT_TOOLS, normalizeLegacyDeleteScope } = await import(
-  "./assistantTools"
+  "./tools"
 );
 
 function propertiesFor(name: string): Record<string, unknown> {

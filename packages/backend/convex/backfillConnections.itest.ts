@@ -190,4 +190,43 @@ describe("connection backfill", () => {
     expect(byKey.get("op-acc")).toBe("succeeded");
     expect(byKey.get("op-amb")).toBe("ambiguous");
   });
+
+  test("verifyParity reports full parity after a backfill", async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("syncState", { userId: USER, status: "idle" });
+      await ctx.db.insert("calendars", {
+        userId: USER,
+        googleCalendarId: "primary",
+        selected: true,
+      });
+      await ctx.db.insert("events", {
+        userId: USER,
+        calendarId: "primary",
+        googleEventId: "g-1",
+        startMs: 1_000,
+        endMs: 2_000,
+        allDay: false,
+        status: "confirmed",
+        googleUpdatedMs: 1,
+      });
+    });
+
+    // backfillUser sets up the connection + calendars and schedules the event
+    // pass; drive that pass directly rather than depend on the scheduler.
+    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
+    const connectionId = (await connectionFor(t, USER))!;
+    await t.mutation(internal.backfillConnections.backfillUserEvents, {
+      userId: USER,
+      connectionId,
+      cursor: null,
+    });
+
+    const report = await t.query(internal.backfillConnections.verifyParity, {});
+    expect(report.usersMatch).toBe(true);
+    expect(report.connections).toBe(1);
+    expect(report.events.lackingConnectionId).toBe(0);
+    expect(report.events.sampleCapped).toBe(false); // whole table covered
+    expect(report.calendars.lackingConnectionId).toBe(0);
+  });
 });

@@ -10,6 +10,7 @@ import {
 import {
   decodeCursor,
   encodeCursor,
+  providerEventToMapped,
   toProviderError,
   toProviderEvent,
 } from "./mappers";
@@ -69,6 +70,47 @@ describe("toProviderEvent", () => {
     expect(toProviderEvent(mappedEvent({ status: "cancelled" })).status).toBe(
       "cancelled",
     );
+  });
+});
+
+describe("providerEventToMapped (reverse map)", () => {
+  test("round-trips a mapped event through the neutral shape and back", () => {
+    const original = mappedEvent({
+      summary: "Sync",
+      description: "notes",
+      location: "Room 1",
+      transparency: "transparent",
+      colorId: "5",
+      recurringEventId: "series-9",
+      conferenceUrl: "https://meet.example/xyz",
+      conferenceType: "hangoutsMeet",
+      attendees: [
+        { email: "me@x.com", self: true, responseStatus: "accepted" },
+        { email: "guest@x.com", optional: true },
+      ],
+      guestsCanModify: false,
+    });
+
+    const back = providerEventToMapped(toProviderEvent(original));
+
+    expect(back.googleEventId).toBe("g-evt");
+    expect(back.googleUpdatedMs).toBe(500);
+    expect(back.transparency).toBe("transparent");
+    expect(back.colorId).toBe("5");
+    expect(back.recurringEventId).toBe("series-9");
+    expect(back.conferenceUrl).toBe("https://meet.example/xyz");
+    expect(back.hangoutLink).toBe("https://meet.example/xyz"); // hangoutsMeet
+    expect(back.attendees).toEqual(original.attendees);
+    expect(back.summary).toBe("Sync");
+  });
+
+  test("busy/transparency mapping survives the round trip", () => {
+    // Absent transparency stays absent (Google's busy default), not invented.
+    expect(providerEventToMapped(toProviderEvent(mappedEvent())).transparency).toBeUndefined();
+    expect(
+      providerEventToMapped(toProviderEvent(mappedEvent({ transparency: "opaque" })))
+        .transparency,
+    ).toBe("opaque");
   });
 });
 

@@ -1,28 +1,24 @@
 /**
- * Booking acceptance — the one booking operation that talks to Google, so it is
- * an action, not a mutation. The root `booking.ts` wraps this handler in a
- * Convex `action` at `api.booking.acceptBooking`.
+ * Booking acceptance — the one booking operation that talks to a calendar
+ * provider, so it is an action, not a mutation. The root `booking.ts` wraps this
+ * handler in a Convex `action` at `api.booking.acceptBooking`.
  *
- * It reuses `calendar.createEvent`'s sequence: resolve a token through the
- * credential broker, pick the primary calendar, insert with the requester as a
- * guest and `sendUpdates:"all"` (Google's own invitation email is the
- * confirmation — we send none), then mirror the row so the card appears now.
+ * The calendar write goes through the provider adapter (via the registry), so
+ * this path is provider-neutral: `createEventReconciling` creates the event and,
+ * on an ambiguous/conflict failure, reconciles by the operation's idempotency
+ * key instead of risking a duplicate. The claim/mark/release lease around it is
+ * unchanged. `notify:"all"` makes the provider send its own invitation email,
+ * which is the requester's confirmation — the app sends none.
  */
 
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import type { ActionCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
-import { googleEventIdForOperation } from "../../lib/assistantLogic";
-import { getGoogleAccessToken } from "../../lib/googleCredentials";
-import {
-  getCalendarEvent,
-  GoogleApiError,
-  GoogleNetworkError,
-  insertCalendarEvent,
-  mapGoogleEvent,
-  toGoogleTime,
-} from "../../lib/google";
+import { ProviderError } from "../../integrations/calendar/errors";
+import { getCalendarAdapter } from "../../integrations/calendar/registry";
+import { createEventReconciling } from "../../integrations/calendar/service";
+import { providerEventToMapped } from "../../integrations/google/mappers";
 
 export async function acceptBookingHandler(
   ctx: ActionCtx,
@@ -33,7 +29,9 @@ export async function acceptBookingHandler(
     throw new Error("Not authenticated");
   }
 
-  const accessToken = await getGoogleAccessToken(ctx, user._id);
+  // Resolve the adapter (the credential broker resolves the token inside it)
+  // before claiming, so a missing/invalid grant fails fast without taking a lease.
+  const adapter = await getCalendarAdapter(ctx, user._id);
 
   const calendarId =
     (await ctx.runQuery(internal.calendar.getPrimaryCalendarId, {
@@ -65,42 +63,30 @@ export async function acceptBookingHandler(
   } = claimed;
 
   const label = page.title?.trim() || "Meeting";
-  const requestedGoogleEventId = googleEventIdForOperation(operationId);
   let event;
   try {
-    try {
-      event = await insertCalendarEvent(
-        accessToken,
-        claimedCalendarId,
-        {
-          id: requestedGoogleEventId,
-          summary: `${label} with ${booking.requesterName}`,
-          description: booking.note
-            ? `Booked via qali.\n\n${booking.note}`
-            : "Booked via qali.",
-          start: toGoogleTime(booking.startMs, false, page.timeZone),
-          end: toGoogleTime(booking.endMs, false, page.timeZone),
-          attendees: [
-            {
-              email: booking.requesterEmail,
-              displayName: booking.requesterName,
-            },
-          ],
-        },
-        // Google owns the invitation email; this is what sends it.
-        "all",
-      );
-    } catch (error) {
-      if (!(error instanceof GoogleApiError) || error.status !== 409) throw error;
-      event = mapGoogleEvent(
-        await getCalendarEvent(
-          accessToken,
-          claimedCalendarId,
-          requestedGoogleEventId,
-        ),
-        claimedCalendarId,
-      );
-    }
+    // The operationId is the idempotency key: a retry that already created the
+    // event reconciles instead of double-booking (adapter maps it to Google's
+    // client-assigned event id + 409-as-success).
+    const providerEvent = await createEventReconciling(adapter, {
+      calendarId: claimedCalendarId,
+      event: {
+        summary: `${label} with ${booking.requesterName}`,
+        description: booking.note
+          ? `Booked via qali.\n\n${booking.note}`
+          : "Booked via qali.",
+        startMs: booking.startMs,
+        endMs: booking.endMs,
+        allDay: false,
+        timeZone: page.timeZone,
+        attendees: [
+          { email: booking.requesterEmail, displayName: booking.requesterName },
+        ],
+      },
+      idempotencyKey: operationId,
+      notify: "all",
+    });
+    event = providerEventToMapped(providerEvent);
 
     const marked = await ctx.runMutation(internal.booking.markAccepted, {
       bookingId: args.bookingId,
@@ -115,8 +101,11 @@ export async function acceptBookingHandler(
       bookingId: args.bookingId,
       hostUserId: user._id,
       attemptId,
+      // An ambiguous provider failure (a lost response) is the "may have landed"
+      // case — the neutral successor to the old GoogleNetworkError branch.
       mayHaveSucceeded:
-        event !== undefined || error instanceof GoogleNetworkError,
+        event !== undefined ||
+        (error instanceof ProviderError && error.kind === "ambiguous"),
     });
     if (event) {
       throw new Error(
@@ -126,15 +115,15 @@ export async function acceptBookingHandler(
     throw error;
   }
 
-  // The booking state and Google event are authoritative. A sync repairs this
-  // optional optimistic mirror if the local write is transiently unavailable.
+  // The booking state and the provider event are authoritative. A sync repairs
+  // this optional optimistic mirror if the local write is transiently unavailable.
   try {
     await ctx.runMutation(internal.calendar.upsertEvent, {
       userId: user._id,
       event,
     });
   } catch (error) {
-    console.error("[booking] Google accepted event; mirror pending", error);
+    console.error("[booking] provider accepted event; mirror pending", error);
   }
   return null;
 }

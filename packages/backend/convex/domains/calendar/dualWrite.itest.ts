@@ -99,3 +99,41 @@ describe("calendar dual-write", () => {
     expect(series?.providerEventId).toBe("series-1");
   });
 });
+
+describe("sync engine dual-write", () => {
+  test("reconcile + upsertEventsPage + setSyncToken stamp the neutral mirror", async () => {
+    const t = convexTest(schema, modules);
+
+    await t.mutation(internal.googleSync.reconcileCalendars, {
+      userId: USER,
+      calendars: [{ googleCalendarId: "primary", primary: true }],
+    });
+    await t.mutation(internal.googleSync.upsertEventsPage, {
+      userId: USER,
+      events: [googleEvent],
+    });
+    await t.mutation(internal.googleSync.setCalendarSyncToken, {
+      userId: USER,
+      googleCalendarId: "primary",
+      syncToken: "tok-1",
+    });
+
+    await t.run(async (ctx) => {
+      const cal = await ctx.db
+        .query("calendars")
+        .withIndex("by_user", (q) => q.eq("userId", USER))
+        .unique();
+      expect(cal?.connectionId).toBeDefined();
+      expect(cal?.providerCalendarId).toBe("primary");
+      expect(cal?.syncCursor).toBe("tok-1"); // mirrors syncToken
+
+      const event = await ctx.db
+        .query("events")
+        .withIndex("by_user_and_start", (q) => q.eq("userId", USER))
+        .unique();
+      expect(event?.connectionId).toBe(cal?.connectionId);
+      expect(event?.providerEventId).toBe("g-evt");
+      expect(event?.providerUpdatedMs).toBe(777);
+    });
+  });
+});

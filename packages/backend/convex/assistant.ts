@@ -27,7 +27,7 @@ import { authComponent } from "./auth";
 import {
   ExternalWriteCommittedError,
   isDefinitiveGoogleFailure,
-} from "./lib/calendarOps";
+} from "./domains/calendar/service";
 import { getGoogleAccessToken } from "./lib/googleCredentials";
 import {
   ASSISTANT_TOOLS,

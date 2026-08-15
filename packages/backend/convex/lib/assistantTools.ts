@@ -25,7 +25,7 @@ import {
   deleteEventOp,
   resolveEventForWrite,
   updateEventOp,
-} from "./calendarOps";
+} from "../domains/calendar/service";
 import {
   MS_PER_MINUTE,
   addDaysToDateKey,

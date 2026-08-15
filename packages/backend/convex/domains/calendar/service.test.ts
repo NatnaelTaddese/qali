@@ -1,8 +1,8 @@
 // @ts-expect-error Bun supplies its test module at runtime.
 import { afterEach, describe, expect, test } from "bun:test";
 
-import type { Doc, Id } from "../_generated/dataModel";
-import type { ActionCtx } from "../_generated/server";
+import type { Doc, Id } from "../../_generated/dataModel";
+import type { ActionCtx } from "../../_generated/server";
 
 process.env.SKIP_ENV_VALIDATION = "1";
 const {
@@ -11,7 +11,7 @@ const {
   respondToEventOp,
   truncateRecurrence,
   updateEventOp,
-} = await import("./calendarOps");
+} = await import("./service");
 
 const originalFetch = globalThis.fetch;
 

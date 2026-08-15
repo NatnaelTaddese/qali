@@ -14,10 +14,10 @@
  * it reaches the database and Google, and only runs inside an action.
  */
 
-import { internal } from "../_generated/api";
-import type { Doc, Id } from "../_generated/dataModel";
-import type { ActionCtx } from "../_generated/server";
-import { CALENDAR_HISTORY_MS, syncOneCalendar } from "../googleSync";
+import { internal } from "../../_generated/api";
+import type { Doc, Id } from "../../_generated/dataModel";
+import type { ActionCtx } from "../../_generated/server";
+import { CALENDAR_HISTORY_MS, syncOneCalendar } from "../../googleSync";
 import {
   deleteCalendarEvent,
   getCalendarEvent,
@@ -30,12 +30,12 @@ import {
   type RawCalendarDateTime,
   type RawEvent,
   toGoogleTime,
-} from "./google";
+} from "../../lib/google";
 import {
   googleEventIdForOperation,
   mergeLiveAttendees,
   shiftRecurringMasterRange,
-} from "./assistantLogic";
+} from "../../lib/assistantLogic";
 import { eventCapabilities, type EventCapabilities } from "@qali/domain/permissions";
 
 export type EventCapabilityName =

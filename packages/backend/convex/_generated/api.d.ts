@@ -23,6 +23,7 @@ import type * as domains_booking_mutations from "../domains/booking/mutations.js
 import type * as domains_booking_queries from "../domains/booking/queries.js";
 import type * as domains_booking_service from "../domains/booking/service.js";
 import type * as domains_booking_tables from "../domains/booking/tables.js";
+import type * as domains_calendar_service from "../domains/calendar/service.js";
 import type * as domains_marketing_mutations from "../domains/marketing/mutations.js";
 import type * as domains_marketing_tables from "../domains/marketing/tables.js";
 import type * as domains_notifications_model from "../domains/notifications/model.js";
@@ -43,7 +44,6 @@ import type * as integrations_google_mappers from "../integrations/google/mapper
 import type * as lib_assistantHistory from "../lib/assistantHistory.js";
 import type * as lib_assistantLogic from "../lib/assistantLogic.js";
 import type * as lib_assistantTools from "../lib/assistantTools.js";
-import type * as lib_calendarOps from "../lib/calendarOps.js";
 import type * as lib_calendars from "../lib/calendars.js";
 import type * as lib_eventReads from "../lib/eventReads.js";
 import type * as lib_google from "../lib/google.js";
@@ -78,6 +78,7 @@ declare const fullApi: ApiFromModules<{
   "domains/booking/queries": typeof domains_booking_queries;
   "domains/booking/service": typeof domains_booking_service;
   "domains/booking/tables": typeof domains_booking_tables;
+  "domains/calendar/service": typeof domains_calendar_service;
   "domains/marketing/mutations": typeof domains_marketing_mutations;
   "domains/marketing/tables": typeof domains_marketing_tables;
   "domains/notifications/model": typeof domains_notifications_model;
@@ -98,7 +99,6 @@ declare const fullApi: ApiFromModules<{
   "lib/assistantHistory": typeof lib_assistantHistory;
   "lib/assistantLogic": typeof lib_assistantLogic;
   "lib/assistantTools": typeof lib_assistantTools;
-  "lib/calendarOps": typeof lib_calendarOps;
   "lib/calendars": typeof lib_calendars;
   "lib/eventReads": typeof lib_eventReads;
   "lib/google": typeof lib_google;

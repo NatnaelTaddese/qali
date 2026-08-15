@@ -27,7 +27,7 @@ import {
   respondToEventOp,
   updateEventOp,
   updateEventTimeOp,
-} from "./lib/calendarOps";
+} from "./domains/calendar/service";
 import { getGoogleAccessToken } from "./lib/googleCredentials";
 
 /** The set of `googleCalendarId`s the user has toggled visible. */

@@ -92,6 +92,13 @@ export const eventDocValidator = googleEventValidator.extend({
   // absent on incrementally-written rows; the next full resync re-stamps any that
   // still exist in Google, so absence never causes a wrongful sweep.
   syncGeneration: v.optional(v.number()),
+  // Provider-neutral fields, dual-written alongside the Google-named columns
+  // above during the connection-model migration and read with legacy fallback
+  // until cutover. `providerEventId` mirrors `googleEventId`, `providerUpdatedMs`
+  // mirrors `googleUpdatedMs`. Optional until backfilled. See Stage 5.
+  connectionId: v.optional(v.id("calendarConnections")),
+  providerEventId: v.optional(v.string()),
+  providerUpdatedMs: v.optional(v.number()),
 });
 
 /** One piece of an assistant turn, in the order it happened.
@@ -194,9 +201,21 @@ export default defineSchema({
     // at the start of each full resync; the run stamps re-fetched rows with it
     // and sweeps rows carrying an older value. See syncOneCalendar.
     syncGeneration: v.optional(v.number()),
+    // Provider-neutral fields (dual-written until cutover). `providerCalendarId`
+    // mirrors `googleCalendarId`; `syncCursor` is the opaque per-calendar cursor
+    // that mirrors `syncToken` (a Google sync token today, a Graph delta link
+    // later). Optional until backfilled.
+    connectionId: v.optional(v.id("calendarConnections")),
+    providerCalendarId: v.optional(v.string()),
+    syncCursor: v.optional(v.string()),
   })
     .index("by_user", ["userId"])
-    .index("by_user_and_googleCalendarId", ["userId", "googleCalendarId"]),
+    .index("by_user_and_googleCalendarId", ["userId", "googleCalendarId"])
+    // Staged neutral-id lookup; read by nothing until cutover.
+    .index("by_connection_and_providerCalendarId", [
+      "connectionId",
+      "providerCalendarId",
+    ]),
 
   // One row per synced Google Calendar event. See eventDocValidator above.
   events: defineTable(eventDocValidator)
@@ -209,6 +228,14 @@ export default defineSchema({
       "userId",
       "calendarId",
       "googleEventId",
+    ])
+    // Provider-neutral event-id lookup, the successor to the Google-id index
+    // above. Staged: built now but read by nothing until cutover, after which the
+    // Google-id index is retired. Costs one extra index copy on the largest table
+    // for the duration of the migration — an accepted, temporary cost.
+    .index("by_connection_and_providerEventId", [
+      "connectionId",
+      "providerEventId",
     ]),
 
   // One physical copy of a Google *public* calendar's events (holidays,
@@ -245,11 +272,21 @@ export default defineSchema({
     // The instance update time that this rule was fetched against. A newer
     // synced instance invalidates the cache and triggers one master refresh.
     sourceUpdatedMs: v.number(),
-  }).index("by_user_and_calendar_and_googleEventId", [
-    "userId",
-    "calendarId",
-    "googleEventId",
-  ]),
+    // Provider-neutral fields (dual-written until cutover). `providerEventId`
+    // mirrors `googleEventId`. Optional until backfilled.
+    connectionId: v.optional(v.id("calendarConnections")),
+    providerEventId: v.optional(v.string()),
+  })
+    .index("by_user_and_calendar_and_googleEventId", [
+      "userId",
+      "calendarId",
+      "googleEventId",
+    ])
+    // Staged neutral-id lookup; read by nothing until cutover.
+    .index("by_connection_and_providerEventId", [
+      "connectionId",
+      "providerEventId",
+    ]),
 
   // One row per host: the public booking link plus its whole configuration.
   // A user has at most one page in this version, so the public page renders
@@ -325,6 +362,11 @@ export default defineSchema({
     // Reserved when acceptance starts and retained with the Google event.
     googleEventId: v.optional(v.string()),
     calendarId: v.optional(v.string()),
+    // Provider-neutral fields (dual-written until cutover). `connectionId` is the
+    // writable connection acceptance created the event on; `providerEventId`
+    // mirrors `googleEventId`. Optional until backfilled.
+    connectionId: v.optional(v.id("calendarConnections")),
+    providerEventId: v.optional(v.string()),
     decidedAt: v.optional(v.number()),
     // A stable Google create ID plus a short-lived claimant. Status remains
     // pending while Google is in flight so existing clients keep rendering the

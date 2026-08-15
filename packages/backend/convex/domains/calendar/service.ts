@@ -37,6 +37,8 @@ import {
   shiftRecurringMasterRange,
 } from "../../lib/assistantLogic";
 import { eventCapabilities, type EventCapabilities } from "@qali/domain/permissions";
+import { authComponent } from "../../auth";
+import { getGoogleAccessToken } from "../../lib/googleCredentials";
 
 export type EventCapabilityName =
   | "canEdit"
@@ -1219,4 +1221,107 @@ export async function deleteEventOp(
     );
   }
   return null;
+}
+
+// --- Action handlers ------------------------------------------------------
+// The Convex-action entry points for calendar writes. Each resolves the user +
+// token, then delegates to the op above. The root `calendar.ts` wraps these in
+// `action(...)`. The assistant reaches the ops directly (never these), so it
+// doesn't re-resolve the user/token per tool call.
+
+/** The opening move of every action that writes to Google: resolve the
+ * signed-in user and get them a token. Whether they may touch the *event* is a
+ * separate question, answered inside each op by `resolveEventForWrite`. */
+async function authedWrite(
+  ctx: ActionCtx,
+): Promise<{ userId: string; accessToken: string }> {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+  return {
+    userId: user._id,
+    accessToken: await getGoogleAccessToken(ctx, user._id),
+  };
+}
+
+export async function createEventHandler(
+  ctx: ActionCtx,
+  args: CreateEventArgs,
+): Promise<MappedEvent> {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+  const accessToken = await getGoogleAccessToken(ctx, user._id);
+  return await createEventOp(ctx, user._id, accessToken, args);
+}
+
+export async function refreshEventRecurrenceHandler(
+  ctx: ActionCtx,
+  { eventId }: { eventId: Id<"events"> | Id<"sharedEvents"> },
+): Promise<null> {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+
+  const context = await ctx.runQuery(internal.calendar.getEventContext, {
+    eventId,
+    userId: user._id,
+  });
+  if (!context) {
+    throw new Error("Event not found");
+  }
+  if (!context.event.recurringEventId) {
+    return null;
+  }
+
+  const accessToken = await getGoogleAccessToken(ctx, user._id);
+
+  const master = await getCalendarEvent(
+    accessToken,
+    context.event.calendarId,
+    context.event.recurringEventId,
+  );
+  await ctx.runMutation(internal.calendar.upsertRecurringSeries, {
+    userId: user._id,
+    calendarId: context.event.calendarId,
+    googleEventId: context.event.recurringEventId,
+    recurrence: master.recurrence ?? [],
+    sourceUpdatedMs: context.event.googleUpdatedMs,
+  });
+  return null;
+}
+
+export async function updateEventTimeHandler(
+  ctx: ActionCtx,
+  args: UpdateEventTimeArgs,
+): Promise<MappedEvent> {
+  const { userId, accessToken } = await authedWrite(ctx);
+  return await updateEventTimeOp(ctx, userId, accessToken, args);
+}
+
+export async function updateEventHandler(
+  ctx: ActionCtx,
+  args: UpdateEventArgs,
+): Promise<MappedEvent> {
+  const { userId, accessToken } = await authedWrite(ctx);
+  return await updateEventOp(ctx, userId, accessToken, args);
+}
+
+export async function respondToEventHandler(
+  ctx: ActionCtx,
+  args: RespondToEventArgs,
+): Promise<MappedEvent> {
+  const { userId, accessToken } = await authedWrite(ctx);
+  return await respondToEventOp(ctx, userId, accessToken, args);
+}
+
+export async function deleteEventHandler(
+  ctx: ActionCtx,
+  args: DeleteEventArgs,
+): Promise<null> {
+  const { userId, accessToken } = await authedWrite(ctx);
+  return await deleteEventOp(ctx, userId, accessToken, args);
 }

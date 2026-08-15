@@ -20,7 +20,7 @@ import {
   fetchOtherContactsPage,
   SyncTokenExpiredError,
 } from "./lib/google";
-import { googleEventValidator } from "./schema";
+import { googleEventValidator } from "./domains/calendar/validators";
 
 // Validators for data pushed from actions into mutations (mapped Google shapes).
 const contactValidator = v.object({

@@ -23,7 +23,12 @@ import type * as domains_booking_mutations from "../domains/booking/mutations.js
 import type * as domains_booking_queries from "../domains/booking/queries.js";
 import type * as domains_booking_service from "../domains/booking/service.js";
 import type * as domains_booking_tables from "../domains/booking/tables.js";
+import type * as domains_calendar_model from "../domains/calendar/model.js";
+import type * as domains_calendar_mutations from "../domains/calendar/mutations.js";
+import type * as domains_calendar_queries from "../domains/calendar/queries.js";
 import type * as domains_calendar_service from "../domains/calendar/service.js";
+import type * as domains_calendar_tables from "../domains/calendar/tables.js";
+import type * as domains_calendar_validators from "../domains/calendar/validators.js";
 import type * as domains_marketing_mutations from "../domains/marketing/mutations.js";
 import type * as domains_marketing_tables from "../domains/marketing/tables.js";
 import type * as domains_notifications_model from "../domains/notifications/model.js";
@@ -78,7 +83,12 @@ declare const fullApi: ApiFromModules<{
   "domains/booking/queries": typeof domains_booking_queries;
   "domains/booking/service": typeof domains_booking_service;
   "domains/booking/tables": typeof domains_booking_tables;
+  "domains/calendar/model": typeof domains_calendar_model;
+  "domains/calendar/mutations": typeof domains_calendar_mutations;
+  "domains/calendar/queries": typeof domains_calendar_queries;
   "domains/calendar/service": typeof domains_calendar_service;
+  "domains/calendar/tables": typeof domains_calendar_tables;
+  "domains/calendar/validators": typeof domains_calendar_validators;
   "domains/marketing/mutations": typeof domains_marketing_mutations;
   "domains/marketing/tables": typeof domains_marketing_tables;
   "domains/notifications/model": typeof domains_notifications_model;

@@ -806,17 +806,22 @@ async function runSyncForUser(
 // ---------------------------------------------------------------------------
 
 /** Called by the authenticated client to register + sync the current user. */
+/** Run the signed-in user's sync now, on the fast cadence. Shared by the
+ * `googleSync.syncNow` compatibility action and the provider-neutral
+ * `calendarSync.syncNow` facade so both trigger identical behavior. */
+export async function syncNowForCurrentUser(ctx: ActionCtx): Promise<null> {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+  // User-initiated: keep them on the fast cadence while the app is open.
+  await runSyncForUser(ctx, user._id, true);
+  return null;
+}
+
 export const syncNow = action({
   args: {},
-  handler: async (ctx): Promise<null> => {
-    const user = await authComponent.safeGetAuthUser(ctx);
-    if (!user) {
-      throw new Error("Not authenticated");
-    }
-    // User-initiated: keep them on the fast cadence while the app is open.
-    await runSyncForUser(ctx, user._id, true);
-    return null;
-  },
+  handler: (ctx): Promise<null> => syncNowForCurrentUser(ctx),
 });
 
 /** Per-user sync run, scheduled by the cron. */

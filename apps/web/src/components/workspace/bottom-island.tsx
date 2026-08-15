@@ -372,7 +372,7 @@ function NavRow({
   onPrepareAvailability: () => void;
   onOpenAvailability: () => void;
 }) {
-  const syncNow = useAction(api.googleSync.syncNow);
+  const syncNow = useAction(api.calendarSync.syncNow);
   const [isSyncing, setIsSyncing] = useState(false);
 
   const sync = async () => {

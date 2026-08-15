@@ -4,7 +4,7 @@
 import { ConvexError } from "convex/values";
 
 import type { MutationCtx } from "../../_generated/server";
-import { consumeRateLimit } from "../../lib/rateLimit";
+import { consumeRateLimit } from "../../infrastructure/rateLimit";
 
 const RATE_WINDOW_MS = 60 * 60 * 1000;
 // A hard hourly cap on total new signups across everyone. This is the real guard

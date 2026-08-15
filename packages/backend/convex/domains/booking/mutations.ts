@@ -15,7 +15,7 @@ import type { Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import { googleEventIdForOperation } from "../../lib/assistantLogic";
-import { consumeRateLimit } from "../../lib/rateLimit";
+import { consumeRateLimit } from "../../infrastructure/rateLimit";
 import { clearBookingNotifications } from "../notifications/model";
 import {
   ACCEPT_LEASE_MS,

@@ -12,6 +12,7 @@ import type * as assistant from "../assistant.js";
 import type * as assistantData from "../assistantData.js";
 import type * as assistantMaintenance from "../assistantMaintenance.js";
 import type * as auth from "../auth.js";
+import type * as backfillConnections from "../backfillConnections.js";
 import type * as booking from "../booking.js";
 import type * as calendar from "../calendar.js";
 import type * as calendarSync from "../calendarSync.js";
@@ -53,6 +54,7 @@ declare const fullApi: ApiFromModules<{
   assistantData: typeof assistantData;
   assistantMaintenance: typeof assistantMaintenance;
   auth: typeof auth;
+  backfillConnections: typeof backfillConnections;
   booking: typeof booking;
   calendar: typeof calendar;
   calendarSync: typeof calendarSync;

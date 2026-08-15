@@ -244,6 +244,9 @@ describe("booking acceptance settle", () => {
     const row = await t.run((ctx) => ctx.db.get(bookingId));
     expect(row!.status).toBe("accepted");
     expect(row!.googleEventId).toBe("evt_google");
+    // Dual-write: the neutral mirror is stamped alongside the Google id.
+    expect(row!.connectionId).toBeDefined();
+    expect(row!.providerEventId).toBe("evt_google");
     expect(row!.acceptAttemptId).toBeUndefined();
     expect(row!.acceptLeaseExpiresAt).toBeUndefined();
     expect(row!.acceptMayHaveSucceeded).toBeUndefined();

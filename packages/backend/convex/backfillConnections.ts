@@ -17,7 +17,11 @@ import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { internalMutation, type MutationCtx } from "./_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from "./_generated/server";
 
 const USER_BATCH = 50;
 const ROW_BATCH = 500;
@@ -230,5 +234,70 @@ export const backfillUserTail = internalMutation({
       }
     }
     return null;
+  },
+});
+
+/**
+ * Read-only parity check for the backfill. Run after it settles:
+ *   npx convex run --prod backfillConnections:verifyParity '{}'
+ *
+ * The EXACT signal is `usersMatch`: one connection + one connectionSyncState per
+ * syncState user. The per-table `lacking` counts are SAMPLED (up to `sampleLimit`,
+ * default 5000) — `sampleCapped:false` means the sample covered the whole table,
+ * so the count is exhaustive. A small, growing `lacking` count is expected once
+ * traffic resumes: rows synced/created after the backfill won't carry the neutral
+ * fields until dual-write ships. So read this right after the backfill, and judge
+ * coverage against the sampled total, not against zero forever.
+ */
+export const verifyParity = internalQuery({
+  args: { sampleLimit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const n = args.sampleLimit ?? 5000;
+    const connections = await ctx.db.query("calendarConnections").collect();
+    const connSync = await ctx.db.query("connectionSyncState").collect();
+    const syncStates = await ctx.db.query("syncState").collect();
+    const ops = await ctx.db.query("calendarOperations").collect();
+
+    const sample = async (
+      table: "events" | "calendars" | "recurringSeries" | "bookings",
+    ) => {
+      const rows = await ctx.db.query(table).take(n);
+      const lackingConnectionId = rows.filter((r) => !r.connectionId).length;
+      const idMismatch = rows.filter(
+        (r) =>
+          "googleEventId" in r &&
+          r.googleEventId !== undefined &&
+          r.providerEventId !== r.googleEventId,
+      ).length;
+      return {
+        sampled: rows.length,
+        sampleCapped: rows.length === n, // true => raise sampleLimit for exact
+        lackingConnectionId,
+        providerIdMismatch: idMismatch,
+      };
+    };
+
+    return {
+      // The exact, churn-free parity signal.
+      syncStateUsers: syncStates.length,
+      connections: connections.length,
+      connectionSyncState: connSync.length,
+      usersMatch:
+        connections.length === syncStates.length &&
+        connSync.length === syncStates.length,
+      connectionsByProvider: connections.reduce<Record<string, number>>(
+        (m, c) => ({ ...m, [c.provider]: (m[c.provider] ?? 0) + 1 }),
+        {},
+      ),
+      calendarOperations: ops.length,
+      opStatus: ops.reduce<Record<string, number>>(
+        (m, o) => ({ ...m, [o.status]: (m[o.status] ?? 0) + 1 }),
+        {},
+      ),
+      events: await sample("events"),
+      calendars: await sample("calendars"),
+      recurringSeries: await sample("recurringSeries"),
+      bookings: await sample("bookings"),
+    };
   },
 });

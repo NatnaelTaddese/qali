@@ -1,7 +1,9 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+import { marketingTables } from "./domains/marketing/tables";
 import { notificationTables } from "./domains/notifications/tables";
+import { peopleTables } from "./domains/people/tables";
 
 /** A guest on an event. Mirrors the subset of Google's attendee object we keep;
  * `responseStatus` is "needsAction" | "declined" | "tentative" | "accepted".
@@ -397,60 +399,9 @@ export default defineSchema({
     count: v.number(),
   }).index("by_key", ["key"]),
 
-  // One row per synced Google contact (People API connection).
-  contacts: defineTable({
-    userId: v.string(),
-    resourceName: v.string(),
-    displayName: v.optional(v.string()),
-    emails: v.array(v.string()),
-    phones: v.array(v.string()),
-    photoUrl: v.optional(v.string()),
-    googleEtag: v.optional(v.string()),
-    // Full-resync reconcile marker (see syncState.contactsSyncGeneration).
-    syncGeneration: v.optional(v.number()),
-  })
-    .index("by_user", ["userId"])
-    .index("by_user_and_resourceName", ["userId", "resourceName"]),
-
-  // A unified, email-keyed people directory: the union of three feeders —
-  // saved Google connections ("connection"), auto-collected Other Contacts
-  // ("other"), and people harvested from calendar events ("attendee"). This is
-  // what the client joins attendee emails against for names + avatars, so a
-  // guest the user has met but never saved still gets a real photo. One row per
-  // (userId, lowercased email); `sources` records which feeders have seen it.
-  people: defineTable({
-    userId: v.string(),
-    email: v.string(),
-    displayName: v.optional(v.string()),
-    photoUrl: v.optional(v.string()),
-    sources: v.array(
-      v.union(
-        v.literal("connection"),
-        v.literal("other"),
-        v.literal("attendee"),
-      ),
-    ),
-    // Engagement ranking, recomputed from the user's events on each sync (see
-    // recomputeEngagement in googleSync.ts). A recency- + intimacy-weighted
-    // frequency score orders the guest picker toward frequent, recent meeting
-    // partners. The count/timestamps back tiebreaks and future UI hints. Absent
-    // until the first recompute; treat missing as 0 / never.
-    score: v.optional(v.number()),
-    meetingCount: v.optional(v.number()),
-    lastMetMs: v.optional(v.number()),
-    nextMeetingMs: v.optional(v.number()),
-    updatedAt: v.number(),
-    // Last full-resync generation of the Other Contacts feeder that saw this
-    // person. Only meaningful when `sources` includes "other"; used to reconcile
-    // away the "other" source when an Other Contact disappears across a full
-    // resync (that feeder has no backing table). See syncOtherContacts.
-    otherSyncGeneration: v.optional(v.number()),
-  })
-    .index("by_user", ["userId"])
-    .index("by_user_and_email", ["userId", "email"])
-    // Ranked reads for the guest picker: query descending to get top scorers
-    // without loading and JS-sorting the whole directory per client.
-    .index("by_user_and_score", ["userId", "score"]),
+  // People domain tables — contacts feed + unified directory (see
+  // domains/people/tables.ts).
+  ...peopleTables,
 
   // --- AI assistant ---------------------------------------------------------
   // These tables stay empty when no DEEPSEEK_API_KEY is configured; the
@@ -551,19 +502,8 @@ export default defineSchema({
     .index("by_thread", ["threadId", "createdAt"])
     .index("by_user_and_status", ["userId", "status"]),
 
-  // Email signups from the public marketing site. No account, no auth — anyone
-  // can add their address once. `by_email` both serves the dedupe check on the
-  // one public mutation that writes here and keeps a second signup from creating
-  // a duplicate row.
-  waitlist: defineTable({
-    // Stored trimmed and lowercased so the dedupe check can't be fooled by case
-    // or surrounding whitespace.
-    email: v.string(),
-    // Where the signup came from, e.g. "www". Optional so future entry points
-    // don't force a schema change.
-    source: v.optional(v.string()),
-    createdAt: v.number(),
-  }).index("by_email", ["email"]),
+  // Marketing domain tables — the public waitlist (see domains/marketing/tables.ts).
+  ...marketingTables,
 
   // --- Provider-ready connection model (Stage 5 "expand") -----------------
   // These three tables are additive and, for now, written/read by nothing: they

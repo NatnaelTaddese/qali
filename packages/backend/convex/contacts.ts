@@ -1,17 +1,10 @@
-import { query } from "./_generated/server";
-import { authComponent } from "./auth";
+/** Stable public facade for contacts. Logic lives in `domains/people/`; this
+ * keeps `api.contacts.listContacts` fixed. */
 
-/** Contacts for the current user, read from the synced `contacts` table. */
+import { query } from "./_generated/server";
+import { listContactsHandler } from "./domains/people/queries";
+
 export const listContacts = query({
   args: {},
-  handler: async (ctx) => {
-    const user = await authComponent.safeGetAuthUser(ctx);
-    if (!user) {
-      return [];
-    }
-    return await ctx.db
-      .query("contacts")
-      .withIndex("by_user", (q) => q.eq("userId", user._id))
-      .take(200);
-  },
+  handler: (ctx) => listContactsHandler(ctx),
 });

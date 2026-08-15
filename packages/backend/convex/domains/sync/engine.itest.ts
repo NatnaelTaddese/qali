@@ -2,10 +2,12 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 
-import { internal } from "./_generated/api";
-import schema from "./schema";
+import { internal } from "../../_generated/api";
+import schema from "../../schema";
 
-const modules = import.meta.glob("./**/*.ts");
+// Globs from the convex root (two levels up) so convex-test loads the whole
+// function surface, not just this domain folder.
+const modules = import.meta.glob("../../**/*.ts");
 
 /** A minimal stored event for the given user/calendar/generation. */
 function eventDoc(

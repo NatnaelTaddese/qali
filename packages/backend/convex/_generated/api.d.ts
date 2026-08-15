@@ -37,6 +37,7 @@ import type * as domains_notifications_queries from "../domains/notifications/qu
 import type * as domains_notifications_tables from "../domains/notifications/tables.js";
 import type * as domains_people_queries from "../domains/people/queries.js";
 import type * as domains_people_tables from "../domains/people/tables.js";
+import type * as domains_sync_engine from "../domains/sync/engine.js";
 import type * as googleSync from "../googleSync.js";
 import type * as healthCheck from "../healthCheck.js";
 import type * as http from "../http.js";
@@ -97,6 +98,7 @@ declare const fullApi: ApiFromModules<{
   "domains/notifications/tables": typeof domains_notifications_tables;
   "domains/people/queries": typeof domains_people_queries;
   "domains/people/tables": typeof domains_people_tables;
+  "domains/sync/engine": typeof domains_sync_engine;
   googleSync: typeof googleSync;
   healthCheck: typeof healthCheck;
   http: typeof http;

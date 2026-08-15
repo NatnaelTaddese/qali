@@ -298,6 +298,8 @@ export type RawEvent = {
   /** Present on recurring masters; expanded instances only carry recurringEventId. */
   recurrence?: string[];
   recurringEventId?: string;
+  /** The occurrence's position in its series before any per-instance move. */
+  originalStartTime?: RawCalendarDateTime;
   hangoutLink?: string;
   conferenceData?: RawConferenceData;
 };

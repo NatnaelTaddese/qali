@@ -1,31 +1,13 @@
 /**
- * The public marketing-site waitlist: anyone can leave an email to be notified
- * at launch. This is an anonymous surface, so `join` normalizes the address and
- * dedupes against the `by_email` index — a repeat signup (or a network retry of
- * the same request) is a no-op, never a second row.
+ * The public marketing-site waitlist. Stable facade — keeps `api.waitlist.join`
+ * fixed while the logic lives in `domains/marketing/`.
  */
 
-import { ConvexError, v } from "convex/values";
+import { v } from "convex/values";
 
 import { mutation } from "./_generated/server";
-import { consumeRateLimit } from "./lib/rateLimit";
+import { joinHandler } from "./domains/marketing/mutations";
 
-const RATE_WINDOW_MS = 60 * 60 * 1000;
-// A hard hourly cap on total new signups across everyone. This is the real guard
-// on an anonymous surface with no client IP: it bounds how many unique-email rows
-// an attacker can create per hour (dedupe already collapses repeats of one
-// address). Generous enough for a launch spike; tune down if abuse appears, or
-// move to the sharded `@convex-dev/rate-limiter` if the single global key turns
-// hot. See consumeRateLimit.
-const MAX_JOINS_GLOBAL = 600;
-// Per-address ceiling, mostly to serialize concurrent submits of the same new
-// email so they can't slip past the dedupe check and create duplicate rows.
-const MAX_JOINS_PER_EMAIL = 3;
-
-/** Add an email to the waitlist. Idempotent by email: an address already on the
- * list is treated as success without inserting again, so double-submits and
- * retries stay harmless. Rate-limited: a global hourly cap bounds the anonymous
- * write surface, checked before any row (waitlist or counter) is created. */
 export const join = mutation({
   args: {
     email: v.string(),
@@ -33,49 +15,5 @@ export const join = mutation({
     source: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    const email = args.email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) {
-      throw new Error("Please enter a valid email address");
-    }
-
-    // Global cap FIRST, so a flood is throttled before it can create either a
-    // waitlist row or a per-email counter row.
-    if (
-      !(await consumeRateLimit(
-        ctx,
-        "waitlist:global",
-        MAX_JOINS_GLOBAL,
-        RATE_WINDOW_MS,
-      ))
-    ) {
-      throw new ConvexError({ code: "WAITLIST_RATE_LIMIT" });
-    }
-
-    const existing = await ctx.db
-      .query("waitlist")
-      .withIndex("by_email", (q) => q.eq("email", email))
-      .unique();
-    if (existing) {
-      return null;
-    }
-
-    if (
-      !(await consumeRateLimit(
-        ctx,
-        `waitlist:email:${email}`,
-        MAX_JOINS_PER_EMAIL,
-        RATE_WINDOW_MS,
-      ))
-    ) {
-      throw new ConvexError({ code: "WAITLIST_RATE_LIMIT" });
-    }
-
-    await ctx.db.insert("waitlist", {
-      email,
-      source: args.source,
-      createdAt: Date.now(),
-    });
-    return null;
-  },
+  handler: (ctx, args) => joinHandler(ctx, args),
 });

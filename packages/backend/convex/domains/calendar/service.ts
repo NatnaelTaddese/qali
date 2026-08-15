@@ -14,11 +14,10 @@
  * it reaches the database and Google, and only runs inside an action.
  */
 
-import { internal } from "../_generated/api";
-import type { Doc, Id } from "../_generated/dataModel";
-import type { ActionCtx } from "../_generated/server";
-import { createAuth } from "../auth";
-import { CALENDAR_HISTORY_MS, syncOneCalendar } from "../googleSync";
+import { internal } from "../../_generated/api";
+import type { Doc, Id } from "../../_generated/dataModel";
+import type { ActionCtx } from "../../_generated/server";
+import { CALENDAR_HISTORY_MS, syncOneCalendar } from "../../googleSync";
 import {
   deleteCalendarEvent,
   getCalendarEvent,
@@ -31,13 +30,15 @@ import {
   type RawCalendarDateTime,
   type RawEvent,
   toGoogleTime,
-} from "./google";
+} from "../../lib/google";
 import {
   googleEventIdForOperation,
   mergeLiveAttendees,
   shiftRecurringMasterRange,
-} from "./assistantLogic";
-import { eventCapabilities, type EventCapabilities } from "./permissions";
+} from "../../lib/assistantLogic";
+import { eventCapabilities, type EventCapabilities } from "@qali/domain/permissions";
+import { authComponent } from "../../auth";
+import { getGoogleAccessToken } from "../../lib/googleCredentials";
 
 export type EventCapabilityName =
   | "canEdit"
@@ -114,6 +115,7 @@ type GoogleEventPatch = {
   attendees?: RawAttendee[];
   start?: RawCalendarDateTime;
   end?: RawCalendarDateTime;
+  recurrence?: string[];
 };
 
 function sameGoogleTime(
@@ -163,6 +165,12 @@ function googleEventMatchesPatch(
   if (!sameGoogleTime(event.start, patch.start)) return false;
   if (!sameGoogleTime(event.end, patch.end)) return false;
   if (
+    patch.recurrence !== undefined &&
+    JSON.stringify(event.recurrence ?? []) !== JSON.stringify(patch.recurrence)
+  ) {
+    return false;
+  }
+  if (
     patch.attendees !== undefined &&
     attendeeKeys(event.attendees).join("\n") !== attendeeKeys(patch.attendees).join("\n")
   ) {
@@ -172,21 +180,6 @@ function googleEventMatchesPatch(
   if (conference === "add" && !hasConference) return false;
   if (conference === "remove" && hasConference) return false;
   return true;
-}
-
-/** A Google OAuth access token for `userId`, or a thrown error. Better Auth's
- * component owns the refresh, so this is always fetched at use time. */
-export async function getGoogleAccessToken(
-  ctx: ActionCtx,
-  userId: string,
-): Promise<string> {
-  const { accessToken } = await createAuth(ctx).api.getAccessToken({
-    body: { providerId: "google", userId },
-  });
-  if (!accessToken) {
-    throw new Error("No Google access token available for user");
-  }
-  return accessToken;
 }
 
 /**
@@ -281,7 +274,7 @@ function toRRuleUntil(ms: number, allDay: boolean): string {
  * `COUNT` or existing `UNTIL`; other recurrence lines (EXDATE/RDATE) pass
  * through untouched. This is how "this and following" ends the original series.
  */
-function truncateRecurrence(
+export function truncateRecurrence(
   recurrence: string[],
   untilMs: number,
   allDay: boolean,
@@ -436,6 +429,7 @@ export async function updateEventTimeOp(
 }
 
 export type UpdateEventScope = "thisEvent" | "thisAndFollowing" | "allEvents";
+export type DeleteEventScope = UpdateEventScope;
 
 export interface UpdateEventArgs {
   eventId: Id<"events">;
@@ -449,6 +443,8 @@ export interface UpdateEventArgs {
   endMs?: number;
   allDay?: boolean;
   attendees?: RawAttendee[];
+  /** Set only when converting a single event into a recurring master. */
+  recurrence?: string[];
   timeZone?: string;
   conference?: "meet" | null;
   scope?: UpdateEventScope;
@@ -491,6 +487,23 @@ export async function updateEventOp(
   const { row, capabilities } = await resolveEventForWrite(ctx, userId, args.eventId, [
     "canEdit",
   ]);
+
+  if (args.recurrence !== undefined) {
+    if (args.recurrence.length === 0) {
+      throw new Error("A recurring event needs a recurrence rule");
+    }
+    if (!capabilities.canChangeRecurrence) {
+      throw new Error("This event is already part of a recurring series");
+    }
+    if (
+      args.expectedGoogleUpdatedMs !== undefined &&
+      row.googleUpdatedMs !== args.expectedGoogleUpdatedMs
+    ) {
+      throw new Error(
+        "The event changed after this recurring-event proposal was made. Please propose it again.",
+      );
+    }
+  }
 
   // A non-recurring event has no series, so any scope collapses to the one
   // event; only a recurring instance can reach the master.
@@ -570,6 +583,63 @@ export async function updateEventOp(
       : args.conference === null
         ? "remove"
         : "add";
+
+  if (args.recurrence !== undefined) {
+    const startMs = hasTimeChange ? args.startMs! : row.startMs;
+    const endMs = hasTimeChange ? args.endMs! : row.endMs;
+    if (!allDay && !args.timeZone) {
+      throw new Error("A time zone is required to make a timed event repeat");
+    }
+    const patch = {
+      start: toGoogleTime(startMs, allDay, args.timeZone),
+      end: toGoogleTime(endMs, allDay, args.timeZone),
+      ...fields,
+      recurrence: args.recurrence,
+    };
+    const live =
+      liveAttendeeSource ??
+      (await getCalendarEvent(accessToken, row.calendarId, row.googleEventId));
+    const liveUpdatedMs = live.updated
+      ? new Date(live.updated).getTime()
+      : undefined;
+    if (
+      args.expectedGoogleUpdatedMs !== undefined &&
+      liveUpdatedMs !== undefined &&
+      liveUpdatedMs !== args.expectedGoogleUpdatedMs &&
+      !googleEventMatchesPatch(live, patch, conference)
+    ) {
+      throw new Error(
+        "The event changed after this recurring-event proposal was made. Please propose it again.",
+      );
+    }
+
+    const master =
+      args.operationId && googleEventMatchesPatch(live, patch, conference)
+        ? mapGoogleEvent(live, row.calendarId)
+        : await patchCalendarEvent(
+            accessToken,
+            row.calendarId,
+            row.googleEventId,
+            patch,
+            sendUpdates,
+            conference,
+            args.operationId,
+          );
+    try {
+      await ctx.runMutation(internal.calendar.upsertRecurringSeries, {
+        userId,
+        calendarId: row.calendarId,
+        googleEventId: master.googleEventId,
+        recurrence: args.recurrence,
+        sourceUpdatedMs: master.googleUpdatedMs,
+        replacedEventId: row._id,
+      });
+      await resyncCalendar(ctx, userId, accessToken, row.calendarId);
+    } catch (error) {
+      throw new ExternalWriteCommittedError("Event made recurring.", error);
+    }
+    return master;
+  }
 
   if (scope === "thisEvent") {
     const times =
@@ -946,21 +1016,34 @@ export async function respondToEventOp(
 }
 
 /**
- * Delete an event, meaning one of two different things.
+ * Delete one occurrence, a recurring tail, or an entire series.
  *
- * As its organizer, this cancels the event for everyone and mails them about
- * it. As a mere guest, the copy on your calendar is yours alone: deleting it
- * removes it from your view, leaves the organizer's copy untouched, and tells
- * nobody. The frontend labels the button accordingly ("Delete event" vs.
- * "Remove from my calendar") — the two are not the same act and shouldn't read
- * as though they were. Declining, if that's what the user means, is the RSVP
- * control; this deliberately doesn't decline on their behalf.
+ * Organizers cancel the selected scope for everyone and notify guests. Guests
+ * can remove one occurrence or their whole local series copy without sending
+ * notifications; only an organizer can truncate a series from an occurrence
+ * onward. Declining remains a separate RSVP operation.
  */
+export interface DeleteEventArgs {
+  eventId: Id<"events">;
+  scope?: DeleteEventScope;
+  operationId?: string;
+  /** Version of the recurring master cached when an assistant proposal was
+   * shown. Only future-only deletion depends on the rule remaining unchanged. */
+  expectedSeriesUpdatedMs?: number;
+}
+
+function googleTimeMs(value: RawCalendarDateTime | undefined): number | undefined {
+  const encoded = value?.dateTime ?? value?.date;
+  if (!encoded) return undefined;
+  const parsed = new Date(encoded).getTime();
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export async function deleteEventOp(
   ctx: ActionCtx,
   userId: string,
   accessToken: string,
-  args: { eventId: Id<"events"> },
+  args: DeleteEventArgs,
 ): Promise<null> {
   const { row, capabilities } = await resolveEventForWrite(
     ctx,
@@ -969,14 +1052,152 @@ export async function deleteEventOp(
     ["canDelete", "canRemoveSelf"],
   );
 
+  const scope = row.recurringEventId
+    ? (args.scope ?? "thisEvent")
+    : "thisEvent";
+  if (scope === "thisAndFollowing" && !capabilities.isOrganizer) {
+    throw new Error(
+      "Only the organizer can remove this and following events from the series",
+    );
+  }
+
   const hasGuests = (row.attendees?.length ?? 0) > 0;
+  const sendUpdates =
+    capabilities.isOrganizer && hasGuests ? ("all" as const) : ("none" as const);
+
+  if (row.recurringEventId && scope === "thisAndFollowing") {
+    let rawInstance: RawEvent;
+    try {
+      rawInstance = await getCalendarEvent(
+        accessToken,
+        row.calendarId,
+        row.googleEventId,
+      );
+    } catch (error) {
+      // A retry after a successful truncation can no longer retrieve this
+      // occurrence. Drop a possibly stale local row before re-syncing.
+      if (!(error instanceof GoogleApiError) || error.status !== 404) throw error;
+      try {
+        await ctx.runMutation(internal.calendar.deleteEventRow, {
+          eventId: args.eventId,
+          userId,
+          calendarId: row.calendarId,
+        });
+        await resyncCalendar(ctx, userId, accessToken, row.calendarId);
+      } catch (syncError) {
+        throw new ExternalWriteCommittedError(
+          "This and following events deleted.",
+          syncError,
+        );
+      }
+      return null;
+    }
+
+    const rawMaster = await getCalendarEvent(
+      accessToken,
+      row.calendarId,
+      row.recurringEventId,
+    );
+    const master = mapGoogleEvent(rawMaster, row.calendarId);
+    const originalStartMs =
+      googleTimeMs(rawInstance.originalStartTime) ??
+      googleTimeMs(rawInstance.start) ??
+      row.startMs;
+
+    // Removing from the first occurrence onward is exactly a whole-series
+    // delete; an UNTIL before DTSTART would be invalid.
+    if (originalStartMs === master.startMs) {
+      try {
+        await deleteCalendarEvent(
+          accessToken,
+          row.calendarId,
+          row.recurringEventId,
+          sendUpdates,
+        );
+      } catch (error) {
+        if (!(error instanceof GoogleApiError) || error.status !== 404) throw error;
+      }
+      try {
+        await ctx.runMutation(internal.calendar.deleteEventRow, {
+          eventId: args.eventId,
+          userId,
+          calendarId: row.calendarId,
+          recurringEventId: row.recurringEventId,
+        });
+        await resyncCalendar(ctx, userId, accessToken, row.calendarId);
+      } catch (error) {
+        throw new ExternalWriteCommittedError("Event series deleted.", error);
+      }
+      return null;
+    }
+
+    const recurrence = rawMaster.recurrence ?? [];
+    if (!recurrence.some((line) => line.startsWith("RRULE:"))) {
+      throw new Error("The recurring series has no recurrence rule to truncate");
+    }
+    const truncated = truncateRecurrence(
+      recurrence,
+      originalStartMs - 1_000,
+      master.allDay,
+    );
+    const alreadyTruncated =
+      JSON.stringify(recurrence) === JSON.stringify(truncated);
+    const liveMasterUpdatedMs = rawMaster.updated
+      ? new Date(rawMaster.updated).getTime()
+      : undefined;
+    if (
+      !alreadyTruncated &&
+      args.expectedSeriesUpdatedMs !== undefined &&
+      liveMasterUpdatedMs !== undefined &&
+      liveMasterUpdatedMs !== args.expectedSeriesUpdatedMs
+    ) {
+      throw new Error(
+        "The recurring series changed after this deletion was proposed. Please propose it again.",
+      );
+    }
+
+    const updatedMaster = alreadyTruncated
+      ? master
+      : await patchCalendarEvent(
+          accessToken,
+          row.calendarId,
+          row.recurringEventId,
+          { recurrence: truncated },
+          sendUpdates,
+        );
+    try {
+      await ctx.runMutation(internal.calendar.upsertRecurringSeries, {
+        userId,
+        calendarId: row.calendarId,
+        googleEventId: row.recurringEventId,
+        recurrence: truncated,
+        sourceUpdatedMs: updatedMaster.googleUpdatedMs,
+      });
+      await ctx.runMutation(internal.calendar.deleteEventRow, {
+        eventId: args.eventId,
+        userId,
+        calendarId: row.calendarId,
+      });
+      await resyncCalendar(ctx, userId, accessToken, row.calendarId);
+    } catch (error) {
+      throw new ExternalWriteCommittedError(
+        "This and following events deleted.",
+        error,
+      );
+    }
+    return null;
+  }
+
+  const recurringEventId =
+    row.recurringEventId && scope === "allEvents"
+      ? row.recurringEventId
+      : undefined;
   try {
     await deleteCalendarEvent(
       accessToken,
       row.calendarId,
-      row.googleEventId,
-      // Only the organizer's delete is a cancellation worth emailing about.
-      capabilities.isOrganizer && hasGuests ? "all" : "none",
+      recurringEventId ?? row.googleEventId,
+      sendUpdates,
     );
   } catch (error) {
     // A retry after an uncertain response sees 404 once the first delete won.
@@ -987,9 +1208,120 @@ export async function deleteEventOp(
     await ctx.runMutation(internal.calendar.deleteEventRow, {
       eventId: args.eventId,
       userId,
+      calendarId: row.calendarId,
+      ...(recurringEventId ? { recurringEventId } : {}),
     });
+    if (recurringEventId) {
+      await resyncCalendar(ctx, userId, accessToken, row.calendarId);
+    }
   } catch (error) {
-    throw new ExternalWriteCommittedError("Event deleted.", error);
+    throw new ExternalWriteCommittedError(
+      recurringEventId ? "Event series deleted." : "Event deleted.",
+      error,
+    );
   }
   return null;
+}
+
+// --- Action handlers ------------------------------------------------------
+// The Convex-action entry points for calendar writes. Each resolves the user +
+// token, then delegates to the op above. The root `calendar.ts` wraps these in
+// `action(...)`. The assistant reaches the ops directly (never these), so it
+// doesn't re-resolve the user/token per tool call.
+
+/** The opening move of every action that writes to Google: resolve the
+ * signed-in user and get them a token. Whether they may touch the *event* is a
+ * separate question, answered inside each op by `resolveEventForWrite`. */
+async function authedWrite(
+  ctx: ActionCtx,
+): Promise<{ userId: string; accessToken: string }> {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+  return {
+    userId: user._id,
+    accessToken: await getGoogleAccessToken(ctx, user._id),
+  };
+}
+
+export async function createEventHandler(
+  ctx: ActionCtx,
+  args: CreateEventArgs,
+): Promise<MappedEvent> {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+  const accessToken = await getGoogleAccessToken(ctx, user._id);
+  return await createEventOp(ctx, user._id, accessToken, args);
+}
+
+export async function refreshEventRecurrenceHandler(
+  ctx: ActionCtx,
+  { eventId }: { eventId: Id<"events"> | Id<"sharedEvents"> },
+): Promise<null> {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+
+  const context = await ctx.runQuery(internal.calendar.getEventContext, {
+    eventId,
+    userId: user._id,
+  });
+  if (!context) {
+    throw new Error("Event not found");
+  }
+  if (!context.event.recurringEventId) {
+    return null;
+  }
+
+  const accessToken = await getGoogleAccessToken(ctx, user._id);
+
+  const master = await getCalendarEvent(
+    accessToken,
+    context.event.calendarId,
+    context.event.recurringEventId,
+  );
+  await ctx.runMutation(internal.calendar.upsertRecurringSeries, {
+    userId: user._id,
+    calendarId: context.event.calendarId,
+    googleEventId: context.event.recurringEventId,
+    recurrence: master.recurrence ?? [],
+    sourceUpdatedMs: context.event.googleUpdatedMs,
+  });
+  return null;
+}
+
+export async function updateEventTimeHandler(
+  ctx: ActionCtx,
+  args: UpdateEventTimeArgs,
+): Promise<MappedEvent> {
+  const { userId, accessToken } = await authedWrite(ctx);
+  return await updateEventTimeOp(ctx, userId, accessToken, args);
+}
+
+export async function updateEventHandler(
+  ctx: ActionCtx,
+  args: UpdateEventArgs,
+): Promise<MappedEvent> {
+  const { userId, accessToken } = await authedWrite(ctx);
+  return await updateEventOp(ctx, userId, accessToken, args);
+}
+
+export async function respondToEventHandler(
+  ctx: ActionCtx,
+  args: RespondToEventArgs,
+): Promise<MappedEvent> {
+  const { userId, accessToken } = await authedWrite(ctx);
+  return await respondToEventOp(ctx, userId, accessToken, args);
+}
+
+export async function deleteEventHandler(
+  ctx: ActionCtx,
+  args: DeleteEventArgs,
+): Promise<null> {
+  const { userId, accessToken } = await authedWrite(ctx);
+  return await deleteEventOp(ctx, userId, accessToken, args);
 }

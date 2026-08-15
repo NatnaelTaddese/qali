@@ -1,6 +1,6 @@
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { DayInterval } from "@qali/backend/convex/lib/availability";
+import type { DayInterval } from "@qali/domain/availability";
 import { cn } from "@qali/ui/lib/utils";
 import { motion, useReducedMotion } from "motion/react";
 

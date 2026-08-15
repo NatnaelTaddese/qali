@@ -1,0 +1,20 @@
+{
+  "name": "@qali/domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./availability": "./src/availability.ts",
+    "./permissions": "./src/permissions.ts",
+    "./slug": "./src/slug.ts"
+  },
+  "scripts": {
+    "test": "bun test src",
+    "check-types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@qali/config": "workspace:*",
+    "@types/node": "^24.3.0",
+    "typescript": "catalog:"
+  }
+}

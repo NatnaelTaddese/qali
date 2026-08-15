@@ -10,7 +10,7 @@ export const Route = createFileRoute("/_workspace/")({
 });
 
 function HomeComponent() {
-  const syncNow = useAction(api.googleSync.syncNow);
+  const syncNow = useAction(api.calendarSync.syncNow);
 
   // Register the user for background sync and pull an initial snapshot of their
   // Google calendar + contacts on first load.

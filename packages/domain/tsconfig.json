@@ -1,0 +1,5 @@
+{
+  "extends": "@qali/config/tsconfig.base.json",
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

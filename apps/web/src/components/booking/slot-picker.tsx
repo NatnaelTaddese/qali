@@ -4,7 +4,7 @@ import {
   Calendar03Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { SlotOption } from "@qali/backend/convex/lib/availability";
+import type { SlotOption } from "@qali/domain/availability";
 import { Button } from "@qali/ui/components/button";
 import { cn } from "@qali/ui/lib/utils";
 import { format } from "date-fns";

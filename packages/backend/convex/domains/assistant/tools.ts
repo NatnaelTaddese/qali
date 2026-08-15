@@ -17,15 +17,15 @@
 
 import { z } from "zod";
 
-import { api, internal } from "../_generated/api";
-import type { Doc, Id } from "../_generated/dataModel";
-import type { ActionCtx } from "../_generated/server";
+import { api, internal } from "../../_generated/api";
+import type { Doc, Id } from "../../_generated/dataModel";
+import type { ActionCtx } from "../../_generated/server";
 import {
   createEventOp,
   deleteEventOp,
   resolveEventForWrite,
   updateEventOp,
-} from "./calendarOps";
+} from "../calendar/service";
 import {
   MS_PER_MINUTE,
   addDaysToDateKey,
@@ -34,14 +34,17 @@ import {
   allDayBusyInterval,
   utcToZoned,
   zonedToUtcMs,
-} from "./availability";
-import { subtractBusy } from "./assistantHistory";
+} from "@qali/domain/availability";
+import { subtractBusy } from "./history";
 import {
+  ASSISTANT_WEEKDAYS,
   assistantRangeToEventTime,
+  assistantRepeatToRRule,
   formatAssistantAllDayRange,
+  formatAssistantRepeat,
   isDateKey,
   type AssistantEventRange,
-} from "./assistantLogic";
+} from "../../lib/assistantLogic";
 
 // --- Plumbing --------------------------------------------------------------
 
@@ -259,7 +262,9 @@ function previewValue(value: string, max = 120): string {
  * cancelled one doesn't, and neither does one they've declined — that last
  * case is the difference between an honest answer and offering a slot the user
  * already said no to. */
-function isBusy(event: Doc<"events">): boolean {
+function isBusy(
+  event: Pick<Doc<"events">, "status" | "transparency" | "attendees">,
+): boolean {
   if (event.status === "cancelled") return false;
   if (event.transparency === "transparent") return false;
   const self = event.attendees?.find((a) => a.self);
@@ -527,6 +532,73 @@ const allDayRangeSchema = z
 
 const eventRangeSchema = z.union([timedRangeSchema, allDayRangeSchema]);
 
+const repeatEndSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("never") }),
+  z.object({
+    kind: z.literal("onDate"),
+    date: dateKeySchema.describe("Inclusive final local calendar date."),
+  }),
+  z.object({
+    kind: z.literal("count"),
+    count: z.number().int().min(1).max(10_000),
+  }),
+]);
+
+const repeatFields = {
+  interval: z
+    .number()
+    .int()
+    .min(1)
+    .max(1_000)
+    .optional()
+    .describe("Repeat every N periods. Omit for every 1 period."),
+  end: repeatEndSchema
+    .optional()
+    .describe('When repetition stops. Omit or use {"kind":"never"} for no end.'),
+};
+
+const repeatSchema = z
+  .discriminatedUnion("frequency", [
+    z.object({ frequency: z.literal("daily"), ...repeatFields }),
+    z.object({
+      frequency: z.literal("weekly"),
+      weekdays: z
+        .array(z.enum(ASSISTANT_WEEKDAYS))
+        .min(1)
+        .max(7)
+        .describe(
+          "Every weekday in this one weekly series. Use full lowercase names.",
+        ),
+      ...repeatFields,
+    }),
+    z.object({ frequency: z.literal("monthly"), ...repeatFields }),
+    z.object({ frequency: z.literal("yearly"), ...repeatFields }),
+  ])
+  .describe(
+    "Structured recurrence. The event's start is the first occurrence and anchors monthly/yearly rules.",
+  );
+
+const recurrenceLinesSchema = z.array(z.string().max(500)).max(10);
+
+function rowRange(row: Doc<"events">): AssistantEventRange {
+  return row.allDay
+    ? {
+        kind: "allDay",
+        startDate: new Date(row.startMs).toISOString().slice(0, 10),
+        endDate: new Date(row.endMs).toISOString().slice(0, 10),
+      }
+    : { kind: "timed", startMs: row.startMs, endMs: row.endMs };
+}
+
+function storedRecurrence(raw: unknown, key: string): string[] | undefined {
+  if (typeof raw !== "object" || raw === null || !(key in raw)) return undefined;
+  const parsed = recurrenceLinesSchema.safeParse(
+    (raw as Record<string, unknown>)[key],
+  );
+  if (!parsed.success) throw new Error("Stored recurrence is invalid");
+  return parsed.data;
+}
+
 const createEventSchema = z.object({
   summary: z.string().min(1).max(500).describe("Event title."),
   time: eventRangeSchema.describe(
@@ -547,11 +619,7 @@ const createEventSchema = z.object({
     .boolean()
     .optional()
     .describe("Attach a Google Meet link."),
-  recurrence: z
-    .array(z.string().max(500))
-    .max(10)
-    .optional()
-    .describe('RFC5545 lines, e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO"].'),
+  repeat: repeatSchema.optional(),
 });
 
 const createEvent = writeTool({
@@ -579,12 +647,9 @@ const createEvent = writeTool({
     if (args.addConference !== undefined) {
       parts.push(args.addConference ? "add Google Meet" : "no conference");
     }
-    if (args.recurrence !== undefined) {
-      parts.push(
-        args.recurrence.length
-          ? `recurrence ${args.recurrence.join("; ")}`
-          : "non-recurring",
-      );
+    if (args.repeat !== undefined) {
+      assistantRepeatToRRule(args.repeat, args.time, tc.timeZone);
+      parts.push(`repeat ${formatAssistantRepeat(args.repeat, args.time, tc.timeZone)}`);
     }
     return `Create “${args.summary}”: ${parts.join(" · ")}`;
   },
@@ -603,6 +668,9 @@ const updateEventSchema = z.object({
     .max(200)
     .optional()
     .describe("Replaces the guest list wholesale — anyone omitted is uninvited."),
+  repeat: repeatSchema
+    .optional()
+    .describe("Turn a single, non-repeating event into a recurring series."),
   scope: z
     .enum(["thisEvent", "thisAndFollowing", "allEvents"])
     .optional()
@@ -628,8 +696,9 @@ const updateEvent = writeTool({
   name: "update_event",
   description:
     "Propose changing an existing event's title, description, location, guest " +
-    "list, or times. Requires an eventId from list_events. Nothing changes and " +
-    "no guest is notified until the user confirms.",
+    "list, times, or turn a non-repeating event into a recurring series. " +
+    "Requires an eventId from list_events. Nothing changes and no guest is " +
+    "notified until the user confirms.",
   schema: updateEventSchema,
   async preview(tc, args) {
     const { row, capabilities } = await resolveEventForWrite(
@@ -640,6 +709,9 @@ const updateEvent = writeTool({
     );
     if (args.guestEmails !== undefined && !capabilities.canInviteOthers) {
       throw new Error("The organiser does not allow you to invite or remove guests");
+    }
+    if (args.repeat !== undefined && !capabilities.canChangeRecurrence) {
+      throw new Error("This event is already part of a recurring series");
     }
     const parts: string[] = [];
     if (args.summary !== undefined) parts.push(`title → “${args.summary}”`);
@@ -659,6 +731,13 @@ const updateEvent = writeTool({
           : "all guests removed",
       );
     }
+    if (args.repeat !== undefined) {
+      const range = args.time ?? rowRange(row);
+      assistantRepeatToRRule(args.repeat, range, tc.timeZone);
+      parts.push(
+        `repeat → ${formatAssistantRepeat(args.repeat, range, tc.timeZone)}`,
+      );
+    }
     const scope =
       row.recurringEventId && args.scope && args.scope !== "thisEvent"
         ? args.scope === "allEvents"
@@ -668,8 +747,11 @@ const updateEvent = writeTool({
     return `Update “${row.summary ?? "(No title)"}”${scope}: ${parts.join(", ") || "no changes"}`;
   },
   async storedArgs(tc, args) {
-    if (args.guestEmails === undefined) return {};
+    if (args.guestEmails === undefined && args.repeat === undefined) return {};
     const row = await requireEditable(tc, args.eventId);
+    if (args.repeat !== undefined && row.recurringEventId !== undefined) {
+      throw new Error("This event is already part of a recurring series");
+    }
     const editsSeries =
       row.recurringEventId !== undefined &&
       args.scope !== undefined &&
@@ -687,6 +769,15 @@ const updateEvent = writeTool({
     }
     return {
       expectedGoogleUpdatedMs: row.googleUpdatedMs,
+      ...(args.repeat === undefined
+        ? {}
+        : {
+            compiledRecurrence: assistantRepeatToRRule(
+              args.repeat,
+              args.time ?? rowRange(row),
+              tc.timeZone,
+            ),
+          }),
       ...(expectedSeriesUpdatedMs === null ? {} : { expectedSeriesUpdatedMs }),
     };
   },
@@ -718,14 +809,21 @@ const moveEvent = writeTool({
 
 const deleteEventSchema = z.object({
   eventId: z.string().describe("The eventId from list_events."),
+  scope: z
+    .enum(["thisEvent", "thisAndFollowing", "allEvents"])
+    .describe(
+      "Required. For a recurring event, ask which scope the user means before proposing. Use thisEvent for a non-recurring event.",
+    ),
 });
 
 const deleteEvent = writeTool({
   name: "delete_event",
   description:
-    "Propose deleting an event. If the user organises it this cancels it for " +
-    "every guest and emails them; if they are only a guest it just removes " +
-    "their own copy. Nothing is deleted until the user confirms.",
+    "Propose deleting an event with an explicit scope. For a recurring event, " +
+    "ask whether the user means this occurrence, this and following, or the " +
+    "whole series before calling. A guest may use thisEvent or allEvents, but " +
+    "only the organizer may use thisAndFollowing. Nothing is deleted until " +
+    "the user confirms.",
   schema: deleteEventSchema,
   async preview(tc, args) {
     const { row, capabilities } = await resolveEventForWrite(
@@ -735,11 +833,47 @@ const deleteEvent = writeTool({
       ["canDelete", "canRemoveSelf"],
     );
     const guests = row.attendees?.length ?? 0;
-    const verb =
-      capabilities.isOrganizer && guests > 0
-        ? `Cancel “${row.summary ?? "(No title)"}” and notify ${guests} guest${guests === 1 ? "" : "s"}`
-        : `Remove “${row.summary ?? "(No title)"}” from your calendar`;
+    const recurring = row.recurringEventId !== undefined;
+    if (!recurring && args.scope !== "thisEvent") {
+      throw new Error("A non-recurring event only has one occurrence");
+    }
+    if (
+      recurring &&
+      args.scope === "thisAndFollowing" &&
+      !capabilities.isOrganizer
+    ) {
+      throw new Error(
+        "Only the organizer can remove this and following events from the series",
+      );
+    }
+    const scope = !recurring
+      ? ""
+      : args.scope === "thisEvent"
+        ? " (this occurrence)"
+        : args.scope === "thisAndFollowing"
+          ? " (this and following)"
+          : " (whole series)";
+    const title = `“${row.summary ?? "(No title)"}”${scope}`;
+    const verb = capabilities.isOrganizer
+      ? guests > 0
+        ? `Cancel ${title} and notify ${guests} guest${guests === 1 ? "" : "s"}`
+        : `Delete ${title}`
+      : `Remove ${title} from your calendar`;
     return `${verb} · ${formatRange(row.startMs, row.endMs, tc.timeZone, row.allDay)}`;
+  },
+  async storedArgs(tc, args) {
+    if (args.scope !== "thisAndFollowing") return {};
+    const row = await requireEditable(tc, args.eventId);
+    const expectedSeriesUpdatedMs = await tc.ctx.runQuery(
+      internal.assistantData.getRecurringSeriesVersion,
+      { userId: tc.userId, eventId: row._id },
+    );
+    if (expectedSeriesUpdatedMs === null) {
+      throw new Error(
+        "The recurring series is not fully synced yet. Refresh it before deleting future events.",
+      );
+    }
+    return { expectedSeriesUpdatedMs };
   },
 });
 
@@ -826,11 +960,25 @@ export async function applyProposal(
     if (!accessToken) throw new Error("Google access token is required");
     return accessToken;
   };
+  const proposalTimeZone = () => {
+    if (!timeZone) throw new Error("The proposal is missing its time zone");
+    return timeZone;
+  };
 
   switch (action.tool) {
     case "create_event": {
       const args = createEventSchema.parse(raw);
       const time = assistantRangeToEventTime(args.time);
+      // Proposals created before the structured repeat contract stored raw
+      // recurrence lines. Keep those confirmable while hiding RRULE from all
+      // newly generated tool definitions.
+      const recurrence = args.repeat
+        ? assistantRepeatToRRule(
+            args.repeat,
+            args.time,
+            proposalTimeZone(),
+          )
+        : storedRecurrence(raw, "recurrence");
       const event = await createEventOp(ctx, userId, token(), {
         summary: args.summary,
         ...time,
@@ -838,7 +986,7 @@ export async function applyProposal(
         location: args.location,
         attendees: args.guestEmails?.map((email) => ({ email })),
         addConference: args.addConference,
-        recurrence: args.recurrence,
+        recurrence,
         timeZone,
         operationId,
       });
@@ -847,6 +995,12 @@ export async function applyProposal(
     case "update_event": {
       const args = updateEventSchema.parse(raw);
       const time = args.time ? assistantRangeToEventTime(args.time) : undefined;
+      const recurrence = args.repeat
+        ? storedRecurrence(raw, "compiledRecurrence")
+        : undefined;
+      if (args.repeat && !recurrence) {
+        throw new Error("The recurring-event proposal is incomplete");
+      }
       const expectedGoogleUpdatedMs =
         typeof raw === "object" &&
         raw !== null &&
@@ -870,6 +1024,7 @@ export async function applyProposal(
         endMs: time?.endMs,
         allDay: time?.allDay,
         attendees: args.guestEmails?.map((email) => ({ email })),
+        recurrence,
         scope: args.scope,
         timeZone,
         operationId,
@@ -891,8 +1046,18 @@ export async function applyProposal(
     }
     case "delete_event": {
       const args = deleteEventSchema.parse(raw);
+      const expectedSeriesUpdatedMs =
+        typeof raw === "object" &&
+        raw !== null &&
+        "expectedSeriesUpdatedMs" in raw &&
+        typeof raw.expectedSeriesUpdatedMs === "number"
+          ? raw.expectedSeriesUpdatedMs
+          : undefined;
       await deleteEventOp(ctx, userId, token(), {
         eventId: args.eventId as Id<"events">,
+        scope: args.scope,
+        operationId,
+        expectedSeriesUpdatedMs,
       });
       return "Event deleted.";
     }
@@ -914,12 +1079,25 @@ export async function applyProposal(
 /** Pending proposals created before the date-only contract may still be on
  * screen. Normalize only those persisted shapes at apply time; newly generated
  * tool schemas expose the unambiguous `time` union exclusively. */
+export function normalizeLegacyDeleteScope(
+  tool: string,
+  raw: unknown,
+): unknown {
+  return tool === "delete_event" &&
+    typeof raw === "object" &&
+    raw !== null &&
+    !("scope" in raw)
+    ? { ...raw, scope: "thisEvent" }
+    : raw;
+}
+
 async function normalizeStoredProposal(
   ctx: ActionCtx,
   userId: string,
   tool: string,
   raw: unknown,
 ): Promise<unknown> {
+  raw = normalizeLegacyDeleteScope(tool, raw);
   if (
     typeof raw !== "object" ||
     raw === null ||

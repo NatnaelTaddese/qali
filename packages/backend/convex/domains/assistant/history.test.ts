@@ -9,7 +9,7 @@ import {
   type StoredTurn,
   subtractBusy,
   toWireMessages,
-} from "./assistantHistory";
+} from "./history";
 
 describe("applyToolCallDeltas", () => {
   test("concatenates argument fragments into valid JSON", () => {

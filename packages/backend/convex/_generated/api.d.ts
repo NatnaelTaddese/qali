@@ -54,6 +54,7 @@ import type * as integrations_calendar_service from "../integrations/calendar/se
 import type * as integrations_calendar_types from "../integrations/calendar/types.js";
 import type * as integrations_google_adapter from "../integrations/google/adapter.js";
 import type * as integrations_google_mappers from "../integrations/google/mappers.js";
+import type * as jobs_maintenance from "../jobs/maintenance.js";
 import type * as lib_assistantLogic from "../lib/assistantLogic.js";
 import type * as lib_calendars from "../lib/calendars.js";
 import type * as lib_eventReads from "../lib/eventReads.js";
@@ -62,6 +63,7 @@ import type * as lib_googleCredentials from "../lib/googleCredentials.js";
 import type * as lib_notifications from "../lib/notifications.js";
 import type * as lib_rateLimit from "../lib/rateLimit.js";
 import type * as maintenance from "../maintenance.js";
+import type * as migrations_backfills from "../migrations/backfills.js";
 import type * as notifications from "../notifications.js";
 import type * as people from "../people.js";
 import type * as privateData from "../privateData.js";
@@ -120,6 +122,7 @@ declare const fullApi: ApiFromModules<{
   "integrations/calendar/types": typeof integrations_calendar_types;
   "integrations/google/adapter": typeof integrations_google_adapter;
   "integrations/google/mappers": typeof integrations_google_mappers;
+  "jobs/maintenance": typeof jobs_maintenance;
   "lib/assistantLogic": typeof lib_assistantLogic;
   "lib/calendars": typeof lib_calendars;
   "lib/eventReads": typeof lib_eventReads;
@@ -128,6 +131,7 @@ declare const fullApi: ApiFromModules<{
   "lib/notifications": typeof lib_notifications;
   "lib/rateLimit": typeof lib_rateLimit;
   maintenance: typeof maintenance;
+  "migrations/backfills": typeof migrations_backfills;
   notifications: typeof notifications;
   people: typeof people;
   privateData: typeof privateData;

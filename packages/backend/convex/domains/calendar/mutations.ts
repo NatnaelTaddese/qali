@@ -7,6 +7,7 @@ import type { Infer } from "convex/values";
 import type { Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
+import { ensureGoogleConnection } from "./connections";
 import { googleEventValidator } from "./validators";
 
 /** Toggle whether a calendar's events appear on the grid. */
@@ -61,6 +62,16 @@ export async function upsertEventHandler(
   ctx: MutationCtx,
   args: { userId: string; event: Infer<typeof googleEventValidator> },
 ): Promise<null> {
+  // Dual-write: stamp the neutral mirror alongside the Google-named columns so
+  // the row stays cutover-ready. Legacy columns remain the source of truth.
+  const connectionId = await ensureGoogleConnection(ctx, args.userId);
+  const doc = {
+    userId: args.userId,
+    ...args.event,
+    connectionId,
+    providerEventId: args.event.googleEventId,
+    providerUpdatedMs: args.event.googleUpdatedMs,
+  };
   const existing = await ctx.db
     .query("events")
     .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
@@ -71,9 +82,9 @@ export async function upsertEventHandler(
     )
     .unique();
   if (existing) {
-    await ctx.db.replace(existing._id, { userId: args.userId, ...args.event });
+    await ctx.db.replace(existing._id, doc);
   } else {
-    await ctx.db.insert("events", { userId: args.userId, ...args.event });
+    await ctx.db.insert("events", doc);
   }
   return null;
 }
@@ -99,9 +110,14 @@ export async function upsertRecurringSeriesHandler(
         .eq("googleEventId", args.googleEventId),
     )
     .unique();
+  // Dual-write the neutral mirror (connectionId + providerEventId) on both the
+  // patch and insert paths, so incremental cache refreshes keep it current too.
+  const connectionId = await ensureGoogleConnection(ctx, args.userId);
   const value = {
     recurrence: args.recurrence,
     sourceUpdatedMs: args.sourceUpdatedMs,
+    connectionId,
+    providerEventId: args.googleEventId,
   };
   if (existing) {
     await ctx.db.patch(existing._id, value);

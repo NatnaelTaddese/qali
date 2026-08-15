@@ -91,7 +91,11 @@ async function readSharedEventsInRange(
       .take(budget.remaining + 1);
     spendRowBudget(budget, page.length);
     for (const r of page) {
-      if (r.startMs < toMs) out.push(sharedAsEvent(r, userId));
+      // Shared rows are stored non-cancelled, but keep the defensive filter the
+      // combined-result filter used to provide so a stray cancelled row can't leak.
+      if (r.startMs < toMs && r.status !== "cancelled") {
+        out.push(sharedAsEvent(r, userId));
+      }
     }
   }
   return out;
@@ -194,7 +198,11 @@ export const listEvents = query({
         )
         .order("asc")
         .take(50);
-      shared.push(...rows.map((r) => sharedAsEvent(r, user._id)));
+      shared.push(
+        ...rows
+          .filter((r) => r.status !== "cancelled")
+          .map((r) => sharedAsEvent(r, user._id)),
+      );
     }
     return [...personal, ...shared]
       .sort((a, b) => a.startMs - b.startMs)

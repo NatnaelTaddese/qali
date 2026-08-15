@@ -114,9 +114,9 @@ describe("opaque cursor codec", () => {
     });
   });
 
-  test("a sync token wins when both are somehow present", () => {
+  test("carries both a sync token and a page token (a delta pass continuation)", () => {
     expect(
       decodeCursor(encodeCursor({ pageToken: "p1", syncToken: "s1" })),
-    ).toEqual({ pageToken: undefined, syncToken: "s1" });
+    ).toEqual({ pageToken: "p1", syncToken: "s1" });
   });
 });

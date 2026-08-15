@@ -87,18 +87,23 @@ export class GoogleCalendarAdapter implements CalendarProviderAdapter {
     try {
       const page = await fetchCalendarPage(this.accessToken, {
         calendarId: args.calendarId,
-        // A page continuation carries only the pageToken; only the first call of
-        // a pass sets the window (full) or the syncToken (delta).
-        ...(decoded.pageToken
-          ? { pageToken: decoded.pageToken }
-          : decoded.syncToken
-            ? { syncToken: decoded.syncToken }
-            : { timeMinMs: args.fromMs, timeMaxMs: args.toMs }),
+        // Keep the pass anchor on every page: a delta pass carries its syncToken,
+        // a full pass its window, alongside the pageToken continuation — matching
+        // what Google (and the existing sync loop) require so the params stay
+        // identical across a pass. syncToken forbids timeMin/timeMax.
+        syncToken: decoded.syncToken,
+        pageToken: decoded.pageToken,
+        ...(decoded.syncToken
+          ? {}
+          : { timeMinMs: args.fromMs, timeMaxMs: args.toMs }),
       });
       return {
         items: page.events.map(toProviderEvent),
         nextPageCursor: page.nextPageToken
-          ? encodeCursor({ pageToken: page.nextPageToken })
+          ? encodeCursor({
+              pageToken: page.nextPageToken,
+              syncToken: decoded.syncToken,
+            })
           : null,
         commitCursor: page.nextSyncToken
           ? encodeCursor({ syncToken: page.nextSyncToken })
@@ -198,6 +203,7 @@ export class GoogleCalendarAdapter implements CalendarProviderAdapter {
           colorId: args.patch.color,
           visibility: args.patch.visibility,
           transparency: transparencyFor(args.patch),
+          attendees: args.patch.attendees?.map((a) => ({ ...a })),
           recurrence: args.patch.recurrence
             ? [...args.patch.recurrence]
             : undefined,

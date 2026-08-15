@@ -116,9 +116,10 @@ interface DecodedCursor {
 }
 
 export function encodeCursor(parts: DecodedCursor): SyncCursor {
-  return JSON.stringify(
-    parts.syncToken ? { s: parts.syncToken } : { p: parts.pageToken },
-  );
+  // Carry both: a delta pass's page continuation needs its syncToken *and* the
+  // pageToken on every page (Google requires the pass params to stay identical),
+  // so the cursor cannot drop one for the other. JSON.stringify omits undefined.
+  return JSON.stringify({ p: parts.pageToken, s: parts.syncToken });
 }
 
 export function decodeCursor(cursor: SyncCursor): DecodedCursor {

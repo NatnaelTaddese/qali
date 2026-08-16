@@ -42,6 +42,7 @@ import {
   toProviderError,
   toProviderEvent,
 } from "./mappers";
+import { isGoogleSharedHolidayCalendar } from "./holidays";
 
 const GOOGLE_CAPABILITIES: ProviderCapabilities = {
   contacts: true,
@@ -134,7 +135,10 @@ export class GoogleCalendarAdapter implements CalendarProviderAdapter {
 
   async listCalendars(): Promise<readonly ProviderCalendar[]> {
     try {
-      return (await fetchCalendarList(this.accessToken)).map(toProviderCalendar);
+      return (await fetchCalendarList(this.accessToken)).map((calendar) => ({
+        ...toProviderCalendar(calendar),
+        shared: isGoogleSharedHolidayCalendar(calendar.googleCalendarId),
+      }));
     } catch (error) {
       throw toProviderError(error, "read");
     }

@@ -16,8 +16,8 @@ export function connectionSyncFields(
     otherContactsGeneration: legacy?.otherContactsSyncGeneration,
     status: legacy?.status ?? "idle",
     lastError: legacy?.lastError,
-    nextSyncDueAt: legacy?.nextSyncDueAt,
-    syncIntervalMs: legacy?.syncIntervalMs,
+    nextSyncDueAt: legacy?.nextSyncDueAt ?? 0,
+    syncIntervalMs: legacy?.syncIntervalMs ?? 15 * 60 * 1000,
     syncLeaseExpiresAt: legacy?.syncLeaseExpiresAt,
     syncAttemptId: legacy?.syncAttemptId,
   };

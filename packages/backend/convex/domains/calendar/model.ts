@@ -36,6 +36,16 @@ export async function selectedCalendarIds(
   );
 }
 
+export async function selectedCalendars(
+  ctx: QueryCtx,
+  userId: string,
+): Promise<Doc<"calendars">[]> {
+  return (await ctx.db
+    .query("calendars")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect()).filter((calendar) => calendar.selected);
+}
+
 /**
  * A calendar event as the client sees it: either a synced `events` row or a
  * public `sharedEvents` row (holidays, birthdays) presented in the same shape.
@@ -69,23 +79,34 @@ export function sharedAsEvent(
 export async function readSharedEventsInRange(
   ctx: QueryCtx,
   userId: string,
-  publicCalendarIds: string[],
+  publicCalendars: Doc<"calendars">[],
   fromMs: number,
   toMs: number,
   budget: RowBudget,
 ): Promise<EventView[]> {
   const spanEnd = toMs + MAX_EVENT_SPAN_MS;
   const out: EventView[] = [];
-  for (const calendarId of publicCalendarIds) {
+  for (const calendar of publicCalendars) {
+    const provider = calendar.connectionId
+      ? (await ctx.db.get(calendar.connectionId))?.provider
+      : "google";
+    const providerCalendarId =
+      calendar.providerCalendarId ?? calendar.googleCalendarId;
     const page = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_end", (q) =>
-        q.eq("calendarId", calendarId).gt("endMs", fromMs).lte("endMs", spanEnd),
+      .withIndex("by_provider_and_providerCalendarId_and_endMs", (q) =>
+        q
+          .eq("provider", provider ?? "google")
+          .eq("providerCalendarId", providerCalendarId)
+          .gt("endMs", fromMs)
+          .lte("endMs", spanEnd),
       )
       .take(budget.remaining + 1);
     spendRowBudget(budget, page.length);
     for (const r of page) {
-      if (r.startMs < toMs) out.push(sharedAsEvent(r, userId));
+      if (r.startMs < toMs) {
+        out.push(sharedAsEvent(r, userId));
+      }
     }
   }
   return out;

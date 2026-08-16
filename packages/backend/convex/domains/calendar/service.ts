@@ -14,7 +14,7 @@ import {
   isDefinitiveProviderFailure,
   ProviderError,
 } from "../../integrations/calendar/errors";
-import { refreshCalendarMirror } from "../../integrations/calendar/refresh";
+import { refreshConnectionCalendar } from "../sync/engine";
 import { getCalendarAdapter } from "../../integrations/calendar/registry";
 import { createEventReconciling } from "../../integrations/calendar/service";
 import type {
@@ -105,11 +105,9 @@ async function adapterFor(
   connectionId: Id<"calendarConnections">,
   dependencies?: CalendarServiceDependencies,
 ): Promise<CalendarProviderAdapter> {
-  return await (dependencies?.getAdapter ?? getCalendarAdapter)(
-    ctx,
-    userId,
-    connectionId,
-  );
+  return dependencies?.getAdapter
+    ? await dependencies.getAdapter(ctx, userId, connectionId)
+    : await getCalendarAdapter(ctx, connectionId);
 }
 
 async function refreshTarget(
@@ -118,7 +116,7 @@ async function refreshTarget(
   target: Pick<WriteTarget | CreateTarget, "connectionId" | "localCalendarId">,
   dependencies?: CalendarServiceDependencies,
 ): Promise<void> {
-  await (dependencies?.refreshCalendar ?? refreshCalendarMirror)(
+  await (dependencies?.refreshCalendar ?? refreshConnectionCalendar)(
     ctx,
     userId,
     target.connectionId,

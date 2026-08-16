@@ -66,8 +66,8 @@ export const migratePublicCalendarsToShared = defineMutation({
       return { deleted, done: false };
     }
     // Final page: fan out a sync for every user so `sharedEvents` fills in now.
-    for await (const state of ctx.db.query("syncState")) {
-      await ctx.scheduler.runAfter(0, internal.googleSync.syncUser, {
+    for await (const state of ctx.db.query("userSyncState")) {
+      await ctx.scheduler.runAfter(0, internal.calendarSync.syncUser, {
         userId: state.userId,
       });
     }
@@ -104,8 +104,8 @@ export const purgeNonSharedSharedEvents = defineMutation({
     }
     // Final page: fan out a sync so purged birthday/secondary events are
     // re-synced into their owners' per-user `events` promptly.
-    for await (const state of ctx.db.query("syncState")) {
-      await ctx.scheduler.runAfter(0, internal.googleSync.syncUser, {
+    for await (const state of ctx.db.query("userSyncState")) {
+      await ctx.scheduler.runAfter(0, internal.calendarSync.syncUser, {
         userId: state.userId,
       });
     }

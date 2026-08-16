@@ -26,6 +26,4 @@
  * forgoes the storage dedup). Add further markers here only for calendars proven
  * to be identical for every viewer.
  */
-export function isSharedPublicCalendar(googleCalendarId: string): boolean {
-  return googleCalendarId.endsWith("#holiday@group.v.calendar.google.com");
-}
+export { isGoogleSharedHolidayCalendar as isSharedPublicCalendar } from "../../integrations/google/holidays";

@@ -66,7 +66,7 @@ export async function acceptBookingHandler(
   const label = page.title?.trim() || "Meeting";
   let adapter;
   try {
-    adapter = await getCalendarAdapter(ctx, user._id, connectionId);
+    adapter = await getCalendarAdapter(ctx, connectionId);
   } catch (error) {
     await ctx.runMutation(internal.booking.releaseBookingAcceptance, {
       bookingId: args.bookingId,

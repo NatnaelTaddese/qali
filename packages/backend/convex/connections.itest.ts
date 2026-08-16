@@ -15,7 +15,7 @@ const modules = import.meta.glob("./**/*.ts");
  * will write, and a guard against a schema drift that would break it.
  */
 describe("connection model expand", () => {
-  test("adapter resolution exposes only an owned active connection", async () => {
+  test("adapter resolution exposes only an active connection", async () => {
     const t = convexTest(schema, modules);
     const connectionId = await t.run((ctx) =>
       ctx.db.insert("calendarConnections", {
@@ -29,35 +29,24 @@ describe("connection model expand", () => {
     );
     expect(
       await t.query(internal.calendar.getCalendarConnectionForAdapter, {
-        userId: "owner",
         connectionId,
       }),
     ).toMatchObject({ credentialRef: "account-1", provider: "google" });
-    expect(
-      await t.query(internal.calendar.getCalendarConnectionForAdapter, {
-        userId: "other",
-        connectionId,
-      }),
-    ).toBeNull();
-
     await t.run((ctx) => ctx.db.patch(connectionId, { status: "paused" }));
     expect(
       await t.query(internal.calendar.getCalendarConnectionForAdapter, {
-        userId: "owner",
         connectionId,
       }),
     ).toBeNull();
     await t.run((ctx) => ctx.db.patch(connectionId, { status: "error" }));
     expect(
       await t.query(internal.calendar.getCalendarConnectionForAdapter, {
-        userId: "owner",
         connectionId,
       }),
     ).toBeNull();
     await t.run((ctx) => ctx.db.delete(connectionId));
     expect(
       await t.query(internal.calendar.getCalendarConnectionForAdapter, {
-        userId: "owner",
         connectionId,
       }),
     ).toBeNull();
@@ -188,12 +177,12 @@ describe("connection model expand", () => {
     );
     expect(found?.calendarId).toBe("second");
     expect(found?.localCalendarId).toBe(secondCalendarId);
-    const staged = (
+    const indexes = (
       calendarTables.events as unknown as {
-        stagedDbIndexes: { indexDescriptor: string; fields: string[] }[];
+        indexes: { indexDescriptor: string; fields: string[] }[];
       }
-    ).stagedDbIndexes;
-    expect(staged).toContainEqual({
+    ).indexes;
+    expect(indexes).toContainEqual({
       indexDescriptor: "by_connection_and_localCalendarId_and_providerEventId",
       fields: ["connectionId", "localCalendarId", "providerEventId"],
     });

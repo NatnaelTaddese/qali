@@ -27,6 +27,9 @@ export interface ProviderCalendar {
   readonly timeZone?: string;
   readonly color?: string;
   readonly writable: boolean;
+  readonly selected?: boolean;
+  /** Safe to store once for every user. Providers must classify conservatively. */
+  readonly shared?: boolean;
 }
 
 export interface ProviderPerson {

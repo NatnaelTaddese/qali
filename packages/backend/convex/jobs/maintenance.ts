@@ -28,7 +28,7 @@ export const enqueueEventPrune = defineMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const page = await ctx.db
-      .query("syncState")
+      .query("userSyncState")
       .paginate({ cursor: args.cursor ?? null, numItems: USER_FANOUT_BATCH });
     for (const row of page.page) {
       await ctx.scheduler.runAfter(0, internal.maintenance.pruneUserEvents, {
@@ -95,7 +95,10 @@ export const enqueueSharedEventPrune = defineMutation({
       await ctx.scheduler.runAfter(
         0,
         internal.maintenance.pruneSharedCalendarEvents,
-        { calendarId: row.googleCalendarId },
+        {
+          provider: row.provider ?? "google",
+          providerCalendarId: row.providerCalendarId ?? row.googleCalendarId,
+        },
       );
     }
     if (!page.isDone) {
@@ -110,14 +113,20 @@ export const enqueueSharedEventPrune = defineMutation({
 });
 
 export const pruneSharedCalendarEvents = defineMutation({
-  args: { calendarId: v.string() },
+  args: {
+    provider: v.union(v.literal("google"), v.literal("microsoft")),
+    providerCalendarId: v.string(),
+  },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const now = Date.now();
     const past = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_start", (q) =>
-        q.eq("calendarId", args.calendarId).lt("startMs", now - EVENT_RETENTION_MS),
+      .withIndex("by_provider_and_providerCalendarId_and_startMs", (q) =>
+        q
+          .eq("provider", args.provider)
+          .eq("providerCalendarId", args.providerCalendarId)
+          .lt("startMs", now - EVENT_RETENTION_MS),
       )
       .take(BATCH_SIZE);
     for (const row of past) {
@@ -127,15 +136,16 @@ export const pruneSharedCalendarEvents = defineMutation({
       await ctx.scheduler.runAfter(
         0,
         internal.maintenance.pruneSharedCalendarEvents,
-        { calendarId: args.calendarId },
+        args,
       );
       return null;
     }
     const future = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_start", (q) =>
+      .withIndex("by_provider_and_providerCalendarId_and_startMs", (q) =>
         q
-          .eq("calendarId", args.calendarId)
+          .eq("provider", args.provider)
+          .eq("providerCalendarId", args.providerCalendarId)
           .gt("startMs", now + EVENT_FUTURE_RETENTION_MS),
       )
       .take(BATCH_SIZE);
@@ -146,7 +156,7 @@ export const pruneSharedCalendarEvents = defineMutation({
       await ctx.scheduler.runAfter(
         0,
         internal.maintenance.pruneSharedCalendarEvents,
-        { calendarId: args.calendarId },
+        args,
       );
     }
     return null;
@@ -203,12 +213,15 @@ export const purgeUserData = defineMutation({
     const byUser = (
       table:
         | "syncState"
+        | "userSyncState"
         | "connectionSyncState"
         | "calendarConnections"
         | "connectionBackfillUsers"
         | "calendars"
         | "bookingPages"
         | "contacts"
+        | "otherContactSources"
+        | "personSourceClaims"
         | "people"
         | "assistantUserState"
         | "assistantMessages",
@@ -219,6 +232,7 @@ export const purgeUserData = defineMutation({
         .take(PURGE_BATCH);
 
     await drain(await byUser("syncState"));
+    await drain(await byUser("userSyncState"));
     // Delete connection children before their parent connection rows. Convex
     // does not enforce foreign keys, but this ordering prevents retries from
     // observing orphaned operational state midway through a batched purge.
@@ -233,10 +247,14 @@ export const purgeUserData = defineMutation({
     await drain(await byUser("calendars"));
     await drain(await byUser("bookingPages"));
     await drain(await byUser("contacts"));
+    await drain(await byUser("otherContactSources"));
+    await drain(await byUser("personSourceClaims"));
     await drain(await byUser("people"));
     await drain(await byUser("assistantUserState"));
     await drain(await byUser("assistantMessages"));
-    await drain(await byUser("calendarConnections"));
+    // Parent connections are removed only after every child table has drained;
+    // retries therefore never strand connection-owned claims or sync state.
+    if (!more) await drain(await byUser("calendarConnections"));
     await drain(
       await ctx.db
         .query("events")

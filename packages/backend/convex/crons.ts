@@ -8,7 +8,7 @@ const crons = cronJobs();
 crons.interval(
   "sync google data",
   { minutes: 15 },
-  internal.googleSync.enqueueSyncs,
+  internal.calendarSync.enqueueSyncs,
   {},
 );
 
@@ -25,7 +25,7 @@ crons.interval(
 crons.interval(
   "refresh people ranking",
   { hours: 24 },
-  internal.googleSync.enqueueEngagementRefresh,
+  internal.calendarSync.enqueueEngagementRefresh,
   {},
 );
 

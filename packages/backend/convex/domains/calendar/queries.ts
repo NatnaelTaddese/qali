@@ -15,7 +15,7 @@ import {
   isSharedPublicCalendar,
   MAX_EVENT_RANGE_MS,
   readSharedEventsInRange,
-  selectedCalendarIds,
+  selectedCalendars,
   sharedAsEvent,
 } from "./model";
 
@@ -29,16 +29,25 @@ export async function listSharedEventsForAssistantHandler(
     .query("calendars")
     .withIndex("by_user", (q) => q.eq("userId", args.userId))
     .collect();
-  const publicIds = calendars
-    .filter((c) => c.selected && isSharedPublicCalendar(c.googleCalendarId))
-    .map((c) => c.googleCalendarId);
+  const sharedCalendars = calendars.filter(
+    (c) => c.selected && (c.isShared ?? isSharedPublicCalendar(c.googleCalendarId)),
+  );
 
   const out: EventView[] = [];
-  for (const calendarId of publicIds) {
+  for (const calendar of sharedCalendars) {
+    const connection = calendar.connectionId
+      ? await ctx.db.get(calendar.connectionId)
+      : null;
     const rows = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_end", (q) =>
-        q.eq("calendarId", calendarId).gt("endMs", args.startMs),
+      .withIndex("by_provider_and_providerCalendarId_and_endMs", (q) =>
+        q
+          .eq("provider", connection?.provider ?? "google")
+          .eq(
+            "providerCalendarId",
+            calendar.providerCalendarId ?? calendar.googleCalendarId,
+          )
+          .gt("endMs", args.startMs),
       )
       .take(ASSISTANT_SHARED_EVENT_LIMIT);
     for (const r of rows) {
@@ -63,14 +72,10 @@ export async function listCalendarsHandler(ctx: QueryCtx) {
 /** Registry lookup that deliberately hides foreign and inactive connections. */
 export async function getCalendarConnectionForAdapterHandler(
   ctx: QueryCtx,
-  args: { userId: string; connectionId: Id<"calendarConnections"> },
+  args: { connectionId: Id<"calendarConnections"> },
 ): Promise<Doc<"calendarConnections"> | null> {
   const connection = await ctx.db.get(args.connectionId);
-  if (
-    !connection ||
-    connection.userId !== args.userId ||
-    connection.status !== "active"
-  ) {
+  if (!connection || connection.status !== "active") {
     return null;
   }
   return connection;
@@ -82,7 +87,9 @@ export async function listEventsHandler(ctx: QueryCtx) {
   if (!user) {
     return [];
   }
-  const selected = await selectedCalendarIds(ctx, user._id);
+  const selected = await selectedCalendars(ctx, user._id);
+  const selectedLocalIds = new Set(selected.map((calendar) => calendar._id));
+  const selectedLegacyIds = new Set(selected.map((calendar) => calendar.googleCalendarId));
   const now = Date.now();
   const personal = (
     await ctx.db
@@ -92,18 +99,36 @@ export async function listEventsHandler(ctx: QueryCtx) {
       )
       .order("asc")
       .take(50)
-  ).filter((e) => selected.has(e.calendarId));
-  const publicIds = [...selected].filter(isSharedPublicCalendar);
+  ).filter((event) =>
+    event.localCalendarId
+      ? selectedLocalIds.has(event.localCalendarId)
+      : selectedLegacyIds.has(event.calendarId),
+  );
+  const publicCalendars = selected.filter(
+    (calendar) =>
+      calendar.isShared ?? isSharedPublicCalendar(calendar.googleCalendarId),
+  );
   const shared: EventView[] = [];
-  for (const calendarId of publicIds) {
+  for (const calendar of publicCalendars) {
+    const connection = calendar.connectionId
+      ? await ctx.db.get(calendar.connectionId)
+      : null;
     const rows = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_start", (q) =>
-        q.eq("calendarId", calendarId).gte("startMs", now),
+      .withIndex("by_provider_and_providerCalendarId_and_startMs", (q) =>
+        q
+          .eq("provider", connection?.provider ?? "google")
+          .eq(
+            "providerCalendarId",
+            calendar.providerCalendarId ?? calendar.googleCalendarId,
+          )
+          .gte("startMs", now),
       )
       .order("asc")
       .take(50);
-    shared.push(...rows.map((r) => sharedAsEvent(r, user._id)));
+    shared.push(
+      ...rows.map((row) => sharedAsEvent(row, user._id)),
+    );
   }
   return [...personal, ...shared]
     .sort((a, b) => a.startMs - b.startMs)
@@ -122,36 +147,45 @@ export async function listEventsInRangeHandler(
   if (endMs <= startMs || endMs - startMs > MAX_EVENT_RANGE_MS) {
     throw new Error("Requested calendar range is too large");
   }
-  const selected = await selectedCalendarIds(ctx, user._id);
+  const selected = await selectedCalendars(ctx, user._id);
   // Overlap is `endMs > startMs && startMs < endMs`. Range each calendar's
   // `by_..._end` index on endMs so a multi-day event that began before the
   // window is caught, bound the far side with MAX_EVENT_SPAN_MS, and cap the
   // combined read with one row budget.
   const budget = newRowBudget();
   const spanEnd = endMs + MAX_EVENT_SPAN_MS;
-  const personalIds = [...selected].filter((id) => !isSharedPublicCalendar(id));
-  const publicIds = [...selected].filter(isSharedPublicCalendar);
+  const personalCalendars = selected.filter(
+    (calendar) =>
+      !(calendar.isShared ?? isSharedPublicCalendar(calendar.googleCalendarId)),
+  );
+  const publicCalendars = selected.filter(
+    (calendar) =>
+      calendar.isShared ?? isSharedPublicCalendar(calendar.googleCalendarId),
+  );
   const personal: EventView[] = [];
-  for (const calendarId of personalIds) {
+  for (const calendar of personalCalendars) {
     const page = await ctx.db
       .query("events")
-      .withIndex("by_user_and_calendar_and_end", (q) =>
+      .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
         q
-          .eq("userId", user._id)
-          .eq("calendarId", calendarId)
-          .gt("endMs", startMs)
-          .lte("endMs", spanEnd),
+          .eq("connectionId", calendar.connectionId)
+          .eq("localCalendarId", calendar._id),
       )
       .take(budget.remaining + 1);
     spendRowBudget(budget, page.length);
     for (const e of page) {
-      if (e.startMs < endMs && e.status !== "cancelled") personal.push(e);
+      if (
+        e.endMs > startMs &&
+        e.endMs <= spanEnd &&
+        e.startMs < endMs &&
+        e.status !== "cancelled"
+      ) personal.push(e);
     }
   }
   const shared = await readSharedEventsInRange(
     ctx,
     user._id,
-    publicIds,
+    publicCalendars,
     startMs,
     endMs,
     budget,
@@ -178,8 +212,25 @@ export async function getEventByIdHandler(
   }
   // A shared (public-calendar) event belongs to no user, but it must only be
   // returned to a caller who actually has that calendar selected.
-  const selected = await selectedCalendarIds(ctx, user._id);
-  if (!selected.has(row.calendarId)) {
+  const selected = await selectedCalendars(ctx, user._id);
+  let allowed = false;
+  for (const calendar of selected) {
+    if (!(calendar.isShared ?? isSharedPublicCalendar(calendar.googleCalendarId))) {
+      continue;
+    }
+    const connection = calendar.connectionId
+      ? await ctx.db.get(calendar.connectionId)
+      : null;
+    if (
+      (connection?.provider ?? "google") === (row.provider ?? "google") &&
+      (calendar.providerCalendarId ?? calendar.googleCalendarId) ===
+        (row.providerCalendarId ?? row.calendarId)
+    ) {
+      allowed = true;
+      break;
+    }
+  }
+  if (!allowed) {
     return null;
   }
   return sharedAsEvent(row, user._id);
@@ -204,15 +255,28 @@ export async function getEventRecurrenceHandler(
   }
   const recurringEventId = event.recurringEventId;
 
-  const series = await ctx.db
-    .query("recurringSeries")
-    .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-      q
-        .eq("userId", user._id)
-        .eq("calendarId", event.calendarId)
-        .eq("googleEventId", recurringEventId),
-    )
-    .unique();
+  const series =
+    event.connectionId && event.localCalendarId
+      ? await ctx.db
+          .query("recurringSeries")
+          .withIndex(
+            "by_connection_and_localCalendarId_and_providerEventId",
+            (q) =>
+              q
+                .eq("connectionId", event.connectionId)
+                .eq("localCalendarId", event.localCalendarId)
+                .eq("providerEventId", event.providerSeriesId ?? recurringEventId),
+          )
+          .unique()
+      : await ctx.db
+          .query("recurringSeries")
+          .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+            q
+              .eq("userId", user._id)
+              .eq("calendarId", event.calendarId)
+              .eq("googleEventId", recurringEventId),
+          )
+          .unique();
   return series && series.sourceUpdatedMs >= event.googleUpdatedMs
     ? series.recurrence
     : null;
@@ -227,12 +291,14 @@ export async function getEventContextHandler(
   if (!event || !("userId" in event) || event.userId !== args.userId) {
     return null;
   }
-  const calendar = await ctx.db
-    .query("calendars")
-    .withIndex("by_user_and_googleCalendarId", (q) =>
-      q.eq("userId", args.userId).eq("googleCalendarId", event.calendarId),
-    )
-    .unique();
+  const calendar = event.localCalendarId
+    ? await ctx.db.get(event.localCalendarId)
+    : await ctx.db
+        .query("calendars")
+        .withIndex("by_user_and_googleCalendarId", (q) =>
+          q.eq("userId", args.userId).eq("googleCalendarId", event.calendarId),
+        )
+        .first();
   return { event, calendar };
 }
 

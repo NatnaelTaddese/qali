@@ -35,6 +35,7 @@ export const calendarTables = {
     connectionId: v.optional(v.id("calendarConnections")),
     providerCalendarId: v.optional(v.string()),
     syncCursor: v.optional(v.string()),
+    isShared: v.optional(v.boolean()),
   })
     .index("by_user", ["userId"])
     .index("by_user_and_googleCalendarId", ["userId", "googleCalendarId"])
@@ -64,14 +65,16 @@ export const calendarTables = {
     ])
     // Correctly keyed neutral lookups. Staged and unread until a later deploy;
     // calendar identity is required because provider event ids may collide.
-    .index("by_connection_and_localCalendarId_and_providerEventId", {
-      fields: ["connectionId", "localCalendarId", "providerEventId"],
-      staged: true,
-    })
-    .index("by_connection_and_localCalendarId_and_providerSeriesId", {
-      fields: ["connectionId", "localCalendarId", "providerSeriesId"],
-      staged: true,
-    }),
+    .index("by_connection_and_localCalendarId_and_providerEventId", [
+      "connectionId",
+      "localCalendarId",
+      "providerEventId",
+    ])
+    .index("by_connection_and_localCalendarId_and_providerSeriesId", [
+      "connectionId",
+      "localCalendarId",
+      "providerSeriesId",
+    ]),
 
   // One physical copy of a Google *public* calendar's events (holidays,
   // birthdays), shared across every user who selects that calendar. Stored once
@@ -86,15 +89,27 @@ export const calendarTables = {
       providerEventId: v.optional(v.string()),
       providerUpdatedMs: v.optional(v.number()),
       providerSeriesId: v.optional(v.string()),
+      syncGeneration: v.optional(v.number()),
     }),
   )
     .index("by_calendar_and_start", ["calendarId", "startMs"])
     .index("by_calendar_and_end", ["calendarId", "endMs"])
     .index("by_calendar_and_googleEventId", ["calendarId", "googleEventId"])
-    .index("by_provider_and_providerCalendarId_and_providerEventId", {
-      fields: ["provider", "providerCalendarId", "providerEventId"],
-      staged: true,
-    }),
+    .index("by_provider_and_providerCalendarId_and_providerEventId", [
+      "provider",
+      "providerCalendarId",
+      "providerEventId",
+    ])
+    .index("by_provider_and_providerCalendarId_and_startMs", [
+      "provider",
+      "providerCalendarId",
+      "startMs",
+    ])
+    .index("by_provider_and_providerCalendarId_and_endMs", [
+      "provider",
+      "providerCalendarId",
+      "endMs",
+    ]),
 
   // One row per shared public calendar: its user-independent sync token plus a
   // lease so exactly one user's sync refreshes it at a time.
@@ -109,12 +124,14 @@ export const calendarTables = {
     lastSyncAt: v.optional(v.number()),
     // Held while a sync runs; a second user finding a live lease skips its run.
     syncLeaseExpiresAt: v.optional(v.number()),
+    syncAttemptId: v.optional(v.string()),
+    syncGeneration: v.optional(v.number()),
   })
     .index("by_googleCalendarId", ["googleCalendarId"])
-    .index("by_provider_and_providerCalendarId", {
-      fields: ["provider", "providerCalendarId"],
-      staged: true,
-    }),
+    .index("by_provider_and_providerCalendarId", [
+      "provider",
+      "providerCalendarId",
+    ]),
 
   // One row per recurring master. Expanded event instances share this rule;
   // keeping it separately avoids duplicating it across every occurrence.
@@ -146,8 +163,9 @@ export const calendarTables = {
       "providerEventId",
     ])
     // Staged neutral-id lookup; read by nothing until cutover.
-    .index("by_connection_and_localCalendarId_and_providerEventId", {
-      fields: ["connectionId", "localCalendarId", "providerEventId"],
-      staged: true,
-    }),
+    .index("by_connection_and_localCalendarId_and_providerEventId", [
+      "connectionId",
+      "localCalendarId",
+      "providerEventId",
+    ]),
 };

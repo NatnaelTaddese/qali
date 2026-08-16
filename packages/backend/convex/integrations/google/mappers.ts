@@ -35,6 +35,7 @@ export function toProviderCalendar(cal: MappedCalendar): ProviderCalendar {
     timeZone: cal.timeZone,
     color: cal.backgroundColor,
     writable: WRITABLE_ACCESS_ROLES.has(cal.accessRole ?? ""),
+    selected: cal.googleSelected,
   };
 }
 

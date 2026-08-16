@@ -75,4 +75,12 @@ export const connectionSyncTables = {
     .index("by_connection", ["connectionId"])
     .index("by_user", ["userId"])
     .index("by_nextSyncDueAt", ["nextSyncDueAt"]),
+
+  // One stable row per user for work that intentionally spans every calendar
+  // connection. Connection polling never reads this row.
+  userSyncState: defineTable({
+    userId: v.string(),
+    engagementDirty: v.boolean(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
 };

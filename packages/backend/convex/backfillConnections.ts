@@ -229,6 +229,17 @@ async function repairConnectionSyncState(
   const value = { userId, ...connectionSyncFields(legacy) };
   if (row) await ctx.db.patch(row._id, value);
   else await ctx.db.insert("connectionSyncState", { connectionId, ...value });
+  const userState = await ctx.db
+    .query("userSyncState")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .unique();
+  if (!userState) {
+    await ctx.db.insert("userSyncState", {
+      userId,
+      engagementDirty: false,
+      updatedAt: Date.now(),
+    });
+  }
 }
 
 async function localCalendar(

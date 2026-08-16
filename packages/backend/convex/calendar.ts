@@ -99,7 +99,6 @@ export const getPrimaryCalendarId = internalQuery({
 
 export const getCalendarConnectionForAdapter = internalQuery({
   args: {
-    userId: v.string(),
     connectionId: v.id("calendarConnections"),
   },
   handler: (ctx, args) => getCalendarConnectionForAdapterHandler(ctx, args),

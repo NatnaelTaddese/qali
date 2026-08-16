@@ -3,335 +3,586 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 
 import { internal } from "../../_generated/api";
+import type { Id } from "../../_generated/dataModel";
+import type { ActionCtx } from "../../_generated/server";
+import { ProviderError } from "../../integrations/calendar/errors";
+import { getContactsAdapter } from "../../integrations/calendar/registry";
+import type {
+  CalendarProviderAdapter,
+  PageCursor,
+  ProviderCalendar,
+  ProviderEvent,
+  SyncCursor,
+  SyncPage,
+} from "../../integrations/calendar/types";
 import schema from "../../schema";
+import { syncOneCalendar, syncOneSharedCalendar } from "./engine";
 
-// Globs from the convex root (two levels up) so convex-test loads the whole
-// function surface, not just this domain folder.
 const modules = import.meta.glob("../../**/*.ts");
 
-/** A minimal stored event for the given user/calendar/generation. */
-function eventDoc(
-  userId: string,
-  calendarId: string,
-  googleEventId: string,
-  syncGeneration?: number,
-) {
+function event(id: string, calendarId = "calendar"): ProviderEvent {
   return {
-    userId,
+    id,
     calendarId,
-    googleEventId,
     startMs: 1_000,
     endMs: 2_000,
     allDay: false,
     status: "confirmed",
-    googleUpdatedMs: 1_000,
-    ...(syncGeneration !== undefined ? { syncGeneration } : {}),
+    updatedMs: 1_000,
   };
 }
 
-describe("per-user sync lease", () => {
-  test("is mutually exclusive and released only by the holding attempt", async () => {
-    const t = convexTest(schema, modules);
-    const userId = "user_lease";
-    await t.mutation(internal.googleSync.ensureSyncState, { userId });
+class FakeCalendarAdapter implements CalendarProviderAdapter {
+  readonly provider = "microsoft" as const;
+  readonly capabilities = {
+    contacts: false,
+    recurringEvents: true,
+    attendeeMembershipUpdates: true,
+    rsvp: true,
+    removeSelf: true,
+    conference: { create: false, add: false, remove: false },
+    idempotentCreate: true,
+    idempotentUpdate: true,
+    idempotentResponse: true,
+    idempotentDelete: true,
+  };
+  readonly calls: { syncCursor: SyncCursor | null; pageCursor?: PageCursor | null }[] = [];
 
-    const first = await t.mutation(internal.googleSync.claimSyncLease, {
-      userId,
+  constructor(
+    private readonly pages: (
+      | SyncPage<ProviderEvent>
+      | Error
+      | ((call: number) => SyncPage<ProviderEvent> | Error)
+    )[],
+  ) {}
+
+  async listCalendars(): Promise<readonly ProviderCalendar[]> {
+    return [];
+  }
+
+  async listEvents(args: {
+    calendarId: string;
+    syncCursor: SyncCursor | null;
+    pageCursor?: PageCursor | null;
+    fromMs: number;
+    toMs: number;
+  }): Promise<SyncPage<ProviderEvent>> {
+    this.calls.push({
+      syncCursor: args.syncCursor,
+      pageCursor: args.pageCursor,
     });
-    expect(typeof first).toBe("string");
+    const configured = this.pages.shift();
+    const result =
+      typeof configured === "function"
+        ? configured(this.calls.length)
+        : configured;
+    if (!result) throw new Error("Unexpected fake-provider page request");
+    if (result instanceof Error) throw result;
+    return result;
+  }
 
-    // A second run cannot claim while the lease is live.
-    const second = await t.mutation(internal.googleSync.claimSyncLease, {
+  async getEvent(): Promise<ProviderEvent> {
+    throw new Error("not used");
+  }
+  async createEvent(): Promise<ProviderEvent> {
+    throw new Error("not used");
+  }
+  async reconcileAmbiguousCreate(): Promise<ProviderEvent | null> {
+    return null;
+  }
+  async updateEvent(): Promise<ProviderEvent> {
+    throw new Error("not used");
+  }
+  async respondToEvent(): Promise<ProviderEvent> {
+    throw new Error("not used");
+  }
+  async deleteEvent(): Promise<void> {
+    throw new Error("not used");
+  }
+}
+
+async function setupConnection(
+  t: ReturnType<typeof convexTest>,
+  userId: string,
+  provider: "google" | "microsoft" = "microsoft",
+) {
+  return await t.run(async (ctx) => {
+    const now = Date.now();
+    const connectionId = await ctx.db.insert("calendarConnections", {
       userId,
+      provider,
+      status: "active",
+      capabilities: { contacts: true, idempotentCreate: true },
+      createdAt: now,
+      updatedAt: now,
     });
-    expect(second).toBeNull();
-
-    // An outcome from a different (stale) attempt must not release the lease.
-    await t.mutation(internal.googleSync.recordSyncOutcome, {
+    await ctx.db.insert("connectionSyncState", {
+      connectionId,
       userId,
-      attemptId: "not-the-holder",
       status: "idle",
-      active: false,
+      nextSyncDueAt: 0,
+      syncIntervalMs: 15 * 60 * 1_000,
     });
+    return connectionId;
+  });
+}
+
+async function setupCalendar(
+  t: ReturnType<typeof convexTest>,
+  userId: string,
+  connectionId: Id<"calendarConnections">,
+  providerCalendarId = "calendar",
+  syncCursor?: string,
+) {
+  return await t.run((ctx) =>
+    ctx.db.insert("calendars", {
+      userId,
+      googleCalendarId: providerCalendarId,
+      selected: true,
+      connectionId,
+      providerCalendarId,
+      syncCursor,
+      syncToken: syncCursor,
+    }),
+  );
+}
+
+function testActionCtx(t: ReturnType<typeof convexTest>): ActionCtx {
+  return {
+    runMutation: (reference, args) => t.mutation(reference, args),
+    runQuery: (reference, args) => t.query(reference, args),
+  } as ActionCtx;
+}
+
+describe("connection-scoped fake-provider sync", () => {
+  test("uses separate committed and page cursors and commits only after the final page", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "cursor-user";
+    const connectionId = await setupConnection(t, userId);
+    const calendarId = await setupCalendar(
+      t,
+      userId,
+      connectionId,
+      "calendar",
+      "committed-old",
+    );
+    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId,
+    });
+    const adapter = new FakeCalendarAdapter([
+      {
+        items: [event("one")],
+        nextPageCursor: "page-2" as PageCursor,
+        commitCursor: null,
+      },
+      {
+        items: [event("two")],
+        nextPageCursor: null,
+        commitCursor: "committed-new" as SyncCursor,
+      },
+    ]);
+
+    await syncOneCalendar(testActionCtx(t), adapter, {
+      connectionId,
+      attemptId: attemptId!,
+      localCalendarId: calendarId,
+      providerCalendarId: "calendar",
+      syncCursor: "committed-old",
+    });
+
+    expect(adapter.calls).toEqual([
+      { syncCursor: "committed-old", pageCursor: null },
+      { syncCursor: "committed-old", pageCursor: "page-2" },
+    ]);
+    const calendar = await t.run((ctx) => ctx.db.get(calendarId));
+    expect(calendar?.syncCursor).toBe("committed-new");
     expect(
-      await t.mutation(internal.googleSync.claimSyncLease, { userId }),
-    ).toBeNull();
-
-    // The holder releasing it frees the lease for the next run.
-    await t.mutation(internal.googleSync.recordSyncOutcome, {
-      userId,
-      attemptId: first as string,
-      status: "idle",
-      active: false,
-    });
-    expect(
-      typeof (await t.mutation(internal.googleSync.claimSyncLease, { userId })),
-    ).toBe("string");
-  });
-});
-
-describe("generation-based full-resync sweep", () => {
-  test("keeps the current generation and deletes older/absent ones", async () => {
-    const t = convexTest(schema, modules);
-    const userId = "user_gen";
-    const calendarId = "cal_1";
-    await t.run(async (ctx) => {
-      await ctx.db.insert("events", eventDoc(userId, calendarId, "cur", 2));
-      await ctx.db.insert("events", eventDoc(userId, calendarId, "old", 1));
-      await ctx.db.insert("events", eventDoc(userId, calendarId, "nogen"));
-      // Another calendar's current-gen row must be untouched by this sweep.
-      await ctx.db.insert("events", eventDoc(userId, "cal_2", "other", 1));
-    });
-
-    let cursor: string | null = null;
-    let done = false;
-    while (!done) {
-      const res: { cursor: string | null; done: boolean } = await t.mutation(
-        internal.googleSync.sweepStaleCalendarEventsBatch,
-        { userId, googleCalendarId: calendarId, keepGeneration: 2, cursor },
-      );
-      cursor = res.cursor;
-      done = res.done;
-    }
-
-    const remaining = await t.run(async (ctx) =>
-      ctx.db
-        .query("events")
-        .withIndex("by_user_and_start", (q) => q.eq("userId", userId))
-        .collect(),
-    );
-    const ids = remaining.map((e) => e.googleEventId).sort();
-    // cal_1 keeps only the current generation; cal_2 is left alone entirely.
-    expect(ids).toEqual(["cur", "other"]);
-  });
-});
-
-describe("contact deletion cascade", () => {
-  test("a tombstoned contact whose person has no other source is removed", async () => {
-    const t = convexTest(schema, modules);
-    const userId = "user_c1";
-    await t.mutation(internal.googleSync.upsertContactsPage, {
-      userId,
-      contacts: [
-        {
-          resourceName: "people/1",
-          deleted: false,
-          displayName: "Alice",
-          emails: ["alice@example.com"],
-          phones: [],
-        },
-      ],
-    });
-    let people = await t.run(async (ctx) =>
-      ctx.db.query("people").collect(),
-    );
-    expect(people).toHaveLength(1);
-    expect(people[0].sources).toContain("connection");
-
-    await t.mutation(internal.googleSync.upsertContactsPage, {
-      userId,
-      contacts: [
-        {
-          resourceName: "people/1",
-          deleted: true,
-          emails: ["alice@example.com"],
-          phones: [],
-        },
-      ],
-    });
-
-    const contacts = await t.run(async (ctx) =>
-      ctx.db.query("contacts").collect(),
-    );
-    expect(contacts).toHaveLength(0);
-    people = await t.run(async (ctx) => ctx.db.query("people").collect());
-    expect(people).toHaveLength(0);
-  });
-
-  test("a person also seen as an attendee keeps the row, losing only 'connection'", async () => {
-    const t = convexTest(schema, modules);
-    const userId = "user_c2";
-    const email = "bob@example.com";
-    // Bob is both a saved connection and a calendar attendee.
-    await t.mutation(internal.googleSync.upsertContactsPage, {
-      userId,
-      contacts: [
-        {
-          resourceName: "people/2",
-          deleted: false,
-          displayName: "Bob",
-          emails: [email],
-          phones: [],
-        },
-      ],
-    });
-    await t.run(async (ctx) => {
-      const p = await ctx.db
-        .query("people")
-        .withIndex("by_user_and_email", (q) =>
-          q.eq("userId", userId).eq("email", email),
-        )
-        .unique();
-      await ctx.db.patch(p!._id, { sources: ["connection", "attendee"] });
-    });
-
-    await t.mutation(internal.googleSync.upsertContactsPage, {
-      userId,
-      contacts: [
-        { resourceName: "people/2", deleted: true, emails: [email], phones: [] },
-      ],
-    });
-
-    const people = await t.run(async (ctx) =>
-      ctx.db.query("people").collect(),
-    );
-    expect(people).toHaveLength(1);
-    expect(people[0].sources).toEqual(["attendee"]);
-  });
-});
-
-describe("sync lease recovery", () => {
-  test("an expired lease is reclaimable by a new attempt, stranding the old one", async () => {
-    const t = convexTest(schema, modules);
-    const userId = "user_recover";
-    await t.mutation(internal.googleSync.ensureSyncState, { userId });
-
-    const stale = await t.mutation(internal.googleSync.claimSyncLease, {
-      userId,
-    });
-    expect(typeof stale).toBe("string");
-
-    // Simulate the holder dying: its lease lapses without ever being released.
-    await t.run(async (ctx) => {
-      const row = await ctx.db
-        .query("syncState")
-        .withIndex("by_user", (q) => q.eq("userId", userId))
-        .unique();
-      await ctx.db.patch(row!._id, { syncLeaseExpiresAt: Date.now() - 1 });
-    });
-
-    const fresh = await t.mutation(internal.googleSync.claimSyncLease, {
-      userId,
-    });
-    expect(typeof fresh).toBe("string");
-    expect(fresh).not.toBe(stale);
-
-    // The stranded original attempt can no longer release or clobber the lease.
-    await t.mutation(internal.googleSync.recordSyncOutcome, {
-      userId,
-      attemptId: stale as string,
-      status: "idle",
-      active: false,
-    });
-    expect(
-      await t.mutation(internal.googleSync.claimSyncLease, { userId }),
-    ).toBeNull();
-  });
-});
-
-describe("adaptive sync cadence", () => {
-  test("an idle run backs the interval off; an active run resets it to the floor", async () => {
-    const t = convexTest(schema, modules);
-    const userId = "user_cadence";
-    await t.mutation(internal.googleSync.ensureSyncState, { userId });
-
-    const readState = () =>
-      t.run(async (ctx) =>
+      await t.run((ctx) =>
         ctx.db
-          .query("syncState")
-          .withIndex("by_user", (q) => q.eq("userId", userId))
-          .unique(),
-      );
-    const floor = (await readState())!.syncIntervalMs!;
+          .query("events")
+          .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
+            q.eq("connectionId", connectionId).eq("localCalendarId", calendarId),
+          )
+          .collect(),
+      ),
+    ).toHaveLength(2);
+  });
 
-    // A quiet run doubles the interval and schedules the next poll further out.
-    let attempt = await t.mutation(internal.googleSync.claimSyncLease, {
-      userId,
+  test("keeps the previous snapshot available when a full refresh fails mid-pass", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "snapshot-user";
+    const connectionId = await setupConnection(t, userId);
+    const calendarId = await setupCalendar(t, userId, connectionId);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(calendarId, { syncGeneration: 1 });
+      await ctx.db.insert("events", {
+        userId,
+        googleEventId: "old",
+        calendarId: "calendar",
+        startMs: 1_000,
+        endMs: 2_000,
+        allDay: false,
+        status: "confirmed",
+        googleUpdatedMs: 1_000,
+        syncGeneration: 1,
+        connectionId,
+        localCalendarId: calendarId,
+        providerEventId: "old",
+        providerUpdatedMs: 1_000,
+      });
     });
-    await t.mutation(internal.googleSync.recordSyncOutcome, {
+    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId,
+    });
+    const adapter = new FakeCalendarAdapter([
+      {
+        items: [
+          event("new"),
+          { ...event("old"), status: "cancelled" },
+        ],
+        nextPageCursor: "next" as PageCursor,
+        commitCursor: null,
+      },
+      new Error("provider unavailable"),
+    ]);
+
+    await expect(
+      syncOneCalendar(testActionCtx(t), adapter, {
+        connectionId,
+        attemptId: attemptId!,
+        localCalendarId: calendarId,
+        providerCalendarId: "calendar",
+      }),
+    ).rejects.toThrow("provider unavailable");
+    const ids = await t.run(async (ctx) =>
+      (
+        await ctx.db
+          .query("events")
+          .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
+            q.eq("connectionId", connectionId).eq("localCalendarId", calendarId),
+          )
+          .collect()
+      ).map((row) => row.providerEventId).sort(),
+    );
+    expect(ids).toEqual(["new", "old"]);
+    expect((await t.run((ctx) => ctx.db.get(calendarId)))?.syncCursor).toBeUndefined();
+
+    await syncOneCalendar(
+      testActionCtx(t),
+      new FakeCalendarAdapter([
+        {
+          items: [event("new")],
+          nextPageCursor: null,
+          commitCursor: "snapshot-complete" as SyncCursor,
+        },
+      ]),
+      {
+        connectionId,
+        attemptId: attemptId!,
+        localCalendarId: calendarId,
+        providerCalendarId: "calendar",
+      },
+    );
+    expect(
+      await t.run(async (ctx) =>
+        (
+          await ctx.db
+            .query("events")
+            .withIndex(
+              "by_connection_and_localCalendarId_and_providerEventId",
+              (q) =>
+                q
+                  .eq("connectionId", connectionId)
+                  .eq("localCalendarId", calendarId),
+            )
+            .collect()
+        ).map((row) => row.providerEventId),
+      ),
+    ).toEqual(["new"]);
+  });
+
+  test("falls back to a bounded full pass when the committed cursor expires", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "expiry-user";
+    const connectionId = await setupConnection(t, userId);
+    const calendarId = await setupCalendar(
+      t,
       userId,
-      attemptId: attempt as string,
+      connectionId,
+      "calendar",
+      "expired",
+    );
+    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId,
+    });
+    const adapter = new FakeCalendarAdapter([
+      new ProviderError("cursor-expired", "expired"),
+      {
+        items: [event("fresh")],
+        nextPageCursor: null,
+        commitCursor: "fresh-cursor" as SyncCursor,
+      },
+    ]);
+
+    await syncOneCalendar(testActionCtx(t), adapter, {
+      connectionId,
+      attemptId: attemptId!,
+      localCalendarId: calendarId,
+      providerCalendarId: "calendar",
+      syncCursor: "expired",
+    });
+    expect(adapter.calls.map((call) => call.syncCursor)).toEqual(["expired", null]);
+    expect((await t.run((ctx) => ctx.db.get(calendarId)))?.syncCursor).toBe(
+      "fresh-cursor",
+    );
+  });
+});
+
+describe("connection identity and lease fencing", () => {
+  test("allows colliding provider ids on independent connections", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "collision-user";
+    const first = await setupConnection(t, userId);
+    const second = await setupConnection(t, userId);
+    const firstCalendar = await setupCalendar(t, userId, first, "same-calendar");
+    const secondCalendar = await setupCalendar(t, userId, second, "same-calendar");
+    const firstAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId: first,
+    });
+    const secondAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId: second,
+    });
+    for (const [connectionId, localCalendarId, attemptId] of [
+      [first, firstCalendar, firstAttempt],
+      [second, secondCalendar, secondAttempt],
+    ] as const) {
+      expect(
+        await t.mutation(internal.calendarSync.upsertEventsPage, {
+          connectionId,
+          attemptId: attemptId!,
+          localCalendarId,
+          events: [event("same-event", "same-calendar")],
+        }),
+      ).toBe(true);
+    }
+    const rows = await t.run((ctx) => ctx.db.query("events").collect());
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((row) => row.connectionId)).size).toBe(2);
+  });
+
+  test("a reclaimed attempt cannot write a page, commit a cursor, or release", async () => {
+    const t = convexTest(schema, modules);
+    const connectionId = await setupConnection(t, "fence-user");
+    const calendarId = await setupCalendar(t, "fence-user", connectionId);
+    const stale = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId,
+    });
+    await t.run(async (ctx) => {
+      const state = await ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
+        .unique();
+      await ctx.db.patch(state!._id, { syncLeaseExpiresAt: Date.now() - 1 });
+    });
+    const current = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId,
+    });
+    expect(current).not.toBe(stale);
+    expect(
+      await t.mutation(internal.calendarSync.upsertEventsPage, {
+        connectionId,
+        attemptId: stale!,
+        localCalendarId: calendarId,
+        events: [event("stale")],
+      }),
+    ).toBe(false);
+    expect(
+      await t.mutation(internal.calendarSync.setCalendarSyncCursor, {
+        connectionId,
+        attemptId: stale!,
+        localCalendarId: calendarId,
+        syncCursor: "stale",
+      }),
+    ).toBe(false);
+    await t.mutation(internal.calendarSync.recordSyncOutcome, {
+      connectionId,
+      attemptId: stale!,
       status: "idle",
       active: false,
     });
-    let state = (await readState())!;
-    expect(state.syncIntervalMs).toBe(floor * 2);
-    expect(state.status).toBe("idle");
-    expect(state.syncAttemptId).toBeUndefined();
-    expect(state.nextSyncDueAt).toBeGreaterThan(Date.now());
+    expect(
+      await t.mutation(internal.calendarSync.claimSyncLease, { connectionId }),
+    ).toBeNull();
+  });
 
-    // Any change (or a user-initiated sync) snaps the interval back to the floor.
-    attempt = await t.mutation(internal.googleSync.claimSyncLease, { userId });
-    await t.mutation(internal.googleSync.recordSyncOutcome, {
-      userId,
-      attemptId: attempt as string,
+  test("an error on one connection does not alter another connection's cadence", async () => {
+    const t = convexTest(schema, modules);
+    const first = await setupConnection(t, "partial-user");
+    const second = await setupConnection(t, "partial-user");
+    const firstAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId: first,
+    });
+    const secondAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId: second,
+    });
+    await t.mutation(internal.calendarSync.recordSyncOutcome, {
+      connectionId: first,
+      attemptId: firstAttempt!,
+      status: "error",
+      lastError: "failed",
+      active: false,
+    });
+    await t.mutation(internal.calendarSync.recordSyncOutcome, {
+      connectionId: second,
+      attemptId: secondAttempt!,
       status: "idle",
       active: true,
     });
-    expect((await readState())!.syncIntervalMs).toBe(floor);
+    const states = await t.run((ctx) => ctx.db.query("connectionSyncState").collect());
+    expect(states.find((row) => row.connectionId === first)?.status).toBe("error");
+    expect(states.find((row) => row.connectionId === second)?.status).toBe("idle");
   });
 });
 
-describe("full-resync generation vs cursor", () => {
-  test("generation advances independently of the sync token so an incomplete run withholds the cursor", async () => {
+describe("connection-aware contact ownership", () => {
+  test("a provider without the contacts capability is skipped", async () => {
     const t = convexTest(schema, modules);
-    const userId = "user_commit";
-    const googleCalendarId = "cal_commit";
+    const connectionId = await setupConnection(t, "no-contacts-user");
     await t.run((ctx) =>
-      ctx.db.insert("calendars", {
-        userId,
-        googleCalendarId,
-        selected: true,
-        syncToken: "old",
+      ctx.db.patch(connectionId, {
+        capabilities: { contacts: false, idempotentCreate: true },
+      }),
+    );
+    expect(await getContactsAdapter(testActionCtx(t), connectionId)).toBeNull();
+  });
+
+  test("removing one connection's contact keeps another claim for the same email", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "contact-user";
+    const first = await setupConnection(t, userId);
+    const second = await setupConnection(t, userId);
+    const firstAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId: first,
+    });
+    const secondAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId: second,
+    });
+    for (const [connectionId, attemptId, id] of [
+      [first, firstAttempt, "first"],
+      [second, secondAttempt, "second"],
+    ] as const) {
+      await t.mutation(internal.calendarSync.upsertContactsPage, {
+        connectionId,
+        attemptId: attemptId!,
+        feed: "contacts",
+        contacts: [
+          {
+            id,
+            deleted: false,
+            emails: ["same@example.com"],
+            phones: [],
+          },
+        ],
+      });
+    }
+    await t.mutation(internal.calendarSync.upsertContactsPage, {
+      connectionId: first,
+      attemptId: firstAttempt!,
+      feed: "contacts",
+      contacts: [
+        { id: "first", deleted: true, emails: [], phones: [] },
+      ],
+    });
+    const person = await t.run((ctx) =>
+      ctx.db
+        .query("people")
+        .withIndex("by_user_and_email", (q) =>
+          q.eq("userId", userId).eq("email", "same@example.com"),
+        )
+        .unique(),
+    );
+    expect(person?.sources).toContain("connection");
+    expect(await t.run((ctx) => ctx.db.query("personSourceClaims").collect())).toHaveLength(1);
+  });
+});
+
+describe("shared generation and engagement maintenance", () => {
+  test("a failed shared refresh leaves the old generation visible and releases only its own lease", async () => {
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert("sharedEvents", {
+        googleEventId: "old",
+        calendarId: "holiday",
+        startMs: 1_000,
+        endMs: 2_000,
+        allDay: false,
+        status: "confirmed",
+        googleUpdatedMs: 1_000,
+        provider: "microsoft",
+        providerCalendarId: "holiday",
+        providerEventId: "old",
+        providerUpdatedMs: 1_000,
         syncGeneration: 1,
       }),
     );
+    const adapter = new FakeCalendarAdapter([
+      {
+        items: [event("new", "holiday")],
+        nextPageCursor: "next" as PageCursor,
+        commitCursor: null,
+      },
+      new Error("shared provider failure"),
+    ]);
+    await syncOneSharedCalendar(
+      testActionCtx(t),
+      adapter,
+      "microsoft",
+      "holiday",
+    );
+    const rows = await t.run((ctx) => ctx.db.query("sharedEvents").collect());
+    expect(rows.map((row) => row.providerEventId).sort()).toEqual(["new", "old"]);
+    const state = await t.run((ctx) => ctx.db.query("sharedCalendars").unique());
+    expect(state?.syncAttemptId).toBeUndefined();
+    expect(state?.lastSyncAt).toBeUndefined();
+  });
 
-    const readCal = () =>
-      t.run(async (ctx) =>
-        ctx.db
-          .query("calendars")
-          .withIndex("by_user_and_googleCalendarId", (q) =>
-            q.eq("userId", userId).eq("googleCalendarId", googleCalendarId),
-          )
-          .unique(),
-      );
-
-    expect(
-      await t.mutation(internal.googleSync.beginCalendarFullResync, {
+  test("engagement application resets people absent from the latest aggregate", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "engagement-user";
+    await t.run(async (ctx) => {
+      await ctx.db.insert("people", {
         userId,
-        googleCalendarId,
-      }),
-    ).toBe(2);
-
-    // Committing without a token (an incomplete/failed page) bumps the generation
-    // but keeps the old cursor, so the next run redoes the full resync.
-    await t.mutation(internal.googleSync.commitCalendarFullResync, {
-      userId,
-      googleCalendarId,
-      syncGeneration: 2,
+        email: "stale@example.com",
+        sources: ["attendee"],
+        score: 99,
+        meetingCount: 10,
+        lastMetMs: 100,
+        updatedAt: 0,
+      });
+      await ctx.db.insert("people", {
+        userId,
+        email: "current@example.com",
+        sources: ["attendee"],
+        score: 1,
+        meetingCount: 1,
+        updatedAt: 0,
+      });
     });
-    let cal = (await readCal())!;
-    expect(cal.syncGeneration).toBe(2);
-    expect(cal.syncToken).toBe("old");
-
-    // A complete run commits both generation and the fresh cursor.
-    await t.mutation(internal.googleSync.commitCalendarFullResync, {
+    await t.mutation(internal.calendarSync.applyEngagementScores, {
       userId,
-      googleCalendarId,
-      syncGeneration: 3,
-      syncToken: "new",
+      scores: [
+        { email: "current@example.com", score: 5, meetingCount: 2 },
+      ],
+      cursor: null,
     });
-    cal = (await readCal())!;
-    expect(cal.syncGeneration).toBe(3);
-    expect(cal.syncToken).toBe("new");
-
-    // Incremental sync just advances the cursor in place.
-    await t.mutation(internal.googleSync.setCalendarSyncToken, {
-      userId,
-      googleCalendarId,
-      syncToken: "incr",
+    const people = await t.run((ctx) => ctx.db.query("people").collect());
+    expect(people.find((row) => row.email === "stale@example.com")).toMatchObject({
+      score: 0,
+      meetingCount: 0,
     });
-    expect((await readCal())!.syncToken).toBe("incr");
+    expect(people.find((row) => row.email === "current@example.com")).toMatchObject({
+      score: 5,
+      meetingCount: 2,
+    });
   });
 });

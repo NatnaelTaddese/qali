@@ -25,6 +25,24 @@ describe("purgeUserData", () => {
         userId,
         status: "idle",
       });
+      await ctx.db.insert("userSyncState", {
+        userId,
+        engagementDirty: false,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("personSourceClaims", {
+        userId,
+        connectionId,
+        email,
+        source: "other",
+        updatedAt: 1,
+      });
+      await ctx.db.insert("otherContactSources", {
+        userId,
+        connectionId,
+        providerContactId: "other/1",
+        emails: [email],
+      });
       await ctx.db.insert("calendarOperations", {
         connectionId,
         userId,
@@ -103,6 +121,9 @@ describe("purgeUserData", () => {
       expect(await ctx.db.query("bookings").collect()).toHaveLength(0);
       expect(await ctx.db.query("calendarConnections").collect()).toHaveLength(0);
       expect(await ctx.db.query("connectionSyncState").collect()).toHaveLength(0);
+      expect(await ctx.db.query("userSyncState").collect()).toHaveLength(0);
+      expect(await ctx.db.query("personSourceClaims").collect()).toHaveLength(0);
+      expect(await ctx.db.query("otherContactSources").collect()).toHaveLength(0);
       expect(await ctx.db.query("calendarOperations").collect()).toHaveLength(0);
       expect(await ctx.db.query("connectionBackfillUsers").collect()).toHaveLength(
         0,

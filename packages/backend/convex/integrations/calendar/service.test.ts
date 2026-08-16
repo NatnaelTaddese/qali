@@ -6,9 +6,11 @@ import { createEventReconciling } from "./service";
 import type {
   CalendarProviderAdapter,
   CreateEventRequest,
+  EventCreate,
+  EventPatch,
   EventRef,
-  EventWrite,
   NotifyScope,
+  PageCursor,
   ProviderCalendar,
   ProviderEvent,
   SyncCursor,
@@ -23,7 +25,18 @@ import type {
  */
 class FakeCalendarAdapter implements CalendarProviderAdapter {
   readonly provider = "microsoft" as const; // not google, on purpose
-  readonly capabilities = { contacts: false, idempotentCreate: true };
+  readonly capabilities = {
+    contacts: false,
+    recurringEvents: true,
+    attendeeMembershipUpdates: true,
+    rsvp: true,
+    removeSelf: true,
+    conference: { create: false, add: false, remove: false },
+    idempotentCreate: true,
+    idempotentUpdate: true,
+    idempotentResponse: true,
+    idempotentDelete: true,
+  };
 
   private seq = 0;
   private readonly events = new Map<string, ProviderEvent>();
@@ -51,6 +64,7 @@ class FakeCalendarAdapter implements CalendarProviderAdapter {
       id,
       calendarId: request.calendarId,
       summary: request.event.summary,
+      description: request.event.description,
       startMs: request.event.startMs ?? 0,
       endMs: request.event.endMs ?? 0,
       allDay: request.event.allDay ?? false,
@@ -61,7 +75,8 @@ class FakeCalendarAdapter implements CalendarProviderAdapter {
         self: true,
         responseStatus: "needsAction",
       })),
-      seriesId: request.event.recurrence ? id : undefined,
+      recurrence: request.event.recurrence,
+      timeZone: request.event.timeZone,
     };
     this.events.set(id, event);
     if (request.idempotencyKey) this.byKey.set(request.idempotencyKey, id);
@@ -74,11 +89,12 @@ class FakeCalendarAdapter implements CalendarProviderAdapter {
 
   async listEvents(args: {
     calendarId: string;
-    cursor: SyncCursor | null;
+    syncCursor: SyncCursor | null;
+    pageCursor?: PageCursor | null;
     fromMs: number;
     toMs: number;
   }): Promise<SyncPage<ProviderEvent>> {
-    if (args.cursor && !this.cursorsValid) {
+    if (args.syncCursor && !this.cursorsValid) {
       throw new ProviderError("cursor-expired", "stale cursor");
     }
     return {
@@ -86,7 +102,7 @@ class FakeCalendarAdapter implements CalendarProviderAdapter {
         (e) => e.calendarId === args.calendarId,
       ),
       nextPageCursor: null,
-      commitCursor: "cursor-1",
+      commitCursor: "cursor-1" as SyncCursor,
     };
   }
 
@@ -124,11 +140,19 @@ class FakeCalendarAdapter implements CalendarProviderAdapter {
 
   async updateEvent(args: {
     ref: EventRef;
-    patch: EventWrite;
+    patch: EventPatch;
     notify?: NotifyScope;
+    idempotencyKey?: string;
+    expectedUpdatedMs?: number;
   }): Promise<ProviderEvent> {
     const event = await this.getEvent(args.ref);
-    const updated = { ...event, summary: args.patch.summary ?? event.summary };
+    const updated = {
+      ...event,
+      ...(args.patch.summary !== undefined ? { summary: args.patch.summary } : {}),
+      ...(args.patch.description !== undefined
+        ? { description: args.patch.description ?? undefined }
+        : {}),
+    };
     this.events.set(event.id, updated);
     return updated;
   }
@@ -137,6 +161,7 @@ class FakeCalendarAdapter implements CalendarProviderAdapter {
     ref: EventRef;
     responseStatus: "accepted" | "tentative" | "declined";
     notify?: NotifyScope;
+    idempotencyKey?: string;
   }): Promise<ProviderEvent> {
     const event = await this.getEvent(args.ref);
     const updated: ProviderEvent = {
@@ -149,7 +174,12 @@ class FakeCalendarAdapter implements CalendarProviderAdapter {
     return updated;
   }
 
-  async deleteEvent(args: { ref: EventRef; notify?: NotifyScope }): Promise<void> {
+  async deleteEvent(args: {
+    ref: EventRef;
+    mode: "cancel" | "remove-self";
+    notify?: NotifyScope;
+    idempotencyKey?: string;
+  }): Promise<void> {
     this.events.delete(args.ref.eventId);
   }
 
@@ -158,7 +188,7 @@ class FakeCalendarAdapter implements CalendarProviderAdapter {
   }
 }
 
-const write = (summary: string): EventWrite => ({
+const write = (summary: string): EventCreate => ({
   summary,
   startMs: 1_000,
   endMs: 2_000,
@@ -180,8 +210,23 @@ describe("port conformance with a non-Google adapter", () => {
     expect((await a.updateEvent({ ref, patch: { summary: "Retro" } })).summary).toBe(
       "Retro",
     );
-    await a.deleteEvent({ ref });
+    await a.deleteEvent({ ref, mode: "cancel", idempotencyKey: "delete-1" });
     await expect(a.getEvent(ref)).rejects.toThrow(ProviderError);
+  });
+
+  test("create values and explicit patch clearing remain distinct", async () => {
+    const a = new FakeCalendarAdapter();
+    const created = await a.createEvent({
+      calendarId: "cal",
+      event: { ...write("Notes"), description: "remove me" },
+      idempotencyKey: "create-notes",
+    });
+    const updated = await a.updateEvent({
+      ref: { calendarId: "cal", eventId: created.id },
+      patch: { description: null },
+      idempotencyKey: "clear-notes",
+    });
+    expect(updated.description).toBeUndefined();
   });
 
   test("RSVP updates only the self attendee", async () => {
@@ -197,27 +242,33 @@ describe("port conformance with a non-Google adapter", () => {
     expect(answered.attendees?.[0]?.responseStatus).toBe("accepted");
   });
 
-  test("a recurring create carries the recurrence and yields a series id", async () => {
+  test("a recurring create returns master recurrence metadata", async () => {
     const a = new FakeCalendarAdapter();
     const created = await a.createEvent({
       calendarId: "cal",
       event: { ...write("Weekly"), recurrence: ["RRULE:FREQ=WEEKLY"] },
     });
-    expect(created.seriesId).toBe(created.id);
+    expect(created.recurrence).toEqual(["RRULE:FREQ=WEEKLY"]);
+    expect(created.seriesId).toBeUndefined();
   });
 
   test("a stale cursor is a cursor-expired ProviderError", async () => {
     const a = new FakeCalendarAdapter();
     const page = await a.listEvents({
       calendarId: "cal",
-      cursor: null,
+      syncCursor: null,
       fromMs: 0,
       toMs: 9_999,
     });
     expect(page.commitCursor).toBe("cursor-1");
     a.expireCursors();
     await expect(
-      a.listEvents({ calendarId: "cal", cursor: page.commitCursor, fromMs: 0, toMs: 9_999 }),
+      a.listEvents({
+        calendarId: "cal",
+        syncCursor: page.commitCursor,
+        fromMs: 0,
+        toMs: 9_999,
+      }),
     ).rejects.toMatchObject({ kind: "cursor-expired" });
   });
 
@@ -229,7 +280,11 @@ describe("port conformance with a non-Google adapter", () => {
   });
 
   test("an optional capability is declared, not assumed", () => {
-    expect(new FakeCalendarAdapter().capabilities.contacts).toBe(false);
+    const capabilities = new FakeCalendarAdapter().capabilities;
+    expect(capabilities.contacts).toBe(false);
+    expect(capabilities.conference.create).toBe(false);
+    expect(capabilities.attendeeMembershipUpdates).toBe(true);
+    expect(capabilities.removeSelf).toBe(true);
   });
 });
 

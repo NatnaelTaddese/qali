@@ -4,6 +4,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   fetchCalendarList,
+  getCalendarEvent,
+  GoogleApiError,
   insertCalendarEvent,
   mapGoogleEvent,
   patchCalendarEvent,
@@ -99,6 +101,25 @@ describe("fetchCalendarList", () => {
     expect(new URL(requestedUrls[1]).searchParams.get("pageToken")).toBe(
       "next-page",
     );
+  });
+});
+
+describe("GoogleApiError diagnostics", () => {
+  test("retains the response body and status for operation-aware mapping", async () => {
+    globalThis.fetch = (async () =>
+      new Response('{"error":{"reason":"backend timeout"}}', {
+        status: 408,
+        statusText: "Request Timeout",
+      })) as typeof fetch;
+
+    try {
+      await getCalendarEvent("token", "primary@example.com", "event-1");
+      throw new Error("expected getCalendarEvent to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(GoogleApiError);
+      expect((error as GoogleApiError).status).toBe(408);
+      expect((error as GoogleApiError).responseBody).toContain("backend timeout");
+    }
   });
 });
 

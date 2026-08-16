@@ -20,6 +20,10 @@ export class GoogleApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** Unmodified diagnostic body, retained for reason-based classifications
+     * such as Google's HTTP 403 rateLimitExceeded response. */
+    readonly responseBody?: string,
+    readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = "GoogleApiError";
@@ -149,6 +153,8 @@ async function googleFetch(
       throw new GoogleApiError(
         res.status,
         `Google API ${res.status} ${res.statusText}: ${body}`,
+        body,
+        parseRetryAfterMs(res),
       );
     }
     // DELETE answers 204 with an empty body, which res.json() would choke on.
@@ -304,6 +310,12 @@ export type RawEvent = {
   conferenceData?: RawConferenceData;
 };
 
+export type RawCalendarPage = {
+  events: RawEvent[];
+  nextPageToken?: string;
+  nextSyncToken?: string;
+};
+
 /** Drop a person Google sent as an empty object, so "absent" stays absent
  * rather than becoming a row of undefineds. */
 function mapPerson(raw: RawPersonRef | undefined): MappedPerson | undefined {
@@ -455,7 +467,7 @@ export function mapGoogleEvent(raw: RawEvent, calendarId: string): MappedEvent {
   };
 }
 
-export async function fetchCalendarPage(
+async function fetchRawCalendarPage(
   accessToken: string,
   opts: {
     calendarId: string;
@@ -464,7 +476,7 @@ export async function fetchCalendarPage(
     timeMinMs?: number;
     timeMaxMs?: number;
   },
-): Promise<CalendarPage> {
+): Promise<RawCalendarPage> {
   const params = new URLSearchParams({
     singleEvents: "true",
     showDeleted: "true",
@@ -499,39 +511,72 @@ export async function fetchCalendarPage(
   };
 
   return {
-    events: (data.items ?? []).map((e) => mapGoogleEvent(e, opts.calendarId)),
+    events: data.items ?? [],
     nextPageToken: data.nextPageToken,
     nextSyncToken: data.nextSyncToken,
   };
 }
 
-export async function insertCalendarEvent(
+/** Raw variant used by the provider adapter so recurrence-instance metadata is
+ * not discarded. The existing mapped helper below retains its public behavior. */
+export async function fetchCalendarRawPage(
+  accessToken: string,
+  opts: {
+    calendarId: string;
+    syncToken?: string;
+    pageToken?: string;
+    timeMinMs?: number;
+    timeMaxMs?: number;
+  },
+): Promise<RawCalendarPage> {
+  return await fetchRawCalendarPage(accessToken, opts);
+}
+
+export async function fetchCalendarPage(
+  accessToken: string,
+  opts: {
+    calendarId: string;
+    syncToken?: string;
+    pageToken?: string;
+    timeMinMs?: number;
+    timeMaxMs?: number;
+  },
+): Promise<CalendarPage> {
+  const page = await fetchRawCalendarPage(accessToken, opts);
+  return {
+    events: page.events.map((event) => mapGoogleEvent(event, opts.calendarId)),
+    nextPageToken: page.nextPageToken,
+    nextSyncToken: page.nextSyncToken,
+  };
+}
+
+export type CalendarEventCreateBody = {
+  /** Client-selected ID used to make retries idempotent. */
+  id?: string;
+  summary: string;
+  description?: string;
+  location?: string;
+  start: RawCalendarDateTime;
+  end: RawCalendarDateTime;
+  colorId?: string;
+  visibility?: string;
+  /** "opaque" (busy) | "transparent" (free). Omitted = Google's default. */
+  transparency?: string;
+  attendees?: { email: string; displayName?: string; optional?: boolean }[];
+  recurrence?: string[];
+};
+
+export async function insertRawCalendarEvent(
   accessToken: string,
   calendarId: string,
-  body: {
-    /** Client-selected ID used to make retries idempotent. */
-    id?: string;
-    summary: string;
-    description?: string;
-    location?: string;
-    start: RawCalendarDateTime;
-    end: RawCalendarDateTime;
-    colorId?: string;
-    visibility?: string;
-    /** "opaque" (busy) | "transparent" (free). Omitted = Google's default (busy). */
-    transparency?: string;
-    /** Guests to invite. Google emails them when `sendUpdates` is set. */
-    attendees?: { email: string; displayName?: string; optional?: boolean }[];
-    /** RFC5545 recurrence lines, e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO,WE"]. */
-    recurrence?: string[];
-  },
+  body: CalendarEventCreateBody,
   /** When set, Google emails the affected guests (e.g. "all" for invitations). */
   sendUpdates?: "all" | "externalOnly" | "none",
   /** Ask Google to mint a Google Meet link for the event. The generated URL
    * comes back on the response as `hangoutLink`. */
   addConference?: boolean,
   conferenceRequestId?: string,
-): Promise<MappedEvent> {
+): Promise<RawEvent> {
   const params = new URLSearchParams();
   if (sendUpdates) params.set("sendUpdates", sendUpdates);
   // A `createRequest` only takes effect when this is set — without it Google
@@ -545,12 +590,32 @@ export async function insertCalendarEvent(
   const requestBody = addConference
     ? { ...body, conferenceData: newMeetRequest(conferenceRequestId) }
     : body;
-  const data = (await googleFetch(
+  return (await googleFetch(
     `${CALENDAR_BASE}/calendars/${encodeURIComponent(calendarId)}/events${query}`,
     accessToken,
     { method: "POST", body: JSON.stringify(requestBody) },
   )) as RawEvent;
-  return mapGoogleEvent(data, calendarId);
+}
+
+export async function insertCalendarEvent(
+  accessToken: string,
+  calendarId: string,
+  body: CalendarEventCreateBody,
+  sendUpdates?: "all" | "externalOnly" | "none",
+  addConference?: boolean,
+  conferenceRequestId?: string,
+): Promise<MappedEvent> {
+  return mapGoogleEvent(
+    await insertRawCalendarEvent(
+      accessToken,
+      calendarId,
+      body,
+      sendUpdates,
+      addConference,
+      conferenceRequestId,
+    ),
+    calendarId,
+  );
 }
 
 /** The `conferenceData` payload that asks Google to create a Google Meet. The
@@ -603,34 +668,31 @@ export async function deleteCalendarEvent(
  * A patch only touches the fields present in `body`. To *clear* a field you
  * must send an explicit `null` — omitting it means "leave alone", which is why
  * the clearable fields are typed `string | null` rather than optional strings. */
-export async function patchCalendarEvent(
+export type CalendarEventPatchBody = {
+  start?: RawCalendarDateTime;
+  end?: RawCalendarDateTime;
+  summary?: string;
+  description?: string | null;
+  location?: string | null;
+  colorId?: string | null;
+  visibility?: string | null;
+  transparency?: string;
+  attendees?: RawAttendee[];
+  recurrence?: string[];
+};
+
+export async function patchRawCalendarEvent(
   accessToken: string,
   calendarId: string,
   googleEventId: string,
-  body: {
-    start?: RawCalendarDateTime;
-    end?: RawCalendarDateTime;
-    summary?: string;
-    description?: string | null;
-    location?: string | null;
-    colorId?: string | null;
-    visibility?: string | null;
-    /** "opaque" (busy) | "transparent" (free). */
-    transparency?: string;
-    /** Replaces the guest list wholesale — omitted guests are removed. */
-    attendees?: RawAttendee[];
-    /** RFC5545 recurrence lines. Only meaningful on a recurring *master* id —
-     * e.g. truncating a series by replacing its rule with one that ends on an
-     * `UNTIL`. Omitted leaves the rule alone. */
-    recurrence?: string[];
-  },
+  body: CalendarEventPatchBody,
   /** When set, Google emails the affected guests (e.g. "all" for invitations). */
   sendUpdates?: "all" | "externalOnly" | "none",
   /** `"add"` mints a Google Meet link, `"remove"` clears any existing one, and
    * `undefined` leaves the event's conferencing untouched. */
   conference?: "add" | "remove",
   conferenceRequestId?: string,
-): Promise<MappedEvent> {
+): Promise<RawEvent> {
   const params = new URLSearchParams();
   if (sendUpdates) params.set("sendUpdates", sendUpdates);
   if (conference) params.set("conferenceDataVersion", "1");
@@ -643,12 +705,34 @@ export async function patchCalendarEvent(
       : conference === "remove"
         ? { ...body, conferenceData: null }
         : body;
-  const data = (await googleFetch(
+  return (await googleFetch(
     `${CALENDAR_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(googleEventId)}${query}`,
     accessToken,
     { method: "PATCH", body: JSON.stringify(requestBody) },
   )) as RawEvent;
-  return mapGoogleEvent(data, calendarId);
+}
+
+export async function patchCalendarEvent(
+  accessToken: string,
+  calendarId: string,
+  googleEventId: string,
+  body: CalendarEventPatchBody,
+  sendUpdates?: "all" | "externalOnly" | "none",
+  conference?: "add" | "remove",
+  conferenceRequestId?: string,
+): Promise<MappedEvent> {
+  return mapGoogleEvent(
+    await patchRawCalendarEvent(
+      accessToken,
+      calendarId,
+      googleEventId,
+      body,
+      sendUpdates,
+      conference,
+      conferenceRequestId,
+    ),
+    calendarId,
+  );
 }
 
 // ---------------------------------------------------------------------------

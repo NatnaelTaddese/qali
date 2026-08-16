@@ -12,6 +12,11 @@ import type {
   ProviderEvent,
 } from "./types";
 
+export {
+  ExternalWriteCommittedError,
+  isDefinitiveProviderFailure,
+} from "./errors";
+
 /**
  * Create an event, reconciling a create that may already have landed instead of
  * risking a duplicate.

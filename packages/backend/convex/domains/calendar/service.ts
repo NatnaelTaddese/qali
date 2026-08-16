@@ -35,6 +35,7 @@ import {
   googleEventIdForOperation,
   mergeLiveAttendees,
 } from "../../integrations/google/eventHelpers";
+import { ExternalWriteCommittedError } from "../../integrations/calendar/errors";
 import { eventCapabilities, type EventCapabilities } from "@qali/domain/permissions";
 import { authComponent } from "../../auth";
 import { getGoogleAccessToken } from "../../integrations/google/credentials";
@@ -55,14 +56,7 @@ const CAPABILITY_DENIAL: Record<EventCapabilityName, string> = {
 
 /** Google has committed the write, but a local mirror/reconciliation write did
  * not. Callers must report external success rather than inviting a duplicate. */
-export class ExternalWriteCommittedError extends Error {
-  constructor(readonly successSummary: string, cause: unknown) {
-    super(
-      `Google accepted the change, but local reconciliation is pending: ${cause instanceof Error ? cause.message : String(cause)}`,
-    );
-    this.name = "ExternalWriteCommittedError";
-  }
-}
+export { ExternalWriteCommittedError };
 
 function validateTimePair(
   startMs: number | undefined,

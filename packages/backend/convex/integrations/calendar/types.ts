@@ -1,36 +1,22 @@
 /**
- * The provider-neutral calendar port.
- *
- * Every calendar integration (Google today, Microsoft next) implements
- * `CalendarProviderAdapter`. The domain layer talks only to this interface, so
- * adding a provider is writing one adapter — never re-touching the services.
- *
- * Design rules that keep it honest:
- *  - No provider-shaped identifiers. Ids are opaque `string`s; a Google event id
- *    and a Graph event id are indistinguishable here.
- *  - Cursors are opaque (see {@link SyncCursor}). Google sync tokens and Graph
- *    delta links stay inside their adapter.
- *  - Idempotency is a capability of the adapter, not an assumption of the caller
- *    (see {@link EventWrite.idempotencyKey} and
- *    {@link CalendarProviderAdapter.reconcileAmbiguousCreate}). The caller mints
- *    a key; the adapter maps it to whatever the provider offers — Google a
- *    client-assigned event id, Microsoft a `transactionId`.
- *  - Times are epoch-millis + an all-day flag, never provider date strings.
+ * Provider-neutral calendar port. Provider identifiers and cursors are opaque;
+ * callers persist and replay them without inspecting their contents.
  */
 
 export type ProviderId = "google" | "microsoft";
 
-/** Opaque provider cursor. The string is meaningful only to the adapter that
- * issued it (a Google `syncToken`, a Graph delta link). Callers persist and
- * replay it without inspecting it. */
-export type SyncCursor = string;
+declare const syncCursorBrand: unique symbol;
+declare const pageCursorBrand: unique symbol;
 
-/** One page of a delta/list sync. `nextPageCursor` walks within a single sync
- * pass; `commitCursor` is the cursor to persist once the whole pass has been
- * durably written, so an interrupted pass never advances the stored cursor. */
+/** A committed cursor used to begin a later delta pass. */
+export type SyncCursor = string & { readonly [syncCursorBrand]: true };
+/** A continuation used only to fetch the next page of the current pass. */
+export type PageCursor = string & { readonly [pageCursorBrand]: true };
+
+/** `commitCursor` is persisted only after every page has been durably applied. */
 export interface SyncPage<T> {
   readonly items: readonly T[];
-  readonly nextPageCursor: SyncCursor | null;
+  readonly nextPageCursor: PageCursor | null;
   readonly commitCursor: SyncCursor | null;
 }
 
@@ -40,15 +26,12 @@ export interface ProviderCalendar {
   readonly primary?: boolean;
   readonly timeZone?: string;
   readonly color?: string;
-  /** Whether the authenticated user can write events to this calendar. The
-   * adapter normalizes each provider's access-role vocabulary into this. */
   readonly writable: boolean;
 }
 
 export interface ProviderPerson {
   readonly email?: string;
   readonly displayName?: string;
-  /** The provider's authoritative "this is the caller's own copy" marker. */
   readonly self?: boolean;
 }
 
@@ -66,11 +49,17 @@ export interface ProviderConference {
 
 export type EventStatus = "confirmed" | "tentative" | "cancelled";
 
-/** A calendar event as a provider reports it, fully normalized. Field names are
- * provider-neutral: `id` (not googleEventId), `updatedMs` (not googleUpdatedMs),
- * conference folded into one shape. The guest-permission tri-states are kept as
- * normalized optionals because they are a shared calendar concept, not a Google
- * quirk; turning them into capabilities stays a domain concern. */
+/**
+ * A normalized provider event.
+ *
+ * Google syncs with recurrence expansion enabled. Consequently `listEvents`
+ * returns occurrences, not recurring masters: an occurrence has `seriesId` and
+ * `originalOccurrenceStartMs`, while `recurrence` is normally absent. A master
+ * returned by `getEvent`, create, or update has `recurrence` and normally no
+ * `seriesId`. `originalOccurrenceStartMs` is the occurrence's position before
+ * an exception moved it. `timeZone` is the provider's IANA recurrence anchor;
+ * all-day events may omit it.
+ */
 export interface ProviderEvent {
   readonly id: string;
   readonly calendarId: string;
@@ -80,14 +69,16 @@ export interface ProviderEvent {
   readonly startMs: number;
   readonly endMs: number;
   readonly allDay: boolean;
+  readonly timeZone?: string;
   readonly status: EventStatus;
   readonly updatedMs: number;
   readonly htmlLink?: string;
   readonly color?: string;
   readonly visibility?: string;
-  /** False when the organizer marked the event as not-busy ("free"). */
   readonly busy?: boolean;
   readonly attendees?: readonly ProviderAttendee[];
+  /** True means the provider withheld attendees; never use this list as the
+   * source of a membership replacement or RSVP write. */
   readonly attendeesOmitted?: boolean;
   readonly organizer?: ProviderPerson;
   readonly creator?: ProviderPerson;
@@ -95,129 +86,147 @@ export interface ProviderEvent {
   readonly guestsCanInviteOthers?: boolean;
   readonly guestsCanSeeOtherGuests?: boolean;
   readonly locked?: boolean;
-  /** Provider event category ("default" | "birthday" | "outOfOffice" | …). */
   readonly eventType?: string;
-  /** Set on an expanded instance of a series; ties it back to its master. */
+  readonly recurrence?: readonly string[];
   readonly seriesId?: string;
+  readonly originalOccurrenceStartMs?: number;
   readonly conference?: ProviderConference;
 }
 
-/** Fields the caller supplies to create or patch an event. Times are neutral
- * epoch-millis; the adapter renders them the way its provider wants. */
-export interface EventWrite {
-  readonly summary?: string;
+export interface EventAttendeeInput {
+  readonly email: string;
+  readonly displayName?: string;
+  readonly optional?: boolean;
+}
+
+/** Fields accepted when creating an event. Create has no clearing semantics. */
+export interface EventCreate {
+  readonly summary: string;
   readonly description?: string;
   readonly location?: string;
-  readonly startMs?: number;
-  readonly endMs?: number;
+  readonly startMs: number;
+  readonly endMs: number;
   readonly allDay?: boolean;
   readonly color?: string;
   readonly visibility?: string;
   readonly busy?: boolean;
-  readonly attendees?: readonly {
-    readonly email: string;
-    readonly displayName?: string;
-    readonly optional?: boolean;
-  }[];
-  /** RFC5545 recurrence lines, e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO"]. */
+  readonly attendees?: readonly EventAttendeeInput[];
   readonly recurrence?: readonly string[];
-  readonly addConference?: boolean;
+  readonly conference?: "add";
   readonly timeZone?: string;
 }
 
-/** Whether an invitation reply, delete, etc. should notify the other guests. */
+export type ConferenceChange = "add" | "remove" | "preserve";
+
+/**
+ * Fields accepted when patching an event. Omission preserves a field. `null`
+ * explicitly clears provider fields that the current domain allows clearing.
+ * `attendees`, when present, is the complete desired membership list, not a
+ * list of additions; adapters must reject a partial live provider list before
+ * replacing membership.
+ */
+export interface EventPatch {
+  readonly summary?: string;
+  readonly description?: string | null;
+  readonly location?: string | null;
+  readonly startMs?: number;
+  readonly endMs?: number;
+  readonly allDay?: boolean;
+  readonly color?: string | null;
+  readonly visibility?: string | null;
+  readonly busy?: boolean;
+  readonly attendees?: readonly EventAttendeeInput[];
+  readonly recurrence?: readonly string[];
+  readonly conference?: ConferenceChange;
+  readonly timeZone?: string;
+}
+
 export type NotifyScope = "all" | "none";
 
-/** Who a change or read is authorized against. The adapter is already bound to a
- * provider + credential, so the caller only names the calendar + event. */
 export interface EventRef {
   readonly calendarId: string;
   readonly eventId: string;
 }
 
-/**
- * A create request. `idempotencyKey` is an app-minted token, stable across
- * retries of the *same* logical create. The adapter maps it to the provider's
- * native dedup mechanism so a retry that actually landed the first time is
- * reconciled, not duplicated. THIS is the seam that keeps ambiguous-create
- * safety provider-neutral (Interface Risk #1): Google maps it to a
- * client-assigned event id, Microsoft to a `transactionId`.
- */
+/** Stable across retries of the same logical create. */
 export interface CreateEventRequest {
   readonly calendarId: string;
-  readonly event: EventWrite;
+  readonly event: EventCreate;
   readonly notify?: NotifyScope;
   readonly idempotencyKey?: string;
 }
 
-/** What a provider can do beyond the base calendar CRUD, declared so services
- * never assume an optional feature exists. */
-export interface ProviderCapabilities {
-  /** The provider exposes a contacts/people feed (Google People, Graph
-   * contacts). When false, contacts sync is simply skipped for this connection. */
-  readonly contacts: boolean;
-  /** The provider accepts an app-supplied idempotency token on create. When
-   * false, the domain falls back to reconcile-by-search after an ambiguous write. */
-  readonly idempotentCreate: boolean;
+export interface UpdateEventRequest {
+  readonly ref: EventRef;
+  readonly patch: EventPatch;
+  readonly notify?: NotifyScope;
+  /** Stable across retries. Enables a semantic read-before-retry no-op. */
+  readonly idempotencyKey?: string;
+  /** Refuse membership replacement if the provider event has changed. */
+  readonly expectedUpdatedMs?: number;
 }
 
-/**
- * The calendar port. An adapter instance is already bound to one provider and
- * one credential (see the credential broker), so no method takes a token.
- *
- * Every method rejects with a {@link ProviderError} on failure, so callers
- * branch on `kind` rather than on a provider's HTTP status.
- */
+export interface RespondToEventRequest {
+  readonly ref: EventRef;
+  readonly responseStatus: "accepted" | "tentative" | "declined";
+  readonly notify?: NotifyScope;
+  readonly idempotencyKey?: string;
+}
+
+export type DeleteMode = "cancel" | "remove-self";
+
+export interface DeleteEventRequest {
+  readonly ref: EventRef;
+  readonly mode: DeleteMode;
+  readonly notify?: NotifyScope;
+  readonly idempotencyKey?: string;
+}
+
+export interface ProviderCapabilities {
+  readonly contacts: boolean;
+  readonly recurringEvents: boolean;
+  readonly attendeeMembershipUpdates: boolean;
+  readonly rsvp: boolean;
+  readonly removeSelf: boolean;
+  readonly conference: {
+    readonly create: boolean;
+    readonly add: boolean;
+    readonly remove: boolean;
+  };
+  /** Idempotency may be native or implemented by semantic reconciliation. */
+  readonly idempotentCreate: boolean;
+  readonly idempotentUpdate: boolean;
+  readonly idempotentResponse: boolean;
+  readonly idempotentDelete: boolean;
+}
+
 export interface CalendarProviderAdapter {
   readonly provider: ProviderId;
   readonly capabilities: ProviderCapabilities;
 
-  /** The calendars available to the authenticated user. */
   listCalendars(): Promise<readonly ProviderCalendar[]>;
 
   /**
-   * A page of changes for one calendar. `cursor === null` requests a full
-   * resync bounded by [fromMs, toMs]; a non-null cursor requests the delta
-   * since it. A stale cursor rejects with a `cursor-expired` ProviderError.
+   * `syncCursor` anchors the pass (`null` means a bounded full sync), while
+   * `pageCursor` continues that same pass. They must never be interchanged.
    */
   listEvents(args: {
     readonly calendarId: string;
-    readonly cursor: SyncCursor | null;
+    readonly syncCursor: SyncCursor | null;
+    readonly pageCursor?: PageCursor | null;
     readonly fromMs: number;
     readonly toMs: number;
   }): Promise<SyncPage<ProviderEvent>>;
 
   getEvent(ref: EventRef): Promise<ProviderEvent>;
-
   createEvent(request: CreateEventRequest): Promise<ProviderEvent>;
 
-  /**
-   * Resolve whether a create identified by `idempotencyKey` already exists,
-   * after an ambiguous failure. Returns the landed event or `null` if it never
-   * did. Provider-specific: Google reads the client-assigned id back, Microsoft
-   * queries by `transactionId`.
-   */
   reconcileAmbiguousCreate(args: {
     readonly calendarId: string;
     readonly idempotencyKey: string;
   }): Promise<ProviderEvent | null>;
 
-  updateEvent(args: {
-    readonly ref: EventRef;
-    readonly patch: EventWrite;
-    readonly notify?: NotifyScope;
-  }): Promise<ProviderEvent>;
-
-  /** Answer an invitation. Separate from `updateEvent` because responding is not
-   * editing — it works on events locked against every other change. */
-  respondToEvent(args: {
-    readonly ref: EventRef;
-    readonly responseStatus: "accepted" | "tentative" | "declined";
-    readonly notify?: NotifyScope;
-  }): Promise<ProviderEvent>;
-
-  deleteEvent(args: {
-    readonly ref: EventRef;
-    readonly notify?: NotifyScope;
-  }): Promise<void>;
+  updateEvent(request: UpdateEventRequest): Promise<ProviderEvent>;
+  respondToEvent(request: RespondToEventRequest): Promise<ProviderEvent>;
+  deleteEvent(request: DeleteEventRequest): Promise<void>;
 }

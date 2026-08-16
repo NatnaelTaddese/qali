@@ -10,6 +10,8 @@ import {
   SyncTokenExpiredError,
   type MappedCalendar,
   type MappedEvent,
+  type RawCalendarDateTime,
+  type RawEvent,
 } from "./client";
 import {
   ProviderError,
@@ -17,6 +19,7 @@ import {
 } from "../calendar/errors";
 import type {
   EventStatus,
+  PageCursor,
   ProviderCalendar,
   ProviderEvent,
   SyncCursor,
@@ -52,7 +55,17 @@ function normalizeResponse(
     : undefined;
 }
 
-export function toProviderEvent(event: MappedEvent): ProviderEvent {
+function googleTimeMs(value: RawCalendarDateTime | undefined): number | undefined {
+  const encoded = value?.dateTime ?? value?.date;
+  if (!encoded) return undefined;
+  const parsed = new Date(encoded).getTime();
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function toProviderEvent(
+  event: MappedEvent,
+  raw?: Pick<RawEvent, "recurrence" | "originalStartTime" | "start">,
+): ProviderEvent {
   const conference =
     event.conferenceUrl || event.conferenceName || event.conferenceType || event.hangoutLink
       ? {
@@ -71,6 +84,7 @@ export function toProviderEvent(event: MappedEvent): ProviderEvent {
     startMs: event.startMs,
     endMs: event.endMs,
     allDay: event.allDay,
+    timeZone: raw?.start?.timeZone ?? raw?.originalStartTime?.timeZone,
     status: normalizeStatus(event.status),
     updatedMs: event.googleUpdatedMs,
     htmlLink: event.htmlLink,
@@ -99,7 +113,9 @@ export function toProviderEvent(event: MappedEvent): ProviderEvent {
     guestsCanSeeOtherGuests: event.guestsCanSeeOtherGuests,
     locked: event.locked,
     eventType: event.eventType,
+    recurrence: raw?.recurrence,
     seriesId: event.recurringEventId,
+    originalOccurrenceStartMs: googleTimeMs(raw?.originalStartTime),
     conference,
   };
 }
@@ -156,32 +172,71 @@ export function providerEventToMapped(event: ProviderEvent): MappedEvent {
   };
 }
 
-// --- Opaque cursor codec ---------------------------------------------------
-// Google exposes two distinct cursors — a `pageToken` that walks within one
-// sync pass and a `syncToken` that deltas between passes. The port hides both
-// behind one opaque string, so the adapter tags which it holds and the caller
-// never has to know.
+// --- Opaque cursor codecs --------------------------------------------------
 
-interface DecodedCursor {
-  pageToken?: string;
-  syncToken?: string;
+export function encodeSyncCursor(token: string): SyncCursor {
+  return token as SyncCursor;
 }
 
-export function encodeCursor(parts: DecodedCursor): SyncCursor {
-  // Carry both: a delta pass's page continuation needs its syncToken *and* the
-  // pageToken on every page (Google requires the pass params to stay identical),
-  // so the cursor cannot drop one for the other. JSON.stringify omits undefined.
-  return JSON.stringify({ p: parts.pageToken, s: parts.syncToken });
+/** Accept raw persisted Google tokens and the JSON envelope emitted by the
+ * first adapter draft, so connection backfills can be replayed directly. */
+export function decodeSyncCursor(cursor: SyncCursor): string {
+  try {
+    const parsed = JSON.parse(cursor) as unknown;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "s" in parsed &&
+      typeof parsed.s === "string"
+    ) {
+      return parsed.s;
+    }
+  } catch {
+    // A legacy Google sync token is intentionally not JSON.
+  }
+  return cursor;
 }
 
-export function decodeCursor(cursor: SyncCursor): DecodedCursor {
-  const parsed = JSON.parse(cursor) as { p?: string; s?: string };
-  return { pageToken: parsed.p, syncToken: parsed.s };
+export function encodePageCursor(token: string): PageCursor {
+  return token as PageCursor;
+}
+
+export function decodePageCursor(cursor: PageCursor): string {
+  return cursor;
 }
 
 // --- Error classification --------------------------------------------------
 
-function classifyStatus(status: number): ProviderErrorKind {
+export type GoogleCalendarOperation =
+  | "read"
+  | "sync"
+  | "create"
+  | "update"
+  | "respond"
+  | "delete";
+
+function isUnsafeWrite(operation: GoogleCalendarOperation): boolean {
+  return operation === "create" || operation === "update" || operation === "respond";
+}
+
+function classifyStatus(
+  error: GoogleApiError,
+  operation: GoogleCalendarOperation,
+): ProviderErrorKind {
+  const { status } = error;
+  const rateLimitBody = error.responseBody ?? error.message;
+  if (
+    status === 429 ||
+    (status === 403 && /(?:user)?rateLimitExceeded/i.test(rateLimitBody))
+  ) {
+    return "rate-limited";
+  }
+  if (status === 408) {
+    return isUnsafeWrite(operation) ? "ambiguous" : "transient";
+  }
+  if (status >= 500) {
+    return isUnsafeWrite(operation) ? "ambiguous" : "transient";
+  }
   switch (status) {
     case 401:
       return "authentication";
@@ -192,41 +247,51 @@ function classifyStatus(status: number): ProviderErrorKind {
     case 409:
       return "conflict";
     case 410:
-      return "cursor-expired";
-    case 429:
-      return "rate-limited";
+      return operation === "sync" ? "cursor-expired" : "not-found";
     case 400:
       return "validation";
     default:
-      return status >= 500 ? "transient" : "validation";
+      return "validation";
   }
 }
 
 /**
- * Fold any Google transport failure into the neutral taxonomy. A lost response
- * (`GoogleNetworkError`) is `ambiguous`, not `transient`: the write may have
- * landed, so the domain must reconcile by idempotency key rather than blindly
- * retry. An expired sync token is `cursor-expired`.
+ * Fold a Google transport failure into the neutral taxonomy in the context of
+ * the attempted operation. Read failures are transient; a lost response or 5xx
+ * from an unsafe write is ambiguous because the write may have landed. An
+ * expired token is `cursor-expired` only for sync.
  */
-export function toProviderError(error: unknown): ProviderError {
+export function toProviderError(
+  error: unknown,
+  operation: GoogleCalendarOperation,
+): ProviderError {
   if (error instanceof ProviderError) return error;
   if (error instanceof SyncTokenExpiredError) {
-    return new ProviderError("cursor-expired", error.message, { cause: error });
+    return new ProviderError(
+      operation === "sync" ? "cursor-expired" : "not-found",
+      error.message,
+      { cause: error },
+    );
   }
   if (error instanceof GoogleNetworkError) {
-    return new ProviderError("ambiguous", error.message, {
-      retryable: false,
+    const kind = isUnsafeWrite(operation) ? "ambiguous" : "transient";
+    return new ProviderError(kind, error.message, {
+      retryable: kind === "transient",
       cause: error,
     });
   }
   if (error instanceof GoogleApiError) {
-    return new ProviderError(classifyStatus(error.status), error.message, {
+    const kind = classifyStatus(error, operation);
+    return new ProviderError(kind, error.message, {
+      retryable: kind === "transient" || kind === "rate-limited",
+      retryAfterMs: error.retryAfterMs,
       cause: error,
     });
   }
+  const kind = isUnsafeWrite(operation) ? "ambiguous" : "transient";
   return new ProviderError(
-    "transient",
+    kind,
     error instanceof Error ? error.message : String(error),
-    { retryable: true, cause: error },
+    { retryable: kind === "transient", cause: error },
   );
 }

@@ -3,15 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111111" media="(prefers-color-scheme: dark)" />
     <title>qali — the AI-native calendar</title>
     <!-- Apply the theme class before first paint so a reload doesn't flash the
          default background before next-themes mounts. Mirrors the
-         ThemeProvider config in __root.tsx (attribute=class, defaultTheme=dark,
+         ThemeProvider config in __root.tsx (attribute=class, defaultTheme=light,
          storageKey=vite-ui-theme). -->
     <script>
       (function () {
         try {
-          var theme = localStorage.getItem("vite-ui-theme") || "dark";
+          var theme = localStorage.getItem("vite-ui-theme") || "light";
           if (theme === "system") {
             theme = window.matchMedia("(prefers-color-scheme: dark)").matches
               ? "dark"

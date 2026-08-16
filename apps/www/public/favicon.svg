@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 236 236">
+  <style>
+    /* The mark is a dark blob on light browser tabs; it flips to a light blob
+       with dark eyes on dark tabs so it stays legible either way. */
+    .blob { fill: #231f20; }
+    .eye { fill: #fbfaf5; }
+    @media (prefers-color-scheme: dark) {
+      .blob { fill: #fbfaf5; }
+      .eye { fill: #111111; }
+    }
+  </style>
+  <path
+    class="blob"
+    d="M40 118 C36 66 74 30 122 32 C172 34 202 74 196 122 C193 147 181 158 176 176 C171 195 176 214 156 216 C141 217 137 201 128 199 C119 197 113 208 101 209 C86 210 80 197 73 180 C67 165 51 158 45 141 C41 129 40 124 40 118 Z"
+  />
+  <rect class="eye" x="80" y="88" width="28" height="54" rx="14" />
+  <rect class="eye" x="128" y="92" width="28" height="54" rx="14" />
+</svg>

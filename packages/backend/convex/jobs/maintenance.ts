@@ -205,6 +205,7 @@ export const purgeUserData = defineMutation({
         | "syncState"
         | "connectionSyncState"
         | "calendarConnections"
+        | "connectionBackfillUsers"
         | "calendars"
         | "bookingPages"
         | "contacts"
@@ -228,6 +229,7 @@ export const purgeUserData = defineMutation({
         .take(PURGE_BATCH),
     );
     await drain(await byUser("connectionSyncState"));
+    await drain(await byUser("connectionBackfillUsers"));
     await drain(await byUser("calendars"));
     await drain(await byUser("bookingPages"));
     await drain(await byUser("contacts"));

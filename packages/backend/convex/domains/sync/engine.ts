@@ -60,6 +60,26 @@ const SYNC_FANOUT_BATCH = 100;
 // mid-flight, but short enough that a crashed run's lease is reclaimable soon.
 const SYNC_LEASE_MS = 10 * 60 * 1000;
 
+type ConnectionSyncPatch = Partial<
+  Omit<
+    Doc<"connectionSyncState">,
+    "_id" | "_creationTime" | "connectionId" | "userId"
+  >
+>;
+
+async function patchConnectionSyncState(
+  ctx: MutationCtx,
+  userId: string,
+  patch: ConnectionSyncPatch,
+): Promise<void> {
+  const connectionId = await ensureGoogleConnection(ctx, userId);
+  const row = await ctx.db
+    .query("connectionSyncState")
+    .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
+    .unique();
+  if (row) await ctx.db.patch(row._id, patch);
+}
+
 // ---------------------------------------------------------------------------
 // People directory — the email-keyed union of saved connections, Other
 // Contacts, and calendar attendees. Every feeder funnels through
@@ -960,6 +980,9 @@ export const enqueueSyncs = defineMutation({
       await ctx.db.patch(row._id, {
         nextSyncDueAt: now + (row.syncIntervalMs ?? SYNC_MIN_MS),
       });
+      await patchConnectionSyncState(ctx, row.userId, {
+        nextSyncDueAt: now + (row.syncIntervalMs ?? SYNC_MIN_MS),
+      });
       await ctx.scheduler.runAfter(0, internal.googleSync.syncUser, {
         userId: row.userId,
       });
@@ -986,6 +1009,7 @@ export const getSyncState = defineQuery({
 export const ensureSyncState = defineMutation({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
+    const connectionId = await ensureGoogleConnection(ctx, args.userId);
     const existing = await ctx.db
       .query("syncState")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
@@ -997,11 +1021,41 @@ export const ensureSyncState = defineMutation({
         nextSyncDueAt: 0,
         syncIntervalMs: SYNC_MIN_MS,
       });
+      const connectionState = await ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
+        .unique();
+      if (connectionState) {
+        await ctx.db.patch(connectionState._id, {
+          status: "idle",
+          nextSyncDueAt: 0,
+          syncIntervalMs: SYNC_MIN_MS,
+        });
+      }
     } else if (existing.nextSyncDueAt === undefined) {
       // Lazily backfill cadence fields on rows created before adaptive sync.
       await ctx.db.patch(existing._id, {
         nextSyncDueAt: 0,
         syncIntervalMs: SYNC_MIN_MS,
+      });
+      await patchConnectionSyncState(ctx, args.userId, {
+        nextSyncDueAt: 0,
+        syncIntervalMs: SYNC_MIN_MS,
+      });
+    } else {
+      await patchConnectionSyncState(ctx, args.userId, {
+        contactsCursor: existing.contactsSyncToken,
+        otherContactsCursor: existing.otherContactsSyncToken,
+        contactsLastSyncedAt: existing.lastContactsSyncAt,
+        otherContactsLastSyncedAt: existing.lastOtherContactsSyncAt,
+        contactsGeneration: existing.contactsSyncGeneration,
+        otherContactsGeneration: existing.otherContactsSyncGeneration,
+        status: existing.status,
+        lastError: existing.lastError,
+        nextSyncDueAt: existing.nextSyncDueAt,
+        syncIntervalMs: existing.syncIntervalMs,
+        syncLeaseExpiresAt: existing.syncLeaseExpiresAt,
+        syncAttemptId: existing.syncAttemptId,
       });
     }
     return null;
@@ -1028,6 +1082,11 @@ export const claimSyncLease = defineMutation({
     }
     const attemptId = crypto.randomUUID();
     await ctx.db.patch(row._id, {
+      status: "syncing",
+      syncAttemptId: attemptId,
+      syncLeaseExpiresAt: now + SYNC_LEASE_MS,
+    });
+    await patchConnectionSyncState(ctx, args.userId, {
       status: "syncing",
       syncAttemptId: attemptId,
       syncLeaseExpiresAt: now + SYNC_LEASE_MS,
@@ -1061,14 +1120,16 @@ export const recordSyncOutcome = defineMutation({
     const interval = args.active
       ? SYNC_MIN_MS
       : Math.min(prev * 2, SYNC_MAX_MS);
-    await ctx.db.patch(row._id, {
+    const outcome = {
       status: args.status,
       lastError: args.status === "error" ? args.lastError : undefined,
       syncIntervalMs: interval,
       nextSyncDueAt: Date.now() + interval,
       syncAttemptId: undefined,
       syncLeaseExpiresAt: undefined,
-    });
+    };
+    await ctx.db.patch(row._id, outcome);
+    await patchConnectionSyncState(ctx, args.userId, outcome);
     return null;
   },
 });
@@ -1105,6 +1166,7 @@ export const reconcileCalendars = defineMutation({
       args.calendars.map((calendar) => calendar.googleCalendarId),
     );
     const stored: { googleCalendarId: string; syncToken?: string }[] = [];
+    let primaryLocalCalendarId: Doc<"calendars">["_id"] | undefined;
 
     for (const cal of args.calendars) {
       const existing = existingByGoogleId.get(cal.googleCalendarId);
@@ -1121,19 +1183,24 @@ export const reconcileCalendars = defineMutation({
           accessRole: cal.accessRole,
           timeZone: cal.timeZone,
           googleSelected: cal.googleSelected,
+          connectionId,
+          providerCalendarId: cal.googleCalendarId,
+          syncCursor: existing.syncToken,
         });
         stored.push({
           googleCalendarId: cal.googleCalendarId,
           syncToken: existing.syncToken,
         });
+        if (cal.primary) primaryLocalCalendarId = existing._id;
       } else {
-        await ctx.db.insert("calendars", {
+        const calendarId = await ctx.db.insert("calendars", {
           userId: args.userId,
           selected: cal.googleSelected ?? false,
           ...cal,
           connectionId,
           providerCalendarId: cal.googleCalendarId,
         });
+        if (cal.primary) primaryLocalCalendarId = calendarId;
         stored.push({ googleCalendarId: cal.googleCalendarId });
       }
     }
@@ -1153,6 +1220,19 @@ export const reconcileCalendars = defineMutation({
           googleCalendarId: existing.googleCalendarId,
         },
       );
+    }
+
+    if (primaryLocalCalendarId) {
+      const bookingPage = await ctx.db
+        .query("bookingPages")
+        .withIndex("by_user", (q) => q.eq("userId", args.userId))
+        .unique();
+      if (bookingPage) {
+        await ctx.db.patch(bookingPage._id, {
+          targetConnectionId: connectionId,
+          targetCalendarId: primaryLocalCalendarId,
+        });
+      }
     }
 
     return stored;
@@ -1275,6 +1355,8 @@ export const commitCalendarFullResync = defineMutation({
       .unique();
     if (row) {
       await ctx.db.patch(row._id, {
+        connectionId: await ensureGoogleConnection(ctx, args.userId),
+        providerCalendarId: args.googleCalendarId,
         syncGeneration: args.syncGeneration,
         ...(args.syncToken !== undefined
           ? {
@@ -1304,6 +1386,8 @@ export const setCalendarSyncToken = defineMutation({
       .unique();
     if (row) {
       await ctx.db.patch(row._id, {
+        connectionId: await ensureGoogleConnection(ctx, args.userId),
+        providerCalendarId: args.googleCalendarId,
         syncToken: args.syncToken,
         syncCursor: args.syncToken, // neutral mirror
         lastSyncAt: Date.now(),
@@ -1357,6 +1441,8 @@ export const claimSharedCalendarSync = defineMutation({
     if (!row) {
       await ctx.db.insert("sharedCalendars", {
         googleCalendarId: args.googleCalendarId,
+        provider: "google",
+        providerCalendarId: args.googleCalendarId,
         syncLeaseExpiresAt: now + SHARED_SYNC_LEASE_MS,
       });
       return { claimed: true, syncToken: undefined };
@@ -1369,7 +1455,12 @@ export const claimSharedCalendarSync = defineMutation({
     if (leaseLive || fresh) {
       return { claimed: false, syncToken: row.syncToken };
     }
-    await ctx.db.patch(row._id, { syncLeaseExpiresAt: now + SHARED_SYNC_LEASE_MS });
+    await ctx.db.patch(row._id, {
+      provider: "google",
+      providerCalendarId: row.googleCalendarId,
+      syncCursor: row.syncToken,
+      syncLeaseExpiresAt: now + SHARED_SYNC_LEASE_MS,
+    });
     return { claimed: true, syncToken: row.syncToken };
   },
 });
@@ -1385,7 +1476,12 @@ export const releaseSharedCalendarLease = defineMutation({
       )
       .unique();
     if (row) {
-      await ctx.db.patch(row._id, { syncLeaseExpiresAt: undefined });
+      await ctx.db.patch(row._id, {
+        provider: "google",
+        providerCalendarId: row.googleCalendarId,
+        syncCursor: row.syncToken,
+        syncLeaseExpiresAt: undefined,
+      });
     }
     return null;
   },
@@ -1419,6 +1515,9 @@ export const setSharedCalendarSynced = defineMutation({
         // A full resync returns no token on its first page set; keep the old one
         // rather than clearing a still-valid cursor.
         syncToken: args.syncToken ?? row.syncToken,
+        provider: "google",
+        providerCalendarId: row.googleCalendarId,
+        syncCursor: args.syncToken ?? row.syncToken,
         lastSyncAt: Date.now(),
         syncLeaseExpiresAt: undefined,
       });
@@ -1447,9 +1546,23 @@ export const upsertSharedEventsPage = defineMutation({
         continue;
       }
       if (existing) {
-        await ctx.db.replace(existing._id, { ...e });
+        await ctx.db.replace(existing._id, {
+          ...e,
+          provider: "google",
+          providerCalendarId: e.calendarId,
+          providerEventId: e.googleEventId,
+          providerUpdatedMs: e.googleUpdatedMs,
+          providerSeriesId: e.recurringEventId,
+        });
       } else {
-        await ctx.db.insert("sharedEvents", { ...e });
+        await ctx.db.insert("sharedEvents", {
+          ...e,
+          provider: "google",
+          providerCalendarId: e.calendarId,
+          providerEventId: e.googleEventId,
+          providerUpdatedMs: e.googleUpdatedMs,
+          providerSeriesId: e.recurringEventId,
+        });
       }
     }
     return null;
@@ -1469,12 +1582,22 @@ export const setContactsSync = defineMutation({
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .unique();
     if (row) {
-      await ctx.db.patch(row._id, {
+      const now = Date.now();
+      const patch = {
         ...(args.syncToken !== undefined
-          ? { contactsSyncToken: args.syncToken, lastContactsSyncAt: Date.now() }
+          ? { contactsSyncToken: args.syncToken, lastContactsSyncAt: now }
           : {}),
         ...(args.syncGeneration !== undefined
           ? { contactsSyncGeneration: args.syncGeneration }
+          : {}),
+      };
+      await ctx.db.patch(row._id, patch);
+      await patchConnectionSyncState(ctx, args.userId, {
+        ...(args.syncToken !== undefined
+          ? { contactsCursor: args.syncToken, contactsLastSyncedAt: now }
+          : {}),
+        ...(args.syncGeneration !== undefined
+          ? { contactsGeneration: args.syncGeneration }
           : {}),
       });
     }
@@ -1494,15 +1617,28 @@ export const setOtherContactsSync = defineMutation({
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
       .unique();
     if (row) {
-      await ctx.db.patch(row._id, {
+      const now = Date.now();
+      const patch = {
         ...(args.syncToken !== undefined
           ? {
               otherContactsSyncToken: args.syncToken,
-              lastOtherContactsSyncAt: Date.now(),
+              lastOtherContactsSyncAt: now,
             }
           : {}),
         ...(args.syncGeneration !== undefined
           ? { otherContactsSyncGeneration: args.syncGeneration }
+          : {}),
+      };
+      await ctx.db.patch(row._id, patch);
+      await patchConnectionSyncState(ctx, args.userId, {
+        ...(args.syncToken !== undefined
+          ? {
+              otherContactsCursor: args.syncToken,
+              otherContactsLastSyncedAt: now,
+            }
+          : {}),
+        ...(args.syncGeneration !== undefined
+          ? { otherContactsGeneration: args.syncGeneration }
           : {}),
       });
     }
@@ -1609,6 +1745,12 @@ export const upsertEventsPage = defineMutation({
     const connectionId = await ensureGoogleConnection(ctx, args.userId);
     const harvested: PersonInput[] = [];
     for (const e of args.events) {
+      const localCalendar = await ctx.db
+        .query("calendars")
+        .withIndex("by_user_and_googleCalendarId", (q) =>
+          q.eq("userId", args.userId).eq("googleCalendarId", e.calendarId),
+        )
+        .unique();
       const existing = await ctx.db
         .query("events")
         .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
@@ -1629,8 +1771,10 @@ export const upsertEventsPage = defineMutation({
         ...e,
         syncGeneration: args.syncGeneration,
         connectionId,
+        localCalendarId: localCalendar?._id,
         providerEventId: e.googleEventId,
         providerUpdatedMs: e.googleUpdatedMs,
+        providerSeriesId: e.recurringEventId,
       };
       if (existing) {
         // A mapped Google event is an authoritative snapshot. Replacing the row
@@ -1657,6 +1801,7 @@ export const upsertContactsPage = defineMutation({
     syncGeneration: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<null> => {
+    const connectionId = await ensureGoogleConnection(ctx, args.userId);
     for (const c of args.contacts) {
       const existing = await ctx.db
         .query("contacts")
@@ -1681,12 +1826,21 @@ export const upsertContactsPage = defineMutation({
           ? { syncGeneration: args.syncGeneration }
           : {};
       if (existing) {
-        await ctx.db.patch(existing._id, { ...rest, ...stampGen });
+        await ctx.db.patch(existing._id, {
+          ...rest,
+          ...stampGen,
+          connectionId,
+          providerContactId: c.resourceName,
+          providerVersion: c.googleEtag,
+        });
       } else {
         await ctx.db.insert("contacts", {
           userId: args.userId,
           ...rest,
           ...stampGen,
+          connectionId,
+          providerContactId: c.resourceName,
+          providerVersion: c.googleEtag,
         });
       }
     }

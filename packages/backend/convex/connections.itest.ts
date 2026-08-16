@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 
 import schema from "./schema";
+import { calendarTables } from "./domains/calendar/tables";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -69,48 +70,84 @@ describe("connection model expand", () => {
     });
   });
 
-  test("a dual-written event is reachable through the staged neutral-id index", async () => {
+  test("neutral event identity includes the local calendar and cannot collide", async () => {
     const t = convexTest(schema, modules);
     const userId = "user_dual";
 
-    const connectionId = await t.run((ctx) =>
-      ctx.db.insert("calendarConnections", {
-        userId,
-        provider: "google",
-        status: "active",
-        createdAt: 1,
-        updatedAt: 1,
-      }),
+    const { connectionId, firstCalendarId, secondCalendarId } = await t.run(
+      async (ctx) => {
+        const connectionId = await ctx.db.insert("calendarConnections", {
+          userId,
+          provider: "google",
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        const firstCalendarId = await ctx.db.insert("calendars", {
+          userId,
+          googleCalendarId: "first",
+          selected: true,
+          connectionId,
+          providerCalendarId: "first",
+        });
+        const secondCalendarId = await ctx.db.insert("calendars", {
+          userId,
+          googleCalendarId: "second",
+          selected: true,
+          connectionId,
+          providerCalendarId: "second",
+        });
+        return { connectionId, firstCalendarId, secondCalendarId };
+      },
     );
 
-    // An event as the backfill/dual-write path will write it: legacy Google
-    // columns AND the neutral mirror side by side.
-    await t.run((ctx) =>
-      ctx.db.insert("events", {
-        userId,
-        calendarId: "primary",
-        googleEventId: "g-evt-1",
-        startMs: 1_000,
-        endMs: 2_000,
-        allDay: false,
-        status: "confirmed",
-        googleUpdatedMs: 1_000,
-        connectionId,
-        providerEventId: "g-evt-1",
-        providerUpdatedMs: 1_000,
-      }),
-    );
+    for (const [calendarId, localCalendarId, startMs] of [
+      ["first", firstCalendarId, 1_000],
+      ["second", secondCalendarId, 3_000],
+    ] as const) {
+      await t.run((ctx) =>
+        ctx.db.insert("events", {
+          userId,
+          calendarId,
+          googleEventId: "same-provider-id",
+          startMs,
+          endMs: startMs + 1_000,
+          allDay: false,
+          status: "confirmed",
+          googleUpdatedMs: 1_000,
+          connectionId,
+          localCalendarId,
+          providerEventId: "same-provider-id",
+          providerUpdatedMs: 1_000,
+        }),
+      );
+    }
 
     const found = await t.run((ctx) =>
       ctx.db
         .query("events")
-        .withIndex("by_connection_and_providerEventId", (q) =>
-          q.eq("connectionId", connectionId).eq("providerEventId", "g-evt-1"),
+        // The production index is staged during expand, so convex-test cannot
+        // query it yet. Apply the same complete key and assert its declaration.
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("connectionId"), connectionId),
+            q.eq(q.field("localCalendarId"), secondCalendarId),
+            q.eq(q.field("providerEventId"), "same-provider-id"),
+          ),
         )
         .unique(),
     );
-    // Both id views resolve the same row — the invariant dual-read depends on.
-    expect(found?.googleEventId).toBe("g-evt-1");
-    expect(found?.providerEventId).toBe(found?.googleEventId);
+    expect(found?.calendarId).toBe("second");
+    expect(found?.localCalendarId).toBe(secondCalendarId);
+    const staged = (
+      calendarTables.events as unknown as {
+        stagedDbIndexes: { indexDescriptor: string; fields: string[] }[];
+      }
+    ).stagedDbIndexes;
+    expect(staged).toContainEqual({
+      indexDescriptor:
+        "by_connection_and_localCalendarId_and_providerEventId",
+      fields: ["connectionId", "localCalendarId", "providerEventId"],
+    });
   });
 });

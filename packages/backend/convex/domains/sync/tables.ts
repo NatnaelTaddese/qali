@@ -57,6 +57,8 @@ export const connectionSyncTables = {
     // two contacts feeders. Per-calendar event cursors live on `calendars`.
     contactsCursor: v.optional(v.string()),
     otherContactsCursor: v.optional(v.string()),
+    contactsLastSyncedAt: v.optional(v.number()),
+    otherContactsLastSyncedAt: v.optional(v.number()),
     contactsGeneration: v.optional(v.number()),
     otherContactsGeneration: v.optional(v.number()),
     status: v.union(

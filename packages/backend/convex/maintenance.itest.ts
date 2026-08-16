@@ -34,6 +34,11 @@ describe("purgeUserData", () => {
         createdAt: 1,
         updatedAt: 1,
       });
+      await ctx.db.insert("connectionBackfillUsers", {
+        userId,
+        runId: "run",
+        updatedAt: 1,
+      });
       await ctx.db.insert("events", {
         userId,
         calendarId: "c",
@@ -99,6 +104,9 @@ describe("purgeUserData", () => {
       expect(await ctx.db.query("calendarConnections").collect()).toHaveLength(0);
       expect(await ctx.db.query("connectionSyncState").collect()).toHaveLength(0);
       expect(await ctx.db.query("calendarOperations").collect()).toHaveLength(0);
+      expect(await ctx.db.query("connectionBackfillUsers").collect()).toHaveLength(
+        0,
+      );
       const calendars = await ctx.db.query("calendars").collect();
       expect(calendars.map((c) => c.userId)).toEqual(["bystander"]);
       const waitlist = await ctx.db.query("waitlist").collect();

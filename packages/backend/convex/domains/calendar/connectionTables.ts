@@ -60,6 +60,11 @@ export const calendarOperationTables = {
       v.literal("ambiguous"),
       v.literal("failed"),
     ),
+    bookingId: v.optional(v.id("bookings")),
+    attemptId: v.optional(v.string()),
+    leaseExpiresAt: v.optional(v.number()),
+    mayHaveSucceeded: v.optional(v.boolean()),
+    localCalendarId: v.optional(v.id("calendars")),
     providerCalendarId: v.optional(v.string()),
     providerEventId: v.optional(v.string()),
     lastError: v.optional(v.string()),
@@ -67,5 +72,14 @@ export const calendarOperationTables = {
     updatedAt: v.number(),
   })
     .index("by_connection_and_key", ["connectionId", "idempotencyKey"])
+    .index("by_bookingId", { fields: ["bookingId"], staged: true })
     .index("by_user_and_status", ["userId", "status"]),
+
+  // Durable deduplication/progress for the resumable connection backfill.
+  connectionBackfillUsers: defineTable({
+    userId: v.string(),
+    runId: v.string(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_user", ["userId"]),
 };

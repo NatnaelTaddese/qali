@@ -38,9 +38,17 @@ export const bookingTables = {
     // False keeps the row (and the claimed slug) while the page reads as
     // missing to visitors.
     enabled: v.boolean(),
+    // Additive routing target. Legacy behavior still resolves Google's primary
+    // calendar when these are absent.
+    targetConnectionId: v.optional(v.id("calendarConnections")),
+    targetCalendarId: v.optional(v.id("calendars")),
   })
     .index("by_user", ["userId"])
-    .index("by_slug", ["slug"]),
+    .index("by_slug", ["slug"])
+    .index("by_targetConnectionId_and_targetCalendarId", {
+      fields: ["targetConnectionId", "targetCalendarId"],
+      staged: true,
+    }),
 
   // A single date's replacement for whatever the weekly rules say about that
   // weekday. An empty `intervals` blocks the day outright, which is why this is
@@ -80,6 +88,8 @@ export const bookingTables = {
     // mirrors `googleEventId`. Optional until backfilled.
     connectionId: v.optional(v.id("calendarConnections")),
     providerEventId: v.optional(v.string()),
+    targetConnectionId: v.optional(v.id("calendarConnections")),
+    targetCalendarId: v.optional(v.id("calendars")),
     decidedAt: v.optional(v.number()),
     // A stable Google create ID plus a short-lived claimant. Status remains
     // pending while Google is in flight so existing clients keep rendering the
@@ -94,5 +104,9 @@ export const bookingTables = {
     .index("by_host_and_end", ["hostUserId", "endMs"])
     .index("by_host_and_status_and_start", ["hostUserId", "status", "startMs"])
     .index("by_status_and_end", ["status", "endMs"])
-    .index("by_token", ["token"]),
+    .index("by_token", ["token"])
+    .index("by_targetConnectionId_and_targetCalendarId_and_startMs", {
+      fields: ["targetConnectionId", "targetCalendarId", "startMs"],
+      staged: true,
+    }),
 };

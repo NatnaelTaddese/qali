@@ -104,6 +104,17 @@ describe("booking acceptance claim", () => {
     });
     expect(first).not.toBeNull();
     expect(first!.operationId).toEqual(expect.any(String));
+    const operation = await t.run((ctx) =>
+      ctx.db
+        .query("calendarOperations")
+        .filter((q) => q.eq(q.field("bookingId"), bookingId))
+        .unique(),
+    );
+    expect(operation).toMatchObject({
+      status: "pending",
+      attemptId: "attempt-1",
+      providerCalendarId: CAL,
+    });
 
     // A different attempt cannot claim while the first lease is live.
     const second = await t.mutation(internal.booking.claimBookingAcceptance, {
@@ -250,6 +261,18 @@ describe("booking acceptance settle", () => {
     expect(row!.acceptAttemptId).toBeUndefined();
     expect(row!.acceptLeaseExpiresAt).toBeUndefined();
     expect(row!.acceptMayHaveSucceeded).toBeUndefined();
+    const operation = await t.run((ctx) =>
+      ctx.db
+        .query("calendarOperations")
+        .filter((q) => q.eq(q.field("bookingId"), bookingId))
+        .unique(),
+    );
+    expect(operation).toMatchObject({
+      status: "succeeded",
+      providerEventId: "evt_google",
+    });
+    expect(operation?.attemptId).toBeUndefined();
+    expect(operation?.leaseExpiresAt).toBeUndefined();
   });
 
   test("release records may-have-succeeded only from the holder", async () => {
@@ -288,6 +311,14 @@ describe("booking acceptance settle", () => {
     const row = await t.run((ctx) => ctx.db.get(bookingId));
     expect(row!.acceptAttemptId).toBeUndefined();
     expect(row!.acceptMayHaveSucceeded).toBe(true);
+    const operation = await t.run((ctx) =>
+      ctx.db
+        .query("calendarOperations")
+        .filter((q) => q.eq(q.field("bookingId"), bookingId))
+        .unique(),
+    );
+    expect(operation?.status).toBe("ambiguous");
+    expect(operation?.mayHaveSucceeded).toBe(true);
   });
 });
 

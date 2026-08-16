@@ -104,6 +104,8 @@ export const eventDocValidator = googleEventValidator.extend({
   // until cutover. `providerEventId` mirrors `googleEventId`, `providerUpdatedMs`
   // mirrors `googleUpdatedMs`. Optional until backfilled. See Stage 5.
   connectionId: v.optional(v.id("calendarConnections")),
+  localCalendarId: v.optional(v.id("calendars")),
   providerEventId: v.optional(v.string()),
   providerUpdatedMs: v.optional(v.number()),
+  providerSeriesId: v.optional(v.string()),
 });

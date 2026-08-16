@@ -101,8 +101,15 @@ describe("connection backfill", () => {
         updatedAt: 1,
       }),
     );
-    await t.run((ctx) =>
-      ctx.db.insert("events", {
+    const localCalendarId = await t.run(async (ctx) => {
+      const localCalendarId = await ctx.db.insert("calendars", {
+        userId: USER,
+        googleCalendarId: "primary",
+        selected: true,
+        connectionId,
+        providerCalendarId: "primary",
+      });
+      await ctx.db.insert("events", {
         userId: USER,
         calendarId: "primary",
         googleEventId: "g-1",
@@ -111,8 +118,11 @@ describe("connection backfill", () => {
         allDay: false,
         status: "confirmed",
         googleUpdatedMs: 999,
-      }),
-    );
+        // A partially populated row must have every other mirror repaired.
+        connectionId,
+      });
+      return localCalendarId;
+    });
 
     await t.mutation(internal.backfillConnections.backfillUserEvents, {
       userId: USER,
@@ -129,6 +139,17 @@ describe("connection backfill", () => {
     expect(event?.connectionId).toBe(connectionId);
     expect(event?.providerEventId).toBe("g-1");
     expect(event?.providerUpdatedMs).toBe(999);
+    expect(event?.localCalendarId).toBe(localCalendarId);
+
+    // Restarting the same page is safe and keeps the exact same references.
+    await t.mutation(internal.backfillConnections.backfillUserEvents, {
+      userId: USER,
+      connectionId,
+      cursor: null,
+    });
+    expect(
+      (await t.run((ctx) => ctx.db.get(event!._id)))?.localCalendarId,
+    ).toBe(localCalendarId);
   });
 
   test("backfillUserTail seeds the ledger: accepted -> succeeded, uncertain -> ambiguous", async () => {
@@ -157,6 +178,18 @@ describe("connection backfill", () => {
       ...overrides,
     });
     await t.run(async (ctx) => {
+      await ctx.db.insert("calendars", {
+        userId: USER,
+        googleCalendarId: "primary",
+        selected: true,
+      });
+      await ctx.db.insert("recurringSeries", {
+        userId: USER,
+        calendarId: "primary",
+        googleEventId: "series-1",
+        recurrence: ["RRULE:FREQ=WEEKLY"],
+        sourceUpdatedMs: 42,
+      });
       await ctx.db.insert(
         "bookings",
         booking(USER, {
@@ -175,6 +208,21 @@ describe("connection backfill", () => {
       );
       // A booking that never ran an accept produces no ledger row.
       await ctx.db.insert("bookings", booking(USER, { status: "pending" }));
+      await ctx.db.insert(
+        "bookings",
+        booking(USER, {
+          status: "pending",
+          acceptOperationId: "op-failed",
+          acceptMayHaveSucceeded: false,
+        }),
+      );
+    });
+
+    await t.mutation(internal.backfillConnections.backfillUserRows, {
+      userId: USER,
+      connectionId,
+      phase: "recurringSeries",
+      cursor: null,
     });
 
     await t.mutation(internal.backfillConnections.backfillUserTail, {
@@ -186,9 +234,21 @@ describe("connection backfill", () => {
       ctx.db.query("calendarOperations").collect(),
     );
     const byKey = new Map(ops.map((o) => [o.idempotencyKey, o.status]));
-    expect(ops).toHaveLength(2);
+    expect(ops).toHaveLength(3);
     expect(byKey.get("op-acc")).toBe("succeeded");
     expect(byKey.get("op-amb")).toBe("ambiguous");
+    expect(byKey.get("op-failed")).toBe("failed");
+    expect(ops.every((op) => op.bookingId !== undefined)).toBe(true);
+    const series = await t.run((ctx) =>
+      ctx.db.query("recurringSeries").unique(),
+    );
+    expect(series).toMatchObject({
+      connectionId,
+      providerEventId: "series-1",
+      providerSeriesId: "series-1",
+      providerUpdatedMs: 42,
+    });
+    expect(series?.localCalendarId).toBeDefined();
   });
 
   test("verifyParity reports full parity after a backfill", async () => {
@@ -222,11 +282,95 @@ describe("connection backfill", () => {
       cursor: null,
     });
 
-    const report = await t.query(internal.backfillConnections.verifyParity, {});
-    expect(report.usersMatch).toBe(true);
-    expect(report.connections).toBe(1);
-    expect(report.events.lackingConnectionId).toBe(0);
-    expect(report.events.sampleCapped).toBe(false); // whole table covered
-    expect(report.calendars.lackingConnectionId).toBe(0);
+    const eventReport = await t.query(
+      internal.backfillConnections.verifyParity,
+      { phase: "events", numItems: 1 },
+    );
+    expect(eventReport.scanned).toBe(1);
+    expect(eventReport.mismatches).toBe(0);
+    expect(eventReport.isDone).toBe(true);
+
+    const calendarReport = await t.query(
+      internal.backfillConnections.verifyParity,
+      { phase: "calendars" },
+    );
+    expect(calendarReport.mismatches).toBe(0);
+  });
+
+  test("verification deterministically reports an exact field mismatch", async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const connectionId = await ctx.db.insert("calendarConnections", {
+        userId: USER,
+        provider: "google",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const localCalendarId = await ctx.db.insert("calendars", {
+        userId: USER,
+        googleCalendarId: "primary",
+        selected: true,
+        connectionId,
+        providerCalendarId: "primary",
+      });
+      await ctx.db.insert("events", {
+        userId: USER,
+        calendarId: "primary",
+        googleEventId: "legacy",
+        startMs: 1,
+        endMs: 2,
+        allDay: false,
+        status: "confirmed",
+        googleUpdatedMs: 3,
+        connectionId,
+        localCalendarId,
+        providerEventId: "wrong",
+        providerUpdatedMs: 3,
+      });
+    });
+
+    const report = await t.query(internal.backfillConnections.verifyParity, {
+      phase: "events",
+      numItems: 1,
+    });
+    expect(report).toMatchObject({ scanned: 1, mismatches: 1, isDone: true });
+    expect(report.examples[0]?.reasons).toContain("providerEventId");
+  });
+
+  test("discovery includes a booking-page-only user and deduplicates a run", async () => {
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert("bookingPages", {
+        userId: USER,
+        slug: "only-page",
+        displayName: "Page only",
+        timeZone: "UTC",
+        slotMinutes: 30,
+        bufferMinutes: 0,
+        minNoticeMinutes: 0,
+        horizonDays: 30,
+        rules: [],
+        enabled: true,
+      }),
+    );
+    const args = {
+      phase: "bookingPages" as const,
+      cursor: null,
+      runId: "restartable-run",
+    };
+    await t.mutation(
+      internal.backfillConnections.enqueueConnectionBackfill,
+      args,
+    );
+    await t.mutation(
+      internal.backfillConnections.enqueueConnectionBackfill,
+      args,
+    );
+    const progress = await t.run((ctx) =>
+      ctx.db.query("connectionBackfillUsers").collect(),
+    );
+    expect(progress).toHaveLength(1);
+    expect(progress[0]).toMatchObject({ userId: USER, runId: "restartable-run" });
   });
 });

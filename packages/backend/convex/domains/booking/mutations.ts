@@ -31,6 +31,31 @@ import {
   slotGrid,
 } from "./model";
 
+async function localCalendarForProviderId(
+  ctx: MutationCtx,
+  userId: string,
+  providerCalendarId: string,
+) {
+  return await ctx.db
+    .query("calendars")
+    .withIndex("by_user_and_googleCalendarId", (q) =>
+      q
+        .eq("userId", userId)
+        .eq("googleCalendarId", providerCalendarId),
+    )
+    .unique();
+}
+
+async function primaryLocalCalendar(ctx: MutationCtx, userId: string) {
+  return (
+    await ctx.db
+      .query("calendars")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .filter((q) => q.eq(q.field("primary"), true))
+      .take(1)
+  )[0];
+}
+
 export async function upsertBookingPageHandler(
   ctx: MutationCtx,
   args: {
@@ -83,6 +108,8 @@ export async function upsertBookingPageHandler(
     throw new Error("Booking window must be between 1 and 365 days");
   }
 
+  const targetConnectionId = await ensureGoogleConnection(ctx, user._id);
+  const targetCalendar = await primaryLocalCalendar(ctx, user._id);
   const value = {
     slug,
     displayName: user.name || user.email || "qali user",
@@ -96,6 +123,8 @@ export async function upsertBookingPageHandler(
     minNoticeMinutes: args.minNoticeMinutes,
     horizonDays: args.horizonDays,
     enabled: args.enabled,
+    targetConnectionId,
+    targetCalendarId: targetCalendar?._id,
   };
 
   const existing = await pageByUser(ctx, user._id);
@@ -217,6 +246,10 @@ export async function requestBookingHandler(
   // Dual-write: stamp the host's connection so the row matches the backfilled
   // ones. providerEventId is set later, when acceptance creates the event.
   const connectionId = await ensureGoogleConnection(ctx, page.userId);
+  const targetCalendar =
+    (page.targetCalendarId
+      ? await ctx.db.get(page.targetCalendarId)
+      : undefined) ?? (await primaryLocalCalendar(ctx, page.userId));
   const bookingId = await ctx.db.insert("bookings", {
     hostUserId: page.userId,
     startMs: args.startMs,
@@ -228,6 +261,8 @@ export async function requestBookingHandler(
     status: "pending",
     token,
     connectionId,
+    targetConnectionId: page.targetConnectionId ?? connectionId,
+    targetCalendarId: targetCalendar?._id,
     createdAt: Date.now(),
   });
   // Surface the request in the host's notification bell. Times render in the
@@ -317,17 +352,63 @@ export async function markAcceptedHandler(
   }
   // Dual-write the neutral mirror of the created event alongside the Google id.
   const connectionId = await ensureGoogleConnection(ctx, args.hostUserId);
+  const localCalendar = await localCalendarForProviderId(
+    ctx,
+    args.hostUserId,
+    args.calendarId,
+  );
   await ctx.db.patch(args.bookingId, {
     status: "accepted",
     googleEventId: args.googleEventId,
     calendarId: args.calendarId,
     connectionId,
     providerEventId: args.googleEventId,
+    targetConnectionId: connectionId,
+    targetCalendarId: localCalendar?._id,
     decidedAt: Date.now(),
     acceptAttemptId: undefined,
     acceptLeaseExpiresAt: undefined,
     acceptMayHaveSucceeded: undefined,
   });
+  if (booking.acceptOperationId) {
+    const operation = await ctx.db
+      .query("calendarOperations")
+      .withIndex("by_connection_and_key", (q) =>
+        q
+          .eq("connectionId", connectionId)
+          .eq("idempotencyKey", booking.acceptOperationId!),
+      )
+      .unique();
+    if (operation) {
+      await ctx.db.patch(operation._id, {
+        status: "succeeded",
+        bookingId: booking._id,
+        attemptId: undefined,
+        leaseExpiresAt: undefined,
+        mayHaveSucceeded: undefined,
+        localCalendarId: localCalendar?._id,
+        providerCalendarId: args.calendarId,
+        providerEventId: args.googleEventId,
+        lastError: undefined,
+        updatedAt: Date.now(),
+      });
+    } else {
+      const now = Date.now();
+      await ctx.db.insert("calendarOperations", {
+        connectionId,
+        userId: args.hostUserId,
+        idempotencyKey: booking.acceptOperationId,
+        kind: "create",
+        status: "succeeded",
+        bookingId: booking._id,
+        localCalendarId: localCalendar?._id,
+        providerCalendarId: args.calendarId,
+        providerEventId: args.googleEventId,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  }
   await clearBookingNotifications(ctx, args.bookingId);
   return true;
 }
@@ -376,6 +457,42 @@ export async function claimBookingAcceptanceHandler(
     throw new Error("That time is no longer free on your calendar");
   }
   const calendarId = booking.calendarId ?? args.calendarId;
+  const connectionId = await ensureGoogleConnection(ctx, args.hostUserId);
+  const localCalendar = await localCalendarForProviderId(
+    ctx,
+    args.hostUserId,
+    calendarId,
+  );
+  const operation = await ctx.db
+    .query("calendarOperations")
+    .withIndex("by_connection_and_key", (q) =>
+      q.eq("connectionId", connectionId).eq("idempotencyKey", operationId),
+    )
+    .unique();
+  const operationValue = {
+    status: "pending" as const,
+    bookingId: booking._id,
+    attemptId: args.attemptId,
+    leaseExpiresAt: now + ACCEPT_LEASE_MS,
+    mayHaveSucceeded: true,
+    localCalendarId: localCalendar?._id,
+    providerCalendarId: calendarId,
+    providerEventId: booking.googleEventId,
+    lastError: undefined,
+    updatedAt: now,
+  };
+  if (operation) {
+    await ctx.db.patch(operation._id, operationValue);
+  } else {
+    await ctx.db.insert("calendarOperations", {
+      connectionId,
+      userId: args.hostUserId,
+      idempotencyKey: operationId,
+      kind: "create",
+      createdAt: now,
+      ...operationValue,
+    });
+  }
   await ctx.db.patch(booking._id, {
     acceptOperationId: operationId,
     acceptAttemptId: args.attemptId,
@@ -384,6 +501,9 @@ export async function claimBookingAcceptanceHandler(
     // disappears, rejection cannot contradict a possibly sent invitation.
     acceptMayHaveSucceeded: true,
     calendarId,
+    connectionId,
+    targetConnectionId: connectionId,
+    targetCalendarId: localCalendar?._id,
   });
   return { booking, page, operationId, calendarId };
 }
@@ -408,6 +528,49 @@ export async function releaseBookingAcceptanceHandler(
       acceptLeaseExpiresAt: undefined,
       acceptMayHaveSucceeded: args.mayHaveSucceeded,
     });
+    if (booking.acceptOperationId) {
+      const connectionId = await ensureGoogleConnection(ctx, args.hostUserId);
+      const operation = await ctx.db
+        .query("calendarOperations")
+        .withIndex("by_connection_and_key", (q) =>
+          q
+            .eq("connectionId", connectionId)
+            .eq("idempotencyKey", booking.acceptOperationId!),
+        )
+        .unique();
+      if (operation) {
+        await ctx.db.patch(operation._id, {
+          status: args.mayHaveSucceeded ? "ambiguous" : "failed",
+          attemptId: undefined,
+          leaseExpiresAt: undefined,
+          mayHaveSucceeded: args.mayHaveSucceeded,
+          updatedAt: Date.now(),
+        });
+      } else {
+        const now = Date.now();
+        const localCalendar = booking.calendarId
+          ? await localCalendarForProviderId(
+              ctx,
+              args.hostUserId,
+              booking.calendarId,
+            )
+          : undefined;
+        await ctx.db.insert("calendarOperations", {
+          connectionId,
+          userId: args.hostUserId,
+          idempotencyKey: booking.acceptOperationId,
+          kind: "create",
+          status: args.mayHaveSucceeded ? "ambiguous" : "failed",
+          bookingId: booking._id,
+          mayHaveSucceeded: args.mayHaveSucceeded,
+          localCalendarId: localCalendar?._id,
+          providerCalendarId: booking.calendarId,
+          providerEventId: booking.googleEventId,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
   }
   return null;
 }

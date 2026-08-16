@@ -15,9 +15,16 @@ export const peopleTables = {
     googleEtag: v.optional(v.string()),
     // Full-resync reconcile marker (see syncState.contactsSyncGeneration).
     syncGeneration: v.optional(v.number()),
+    connectionId: v.optional(v.id("calendarConnections")),
+    providerContactId: v.optional(v.string()),
+    providerVersion: v.optional(v.string()),
   })
     .index("by_user", ["userId"])
-    .index("by_user_and_resourceName", ["userId", "resourceName"]),
+    .index("by_user_and_resourceName", ["userId", "resourceName"])
+    .index("by_connection_and_providerContactId", {
+      fields: ["connectionId", "providerContactId"],
+      staged: true,
+    }),
 
   // A unified, email-keyed people directory: the union of three feeders —
   // saved Google connections ("connection"), auto-collected Other Contacts

@@ -56,33 +56,65 @@ export const calendarTables = {
       "calendarId",
       "googleEventId",
     ])
-    // Provider-neutral event-id lookup, the successor to the Google-id index
-    // above. Staged: built now but read by nothing until cutover, after which the
-    // Google-id index is retired. Costs one extra index copy on the largest table
-    // for the duration of the migration — an accepted, temporary cost.
+    // Retained through expand only. It is under-keyed for providers whose event
+    // ids are calendar-scoped; no new read may use it.
     .index("by_connection_and_providerEventId", [
       "connectionId",
       "providerEventId",
-    ]),
+    ])
+    // Correctly keyed neutral lookups. Staged and unread until a later deploy;
+    // calendar identity is required because provider event ids may collide.
+    .index("by_connection_and_localCalendarId_and_providerEventId", {
+      fields: ["connectionId", "localCalendarId", "providerEventId"],
+      staged: true,
+    })
+    .index("by_connection_and_localCalendarId_and_providerSeriesId", {
+      fields: ["connectionId", "localCalendarId", "providerSeriesId"],
+      staged: true,
+    }),
 
   // One physical copy of a Google *public* calendar's events (holidays,
   // birthdays), shared across every user who selects that calendar. Stored once
   // rather than per-user. No `userId`: the row belongs to the calendar, not a
   // person. See isSharedPublicCalendar in sharedPublicCalendars.ts.
-  sharedEvents: defineTable(googleEventValidator)
+  sharedEvents: defineTable(
+    googleEventValidator.extend({
+      provider: v.optional(
+        v.union(v.literal("google"), v.literal("microsoft")),
+      ),
+      providerCalendarId: v.optional(v.string()),
+      providerEventId: v.optional(v.string()),
+      providerUpdatedMs: v.optional(v.number()),
+      providerSeriesId: v.optional(v.string()),
+    }),
+  )
     .index("by_calendar_and_start", ["calendarId", "startMs"])
     .index("by_calendar_and_end", ["calendarId", "endMs"])
-    .index("by_calendar_and_googleEventId", ["calendarId", "googleEventId"]),
+    .index("by_calendar_and_googleEventId", ["calendarId", "googleEventId"])
+    .index("by_provider_and_providerCalendarId_and_providerEventId", {
+      fields: ["provider", "providerCalendarId", "providerEventId"],
+      staged: true,
+    }),
 
   // One row per shared public calendar: its user-independent sync token plus a
   // lease so exactly one user's sync refreshes it at a time.
   sharedCalendars: defineTable({
     googleCalendarId: v.string(),
+    provider: v.optional(
+      v.union(v.literal("google"), v.literal("microsoft")),
+    ),
+    providerCalendarId: v.optional(v.string()),
+    syncCursor: v.optional(v.string()),
     syncToken: v.optional(v.string()),
     lastSyncAt: v.optional(v.number()),
     // Held while a sync runs; a second user finding a live lease skips its run.
     syncLeaseExpiresAt: v.optional(v.number()),
-  }).index("by_googleCalendarId", ["googleCalendarId"]),
+  })
+    .index("by_googleCalendarId", ["googleCalendarId"])
+    .index("by_provider_and_providerCalendarId", {
+      fields: ["provider", "providerCalendarId"],
+      staged: true,
+    }),
 
   // One row per recurring master. Expanded event instances share this rule;
   // keeping it separately avoids duplicating it across every occurrence.
@@ -97,16 +129,25 @@ export const calendarTables = {
     // Provider-neutral fields (dual-written until cutover). `providerEventId`
     // mirrors `googleEventId`. Optional until backfilled.
     connectionId: v.optional(v.id("calendarConnections")),
+    localCalendarId: v.optional(v.id("calendars")),
     providerEventId: v.optional(v.string()),
+    providerSeriesId: v.optional(v.string()),
+    providerUpdatedMs: v.optional(v.number()),
   })
     .index("by_user_and_calendar_and_googleEventId", [
       "userId",
       "calendarId",
       "googleEventId",
     ])
-    // Staged neutral-id lookup; read by nothing until cutover.
+    // Deprecated expand-phase compatibility index; the staged index below is
+    // the correctly calendar-keyed successor.
     .index("by_connection_and_providerEventId", [
       "connectionId",
       "providerEventId",
-    ]),
+    ])
+    // Staged neutral-id lookup; read by nothing until cutover.
+    .index("by_connection_and_localCalendarId_and_providerEventId", {
+      fields: ["connectionId", "localCalendarId", "providerEventId"],
+      staged: true,
+    }),
 };

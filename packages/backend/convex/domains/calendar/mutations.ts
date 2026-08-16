@@ -65,12 +65,22 @@ export async function upsertEventHandler(
   // Dual-write: stamp the neutral mirror alongside the Google-named columns so
   // the row stays cutover-ready. Legacy columns remain the source of truth.
   const connectionId = await ensureGoogleConnection(ctx, args.userId);
+  const localCalendar = await ctx.db
+    .query("calendars")
+    .withIndex("by_user_and_googleCalendarId", (q) =>
+      q
+        .eq("userId", args.userId)
+        .eq("googleCalendarId", args.event.calendarId),
+    )
+    .unique();
   const doc = {
     userId: args.userId,
     ...args.event,
     connectionId,
+    localCalendarId: localCalendar?._id,
     providerEventId: args.event.googleEventId,
     providerUpdatedMs: args.event.googleUpdatedMs,
+    providerSeriesId: args.event.recurringEventId,
   };
   const existing = await ctx.db
     .query("events")
@@ -113,11 +123,20 @@ export async function upsertRecurringSeriesHandler(
   // Dual-write the neutral mirror (connectionId + providerEventId) on both the
   // patch and insert paths, so incremental cache refreshes keep it current too.
   const connectionId = await ensureGoogleConnection(ctx, args.userId);
+  const localCalendar = await ctx.db
+    .query("calendars")
+    .withIndex("by_user_and_googleCalendarId", (q) =>
+      q.eq("userId", args.userId).eq("googleCalendarId", args.calendarId),
+    )
+    .unique();
   const value = {
     recurrence: args.recurrence,
     sourceUpdatedMs: args.sourceUpdatedMs,
     connectionId,
+    localCalendarId: localCalendar?._id,
     providerEventId: args.googleEventId,
+    providerSeriesId: args.googleEventId,
+    providerUpdatedMs: args.sourceUpdatedMs,
   };
   if (existing) {
     await ctx.db.patch(existing._id, value);

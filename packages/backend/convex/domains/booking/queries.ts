@@ -11,7 +11,7 @@ import {
   MAX_EVENT_SPAN_MS,
   newRowBudget,
   spendRowBudget,
-} from "../../lib/eventReads";
+} from "../../shared/eventReads";
 import {
   collectBusy,
   DEFAULT_PAGE,

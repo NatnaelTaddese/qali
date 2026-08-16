@@ -8,7 +8,7 @@ import {
   MAX_EVENT_SPAN_MS,
   newRowBudget,
   spendRowBudget,
-} from "../../lib/eventReads";
+} from "../../shared/eventReads";
 import {
   ASSISTANT_SHARED_EVENT_LIMIT,
   type EventView,

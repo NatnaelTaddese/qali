@@ -16,7 +16,7 @@ import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { type MutationCtx, type QueryCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
-import { defineMutation, defineQuery } from "../../lib/functionDefinitions";
+import { defineMutation, defineQuery } from "../../shared/functionDefinitions";
 import { assistantBlockValidator } from "./validators";
 
 /** How much of the opening message becomes the thread's title. */

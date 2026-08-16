@@ -1,6 +1,6 @@
 /**
  * The Google implementation of the calendar port. It wraps the plain REST
- * helpers in `lib/google.ts`, maps their shapes and failures into the neutral
+ * helpers in `client.ts`, maps their shapes and failures into the neutral
  * contract, and is bound to a single access token — the domain never sees it.
  *
  * All Google-specific mechanics live here: the client-assigned event id that
@@ -9,7 +9,7 @@
  * Swapping in Microsoft is writing a sibling of this file.
  */
 
-import { googleEventIdForOperation } from "../../lib/assistantLogic";
+import { googleEventIdForOperation } from "./eventHelpers";
 import {
   deleteCalendarEvent,
   fetchCalendarList,
@@ -20,7 +20,7 @@ import {
   patchCalendarEvent,
   toGoogleTime,
   type RawAttendee,
-} from "../../lib/google";
+} from "./client";
 import { ProviderError } from "../calendar/errors";
 import type {
   CalendarProviderAdapter,

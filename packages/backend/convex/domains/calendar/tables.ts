@@ -68,7 +68,7 @@ export const calendarTables = {
   // One physical copy of a Google *public* calendar's events (holidays,
   // birthdays), shared across every user who selects that calendar. Stored once
   // rather than per-user. No `userId`: the row belongs to the calendar, not a
-  // person. See isSharedPublicCalendar in lib/calendars.ts.
+  // person. See isSharedPublicCalendar in sharedPublicCalendars.ts.
   sharedEvents: defineTable(googleEventValidator)
     .index("by_calendar_and_start", ["calendarId", "startMs"])
     .index("by_calendar_and_end", ["calendarId", "endMs"])

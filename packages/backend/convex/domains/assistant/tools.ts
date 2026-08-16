@@ -44,7 +44,7 @@ import {
   formatAssistantRepeat,
   isDateKey,
   type AssistantEventRange,
-} from "../../lib/assistantLogic";
+} from "./eventLogic";
 
 // --- Plumbing --------------------------------------------------------------
 

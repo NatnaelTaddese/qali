@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 
 import { internal } from "../_generated/api";
-import { isSharedPublicCalendar } from "../lib/calendars";
-import { defineMutation } from "../lib/functionDefinitions";
+import { isSharedPublicCalendar } from "../domains/calendar/sharedPublicCalendars";
+import { defineMutation } from "../shared/functionDefinitions";
 
 /**
  * One-shot data migrations — run by hand once, then idle. Kept apart from the

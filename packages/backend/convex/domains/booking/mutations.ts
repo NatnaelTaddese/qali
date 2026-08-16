@@ -14,7 +14,7 @@ import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
-import { googleEventIdForOperation } from "../../lib/assistantLogic";
+import { googleEventIdForOperation } from "../../integrations/google/eventHelpers";
 import { consumeRateLimit } from "../../infrastructure/rateLimit";
 import { ensureGoogleConnection } from "../calendar/connections";
 import { clearBookingNotifications } from "../notifications/model";

@@ -1,5 +1,5 @@
 /**
- * Pure mappings between the Google REST shapes (`lib/google.ts`) and the
+ * Pure mappings between the Google REST shapes (`client.ts`) and the
  * provider-neutral port (`integrations/calendar`). No fetch, no ctx — just data
  * in, data out — so they unit-test without a network or a Convex runtime.
  */
@@ -10,7 +10,7 @@ import {
   SyncTokenExpiredError,
   type MappedCalendar,
   type MappedEvent,
-} from "../../lib/google";
+} from "./client";
 import {
   ProviderError,
   type ProviderErrorKind,

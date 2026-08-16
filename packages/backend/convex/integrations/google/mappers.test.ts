@@ -6,7 +6,7 @@ import {
   GoogleNetworkError,
   SyncTokenExpiredError,
   type MappedEvent,
-} from "../../lib/google";
+} from "./client";
 import {
   decodeCursor,
   encodeCursor,

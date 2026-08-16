@@ -433,7 +433,7 @@ export function mapGoogleEvent(raw: RawEvent, calendarId: string): MappedEvent {
     creator: mapPerson(raw.creator),
     // Passed through untouched: an absent guest permission means Google's
     // default for that field, and the defaults differ. Coercing here would
-    // erase the distinction. See lib/permissions.ts.
+    // erase the distinction. The domain permission model applies the defaults.
     guestsCanModify: raw.guestsCanModify,
     guestsCanInviteOthers: raw.guestsCanInviteOthers,
     guestsCanSeeOtherGuests: raw.guestsCanSeeOtherGuests,

@@ -17,7 +17,7 @@ import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
-import { defineMutation } from "../../lib/functionDefinitions";
+import { defineMutation } from "../../shared/functionDefinitions";
 
 const THREAD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const THREAD_PAGE = 100;

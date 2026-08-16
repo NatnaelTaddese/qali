@@ -7,7 +7,7 @@ import {
   insertCalendarEvent,
   mapGoogleEvent,
   patchCalendarEvent,
-} from "./google";
+} from "./client";
 
 /** Capture the URL and parsed JSON body of the single request a write helper
  * makes, and answer it with `response`. */
@@ -185,7 +185,7 @@ describe("mapGoogleEvent", () => {
 
   test("leaves absent guest permissions undefined rather than coercing them", () => {
     // The three flags have *different* Google defaults when absent, so mapping
-    // must not flatten them to false — lib/permissions.ts applies the defaults.
+    // must not flatten them to false; the domain permission model applies the defaults.
     const mapped = mapGoogleEvent(
       { id: "evt-3", start: { dateTime: "2026-07-25T09:00:00.000Z" } },
       "primary@example.com",

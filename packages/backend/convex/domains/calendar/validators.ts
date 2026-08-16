@@ -66,7 +66,7 @@ export const googleEventValidator = v.object({
   // The three guest permissions. Each is tri-state on purpose: Google omits
   // them at their default, and the defaults disagree — absent guestsCanModify
   // means false, absent guestsCanInviteOthers/SeeOtherGuests mean true. Read
-  // them only through lib/permissions.ts, which encodes that.
+  // them only through the domain permission model, which encodes that.
   guestsCanModify: v.optional(v.boolean()),
   guestsCanInviteOthers: v.optional(v.boolean()),
   guestsCanSeeOtherGuests: v.optional(v.boolean()),

@@ -30,15 +30,15 @@ import {
   type RawCalendarDateTime,
   type RawEvent,
   toGoogleTime,
-} from "../../lib/google";
+} from "../../integrations/google/client";
 import {
   googleEventIdForOperation,
   mergeLiveAttendees,
-  shiftRecurringMasterRange,
-} from "../../lib/assistantLogic";
+} from "../../integrations/google/eventHelpers";
 import { eventCapabilities, type EventCapabilities } from "@qali/domain/permissions";
 import { authComponent } from "../../auth";
-import { getGoogleAccessToken } from "../../lib/googleCredentials";
+import { getGoogleAccessToken } from "../../integrations/google/credentials";
+import { shiftRecurringMasterRange } from "./recurrence";
 
 export type EventCapabilityName =
   | "canEdit"

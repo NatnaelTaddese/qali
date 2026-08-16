@@ -11,7 +11,7 @@
 import type { GenericCtx } from "@convex-dev/better-auth";
 
 import type { DataModel } from "../../_generated/dataModel";
-import { getGoogleAccessToken } from "../../lib/googleCredentials";
+import { getGoogleAccessToken } from "../google/credentials";
 import { GoogleCalendarAdapter } from "../google/adapter";
 import type { CalendarProviderAdapter, ProviderId } from "./types";
 

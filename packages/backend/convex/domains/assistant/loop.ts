@@ -28,8 +28,8 @@ import {
   ExternalWriteCommittedError,
   isDefinitiveGoogleFailure,
 } from "../calendar/service";
-import { getGoogleAccessToken } from "../../lib/googleCredentials";
-import { defineAction } from "../../lib/functionDefinitions";
+import { getGoogleAccessToken } from "../../integrations/google/credentials";
+import { defineAction } from "../../shared/functionDefinitions";
 import {
   ASSISTANT_TOOLS,
   TOOLS_BY_NAME,

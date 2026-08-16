@@ -2,7 +2,7 @@ import { v } from "convex/values";
 
 import { internal } from "../_generated/api";
 import type { Id, TableNames } from "../_generated/dataModel";
-import { defineMutation } from "../lib/functionDefinitions";
+import { defineMutation } from "../shared/functionDefinitions";
 
 /**
  * Recurring storage maintenance + the account-deletion purge. All internal,

@@ -4,20 +4,20 @@ import { internal } from "../../_generated/api";
 import type { Doc } from "../../_generated/dataModel";
 import { type ActionCtx, type MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
-import { isSharedPublicCalendar } from "../../lib/calendars";
-import { getGoogleAccessToken } from "../../lib/googleCredentials";
+import { isSharedPublicCalendar } from "../calendar/sharedPublicCalendars";
+import { getGoogleAccessToken } from "../../integrations/google/credentials";
 import {
   defineAction,
   defineMutation,
   defineQuery,
-} from "../../lib/functionDefinitions";
+} from "../../shared/functionDefinitions";
 import {
   fetchCalendarList,
   fetchCalendarPage,
   fetchContactsPage,
   fetchOtherContactsPage,
   SyncTokenExpiredError,
-} from "../../lib/google";
+} from "../../integrations/google/client";
 import { ensureGoogleConnection } from "../calendar/connections";
 import { googleEventValidator } from "../calendar/validators";
 

@@ -3,9 +3,9 @@
 
 import type { QueryCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
-import { selectVisibleNotifications } from "../../lib/notifications";
 import {
   MAX_NOTIFICATIONS,
+  selectVisibleNotifications,
   UNREAD_CAP,
   type NotificationWithBooking,
 } from "./model";

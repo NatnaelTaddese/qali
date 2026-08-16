@@ -2,7 +2,7 @@
 // TypeScript project intentionally does not include Bun's ambient types.
 import { describe, expect, test } from "bun:test";
 
-import { selectVisibleNotifications } from "./notifications";
+import { selectVisibleNotifications } from "./model";
 
 describe("selectVisibleNotifications", () => {
   test("keeps older unread rows reachable ahead of recent read history", () => {

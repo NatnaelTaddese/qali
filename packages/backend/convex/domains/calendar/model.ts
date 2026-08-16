@@ -5,12 +5,12 @@
 
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { QueryCtx } from "../../_generated/server";
-import { isSharedPublicCalendar } from "../../lib/calendars";
+import { isSharedPublicCalendar } from "./sharedPublicCalendars";
 import {
   MAX_EVENT_SPAN_MS,
   type RowBudget,
   spendRowBudget,
-} from "../../lib/eventReads";
+} from "../../shared/eventReads";
 
 // The window is caller-supplied, so bound it: the widest legitimate view (a
 // 7-month month-grid, see QUERY_SIDE_MONTHS on the client) is ~214 days, so 400

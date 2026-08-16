@@ -2,7 +2,7 @@
 // TypeScript project intentionally does not include Bun's ambient types.
 import { describe, expect, test } from "bun:test";
 
-import { isSharedPublicCalendar } from "./calendars";
+import { isSharedPublicCalendar } from "./sharedPublicCalendars";
 
 describe("isSharedPublicCalendar", () => {
   test("holiday calendars are shared (byte-identical for everyone)", () => {

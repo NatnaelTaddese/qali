@@ -1,7 +1,7 @@
 import type { GenericCtx } from "@convex-dev/better-auth";
 
-import type { DataModel } from "../_generated/dataModel";
-import { createAuth } from "../auth";
+import type { DataModel } from "../../_generated/dataModel";
+import { createAuth } from "../../auth";
 
 /**
  * The credential broker: the single place a Google access token is resolved.

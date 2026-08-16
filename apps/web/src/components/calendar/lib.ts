@@ -519,6 +519,13 @@ export interface PositionedEvent {
   columnSpan: number;
 }
 
+/** Blank strip reserved on the left edge of every day column, so a card never
+ * covers the column's left border. It leaves an always-clickable lane for
+ * starting a drag-create right next to (or overlapping) an existing event —
+ * otherwise a full-width card swallows the pointer-down and you can't paint a
+ * neighbour without first finding a gap. */
+export const EVENT_LEFT_GUTTER_PX = 12;
+
 /** Horizontal shift, in pixels, applied per stack level in the overlap cascade. */
 export const STACK_INDENT_PX = 14;
 /** Stack levels that get the full indent before it stops growing. */

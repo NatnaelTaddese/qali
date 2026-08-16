@@ -23,6 +23,8 @@ import { calendarRequestFingerprint } from "../calendar/operationIdentity";
 import { clearBookingNotifications } from "../notifications/model";
 import {
   ACCEPT_LEASE_MS,
+  ACCEPT_RECONCILE_BASE_DELAY_MS,
+  ACCEPT_RECONCILE_MAX_ATTEMPTS,
   bookingNotificationBody,
   collectBusy,
   EXPIRATION_BATCH_SIZE,
@@ -47,14 +49,23 @@ async function localCalendarForProviderId(
     .unique();
 }
 
-async function primaryLocalCalendar(ctx: MutationCtx, userId: string) {
-  return (
-    await ctx.db
-      .query("calendars")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .filter((q) => q.eq(q.field("primary"), true))
-      .take(1)
-  )[0];
+async function primaryLocalCalendar(
+  ctx: MutationCtx,
+  userId: string,
+  connectionId: Id<"calendarConnections">,
+) {
+  const calendars = await ctx.db
+    .query("calendars")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .take(501);
+  if (calendars.length > 500) {
+    throw new Error("Too many calendars to choose a booking target safely");
+  }
+  return calendars.find(
+    (row) =>
+      row.primary === true &&
+      (row.connectionId === connectionId || row.connectionId === undefined),
+  );
 }
 
 type BookingTarget = {
@@ -120,7 +131,7 @@ async function primaryGoogleBookingTarget(
 ): Promise<BookingTarget> {
   const connectionId = await ensureGoogleConnection(ctx, userId);
   const calendar =
-    (await primaryLocalCalendar(ctx, userId)) ??
+    (await primaryLocalCalendar(ctx, userId, connectionId)) ??
     (await ensureDefaultPrimaryCalendar(ctx, userId, connectionId));
   return await validateBookingTarget(ctx, userId, connectionId, calendar._id);
 }
@@ -324,7 +335,16 @@ export async function upsertBookingPageHandler(
     throw new Error("Booking window must be between 1 and 365 days");
   }
 
-  const target = await primaryGoogleBookingTarget(ctx, user._id);
+  const existing = await pageByUser(ctx, user._id);
+  const target =
+    existing?.targetConnectionId && existing.targetCalendarId
+      ? await validateBookingTarget(
+          ctx,
+          user._id,
+          existing.targetConnectionId,
+          existing.targetCalendarId,
+        )
+      : await primaryGoogleBookingTarget(ctx, user._id);
   const value = {
     slug,
     displayName: user.name || user.email || "qali user",
@@ -342,7 +362,6 @@ export async function upsertBookingPageHandler(
     targetCalendarId: target.calendar._id,
   };
 
-  const existing = await pageByUser(ctx, user._id);
   if (existing) {
     await ctx.db.patch(existing._id, value);
   } else {
@@ -451,6 +470,7 @@ export async function requestBookingHandler(
     page,
     args.startMs - MS_PER_DAY,
     endMs + MS_PER_DAY,
+    Date.now(),
   );
   const slot = slots.find((s) => s.startMs === args.startMs);
   if (!slot?.available) {
@@ -672,6 +692,8 @@ export async function claimBookingAcceptanceHandler(
     bookingId: Id<"bookings">;
     hostUserId: string;
     attemptId: string;
+    reconciliation?: boolean;
+    expectedGeneration?: number;
   },
 ) {
   const now = Date.now();
@@ -686,6 +708,18 @@ export async function claimBookingAcceptanceHandler(
   const operation = await operationForBooking(ctx, booking._id);
   if (operation?.status === "succeeded") {
     await mirrorSucceededAcceptance(ctx, booking, operation);
+    return null;
+  }
+  if (
+    args.expectedGeneration !== undefined &&
+    operation?.reconcileGeneration !== args.expectedGeneration
+  ) {
+    return null;
+  }
+  if (
+    args.reconciliation &&
+    (operation?.reconcileAttemptCount ?? 0) >= ACCEPT_RECONCILE_MAX_ATTEMPTS
+  ) {
     return null;
   }
   const page = await pageByUser(ctx, args.hostUserId);
@@ -732,16 +766,22 @@ export async function claimBookingAcceptanceHandler(
   ) {
     throw new Error("That time is no longer free on your calendar");
   }
+  const reconcileGeneration = (operation?.reconcileGeneration ?? 0) + 1;
+  const reconcileAttemptCount =
+    (operation?.reconcileAttemptCount ?? 0) + (args.reconciliation ? 1 : 0);
+  const leaseExpiresAt = now + ACCEPT_LEASE_MS;
   const operationValue = {
     status: "pending" as const,
     bookingId: booking._id,
     attemptId: args.attemptId,
-    leaseExpiresAt: now + ACCEPT_LEASE_MS,
+    leaseExpiresAt,
     mayHaveSucceeded: true,
     localCalendarId: target.calendar._id,
     providerCalendarId: target.providerCalendarId,
     requestFingerprint: operation?.requestFingerprint ?? requestFingerprint,
     providerEventId: operation?.providerEventId ?? booking.providerEventId,
+    reconcileAttemptCount,
+    reconcileGeneration,
     lastError: undefined,
     updatedAt: now,
   };
@@ -760,7 +800,7 @@ export async function claimBookingAcceptanceHandler(
   await ctx.db.patch(booking._id, {
     acceptOperationId: operationId,
     acceptAttemptId: args.attemptId,
-    acceptLeaseExpiresAt: now + ACCEPT_LEASE_MS,
+    acceptLeaseExpiresAt: leaseExpiresAt,
     // Conservative until a known Google failure clears it. If this action
     // disappears, rejection cannot contradict a possibly sent invitation.
     acceptMayHaveSucceeded: true,
@@ -769,6 +809,11 @@ export async function claimBookingAcceptanceHandler(
     targetConnectionId: target.connection._id,
     targetCalendarId: target.calendar._id,
   });
+  await ctx.scheduler.runAt(
+    leaseExpiresAt,
+    internal.booking.reconcileBookingAcceptance,
+    { bookingId: booking._id, expectedGeneration: reconcileGeneration },
+  );
   return {
     booking,
     page,
@@ -777,7 +822,40 @@ export async function claimBookingAcceptanceHandler(
     localCalendarId: target.calendar._id,
     providerCalendarId: target.providerCalendarId,
     reconcileOnly,
+    reconcileGeneration,
+    reconcileAttemptCount,
   };
+}
+
+/** Scheduled claims derive authority from the booking rather than a user
+ * session. The expected generation makes duplicate/lost-action watchdogs no-op. */
+export async function claimScheduledBookingAcceptanceHandler(
+  ctx: MutationCtx,
+  args: {
+    bookingId: Id<"bookings">;
+    attemptId: string;
+    expectedGeneration: number;
+  },
+) {
+  const booking = await ctx.db.get(args.bookingId);
+  if (!booking || booking.status !== "pending") return null;
+  let claimed;
+  try {
+    claimed = await claimBookingAcceptanceHandler(ctx, {
+      bookingId: booking._id,
+      hostUserId: booking.hostUserId,
+      attemptId: args.attemptId,
+      reconciliation: true,
+      expectedGeneration: args.expectedGeneration,
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "Booking calendar target is unavailable"
+    ) return null;
+    throw error;
+  }
+  return claimed ? { ...claimed, hostUserId: booking.hostUserId } : null;
 }
 
 export async function releaseBookingAcceptanceHandler(
@@ -850,6 +928,25 @@ export async function releaseBookingAcceptanceHandler(
     acceptLeaseExpiresAt: undefined,
     acceptMayHaveSucceeded: args.mayHaveSucceeded,
   });
+  if (
+    args.mayHaveSucceeded &&
+    (operation.reconcileAttemptCount ?? 0) < ACCEPT_RECONCILE_MAX_ATTEMPTS
+  ) {
+    const attempt = operation.reconcileAttemptCount ?? 0;
+    const delay = ACCEPT_RECONCILE_BASE_DELAY_MS * 2 ** Math.min(attempt, 4);
+    await ctx.scheduler.runAfter(
+      delay,
+      internal.booking.reconcileBookingAcceptance,
+      {
+        bookingId: booking._id,
+        expectedGeneration: operation.reconcileGeneration ?? 0,
+      },
+    );
+  } else if (!args.mayHaveSucceeded && booking.endMs <= now) {
+    await ctx.scheduler.runAfter(0, internal.booking.expireBooking, {
+      bookingId: booking._id,
+    });
+  }
   return null;
 }
 

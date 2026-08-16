@@ -488,10 +488,12 @@ async function processUserPage(
       .paginate({ cursor: args.cursor, numItems: ROW_BATCH });
     const primary = await primaryCalendar(ctx, args.userId);
     for (const row of page.page) {
-      await ctx.db.patch(row._id, {
-        targetConnectionId: args.connectionId,
-        targetCalendarId: primary?._id,
-      });
+      if (!row.targetConnectionId && !row.targetCalendarId) {
+        await ctx.db.patch(row._id, {
+          targetConnectionId: args.connectionId,
+          targetCalendarId: primary?._id,
+        });
+      }
     }
     return page;
   }
@@ -511,17 +513,21 @@ async function processUserPage(
       const calendar = row.calendarId
         ? await localCalendar(ctx, args.userId, row.calendarId)
         : primary;
+      const targetConnectionId = row.targetConnectionId ?? args.connectionId;
+      const targetCalendar = row.targetCalendarId
+        ? await ctx.db.get(row.targetCalendarId)
+        : calendar;
       await ctx.db.patch(row._id, {
-        connectionId: args.connectionId,
+        connectionId: row.connectionId ?? args.connectionId,
         providerEventId: row.googleEventId,
-        targetConnectionId: args.connectionId,
-        targetCalendarId: calendar?._id,
+        targetConnectionId,
+        targetCalendarId: targetCalendar?._id,
       });
       await repairBookingOperation(
         ctx,
         row,
-        args.connectionId,
-        calendar?._id,
+        targetConnectionId,
+        targetCalendar?._id,
       );
     }
     return page;

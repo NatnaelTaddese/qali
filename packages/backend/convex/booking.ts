@@ -11,6 +11,7 @@ import { v } from "convex/values";
 
 import {
   action,
+  internalAction,
   internalMutation,
   internalQuery,
   mutation,
@@ -19,6 +20,7 @@ import {
 import { slotSettingsValidator } from "./domains/booking/model";
 import {
   claimBookingAcceptanceHandler,
+  claimScheduledBookingAcceptanceHandler,
   expireBookingHandler,
   expirePastBookingsHandler,
   markAcceptedHandler,
@@ -41,7 +43,10 @@ import {
   listPendingBookingsHandler,
   listSlotsHandler,
 } from "./domains/booking/queries";
-import { acceptBookingHandler } from "./domains/booking/service";
+import {
+  acceptBookingHandler,
+  reconcileBookingAcceptanceHandler,
+} from "./domains/booking/service";
 
 // --- Host: the page and its schedule -------------------------------------
 
@@ -123,7 +128,12 @@ export const getPublicPage = query({
 });
 
 export const listSlots = query({
-  args: { slug: v.string(), fromMs: v.number(), toMs: v.number() },
+  args: {
+    slug: v.string(),
+    fromMs: v.number(),
+    toMs: v.number(),
+    nowMs: v.optional(v.number()),
+  },
   handler: (ctx, args) => listSlotsHandler(ctx, args),
 });
 
@@ -169,8 +179,19 @@ export const claimBookingAcceptance = internalMutation({
     bookingId: v.id("bookings"),
     hostUserId: v.string(),
     attemptId: v.string(),
+    reconciliation: v.optional(v.boolean()),
+    expectedGeneration: v.optional(v.number()),
   },
   handler: (ctx, args) => claimBookingAcceptanceHandler(ctx, args),
+});
+
+export const claimScheduledBookingAcceptance = internalMutation({
+  args: {
+    bookingId: v.id("bookings"),
+    attemptId: v.string(),
+    expectedGeneration: v.number(),
+  },
+  handler: (ctx, args) => claimScheduledBookingAcceptanceHandler(ctx, args),
 });
 
 export const releaseBookingAcceptance = internalMutation({
@@ -187,6 +208,14 @@ export const releaseBookingAcceptance = internalMutation({
 export const acceptBooking = action({
   args: { bookingId: v.id("bookings") },
   handler: (ctx, args) => acceptBookingHandler(ctx, args),
+});
+
+export const reconcileBookingAcceptance = internalAction({
+  args: {
+    bookingId: v.id("bookings"),
+    expectedGeneration: v.number(),
+  },
+  handler: (ctx, args) => reconcileBookingAcceptanceHandler(ctx, args),
 });
 
 export const rejectBooking = mutation({

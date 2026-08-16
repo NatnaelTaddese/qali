@@ -16,7 +16,12 @@ import type {
   SyncPage,
 } from "../../integrations/calendar/types";
 import schema from "../../schema";
-import { syncOneConnectionCalendar, syncSharedCalendar } from "./engine";
+import {
+  chunkEngagementScores,
+  summarizeConnectionSyncs,
+  syncOneConnectionCalendar,
+  syncSharedCalendar,
+} from "./engine";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -807,6 +812,165 @@ describe("connection-aware contact ownership", () => {
 });
 
 describe("shared generation and engagement maintenance", () => {
+  test("connection reconciliation chooses the stable Google booking default once", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "booking-target-user";
+    const microsoftId = await setupConnection(t, userId, "microsoft");
+    const googleId = await setupConnection(t, userId, "google");
+    await t.run((ctx) =>
+      ctx.db.insert("bookingPages", {
+        userId,
+        slug: "stable-target",
+        displayName: "Stable Target",
+        timeZone: "UTC",
+        slotMinutes: 30,
+        bufferMinutes: 0,
+        minNoticeMinutes: 0,
+        horizonDays: 30,
+        rules: [],
+        enabled: true,
+      }),
+    );
+    const microsoftAttempt = await t.mutation(
+      internal.calendarSync.claimSyncLease,
+      { connectionId: microsoftId },
+    );
+    const googleAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId: googleId,
+    });
+    const reconcile = (
+      connectionId: Id<"calendarConnections">,
+      attemptId: string,
+      id: string,
+    ) =>
+      t.mutation(internal.calendarSync.reconcileCalendars, {
+        connectionId,
+        attemptId,
+        calendars: [
+          { id, primary: true, writable: true, selected: true, shared: false },
+        ],
+      });
+    await reconcile(microsoftId, microsoftAttempt!, "microsoft-primary");
+    expect(
+      await t.run((ctx) => ctx.db.query("bookingPages").unique()),
+    ).not.toHaveProperty("targetConnectionId");
+    const googleCalendars = await reconcile(
+      googleId,
+      googleAttempt!,
+      "google-primary",
+    );
+    expect(await t.run((ctx) => ctx.db.query("bookingPages").unique())).toMatchObject({
+      targetConnectionId: googleId,
+      targetCalendarId: googleCalendars[0].localCalendarId,
+    });
+
+    await reconcile(microsoftId, microsoftAttempt!, "microsoft-primary");
+    expect(await t.run((ctx) => ctx.db.query("bookingPages").unique())).toMatchObject({
+      targetConnectionId: googleId,
+      targetCalendarId: googleCalendars[0].localCalendarId,
+    });
+  });
+
+  test("manual fan-out reports partial success and rejects aggregate total failure", () => {
+    expect(
+      summarizeConnectionSyncs([
+        { status: "fulfilled", value: { changed: true, skipped: false } },
+        { status: "rejected", reason: new Error("account two unavailable") },
+      ]),
+    ).toEqual({ total: 2, succeeded: 1, failed: 1, skipped: 0, changed: 1 });
+    expect(() =>
+      summarizeConnectionSyncs([
+        { status: "rejected", reason: new Error("google failed") },
+        { status: "rejected", reason: new Error("microsoft failed") },
+      ]),
+    ).toThrow(/all 2 calendar connections failed.*google failed.*microsoft failed/i);
+  });
+
+  test("chunks more than Convex's 8192 array limit into bounded mutations", () => {
+    const chunks = chunkEngagementScores(
+      Array.from({ length: 8_205 }, (_, index) => ({
+        email: `person-${index}@example.com`,
+        score: index,
+        meetingCount: 1,
+      })),
+    );
+    expect(chunks.flat()).toHaveLength(8_205);
+    expect(Math.max(...chunks.map((chunk) => chunk.length))).toBe(200);
+  });
+
+  test("coalesces dirty work and fences a superseded engagement generation", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "coalesced-engagement";
+    await t.run(async (ctx) => {
+      await ctx.db.insert("userSyncState", {
+        userId,
+        engagementDirty: false,
+        engagementGeneration: 0,
+        updatedAt: 0,
+      });
+      for (const email of ["current@example.com", "stale@example.com"]) {
+        await ctx.db.insert("people", {
+          userId,
+          email,
+          sources: ["attendee"],
+          score: 99,
+          meetingCount: 9,
+          updatedAt: 0,
+        });
+      }
+    });
+    await t.mutation(internal.calendarSync.markEngagementDirty, { userId });
+    await t.mutation(internal.calendarSync.markEngagementDirty, { userId });
+    const first = await t.mutation(internal.calendarSync.claimEngagement, { userId });
+    expect(first?.generation).toBe(1);
+    await t.mutation(internal.calendarSync.markEngagementDirty, { userId });
+    expect(
+      await t.mutation(internal.calendarSync.applyEngagementScoreChunk, {
+        userId,
+        ...first!,
+        scores: [{ email: "current@example.com", score: 5, meetingCount: 2 }],
+      }),
+    ).toBe(false);
+    expect(
+      await t.mutation(internal.calendarSync.finishEngagement, {
+        userId,
+        ...first!,
+      }),
+    ).toBe(false);
+
+    const second = await t.mutation(internal.calendarSync.claimEngagement, { userId });
+    expect(second?.generation).toBe(2);
+    expect(
+      await t.mutation(internal.calendarSync.applyEngagementScoreChunk, {
+        userId,
+        ...second!,
+        scores: [{ email: "current@example.com", score: 5, meetingCount: 2 }],
+      }),
+    ).toBe(true);
+    const reset = await t.mutation(
+      internal.calendarSync.resetStaleEngagementScores,
+      { userId, ...second!, cursor: null },
+    );
+    expect(reset?.done).toBe(true);
+    expect(
+      await t.mutation(internal.calendarSync.finishEngagement, {
+        userId,
+        ...second!,
+      }),
+    ).toBe(true);
+    const people = await t.run((ctx) => ctx.db.query("people").collect());
+    expect(people.find((row) => row.email === "current@example.com")).toMatchObject({
+      score: 5,
+      meetingCount: 2,
+      engagementGeneration: 2,
+    });
+    expect(people.find((row) => row.email === "stale@example.com")).toMatchObject({
+      score: 0,
+      meetingCount: 0,
+      engagementGeneration: 2,
+    });
+  });
+
   test("shared reconciliation falls back to and repairs a legacy event", async () => {
     const t = convexTest(schema, modules);
     await t.run((ctx) =>

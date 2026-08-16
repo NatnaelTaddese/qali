@@ -89,11 +89,16 @@ export function AssistantDock() {
     api.assistantData.listPendingActions,
     assistantAvailable && threadId ? { threadId } : "skip",
   );
+  const [quotaNowMs, setQuotaNowMs] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setQuotaNowMs(Date.now()), 5 * 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   // The rolling-30-day message allowance, so the composer can show what's left
   // and block sending once it's spent. Cheap enough to keep warm with the rest.
   const quota = useQuery(
     api.assistantData.monthlyQuota,
-    assistantAvailable ? {} : "skip",
+    assistantAvailable ? { nowMs: quotaNowMs } : "skip",
   );
   // Tracks whether the panel is open so ⌘J can always close it — even from the
   // composer, where the editable-target guard would otherwise swallow the key.

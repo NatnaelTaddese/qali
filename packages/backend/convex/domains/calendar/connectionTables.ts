@@ -69,6 +69,10 @@ export const calendarOperationTables = {
     targetProviderEventId: v.optional(v.string()),
     requestFingerprint: v.optional(v.string()),
     providerEventId: v.optional(v.string()),
+    // Scheduled booking reconciliation is generation-fenced so duplicate or
+    // delayed schedules cannot consume attempts or reclaim a newer lease.
+    reconcileAttemptCount: v.optional(v.number()),
+    reconcileGeneration: v.optional(v.number()),
     lastError: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),

@@ -22,6 +22,11 @@
   pre-cutover `internal.googleSync.*` cross-call contracts for actions already
   running during deployment. Its removal gate is the queue/running-function
   drain in `MIGRATION_RUNBOOK.md`.
+- A small set of old `internal.calendar.*` storage callbacks and the old-shape
+  `internal.calendarSync.applyEngagementScores` callback remain solely for
+  actions already running during cutover. Their explicit removal gates are in
+  the runbook; new code uses provider-neutral operation and chunked engagement
+  callbacks.
 - `auth.ts` configures Better Auth and exports server helpers. Better Auth HTTP
   routes are registered by `http.ts`; there is intentionally no public
   `api.auth.*` query.

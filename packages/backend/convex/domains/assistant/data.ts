@@ -40,6 +40,16 @@ const ASSISTANT_BOOKING_LIMIT = 250;
 const ASSISTANT_CALENDAR_LIMIT = 100;
 const MAX_EVENT_RANGE_MS = 400 * 24 * 60 * 60 * 1000;
 
+export function monthlyUsageAt(
+  state: { monthWindowStartMs?: number; monthCount?: number } | null,
+  nowMs: number,
+): number {
+  return state?.monthWindowStartMs !== undefined &&
+    nowMs - state.monthWindowStartMs < MONTH_WINDOW_MS
+    ? (state.monthCount ?? 0)
+    : 0;
+}
+
 function deriveTitle(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim();
   if (flat.length <= TITLE_MAX) {
@@ -79,9 +89,10 @@ export const isAvailable = defineQuery({
  * Mirrors the window logic in `startTurn` so the two never disagree.
  */
 export const monthlyQuota = defineQuery({
-  args: {},
+  args: { nowMs: v.optional(v.number()) },
   handler: async (
     ctx,
+    args,
   ): Promise<{ used: number; limit: number; remaining: number }> => {
     const user = await authComponent.safeGetAuthUser(ctx);
     if (!user) {
@@ -91,11 +102,11 @@ export const monthlyQuota = defineQuery({
       .query("assistantUserState")
       .withIndex("by_user", (q) => q.eq("userId", user._id))
       .unique();
-    const now = Date.now();
-    const inMonthWindow =
-      state?.monthWindowStartMs !== undefined &&
-      now - state.monthWindowStartMs < MONTH_WINDOW_MS;
-    const used = inMonthWindow ? (state?.monthCount ?? 0) : 0;
+    // Older clients sent `{}`. Keep that call valid without reading a query
+    // wall clock; mutations remain authoritative and a current client supplies
+    // a periodically refreshed time for window rollover display.
+    const now = args.nowMs ?? state?.monthWindowStartMs ?? 0;
+    const used = monthlyUsageAt(state, now);
     return {
       used,
       limit: MAX_TURNS_PER_MONTH,

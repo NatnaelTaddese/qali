@@ -160,7 +160,7 @@ export async function getPublicPageHandler(
  */
 export async function listSlotsHandler(
   ctx: QueryCtx,
-  args: { slug: string; fromMs: number; toMs: number },
+  args: { slug: string; fromMs: number; toMs: number; nowMs?: number },
 ): Promise<{ slotMinutes: number; slots: SlotOption[] }> {
   const page = await pageBySlug(ctx, normalizeSlug(args.slug));
   if (!page || !page.enabled) {
@@ -173,7 +173,9 @@ export async function listSlotsHandler(
   }
   return {
     slotMinutes: page.slotMinutes,
-    slots: await slotGrid(ctx, page, fromMs, toMs),
+    // `fromMs` was already caller-materialized by legacy clients, so it is a
+    // safe compatibility fallback that does not introduce a reactive wall clock.
+    slots: await slotGrid(ctx, page, fromMs, toMs, args.nowMs ?? fromMs),
   };
 }
 

@@ -4,6 +4,14 @@ import { describe, expect, test } from "vitest";
 
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+import type { ActionCtx } from "./_generated/server";
+import { ProviderError } from "./integrations/calendar/errors";
+import type {
+  CalendarProviderAdapter,
+  CreateEventRequest,
+  ProviderEvent,
+} from "./integrations/calendar/types";
+import { reconcileBookingAcceptanceWithAdapter } from "./domains/booking/service";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -103,6 +111,85 @@ async function seedHost(t: ReturnType<typeof convexTest>, userId = HOST) {
 }
 
 const future = () => Date.now() + 60 * 60 * 1000;
+
+function acceptedEvent(id = "accepted-event"): ProviderEvent {
+  return {
+    id,
+    calendarId: CAL,
+    startMs: future(),
+    endMs: future() + 30 * 60_000,
+    allDay: false,
+    status: "confirmed",
+    updatedMs: Date.now(),
+  };
+}
+
+class BookingAdapter implements CalendarProviderAdapter {
+  readonly provider = "google" as const;
+  readonly capabilities = {
+    contacts: false,
+    recurringEvents: true,
+    attendeeMembershipUpdates: true,
+    rsvp: true,
+    removeSelf: true,
+    conference: { create: true, add: true, remove: true },
+    idempotentCreate: true,
+    idempotentUpdate: true,
+    idempotentResponse: true,
+    idempotentDelete: true,
+  };
+  readonly createKeys: (string | undefined)[] = [];
+  reconcileCalls = 0;
+
+  constructor(
+    private readonly reconciliation: ProviderEvent | null | Error,
+    private readonly created: ProviderEvent | Error = acceptedEvent(),
+  ) {}
+
+  async listCalendars() { return []; }
+  async listEvents(): Promise<never> { throw new Error("not used"); }
+  async getEvent(): Promise<never> { throw new Error("not used"); }
+  async createEvent(request: CreateEventRequest): Promise<ProviderEvent> {
+    this.createKeys.push(request.idempotencyKey);
+    if (this.created instanceof Error) throw this.created;
+    return this.created;
+  }
+  async reconcileAmbiguousCreate(): Promise<ProviderEvent | null> {
+    this.reconcileCalls++;
+    if (this.reconciliation instanceof Error) throw this.reconciliation;
+    return this.reconciliation;
+  }
+  async updateEvent(): Promise<never> { throw new Error("not used"); }
+  async respondToEvent(): Promise<never> { throw new Error("not used"); }
+  async deleteEvent(): Promise<void> { throw new Error("not used"); }
+}
+
+function testActionCtx(t: ReturnType<typeof convexTest>): ActionCtx {
+  return {
+    runMutation: (reference, args) => t.mutation(reference, args),
+    runQuery: (reference, args) => t.query(reference, args),
+  } as ActionCtx;
+}
+
+async function ambiguousBooking(t: ReturnType<typeof convexTest>) {
+  await seedHost(t);
+  const start = future();
+  const bookingId = await t.run((ctx) =>
+    ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
+  );
+  const claim = await t.mutation(internal.booking.claimBookingAcceptance, {
+    bookingId,
+    hostUserId: HOST,
+    attemptId: "initial-provider-attempt",
+  });
+  await t.mutation(internal.booking.releaseBookingAcceptance, {
+    bookingId,
+    hostUserId: HOST,
+    attemptId: "initial-provider-attempt",
+    mayHaveSucceeded: true,
+  });
+  return { bookingId, claim: claim! };
+}
 
 describe("booking acceptance claim", () => {
   test("claims a free pending slot, then refuses a concurrent second claim", async () => {
@@ -254,6 +341,154 @@ describe("booking acceptance claim", () => {
       operationId: first!.operationId,
       reconcileOnly: true,
     });
+  });
+});
+
+describe("scheduled booking acceptance reconciliation", () => {
+  test("recovers a lost acceptance action with the same operation key", async () => {
+    const t = convexTest(schema, modules);
+    await seedHost(t);
+    const start = future();
+    const bookingId = await t.run((ctx) =>
+      ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
+    );
+    const claim = await t.mutation(internal.booking.claimBookingAcceptance, {
+      bookingId,
+      hostUserId: HOST,
+      attemptId: "lost-action",
+    });
+    const operation = await t.run(async (ctx) => {
+      const operation = await ctx.db
+        .query("calendarOperations")
+        .withIndex("by_bookingId", (q) => q.eq("bookingId", bookingId))
+        .unique();
+      await ctx.db.patch(operation!._id, { leaseExpiresAt: Date.now() - 1 });
+      await ctx.db.patch(bookingId, { acceptLeaseExpiresAt: Date.now() - 1 });
+      return operation;
+    });
+    const retry = await t.mutation(
+      internal.booking.claimScheduledBookingAcceptance,
+      {
+        bookingId,
+        attemptId: "scheduled-recovery",
+        expectedGeneration: operation!.reconcileGeneration!,
+      },
+    );
+    expect(retry).toMatchObject({
+      operationId: claim!.operationId,
+      reconcileOnly: true,
+      reconcileAttemptCount: 1,
+    });
+  });
+
+  test("accepts when reconciliation finds the provider event", async () => {
+    const t = convexTest(schema, modules);
+    const { bookingId, claim } = await ambiguousBooking(t);
+    const adapter = new BookingAdapter(acceptedEvent("provider-landed"));
+    await reconcileBookingAcceptanceWithAdapter(
+      testActionCtx(t),
+      { bookingId, expectedGeneration: claim.reconcileGeneration },
+      adapter,
+    );
+    expect((await t.run((ctx) => ctx.db.get(bookingId)))?.status).toBe("accepted");
+    expect(adapter.reconcileCalls).toBe(1);
+    expect(adapter.createKeys).toEqual([]);
+  });
+
+  test("retries a confirmed not-landed create once with the same key", async () => {
+    const t = convexTest(schema, modules);
+    const { bookingId, claim } = await ambiguousBooking(t);
+    const adapter = new BookingAdapter(null, acceptedEvent("provider-retried"));
+    await reconcileBookingAcceptanceWithAdapter(
+      testActionCtx(t),
+      { bookingId, expectedGeneration: claim.reconcileGeneration },
+      adapter,
+    );
+    const booking = await t.run((ctx) => ctx.db.get(bookingId));
+    expect(booking?.status).toBe("accepted");
+    expect(adapter.createKeys).toEqual([claim.operationId]);
+  });
+
+  test("expires a past booking after reconciliation proves it did not land", async () => {
+    const t = convexTest(schema, modules);
+    const { bookingId, claim } = await ambiguousBooking(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(bookingId, {
+        startMs: Date.now() - 60_000,
+        endMs: Date.now() - 1,
+      });
+      const operation = await ctx.db
+        .query("calendarOperations")
+        .withIndex("by_bookingId", (q) => q.eq("bookingId", bookingId))
+        .unique();
+      await ctx.db.patch(operation!._id, { requestFingerprint: undefined });
+    });
+    const adapter = new BookingAdapter(null);
+    await reconcileBookingAcceptanceWithAdapter(
+      testActionCtx(t),
+      { bookingId, expectedGeneration: claim.reconcileGeneration },
+      adapter,
+    );
+    await t.mutation(internal.booking.expireBooking, { bookingId });
+    expect((await t.run((ctx) => ctx.db.get(bookingId)))?.status).toBe("expired");
+    expect(adapter.createKeys).toEqual([]);
+  });
+
+  test("bounds repeated ambiguity and leaves a safe retryable ledger state", async () => {
+    const t = convexTest(schema, modules);
+    const { bookingId } = await ambiguousBooking(t);
+    const adapter = new BookingAdapter(
+      new ProviderError("ambiguous", "provider response lost"),
+    );
+    for (let attempt = 0; attempt < 7; attempt++) {
+      const operation = await t.run((ctx) =>
+        ctx.db
+          .query("calendarOperations")
+          .withIndex("by_bookingId", (q) => q.eq("bookingId", bookingId))
+          .unique(),
+      );
+      await reconcileBookingAcceptanceWithAdapter(
+        testActionCtx(t),
+        {
+          bookingId,
+          expectedGeneration: operation!.reconcileGeneration!,
+        },
+        adapter,
+      );
+    }
+    const operation = await t.run((ctx) =>
+      ctx.db
+        .query("calendarOperations")
+        .withIndex("by_bookingId", (q) => q.eq("bookingId", bookingId))
+        .unique(),
+    );
+    expect(operation).toMatchObject({
+      status: "ambiguous",
+      reconcileAttemptCount: 5,
+      mayHaveSucceeded: true,
+    });
+    expect(adapter.reconcileCalls).toBe(5);
+    expect(adapter.createKeys).toEqual([]);
+  });
+
+  test("is a no-op after account connection deletion", async () => {
+    const t = convexTest(schema, modules);
+    const { bookingId, claim } = await ambiguousBooking(t);
+    await t.run(async (ctx) => {
+      const operation = await ctx.db
+        .query("calendarOperations")
+        .withIndex("by_bookingId", (q) => q.eq("bookingId", bookingId))
+        .unique();
+      if (operation) await ctx.db.delete(operation.connectionId);
+    });
+    const adapter = new BookingAdapter(acceptedEvent());
+    await reconcileBookingAcceptanceWithAdapter(
+      testActionCtx(t),
+      { bookingId, expectedGeneration: claim.reconcileGeneration },
+      adapter,
+    );
+    expect(adapter.reconcileCalls).toBe(0);
+    expect(adapter.createKeys).toEqual([]);
   });
 });
 
@@ -645,6 +880,32 @@ describe("booking acceptance authority", () => {
 });
 
 describe("booking context conflict detection", () => {
+  test("slot generation uses caller-materialized time", async () => {
+    const t = convexTest(schema, modules);
+    const fromMs = Date.UTC(2030, 0, 1);
+    await t.run((ctx) =>
+      ctx.db.insert("bookingPages", {
+        ...pageDoc(HOST),
+        slug: "materialized-time",
+        minNoticeMinutes: 120,
+      }),
+    );
+    const earlier = await t.query(api.booking.listSlots, {
+      slug: "materialized-time",
+      fromMs,
+      toMs: fromMs + 4 * 60 * 60_000,
+      nowMs: fromMs - 3 * 60 * 60_000,
+    });
+    const current = await t.query(api.booking.listSlots, {
+      slug: "materialized-time",
+      fromMs,
+      toMs: fromMs + 4 * 60 * 60_000,
+      nowMs: fromMs,
+    });
+    expect(earlier.slots[0]?.startMs).toBe(fromMs);
+    expect(current.slots[0]?.startMs).toBe(fromMs + 2 * 60 * 60_000);
+  });
+
   test("reports a conflict when another event overlaps the pending slot", async () => {
     const t = convexTest(schema, modules);
     await seedHost(t);

@@ -46,6 +46,20 @@ export const enqueueSyncs = internalMutation(definitions.enqueueSyncs);
 export const enqueueEngagementRefresh = internalMutation(
   definitions.enqueueEngagementRefresh,
 );
+export const markEngagementDirty = internalMutation(
+  definitions.markEngagementDirty,
+);
+export const claimEngagement = internalMutation(definitions.claimEngagement);
+export const heartbeatEngagement = internalMutation(
+  definitions.heartbeatEngagement,
+);
+export const applyEngagementScoreChunk = internalMutation(
+  definitions.applyEngagementScoreChunk,
+);
+export const resetStaleEngagementScores = internalMutation(
+  definitions.resetStaleEngagementScores,
+);
+export const finishEngagement = internalMutation(definitions.finishEngagement);
 export const reconcileCalendars = internalMutation(
   definitions.reconcileCalendars,
 );

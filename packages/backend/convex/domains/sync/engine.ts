@@ -39,6 +39,8 @@ const SHARED_LEASE_MS = 5 * 60 * 1000;
 const SHARED_REFRESH_MS = DAY_MS;
 const BATCH_SIZE = 100;
 const FANOUT_BATCH = 100;
+const ENGAGEMENT_CHUNK_SIZE = 200;
+const ENGAGEMENT_LEASE_MS = 10 * 60 * 1000;
 
 const providerValidator = v.union(v.literal("google"), v.literal("microsoft"));
 const providerCalendarValidator = v.object({
@@ -733,17 +735,17 @@ async function runConnection(
   connectionId: Id<"calendarConnections">,
   initiatedByUser: boolean,
   forceFull = false,
-): Promise<boolean> {
+): Promise<{ changed: boolean; skipped: boolean }> {
   const attemptId: string | null = await ctx.runMutation(
     internal.calendarSync.claimSyncLease,
     { connectionId },
   );
-  if (!attemptId) return false;
+  if (!attemptId) return { changed: false, skipped: true };
   const state: Doc<"connectionSyncState"> | null = await ctx.runQuery(
     internal.calendarSync.getConnectionSyncState,
     { connectionId },
   );
-  if (!state) return false;
+  if (!state) return { changed: false, skipped: true };
   try {
     const adapter = await getCalendarAdapter(ctx, connectionId);
     const eventsChanged = await syncCalendars(
@@ -769,7 +771,9 @@ async function runConnection(
     const contactsChanged = savedContactsChanged || otherContactsChanged;
     const changed = eventsChanged || contactsChanged;
     if (eventsChanged) {
-      await recomputeEngagementForUser(ctx, state.userId);
+      await ctx.runMutation(internal.calendarSync.markEngagementDirty, {
+        userId: state.userId,
+      });
     }
     await ctx.runMutation(internal.calendarSync.recordSyncOutcome, {
       connectionId,
@@ -777,7 +781,7 @@ async function runConnection(
       status: "idle",
       active: initiatedByUser || changed,
     });
-    return changed;
+    return { changed, skipped: false };
   } catch (error) {
     await ctx.runMutation(internal.calendarSync.recordSyncOutcome, {
       connectionId,
@@ -790,12 +794,55 @@ async function runConnection(
   }
 }
 
+export type UserSyncStatus = {
+  total: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  changed: number;
+};
+
+export function summarizeConnectionSyncs(
+  results: PromiseSettledResult<{ changed: boolean; skipped: boolean }>[],
+): UserSyncStatus {
+  const failures = results.filter(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  const fulfilled = results.filter(
+    (result): result is PromiseFulfilledResult<{
+      changed: boolean;
+      skipped: boolean;
+    }> => result.status === "fulfilled",
+  );
+  const status = {
+    total: results.length,
+    succeeded: fulfilled.filter((result) => !result.value.skipped).length,
+    failed: failures.length,
+    skipped: fulfilled.filter((result) => result.value.skipped).length,
+    changed: fulfilled.filter((result) => result.value.changed).length,
+  };
+  if (results.length > 0 && failures.length === results.length) {
+    const errors = failures.map((result) =>
+      result.reason instanceof Error
+        ? result.reason
+        : new Error(String(result.reason)),
+    );
+    throw new AggregateError(
+      errors,
+      `All ${results.length} calendar connections failed to sync: ${errors
+        .map((error) => error.message)
+        .join("; ")}`,
+    );
+  }
+  return status;
+}
+
 async function runUser(
   ctx: ActionCtx,
   userId: string,
   initiatedByUser: boolean,
   forceFull = false,
-): Promise<void> {
+): Promise<UserSyncStatus> {
   await ctx.runMutation(internal.calendarSync.ensureSyncState, { userId });
   const connections: Doc<"calendarConnections">[] = await ctx.runQuery(
     internal.calendarSync.listActiveConnections,
@@ -814,18 +861,26 @@ async function runUser(
       );
     }
   }
+  const status = summarizeConnectionSyncs(results);
+  if (status.failed > 0) {
+    console.warn(
+      `Calendar sync partially succeeded: ${status.succeeded} succeeded, ${status.failed} failed, ${status.skipped} skipped`,
+    );
+  }
+  return status;
 }
 
-export async function syncNowForCurrentUser(ctx: ActionCtx): Promise<null> {
+export async function syncNowForCurrentUser(
+  ctx: ActionCtx,
+): Promise<UserSyncStatus> {
   const user = await authComponent.safeGetAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
-  await runUser(ctx, user._id, true);
-  return null;
+  return await runUser(ctx, user._id, true);
 }
 
 export const syncNow = defineAction({
   args: {},
-  handler: (ctx): Promise<null> => syncNowForCurrentUser(ctx),
+  handler: (ctx): Promise<UserSyncStatus> => syncNowForCurrentUser(ctx),
 });
 
 /** Compatibility action for old user-scoped queued calls. */
@@ -854,10 +909,8 @@ export const syncConnection = defineAction({
 
 export const forceFullResync = defineAction({
   args: { userId: v.string() },
-  handler: async (ctx, args): Promise<null> => {
-    await runUser(ctx, args.userId, true, true);
-    return null;
-  },
+  handler: (ctx, args): Promise<UserSyncStatus> =>
+    runUser(ctx, args.userId, true, true),
 });
 
 export const listActiveConnections = defineQuery({
@@ -910,6 +963,7 @@ export const ensureSyncState = defineMutation({
       await ctx.db.insert("userSyncState", {
         userId: args.userId,
         engagementDirty: false,
+        engagementGeneration: 0,
         updatedAt: Date.now(),
       });
     }
@@ -1116,7 +1170,27 @@ export const reconcileCalendars = defineMutation({
         .query("bookingPages")
         .withIndex("by_user", (q) => q.eq("userId", state.userId))
         .unique();
-      if (booking) {
+      const connections = await ctx.db
+        .query("calendarConnections")
+        .withIndex("by_user", (q) => q.eq("userId", state.userId))
+        .take(101);
+      if (connections.length > 100) {
+        throw new Error("Too many connections to choose a booking target safely");
+      }
+      const preferred = connections
+        .filter((row) => row.status === "active")
+        .sort(
+          (a, b) =>
+            Number(b.provider === "google") - Number(a.provider === "google") ||
+            a.createdAt - b.createdAt ||
+            a._creationTime - b._creationTime,
+        )[0];
+      if (
+        booking &&
+        !booking.targetConnectionId &&
+        !booking.targetCalendarId &&
+        preferred?._id === args.connectionId
+      ) {
         await ctx.db.patch(booking._id, {
           targetConnectionId: args.connectionId,
           targetCalendarId: primary,
@@ -2105,10 +2179,261 @@ export const applyEngagementScores = defineMutation({
   },
 });
 
+type EngagementScore = {
+  email: string;
+  score: number;
+  meetingCount: number;
+  lastMetMs?: number;
+  nextMeetingMs?: number;
+};
+
+export function chunkEngagementScores(
+  scores: EngagementScore[],
+): EngagementScore[][] {
+  const chunks: EngagementScore[][] = [];
+  for (let index = 0; index < scores.length; index += ENGAGEMENT_CHUNK_SIZE) {
+    chunks.push(scores.slice(index, index + ENGAGEMENT_CHUNK_SIZE));
+  }
+  return chunks;
+}
+
+async function liveEngagementAttempt(
+  ctx: MutationCtx,
+  userId: string,
+  attemptId: string,
+  generation: number,
+) {
+  const state = await ctx.db
+    .query("userSyncState")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .unique();
+  return state?.engagementAttemptId === attemptId &&
+    state.engagementGeneration === generation &&
+    (state.engagementLeaseExpiresAt ?? 0) > Date.now()
+    ? state
+    : null;
+}
+
+export const markEngagementDirty = defineMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    const now = Date.now();
+    const state = await ctx.db
+      .query("userSyncState")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .unique();
+    if (!state) {
+      await ctx.db.insert("userSyncState", {
+        userId: args.userId,
+        engagementDirty: true,
+        engagementGeneration: 1,
+        updatedAt: now,
+      });
+      await ctx.scheduler.runAfter(0, internal.calendarSync.recomputeEngagement, {
+        userId: args.userId,
+        coordinated: true,
+      });
+      return null;
+    }
+    if (!state.engagementDirty) {
+      await ctx.db.patch(state._id, {
+        engagementDirty: true,
+        engagementGeneration: (state.engagementGeneration ?? 0) + 1,
+        updatedAt: now,
+      });
+    }
+    if (
+      !state.engagementAttemptId ||
+      (state.engagementLeaseExpiresAt ?? 0) <= now
+    ) {
+      await ctx.scheduler.runAfter(0, internal.calendarSync.recomputeEngagement, {
+        userId: args.userId,
+        coordinated: true,
+      });
+    }
+    return null;
+  },
+});
+
+export const claimEngagement = defineMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const state = await ctx.db
+      .query("userSyncState")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .unique();
+    if (!state) return null;
+    const now = Date.now();
+    const leaseIsLive =
+      state.engagementAttemptId &&
+      (state.engagementLeaseExpiresAt ?? 0) > now;
+    if (leaseIsLive || (!state.engagementDirty && !state.engagementAttemptId)) {
+      return null;
+    }
+    const attemptId = crypto.randomUUID();
+    const generation = state.engagementGeneration ?? 0;
+    const leaseExpiresAt = now + ENGAGEMENT_LEASE_MS;
+    await ctx.db.patch(state._id, {
+      engagementDirty: false,
+      engagementAttemptId: attemptId,
+      engagementLeaseExpiresAt: leaseExpiresAt,
+      updatedAt: now,
+    });
+    // If the action disappears, this invocation observes the stale attempt and
+    // reclaims it. A completed attempt leaves neither a lease nor dirty work.
+    await ctx.scheduler.runAt(
+      leaseExpiresAt,
+      internal.calendarSync.recomputeEngagement,
+      { userId: args.userId, coordinated: true },
+    );
+    return { attemptId, generation };
+  },
+});
+
+export const heartbeatEngagement = defineMutation({
+  args: {
+    userId: v.string(),
+    attemptId: v.string(),
+    generation: v.number(),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const state = await liveEngagementAttempt(
+      ctx,
+      args.userId,
+      args.attemptId,
+      args.generation,
+    );
+    if (!state) return false;
+    const leaseExpiresAt = Date.now() + ENGAGEMENT_LEASE_MS;
+    await ctx.db.patch(state._id, {
+      engagementLeaseExpiresAt: leaseExpiresAt,
+    });
+    await ctx.scheduler.runAt(
+      leaseExpiresAt,
+      internal.calendarSync.recomputeEngagement,
+      { userId: args.userId, coordinated: true },
+    );
+    return true;
+  },
+});
+
+const engagementScoreValidator = v.object({
+  email: v.string(),
+  score: v.number(),
+  meetingCount: v.number(),
+  lastMetMs: v.optional(v.number()),
+  nextMeetingMs: v.optional(v.number()),
+});
+
+export const applyEngagementScoreChunk = defineMutation({
+  args: {
+    userId: v.string(),
+    attemptId: v.string(),
+    generation: v.number(),
+    scores: v.array(engagementScoreValidator),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    if (args.scores.length > ENGAGEMENT_CHUNK_SIZE) {
+      throw new Error("Engagement score chunk exceeds the bounded batch size");
+    }
+    if (
+      !(await liveEngagementAttempt(
+        ctx,
+        args.userId,
+        args.attemptId,
+        args.generation,
+      ))
+    ) return false;
+    for (const score of args.scores) {
+      const person = await ctx.db
+        .query("people")
+        .withIndex("by_user_and_email", (q) =>
+          q.eq("userId", args.userId).eq("email", score.email),
+        )
+        .unique();
+      if (!person) continue;
+      await ctx.db.patch(person._id, {
+        score: score.score,
+        meetingCount: score.meetingCount,
+        lastMetMs: score.lastMetMs,
+        nextMeetingMs: score.nextMeetingMs,
+        engagementGeneration: args.generation,
+      });
+    }
+    return true;
+  },
+});
+
+export const resetStaleEngagementScores = defineMutation({
+  args: {
+    userId: v.string(),
+    attemptId: v.string(),
+    generation: v.number(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args) => {
+    if (
+      !(await liveEngagementAttempt(
+        ctx,
+        args.userId,
+        args.attemptId,
+        args.generation,
+      ))
+    ) return null;
+    const page = await ctx.db
+      .query("people")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .paginate({ cursor: args.cursor, numItems: ENGAGEMENT_CHUNK_SIZE });
+    for (const person of page.page) {
+      if (person.engagementGeneration === args.generation) continue;
+      await ctx.db.patch(person._id, {
+        score: 0,
+        meetingCount: 0,
+        lastMetMs: undefined,
+        nextMeetingMs: undefined,
+        engagementGeneration: args.generation,
+      });
+    }
+    return { cursor: page.continueCursor, done: page.isDone };
+  },
+});
+
+export const finishEngagement = defineMutation({
+  args: {
+    userId: v.string(),
+    attemptId: v.string(),
+    generation: v.number(),
+  },
+  handler: async (ctx, args): Promise<boolean> => {
+    const state = await ctx.db
+      .query("userSyncState")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .unique();
+    if (state?.engagementAttemptId !== args.attemptId) return false;
+    const rerun =
+      state.engagementDirty || state.engagementGeneration !== args.generation;
+    await ctx.db.patch(state._id, {
+      engagementAttemptId: undefined,
+      engagementLeaseExpiresAt: undefined,
+      updatedAt: Date.now(),
+    });
+    if (rerun) {
+      await ctx.scheduler.runAfter(0, internal.calendarSync.recomputeEngagement, {
+        userId: args.userId,
+        coordinated: true,
+      });
+    }
+    return !rerun;
+  },
+});
+
 async function recomputeEngagementForUser(
   ctx: ActionCtx,
   userId: string,
 ): Promise<void> {
+  const claim: { attemptId: string; generation: number } | null =
+    await ctx.runMutation(internal.calendarSync.claimEngagement, { userId });
+  if (!claim) return;
   const now = Date.now();
   const scores = new Map<
     string,
@@ -2116,6 +2441,11 @@ async function recomputeEngagementForUser(
   >();
   let cursor: string | null = null;
   for (;;) {
+    const live: boolean = await ctx.runMutation(
+      internal.calendarSync.heartbeatEngagement,
+      { userId, ...claim },
+    );
+    if (!live) break;
     const page: EngagementPage = await ctx.runQuery(
       internal.calendarSync.listEventsPageForEngagement,
       { userId, sinceMs: now - CALENDAR_HISTORY_MS, cursor, numItems: 200 },
@@ -2149,22 +2479,64 @@ async function recomputeEngagementForUser(
     cursor = page.continueCursor;
   }
   const values = [...scores].map(([email, score]) => ({ email, ...score }));
-  let peopleCursor: string | null = null;
-  let done = false;
-  while (!done) {
-    const result: { cursor: string | null; done: boolean } = await ctx.runMutation(
-      internal.calendarSync.applyEngagementScores,
-      { userId, scores: values, cursor: peopleCursor },
-    );
-    peopleCursor = result.cursor;
-    done = result.done;
+  try {
+    for (const chunk of chunkEngagementScores(values)) {
+      const live: boolean = await ctx.runMutation(
+        internal.calendarSync.heartbeatEngagement,
+        { userId, ...claim },
+      );
+      if (!live) return;
+      const wrote: boolean = await ctx.runMutation(
+        internal.calendarSync.applyEngagementScoreChunk,
+        { userId, ...claim, scores: chunk },
+      );
+      if (!wrote) return;
+    }
+    let peopleCursor: string | null = null;
+    let done = false;
+    while (!done) {
+      const live: boolean = await ctx.runMutation(
+        internal.calendarSync.heartbeatEngagement,
+        { userId, ...claim },
+      );
+      if (!live) return;
+      const result: { cursor: string | null; done: boolean } | null =
+        await ctx.runMutation(internal.calendarSync.resetStaleEngagementScores, {
+          userId,
+          ...claim,
+          cursor: peopleCursor,
+        });
+      if (!result) return;
+      peopleCursor = result.cursor;
+      done = result.done;
+    }
+  } finally {
+    await ctx.runMutation(internal.calendarSync.finishEngagement, {
+      userId,
+      ...claim,
+    });
   }
 }
 
 export const recomputeEngagement = defineAction({
-  args: { userId: v.string() },
+  args: { userId: v.string(), coordinated: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<null> => {
-    await recomputeEngagementForUser(ctx, args.userId);
+    try {
+      // Calls queued before dirty-state coordination shipped have no marker.
+      // Materialize their work once; markEngagementDirty's coordinated schedule
+      // becomes a harmless no-op after this invocation completes.
+      if (!args.coordinated) {
+        await ctx.runMutation(internal.calendarSync.markEngagementDirty, {
+          userId: args.userId,
+        });
+      }
+      await recomputeEngagementForUser(ctx, args.userId);
+    } catch (error) {
+      console.error(
+        `Engagement recompute failed for ${args.userId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
     return null;
   },
 });
@@ -2176,7 +2548,7 @@ export const enqueueEngagementRefresh = defineMutation({
       .query("userSyncState")
       .paginate({ cursor: args.cursor ?? null, numItems: FANOUT_BATCH });
     for (const state of page.page) {
-      await ctx.scheduler.runAfter(0, internal.calendarSync.recomputeEngagement, {
+      await ctx.runMutation(internal.calendarSync.markEngagementDirty, {
         userId: state.userId,
       });
     }
@@ -2270,7 +2642,9 @@ export async function refreshConnectionCalendar(
         calendar.providerCalendarId ?? calendar.googleCalendarId,
       syncCursor: calendar.syncCursor ?? calendar.syncToken,
     });
-    if (changed) await recomputeEngagementForUser(ctx, userId);
+    if (changed) {
+      await ctx.runMutation(internal.calendarSync.markEngagementDirty, { userId });
+    }
     await ctx.runMutation(internal.calendarSync.recordSyncOutcome, {
       connectionId,
       attemptId,

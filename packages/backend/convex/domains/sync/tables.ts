@@ -87,6 +87,9 @@ export const connectionSyncTables = {
   userSyncState: defineTable({
     userId: v.string(),
     engagementDirty: v.boolean(),
+    engagementGeneration: v.optional(v.number()),
+    engagementAttemptId: v.optional(v.string()),
+    engagementLeaseExpiresAt: v.optional(v.number()),
     updatedAt: v.number(),
   }).index("by_user", ["userId"]),
 };

@@ -34,10 +34,26 @@ export async function ensureConnectionSyncState(
     .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
     .unique();
   if (existing) return existing._id;
-  const legacy = await ctx.db
-    .query("syncState")
-    .withIndex("by_user", (q) => q.eq("userId", userId))
-    .unique();
+  const connection = await ctx.db.get(connectionId);
+  const defaultGoogle = await ctx.db
+    .query("calendarConnections")
+    .withIndex("by_user_and_provider", (q) =>
+      q.eq("userId", userId).eq("provider", "google"),
+    )
+    .first();
+  // Legacy sync state belongs only to the migrated/default Google grant. A new
+  // Microsoft or secondary Google connection must begin with clean cursors and
+  // generations rather than skipping its first provider snapshot.
+  const maySeedLegacy =
+    connection?.userId === userId &&
+    connection.provider === "google" &&
+    defaultGoogle?._id === connectionId;
+  const legacy = maySeedLegacy
+    ? await ctx.db
+        .query("syncState")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .unique()
+    : null;
   return await ctx.db.insert("connectionSyncState", {
     connectionId,
     userId,
@@ -95,7 +111,13 @@ export async function ensureDefaultPrimaryCalendar(
     throw new Error("Too many calendars to choose a write target safely");
   }
   const existing =
-    calendars.find((row) => row.primary) ??
+    calendars.find(
+      (row) =>
+        row.primary &&
+        (row.connectionId === connectionId ||
+          (row.connectionId === undefined &&
+            (row.providerCalendarId ?? row.googleCalendarId) === "primary")),
+    ) ??
     calendars.find(
       (row) =>
         (row.providerCalendarId ?? row.googleCalendarId) === "primary" &&

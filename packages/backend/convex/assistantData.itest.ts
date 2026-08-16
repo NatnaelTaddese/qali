@@ -3,9 +3,18 @@ import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 
 import { internal } from "./_generated/api";
+import { monthlyUsageAt } from "./domains/assistant/data";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
+
+test("monthly quota rollover uses caller-materialized time", () => {
+  const start = 1_000;
+  const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+  const state = { monthWindowStartMs: start, monthCount: 7 };
+  expect(monthlyUsageAt(state, start + thirtyDays - 1)).toBe(7);
+  expect(monthlyUsageAt(state, start + thirtyDays)).toBe(0);
+});
 
 test("stale assistant attempts cannot settle or reopen a newer claim", async () => {
   const t = convexTest(schema, modules);

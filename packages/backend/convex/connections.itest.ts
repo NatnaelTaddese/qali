@@ -15,6 +15,49 @@ const modules = import.meta.glob("./**/*.ts");
  * will write, and a guard against a schema drift that would break it.
  */
 describe("connection model expand", () => {
+  test("only the default Google connection inherits legacy sync cursors", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "cursor-owner";
+    const { googleId, secondGoogleId, microsoftId } = await t.run(async (ctx) => {
+      await ctx.db.insert("syncState", {
+        userId,
+        contactsSyncToken: "legacy-contacts",
+        contactsSyncGeneration: 7,
+        status: "idle",
+      });
+      const insert = (provider: "google" | "microsoft", createdAt: number) =>
+        ctx.db.insert("calendarConnections", {
+          userId,
+          provider,
+          status: "active",
+          createdAt,
+          updatedAt: createdAt,
+        });
+      return {
+        googleId: await insert("google", 1),
+        secondGoogleId: await insert("google", 2),
+        microsoftId: await insert("microsoft", 3),
+      };
+    });
+
+    await t.mutation(internal.calendarSync.ensureSyncState, { userId });
+    const states = await t.run((ctx) =>
+      ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect(),
+    );
+    const byConnection = new Map(states.map((state) => [state.connectionId, state]));
+    expect(byConnection.get(googleId)).toMatchObject({
+      contactsCursor: "legacy-contacts",
+      contactsGeneration: 7,
+    });
+    expect(byConnection.get(secondGoogleId)?.contactsCursor).toBeUndefined();
+    expect(byConnection.get(secondGoogleId)?.contactsGeneration).toBeUndefined();
+    expect(byConnection.get(microsoftId)?.contactsCursor).toBeUndefined();
+    expect(byConnection.get(microsoftId)?.contactsGeneration).toBeUndefined();
+  });
+
   test("adapter resolution exposes only an active connection", async () => {
     const t = convexTest(schema, modules);
     const connectionId = await t.run((ctx) =>

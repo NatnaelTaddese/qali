@@ -197,6 +197,16 @@ schedules it as far as 365 days out and acceptance may schedule it for lease
 expiry. It must remain registered until code has stopped scheduling it and the
 full maximum queue horizon has elapsed; currently it remains permanent.
 
+The legacy `internal.calendar.getPrimaryCalendarId`, `deleteEventRow`,
+`upsertEvent`, and `upsertRecurringSeries` handlers are in-flight action shims.
+New provider-neutral code must not call them. Remove them only after the Convex
+running-functions view and logs show no call from a pre-cutover calendar action
+for at least 24 hours, and after stored assistant proposals from the old action
+shape have either executed or aged out. Restore the exact target if a late call
+appears. The old-shape `internal.calendarSync.applyEngagementScores` handler has
+the same running-action drain gate; the coordinated engine uses
+`applyEngagementScoreChunk` instead.
+
 ## 8. Contract storage and wire DTOs
 
 Contract only after all parity phases pass twice, staged indexes are active,

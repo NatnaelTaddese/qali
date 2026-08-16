@@ -48,6 +48,8 @@ export const MAX_REQUESTS_PER_PAGE = 20;
 export const MAX_PENDING_BOOKINGS = 500;
 export const EXPIRATION_BATCH_SIZE = 100;
 export const ACCEPT_LEASE_MS = 2 * 60 * 1000;
+export const ACCEPT_RECONCILE_MAX_ATTEMPTS = 5;
+export const ACCEPT_RECONCILE_BASE_DELAY_MS = 30 * 1000;
 
 export const slotSettingsValidator = {
   slotMinutes: v.number(),
@@ -170,6 +172,7 @@ export async function slotGrid(
   page: Doc<"bookingPages">,
   fromMs: number,
   toMs: number,
+  nowMs: number,
 ): Promise<SlotOption[]> {
   // Only the overrides whose date falls in the rendered window matter, and the
   // window is capped at MAX_SLOT_RANGE_MS — so bound the scan to that date range
@@ -199,7 +202,7 @@ export async function slotGrid(
     horizonDays: page.horizonDays,
     fromMs,
     toMs,
-    nowMs: Date.now(),
+    nowMs,
   });
 }
 

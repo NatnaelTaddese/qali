@@ -92,6 +92,10 @@ export const peopleTables = {
     meetingCount: v.optional(v.number()),
     lastMetMs: v.optional(v.number()),
     nextMeetingMs: v.optional(v.number()),
+    // Fences chunked ranking writes. A completed generation resets any person
+    // not stamped by that generation, so removed event relationships do not
+    // retain stale scores.
+    engagementGeneration: v.optional(v.number()),
     updatedAt: v.number(),
     // Last full-resync generation of the Other Contacts feeder that saw this
     // person. Only meaningful when `sources` includes "other"; used to reconcile

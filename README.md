@@ -1,6 +1,6 @@
 # qali
 
-A fast, keyboard-friendly calendar client for Google Calendar. qali syncs your
+An AI-native calendar for Google Calendar. qali syncs your
 Google calendars and builds a unified people directory from your saved contacts,
 Google's auto-collected "Other contacts", and everyone you meet with on your
 calendar — so guests show a real name and avatar even when you never saved them.

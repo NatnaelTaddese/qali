@@ -129,12 +129,6 @@ export function Mascot({ className, proximity = 220 }: MascotProps) {
   const tapScaleY = useMotionValue(1);
   const tapAnimations = useRef<Array<{ stop: () => void }>>([]);
 
-  // On tap the capsule eyes scrunch into a happy `>  <` squint for a beat.
-  const [happy, setHappy] = useState(false);
-  const happyTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  );
-
   const pointerActiveRef = useRef(false);
 
   const resetPointer = useCallback(() => {
@@ -171,8 +165,6 @@ export function Mascot({ className, proximity = 220 }: MascotProps) {
     tapAnimations.current = [];
     tapScaleX.set(1);
     tapScaleY.set(1);
-    clearTimeout(happyTimeout.current);
-    setHappy(false);
   }, [paused, resetPointer, tapScaleX, tapScaleY]);
 
   useEffect(() => {
@@ -281,16 +273,12 @@ export function Mascot({ className, proximity = 220 }: MascotProps) {
   useEffect(
     () => () => {
       tapAnimations.current.forEach((animation) => animation.stop());
-      clearTimeout(happyTimeout.current);
     },
     [],
   );
 
   const reactToTap = useCallback(() => {
     if (paused) return;
-    setHappy(true);
-    clearTimeout(happyTimeout.current);
-    happyTimeout.current = setTimeout(() => setHappy(false), 1300);
     tapAnimations.current.forEach((animation) => animation.stop());
     tapAnimations.current = [
       animate(tapScaleX, [tapScaleX.get(), 1.085, 0.98, 1], {
@@ -465,13 +453,8 @@ export function Mascot({ className, proximity = 220 }: MascotProps) {
                     style={{ x: pupilX, y: pupilY }}
                     filter={`url(#${eyeShadowId})`}
                   >
-                    {/* Resting capsule eyes — fade out when the scrunch fires. */}
-                    <g
-                      style={{
-                        opacity: happy ? 0 : 1,
-                        transition: "opacity 0.16s ease-out",
-                      }}
-                    >
+                    {/* Resting capsule eyes. */}
+                    <g>
                       <g>
                         <rect
                           x="79"
@@ -508,21 +491,6 @@ export function Mascot({ className, proximity = 220 }: MascotProps) {
                           fill={`url(#${eyeGlossId})`}
                         />
                       </g>
-                    </g>
-                    {/* Happy `>  <` squint — a scrunch reaction to being poked. */}
-                    <g
-                      fill="none"
-                      stroke={`url(#${eyeChromaId})`}
-                      strokeWidth="13"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      style={{
-                        opacity: happy ? 1 : 0,
-                        transition: "opacity 0.16s ease-out",
-                      }}
-                    >
-                      <path d="M85 92 L106 114 L85 136" />
-                      <path d="M151 96 L130 118 L151 140" />
                     </g>
                   </motion.g>
                 </g>

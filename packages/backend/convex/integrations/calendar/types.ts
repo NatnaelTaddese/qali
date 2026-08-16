@@ -152,6 +152,14 @@ export interface EventRef {
 export interface CreateEventRequest {
   readonly calendarId: string;
   readonly event: EventCreate;
+  /** Copy provider-complete attendee objects from a live event before applying
+   * `event.attendees`. Used when splitting a series without stripping resources,
+   * comments, organizer entries, or other provider-only attendee metadata. */
+  readonly attendeeSourceRef?: EventRef;
+  /** Membership visible when the desired attendee edit was prepared. Attendees
+   * present live but absent from this snapshot are concurrent additions and
+   * must be preserved rather than treated as requested removals. */
+  readonly knownAttendeeEmails?: readonly string[];
   readonly notify?: NotifyScope;
   readonly idempotencyKey?: string;
 }
@@ -162,8 +170,10 @@ export interface UpdateEventRequest {
   readonly notify?: NotifyScope;
   /** Stable across retries. Enables a semantic read-before-retry no-op. */
   readonly idempotencyKey?: string;
-  /** Refuse membership replacement if the provider event has changed. */
+  /** Refuse a conflict-sensitive update if the provider event has changed. */
   readonly expectedUpdatedMs?: number;
+  /** Local attendee snapshot used to distinguish removals from concurrent adds. */
+  readonly knownAttendeeEmails?: readonly string[];
 }
 
 export interface RespondToEventRequest {

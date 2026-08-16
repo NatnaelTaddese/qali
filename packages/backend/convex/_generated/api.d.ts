@@ -57,6 +57,7 @@ import type * as http from "../http.js";
 import type * as infrastructure_rateLimit from "../infrastructure/rateLimit.js";
 import type * as infrastructure_tables from "../infrastructure/tables.js";
 import type * as integrations_calendar_errors from "../integrations/calendar/errors.js";
+import type * as integrations_calendar_refresh from "../integrations/calendar/refresh.js";
 import type * as integrations_calendar_registry from "../integrations/calendar/registry.js";
 import type * as integrations_calendar_service from "../integrations/calendar/service.js";
 import type * as integrations_calendar_types from "../integrations/calendar/types.js";
@@ -131,6 +132,7 @@ declare const fullApi: ApiFromModules<{
   "infrastructure/rateLimit": typeof infrastructure_rateLimit;
   "infrastructure/tables": typeof infrastructure_tables;
   "integrations/calendar/errors": typeof integrations_calendar_errors;
+  "integrations/calendar/refresh": typeof integrations_calendar_refresh;
   "integrations/calendar/registry": typeof integrations_calendar_registry;
   "integrations/calendar/service": typeof integrations_calendar_service;
   "integrations/calendar/types": typeof integrations_calendar_types;

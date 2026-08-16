@@ -26,9 +26,8 @@ import type { ActionCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import {
   ExternalWriteCommittedError,
-  isDefinitiveGoogleFailure,
+  isDefinitiveProviderFailure,
 } from "../calendar/service";
-import { getGoogleAccessToken } from "../../integrations/google/credentials";
 import { defineAction } from "../../shared/functionDefinitions";
 import {
   ASSISTANT_TOOLS,
@@ -606,10 +605,7 @@ export const confirmAction = defineAction({
     }
 
     try {
-      const accessToken = proposalNeedsGoogleToken(action)
-        ? await getGoogleAccessToken(ctx, user._id)
-        : undefined;
-      const summary = await applyProposal(ctx, user._id, accessToken, action);
+      const summary = await applyProposal(ctx, user._id, action);
       await ctx.runMutation(internal.assistantData.settleClaimedAction, {
         actionId: args.actionId,
         status: "applied",
@@ -620,12 +616,12 @@ export const confirmAction = defineAction({
         await ctx.runMutation(internal.assistantData.settleClaimedAction, {
           actionId: args.actionId,
           status: "applied",
-          resultSummary: `${error.successSummary} Google accepted it; local sync is catching up.`,
+          resultSummary: `${error.successSummary} The calendar provider accepted it; local sync is catching up.`,
         });
         return null;
       }
       const message = error instanceof Error ? error.message : String(error);
-      if (isDefinitiveGoogleFailure(error)) {
+      if (isDefinitiveProviderFailure(error)) {
         await ctx.runMutation(internal.assistantData.settleClaimedAction, {
           actionId: args.actionId,
           status: "failed",
@@ -642,9 +638,3 @@ export const confirmAction = defineAction({
     return null;
   },
 });
-
-function proposalNeedsGoogleToken(action: Doc<"assistantActions">): boolean {
-  // Booking accept resolves its token inside the booking action; reject is a
-  // local mutation. In particular, declining must work after OAuth disconnects.
-  return action.tool !== "decide_booking_request";
-}

@@ -252,6 +252,38 @@ describe("GoogleCalendarAdapter create and patch", () => {
 });
 
 describe("GoogleCalendarAdapter attendee membership", () => {
+  test("preserves live attendees added after the caller's local snapshot", async () => {
+    const requests = requestLog((method, _url, body) =>
+      Response.json(
+        method === "PATCH"
+          ? rawEvent({ attendees: (body as { attendees: unknown }).attendees })
+          : rawEvent({
+              attendees: [
+                { email: "owner@example.com", organizer: true },
+                { email: "remove@example.com" },
+                { email: "concurrent@example.com", comment: "Added elsewhere" },
+              ],
+            }),
+      ),
+    );
+
+    await new GoogleCalendarAdapter("token").updateEvent({
+      ref: { calendarId: "primary@example.com", eventId: "event-1" },
+      patch: { attendees: [] },
+      knownAttendeeEmails: ["owner@example.com", "remove@example.com"],
+    });
+
+    const attendees = (requests[1]?.body as { attendees: Record<string, unknown>[] })
+      .attendees;
+    expect(attendees).toContainEqual({
+      email: "concurrent@example.com",
+      comment: "Added elsewhere",
+    });
+    expect(attendees.some((attendee) => attendee.email === "remove@example.com")).toBe(
+      false,
+    );
+  });
+
   test("merges desired membership into full live objects without stripping raw fields", async () => {
     const updated = Date.parse("2026-08-11T00:00:00.000Z");
     const live = rawEvent({

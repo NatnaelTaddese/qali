@@ -3,15 +3,51 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { ActionCtx } from "../../_generated/server";
+import { GoogleCalendarAdapter } from "../../integrations/google/adapter";
+import type {
+  CalendarProviderAdapter,
+  CreateEventRequest,
+  DeleteEventRequest,
+  ProviderEvent,
+  UpdateEventRequest,
+} from "../../integrations/calendar/types";
+import { ProviderError } from "../../integrations/calendar/errors";
 
 process.env.SKIP_ENV_VALIDATION = "1";
+const service = await import("./service");
 const {
-  createEventOp,
-  deleteEventOp,
-  respondToEventOp,
   truncateRecurrence,
-  updateEventOp,
-} = await import("./service");
+} = service;
+
+const dependencies = {
+  getAdapter: async () => new GoogleCalendarAdapter("token"),
+  refreshCalendar: async () => {},
+};
+
+const createEventOp = (
+  ctx: ActionCtx,
+  userId: string,
+  _accessToken: string,
+  args: Parameters<typeof service.createEventOp>[2],
+) => service.createEventOp(ctx, userId, args, dependencies);
+const updateEventOp = (
+  ctx: ActionCtx,
+  userId: string,
+  _accessToken: string,
+  args: Parameters<typeof service.updateEventOp>[2],
+) => service.updateEventOp(ctx, userId, args, dependencies);
+const respondToEventOp = (
+  ctx: ActionCtx,
+  userId: string,
+  _accessToken: string,
+  args: Parameters<typeof service.respondToEventOp>[2],
+) => service.respondToEventOp(ctx, userId, args, dependencies);
+const deleteEventOp = (
+  ctx: ActionCtx,
+  userId: string,
+  _accessToken: string,
+  args: Parameters<typeof service.deleteEventOp>[2],
+) => service.deleteEventOp(ctx, userId, args, dependencies);
 
 const originalFetch = globalThis.fetch;
 
@@ -33,27 +69,46 @@ function eventRow(overrides: Partial<Doc<"events">> = {}): Doc<"events"> {
     status: "confirmed",
     googleUpdatedMs: Date.parse("2026-08-11T00:00:00.000Z"),
     organizer: { self: true },
+    connectionId: "connection-1" as Id<"calendarConnections">,
+    localCalendarId: "local-calendar-1" as Id<"calendars">,
+    providerEventId: "google-event",
+    providerUpdatedMs: Date.parse("2026-08-11T00:00:00.000Z"),
     ...overrides,
   };
 }
 
 function actionContext(row: Doc<"events">, accessRole = "owner") {
-  let queryCount = 0;
   const mutations: Record<string, unknown>[] = [];
   const ctx = {
-    runQuery: async () => {
-      queryCount += 1;
-      if (queryCount === 1) {
+    runQuery: async () => [],
+    runMutation: async (_reference: unknown, args: Record<string, unknown>) => {
+      if (
+        args.eventId === row._id &&
+        args.userId === row.userId &&
+        Object.keys(args).length === 2
+      ) {
         return {
           event: row,
-          calendar: { accessRole },
+          calendar: {
+            _id: row.localCalendarId,
+            userId: row.userId,
+            googleCalendarId: row.calendarId,
+            providerCalendarId: row.calendarId,
+            connectionId: row.connectionId,
+            selected: true,
+            accessRole,
+          },
+          connectionId: row.connectionId,
+          localCalendarId: row.localCalendarId,
+          providerCalendarId: row.calendarId,
+          providerEventId: row.providerEventId,
+          providerSeriesId: row.providerSeriesId ?? row.recurringEventId,
         };
       }
-      // No synced calendar row means resyncCalendar is a safe no-op in this
-      // unit test; the recurring-series cache mutation still runs.
-      return [];
-    },
-    runMutation: async (_reference: unknown, args: Record<string, unknown>) => {
+      if ("kind" in args && "idempotencyKey" in args) {
+        return { state: "claimed", reconcileOnly: false };
+      }
+      if ("status" in args && "attemptId" in args) return true;
       mutations.push(args);
       return null;
     },
@@ -85,10 +140,19 @@ function liveGoogleEvent(row: Doc<"events">, overrides: Record<string, unknown> 
 function createContext() {
   const mutations: Record<string, unknown>[] = [];
   const ctx = {
-    runQuery: async () => {
-      throw new Error("getPrimaryCalendarId should not be called");
-    },
+    runQuery: async () => [],
     runMutation: async (_reference: unknown, args: Record<string, unknown>) => {
+      if ("requestedCalendarId" in args) {
+        return {
+          connectionId: "connection-1",
+          localCalendarId: "local-calendar-1",
+          providerCalendarId: args.requestedCalendarId,
+        };
+      }
+      if ("kind" in args && "idempotencyKey" in args) {
+        return { state: "claimed", reconcileOnly: false };
+      }
+      if ("status" in args && "attemptId" in args) return true;
       mutations.push(args);
       return null;
     },
@@ -116,6 +180,58 @@ const CREATE_ARGS = {
 };
 
 describe("event creation", () => {
+  test("routes a public create op through an injected non-Google adapter", async () => {
+    const { ctx, mutations } = createContext();
+    let requestedCalendarId: string | undefined;
+    const fake = {
+      provider: "microsoft",
+      capabilities: {
+        contacts: false,
+        recurringEvents: true,
+        attendeeMembershipUpdates: true,
+        rsvp: true,
+        removeSelf: true,
+        conference: { create: true, add: true, remove: true },
+        idempotentCreate: true,
+        idempotentUpdate: true,
+        idempotentResponse: true,
+        idempotentDelete: true,
+      },
+      async createEvent(request: CreateEventRequest) {
+        requestedCalendarId = request.calendarId;
+        return {
+          id: "ms-event-1",
+          calendarId: request.calendarId,
+          summary: request.event.summary,
+          startMs: request.event.startMs,
+          endMs: request.event.endMs,
+          allDay: false,
+          status: "confirmed",
+          updatedMs: 1,
+        };
+      },
+      async reconcileAmbiguousCreate() {
+        return null;
+      },
+    } as unknown as CalendarProviderAdapter;
+
+    const event = await service.createEventOp(ctx, "user-1", CREATE_ARGS, {
+      getAdapter: async () => fake,
+      refreshCalendar: async () => {},
+    });
+
+    expect(fake.provider).toBe("microsoft");
+    expect(requestedCalendarId).toBe("primary@example.com");
+    expect(event.id).toBe("ms-event-1");
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        connectionId: "connection-1",
+        localCalendarId: "local-calendar-1",
+        event: expect.objectContaining({ id: "ms-event-1" }),
+      }),
+    );
+  });
+
   test("emails invitations only when the event has guests", async () => {
     const withGuests = createContext();
     let url = "";
@@ -128,7 +244,7 @@ describe("event creation", () => {
       attendees: [{ email: "guest@example.com" }],
     });
     expect(url).toContain("sendUpdates=all");
-    expect(event.googleEventId).toBe("new-google-id");
+    expect(event.id).toBe("new-google-id");
     // The freshly created event is mirrored into the local table right away.
     expect(withGuests.mutations.length).toBeGreaterThan(0);
 
@@ -161,7 +277,7 @@ describe("event creation", () => {
       operationId: "operation-1",
     });
     expect(methods).toEqual(["POST", "GET"]);
-    expect(event.googleEventId).toBe("op-derived-id");
+    expect(event.id).toBe("op-derived-id");
   });
 });
 
@@ -303,8 +419,9 @@ describe("single event recurrence conversion", () => {
     expect(mutations).toContainEqual(
       expect.objectContaining({
         userId: row.userId,
-        calendarId: row.calendarId,
-        googleEventId: row.googleEventId,
+        connectionId: row.connectionId,
+        localCalendarId: row.localCalendarId,
+        providerEventId: row.googleEventId,
         recurrence: ["RRULE:FREQ=MONTHLY"],
         replacedEventId: row._id,
       }),
@@ -375,6 +492,133 @@ describe("single event recurrence conversion", () => {
   });
 });
 
+describe("scoped recurring updates through a non-Google adapter", () => {
+  const recurringRow = () =>
+    eventRow({
+      startMs: Date.parse("2026-09-08T01:00:00.000Z"),
+      endMs: Date.parse("2026-09-08T02:00:00.000Z"),
+      recurringEventId: "series-master",
+    });
+  const masterEvent = (): ProviderEvent => ({
+    id: "series-master",
+    calendarId: "primary@example.com",
+    summary: "Planning",
+    startMs: Date.parse("2026-09-01T01:00:00.000Z"),
+    endMs: Date.parse("2026-09-01T02:00:00.000Z"),
+    allDay: false,
+    timeZone: "Asia/Shanghai",
+    status: "confirmed",
+    updatedMs: Date.parse("2026-08-11T00:00:00.000Z"),
+    recurrence: ["RRULE:FREQ=WEEKLY"],
+  });
+  const capabilities = {
+    contacts: false,
+    recurringEvents: true,
+    attendeeMembershipUpdates: true,
+    rsvp: true,
+    removeSelf: true,
+    conference: { create: true, add: true, remove: true },
+    idempotentCreate: true,
+    idempotentUpdate: true,
+    idempotentResponse: true,
+    idempotentDelete: true,
+  };
+
+  test("shifts the recurring master by the occurrence delta", async () => {
+    const row = recurringRow();
+    const { ctx } = actionContext(row);
+    let update: UpdateEventRequest | undefined;
+    const adapter = {
+      provider: "microsoft",
+      capabilities,
+      async getEvent() {
+        return masterEvent();
+      },
+      async updateEvent(request: UpdateEventRequest) {
+        update = request;
+        return { ...masterEvent(), ...request.patch, updatedMs: 2 };
+      },
+    } as unknown as CalendarProviderAdapter;
+
+    await service.updateEventOp(
+      ctx,
+      row.userId,
+      {
+        eventId: row._id,
+        scope: "allEvents",
+        startMs: row.startMs + 60 * 60_000,
+        endMs: row.endMs + 60 * 60_000,
+        timeZone: "Asia/Shanghai",
+        operationId: "shift-operation",
+      },
+      { getAdapter: async () => adapter, refreshCalendar: async () => {} },
+    );
+
+    expect(update?.ref.eventId).toBe("series-master");
+    expect(update?.patch).toMatchObject({
+      startMs: masterEvent().startMs + 60 * 60_000,
+      endMs: masterEvent().endMs + 60 * 60_000,
+    });
+  });
+
+  test("creates a deterministic tail first and compensates a definitive truncation failure", async () => {
+    const row = recurringRow();
+    const { ctx } = actionContext(row);
+    const order: string[] = [];
+    let tailRequest: CreateEventRequest | undefined;
+    let compensation: DeleteEventRequest | undefined;
+    const adapter = {
+      provider: "microsoft",
+      capabilities,
+      async getEvent() {
+        return masterEvent();
+      },
+      async createEvent(request: CreateEventRequest) {
+        order.push("create-tail");
+        tailRequest = request;
+        return {
+          ...masterEvent(),
+          id: "tail-series",
+          startMs: row.startMs,
+          endMs: row.endMs,
+        };
+      },
+      async reconcileAmbiguousCreate() {
+        return null;
+      },
+      async updateEvent(_request: UpdateEventRequest) {
+        order.push("truncate-master");
+        throw new ProviderError("validation", "rule rejected");
+      },
+      async deleteEvent(request: DeleteEventRequest) {
+        order.push("delete-tail");
+        compensation = request;
+      },
+    } as unknown as CalendarProviderAdapter;
+
+    await expect(
+      service.updateEventOp(
+        ctx,
+        row.userId,
+        {
+          eventId: row._id,
+          scope: "thisAndFollowing",
+          operationId: "split-operation",
+        },
+        { getAdapter: async () => adapter, refreshCalendar: async () => {} },
+      ),
+    ).rejects.toMatchObject({ kind: "validation" });
+
+    expect(order).toEqual(["create-tail", "truncate-master", "delete-tail"]);
+    expect(tailRequest?.idempotencyKey).toBe("split-operation:tail");
+    expect(compensation).toMatchObject({
+      ref: { eventId: "tail-series" },
+      mode: "cancel",
+      notify: "none",
+    });
+  });
+});
+
 describe("scoped recurring deletion", () => {
   const recurring = (overrides: Partial<Doc<"events">> = {}) =>
     eventRow({ recurringEventId: "series-master", ...overrides });
@@ -441,8 +685,9 @@ describe("scoped recurring deletion", () => {
       expect.objectContaining({
         eventId: row._id,
         userId: row.userId,
-        calendarId: row.calendarId,
-        recurringEventId: "series-master",
+        connectionId: row.connectionId,
+        localCalendarId: row.localCalendarId,
+        providerSeriesId: "series-master",
       }),
     );
   });
@@ -542,14 +787,15 @@ describe("scoped recurring deletion", () => {
     expect(requests.map((request) => request.method)).toEqual([
       "GET",
       "GET",
+      "GET",
       "PATCH",
     ]);
-    expect(requests[2]?.body).toEqual({
+    expect(requests[3]?.body).toEqual({
       recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20260901T005959Z"],
     });
     expect(mutations).toContainEqual(
       expect.objectContaining({
-        googleEventId: "series-master",
+        providerEventId: "series-master",
         recurrence: [
           "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20260901T005959Z",
         ],
@@ -711,7 +957,9 @@ describe("scoped recurring deletion", () => {
     expect(mutations).toContainEqual({
       eventId: row._id,
       userId: row.userId,
-      calendarId: row.calendarId,
+      connectionId: row.connectionId,
+      localCalendarId: row.localCalendarId,
+      providerSeriesId: undefined,
     });
   });
 

@@ -21,6 +21,7 @@ import { api, internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { ActionCtx } from "../../_generated/server";
 import {
+  type CalendarServiceDependencies,
   createEventOp,
   deleteEventOp,
   resolveEventForWrite,
@@ -768,7 +769,7 @@ const updateEvent = writeTool({
       );
     }
     return {
-      expectedGoogleUpdatedMs: row.googleUpdatedMs,
+      expectedProviderUpdatedMs: row.providerUpdatedMs ?? row.googleUpdatedMs,
       ...(args.repeat === undefined
         ? {}
         : {
@@ -941,8 +942,8 @@ export const TOOLS_BY_NAME = new Map(ASSISTANT_TOOLS.map((t) => [t.name, t]));
 export async function applyProposal(
   ctx: ActionCtx,
   userId: string,
-  accessToken: string | undefined,
   action: Doc<"assistantActions">,
+  calendarDependencies?: CalendarServiceDependencies,
 ): Promise<string> {
   const stored: unknown = JSON.parse(action.input);
   const raw = await normalizeStoredProposal(
@@ -956,10 +957,6 @@ export async function applyProposal(
       ? String((raw as { timeZone: unknown }).timeZone)
       : undefined;
   const operationId = action.operationId ?? String(action._id);
-  const token = () => {
-    if (!accessToken) throw new Error("Google access token is required");
-    return accessToken;
-  };
   const proposalTimeZone = () => {
     if (!timeZone) throw new Error("The proposal is missing its time zone");
     return timeZone;
@@ -979,7 +976,7 @@ export async function applyProposal(
             proposalTimeZone(),
           )
         : storedRecurrence(raw, "recurrence");
-      const event = await createEventOp(ctx, userId, token(), {
+      const event = await createEventOp(ctx, userId, {
         summary: args.summary,
         ...time,
         description: args.description,
@@ -989,7 +986,7 @@ export async function applyProposal(
         recurrence,
         timeZone,
         operationId,
-      });
+      }, calendarDependencies);
       return `Created “${event.summary ?? args.summary}”.`;
     }
     case "update_event": {
@@ -1001,13 +998,18 @@ export async function applyProposal(
       if (args.repeat && !recurrence) {
         throw new Error("The recurring-event proposal is incomplete");
       }
-      const expectedGoogleUpdatedMs =
+      const expectedProviderUpdatedMs =
         typeof raw === "object" &&
         raw !== null &&
-        "expectedGoogleUpdatedMs" in raw &&
-        typeof raw.expectedGoogleUpdatedMs === "number"
-          ? raw.expectedGoogleUpdatedMs
-          : undefined;
+        "expectedProviderUpdatedMs" in raw &&
+        typeof raw.expectedProviderUpdatedMs === "number"
+          ? raw.expectedProviderUpdatedMs
+          : typeof raw === "object" &&
+              raw !== null &&
+              "expectedGoogleUpdatedMs" in raw &&
+              typeof raw.expectedGoogleUpdatedMs === "number"
+            ? raw.expectedGoogleUpdatedMs
+            : undefined;
       const expectedSeriesUpdatedMs =
         typeof raw === "object" &&
         raw !== null &&
@@ -1015,7 +1017,7 @@ export async function applyProposal(
         typeof raw.expectedSeriesUpdatedMs === "number"
           ? raw.expectedSeriesUpdatedMs
           : undefined;
-      await updateEventOp(ctx, userId, token(), {
+      await updateEventOp(ctx, userId, {
         eventId: args.eventId as Id<"events">,
         summary: args.summary,
         description: args.description,
@@ -1028,20 +1030,20 @@ export async function applyProposal(
         scope: args.scope,
         timeZone,
         operationId,
-        expectedGoogleUpdatedMs,
+        expectedProviderUpdatedMs,
         expectedSeriesUpdatedMs,
-      });
+      }, calendarDependencies);
       return "Event updated.";
     }
     case "move_event": {
       const args = moveEventSchema.parse(raw);
       const time = assistantRangeToEventTime(args.time);
-      await updateEventOp(ctx, userId, token(), {
+      await updateEventOp(ctx, userId, {
         eventId: args.eventId as Id<"events">,
         ...time,
         timeZone,
         operationId,
-      });
+      }, calendarDependencies);
       return "Event rescheduled.";
     }
     case "delete_event": {
@@ -1053,12 +1055,12 @@ export async function applyProposal(
         typeof raw.expectedSeriesUpdatedMs === "number"
           ? raw.expectedSeriesUpdatedMs
           : undefined;
-      await deleteEventOp(ctx, userId, token(), {
+      await deleteEventOp(ctx, userId, {
         eventId: args.eventId as Id<"events">,
         scope: args.scope,
         operationId,
         expectedSeriesUpdatedMs,
-      });
+      }, calendarDependencies);
       return "Event deleted.";
     }
     case "decide_booking_request": {

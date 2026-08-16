@@ -10,6 +10,285 @@ import { authComponent } from "../../auth";
 import { ensureGoogleConnection } from "./connections";
 import { googleEventValidator, providerEventValidator } from "./validators";
 
+const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
+const CALENDAR_OPERATION_LEASE_MS = 10 * 60 * 1000;
+
+async function connectionForLegacyCalendar(
+  ctx: MutationCtx,
+  userId: string,
+  calendar: Doc<"calendars">,
+): Promise<Id<"calendarConnections">> {
+  const connectionId =
+    calendar.connectionId ?? (await ensureGoogleConnection(ctx, userId));
+  const connection = await ctx.db.get(connectionId);
+  if (!connection || connection.userId !== userId) {
+    throw new Error("Calendar connection is unavailable");
+  }
+  if (
+    calendar.connectionId === undefined ||
+    calendar.providerCalendarId === undefined
+  ) {
+    await ctx.db.patch(calendar._id, {
+      connectionId,
+      providerCalendarId: calendar.providerCalendarId ?? calendar.googleCalendarId,
+    });
+  }
+  return connectionId;
+}
+
+/** Resolve the legacy public calendar string to an owned, writable local row. */
+export async function resolveCreateTargetHandler(
+  ctx: MutationCtx,
+  args: { userId: string; requestedCalendarId?: string },
+) {
+  const calendars = await ctx.db
+    .query("calendars")
+    .withIndex("by_user", (q) => q.eq("userId", args.userId))
+    .take(501);
+  if (calendars.length > 500) {
+    throw new Error("Too many calendars to choose a write target safely");
+  }
+  const calendar = args.requestedCalendarId
+    ? calendars.find(
+        (row) =>
+          row._id === args.requestedCalendarId ||
+          row.providerCalendarId === args.requestedCalendarId ||
+          row.googleCalendarId === args.requestedCalendarId,
+      )
+    : calendars.find((row) => row.primary);
+  if (!calendar) throw new Error("Calendar not found");
+  if (!WRITABLE_ACCESS_ROLES.has(calendar.accessRole ?? "")) {
+    throw new Error("This calendar is read-only");
+  }
+  const connectionId = await connectionForLegacyCalendar(
+    ctx,
+    args.userId,
+    calendar,
+  );
+  return {
+    connectionId,
+    localCalendarId: calendar._id,
+    providerCalendarId: calendar.providerCalendarId ?? calendar.googleCalendarId,
+  };
+}
+
+/** Resolve and repair neutral event identity before any provider operation. */
+export async function resolveEventWriteTargetHandler(
+  ctx: MutationCtx,
+  args: { userId: string; eventId: Id<"events"> },
+) {
+  const event = await ctx.db.get(args.eventId);
+  if (!event || event.userId !== args.userId) return null;
+
+  let calendar = event.localCalendarId
+    ? await ctx.db.get(event.localCalendarId)
+    : null;
+  if (!calendar || calendar.userId !== args.userId) {
+    calendar = await ctx.db
+      .query("calendars")
+      .withIndex("by_user_and_googleCalendarId", (q) =>
+        q.eq("userId", args.userId).eq("googleCalendarId", event.calendarId),
+      )
+      .unique();
+  }
+  if (!calendar) return null;
+
+  const connectionId =
+    event.connectionId ??
+    calendar.connectionId ??
+    (await ensureGoogleConnection(ctx, args.userId));
+  const connection = await ctx.db.get(connectionId);
+  if (!connection || connection.userId !== args.userId) {
+    throw new Error("Calendar connection is unavailable");
+  }
+  if (calendar.connectionId && calendar.connectionId !== connectionId) {
+    throw new Error("Calendar connection does not match this event");
+  }
+  const providerCalendarId =
+    calendar.providerCalendarId ?? calendar.googleCalendarId ?? event.calendarId;
+  const providerEventId = event.providerEventId ?? event.googleEventId;
+  const providerSeriesId = event.providerSeriesId ?? event.recurringEventId;
+
+  if (
+    calendar.connectionId === undefined ||
+    calendar.providerCalendarId === undefined
+  ) {
+    await ctx.db.patch(calendar._id, {
+      connectionId,
+      providerCalendarId,
+    });
+  }
+  if (
+    event.connectionId === undefined ||
+    event.localCalendarId === undefined ||
+    event.providerEventId === undefined ||
+    (event.recurringEventId !== undefined && event.providerSeriesId === undefined) ||
+    event.providerUpdatedMs === undefined
+  ) {
+    await ctx.db.patch(event._id, {
+      connectionId,
+      localCalendarId: calendar._id,
+      providerEventId,
+      providerSeriesId,
+      providerUpdatedMs: event.providerUpdatedMs ?? event.googleUpdatedMs,
+    });
+  }
+  return {
+    event: {
+      ...event,
+      connectionId,
+      localCalendarId: calendar._id,
+      providerEventId,
+      providerSeriesId,
+      providerUpdatedMs: event.providerUpdatedMs ?? event.googleUpdatedMs,
+    },
+    calendar: {
+      ...calendar,
+      connectionId,
+      providerCalendarId,
+    },
+    connectionId,
+    localCalendarId: calendar._id,
+    providerCalendarId,
+    providerEventId,
+    providerSeriesId,
+  };
+}
+
+export async function claimCalendarOperationHandler(
+  ctx: MutationCtx,
+  args: {
+    userId: string;
+    connectionId: Id<"calendarConnections">;
+    localCalendarId: Id<"calendars">;
+    providerCalendarId: string;
+    providerEventId?: string;
+    idempotencyKey: string;
+    kind: "create" | "update" | "delete" | "respond";
+    attemptId: string;
+  },
+) {
+  const connection = await ctx.db.get(args.connectionId);
+  const calendar = await ctx.db.get(args.localCalendarId);
+  if (
+    !connection ||
+    connection.userId !== args.userId ||
+    !calendar ||
+    calendar.userId !== args.userId ||
+    calendar.connectionId !== args.connectionId ||
+    (calendar.providerCalendarId ?? calendar.googleCalendarId) !==
+      args.providerCalendarId
+  ) {
+    throw new Error("Calendar operation target is invalid");
+  }
+  const existing = await ctx.db
+    .query("calendarOperations")
+    .withIndex("by_connection_and_key", (q) =>
+      q
+        .eq("connectionId", args.connectionId)
+        .eq("idempotencyKey", args.idempotencyKey),
+    )
+    .unique();
+  if (existing) {
+    if (
+      existing.userId !== args.userId ||
+      existing.kind !== args.kind ||
+      (existing.localCalendarId &&
+        existing.localCalendarId !== args.localCalendarId) ||
+      (existing.providerCalendarId &&
+        existing.providerCalendarId !== args.providerCalendarId)
+    ) {
+      throw new Error("Calendar operation key was already used for another write");
+    }
+    if (existing.status === "succeeded") {
+      return {
+        state: "succeeded" as const,
+        providerEventId: existing.providerEventId,
+      };
+    }
+    if (
+      existing.status === "pending" &&
+      existing.attemptId &&
+      (existing.leaseExpiresAt ?? 0) > Date.now()
+    ) {
+      throw new Error("This calendar change is already being applied");
+    }
+    await ctx.db.patch(existing._id, {
+      status: "pending",
+      attemptId: args.attemptId,
+      leaseExpiresAt: Date.now() + CALENDAR_OPERATION_LEASE_MS,
+      mayHaveSucceeded: true,
+      localCalendarId: args.localCalendarId,
+      providerCalendarId: args.providerCalendarId,
+      providerEventId: existing.providerEventId ?? args.providerEventId,
+      lastError: undefined,
+      updatedAt: Date.now(),
+    });
+    return {
+      state: "claimed" as const,
+      reconcileOnly:
+        existing.status === "ambiguous" || existing.mayHaveSucceeded === true,
+    };
+  }
+  const now = Date.now();
+  await ctx.db.insert("calendarOperations", {
+    connectionId: args.connectionId,
+    userId: args.userId,
+    idempotencyKey: args.idempotencyKey,
+    kind: args.kind,
+    status: "pending",
+    attemptId: args.attemptId,
+    leaseExpiresAt: now + CALENDAR_OPERATION_LEASE_MS,
+    mayHaveSucceeded: true,
+    localCalendarId: args.localCalendarId,
+    providerCalendarId: args.providerCalendarId,
+    providerEventId: args.providerEventId,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return { state: "claimed" as const, reconcileOnly: false };
+}
+
+export async function settleCalendarOperationHandler(
+  ctx: MutationCtx,
+  args: {
+    userId: string;
+    connectionId: Id<"calendarConnections">;
+    idempotencyKey: string;
+    attemptId: string;
+    status: "succeeded" | "ambiguous" | "failed";
+    providerEventId?: string;
+    error?: string;
+  },
+): Promise<boolean> {
+  const operation = await ctx.db
+    .query("calendarOperations")
+    .withIndex("by_connection_and_key", (q) =>
+      q
+        .eq("connectionId", args.connectionId)
+        .eq("idempotencyKey", args.idempotencyKey),
+    )
+    .unique();
+  if (
+    !operation ||
+    operation.userId !== args.userId ||
+    operation.status !== "pending" ||
+    operation.attemptId !== args.attemptId
+  ) {
+    return false;
+  }
+  await ctx.db.patch(operation._id, {
+    status: args.status,
+    attemptId: undefined,
+    leaseExpiresAt: undefined,
+    mayHaveSucceeded: args.status === "ambiguous" ? true : undefined,
+    providerEventId: args.providerEventId ?? operation.providerEventId,
+    lastError: args.error,
+    updatedAt: Date.now(),
+  });
+  return true;
+}
+
 /** Toggle whether a calendar's events appear on the grid. */
 export async function setCalendarSelectedHandler(
   ctx: MutationCtx,
@@ -186,6 +465,108 @@ export async function mirrorProviderEventHandler(
     .unique();
   if (existing) await ctx.db.replace(existing._id, legacyEvent);
   else await ctx.db.insert("events", legacyEvent);
+  return null;
+}
+
+/** Remove an optimistic event row and, for a whole-series write, its rule cache. */
+export async function deleteProviderEventMirrorHandler(
+  ctx: MutationCtx,
+  args: {
+    eventId: Id<"events">;
+    userId: string;
+    connectionId: Id<"calendarConnections">;
+    localCalendarId: Id<"calendars">;
+    providerSeriesId?: string;
+  },
+): Promise<null> {
+  const row = await ctx.db.get(args.eventId);
+  if (
+    row?.userId === args.userId &&
+    row.connectionId === args.connectionId &&
+    row.localCalendarId === args.localCalendarId
+  ) {
+    await ctx.db.delete(row._id);
+  }
+  if (args.providerSeriesId) {
+    const calendar = await ctx.db.get(args.localCalendarId);
+    if (calendar?.userId === args.userId) {
+      const series = await ctx.db
+        .query("recurringSeries")
+        .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+          q
+            .eq("userId", args.userId)
+            .eq("calendarId", calendar.googleCalendarId)
+            .eq("googleEventId", args.providerSeriesId!),
+        )
+        .unique();
+      if (series) await ctx.db.delete(series._id);
+    }
+  }
+  return null;
+}
+
+/** Cache a recurring master by neutral identity while dual-writing legacy keys. */
+export async function upsertProviderRecurringSeriesHandler(
+  ctx: MutationCtx,
+  args: {
+    userId: string;
+    connectionId: Id<"calendarConnections">;
+    localCalendarId: Id<"calendars">;
+    providerEventId: string;
+    recurrence: string[];
+    sourceUpdatedMs: number;
+    replacedEventId?: Id<"events">;
+  },
+): Promise<null> {
+  const connection = await ctx.db.get(args.connectionId);
+  const calendar = await ctx.db.get(args.localCalendarId);
+  if (
+    !connection ||
+    connection.userId !== args.userId ||
+    !calendar ||
+    calendar.userId !== args.userId ||
+    calendar.connectionId !== args.connectionId
+  ) {
+    throw new Error("Recurring series target is invalid");
+  }
+  const existing = await ctx.db
+    .query("recurringSeries")
+    .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+      q
+        .eq("userId", args.userId)
+        .eq("calendarId", calendar.googleCalendarId)
+        .eq("googleEventId", args.providerEventId),
+    )
+    .unique();
+  const value = {
+    recurrence: args.recurrence,
+    sourceUpdatedMs: args.sourceUpdatedMs,
+    connectionId: args.connectionId,
+    localCalendarId: args.localCalendarId,
+    providerEventId: args.providerEventId,
+    providerSeriesId: args.providerEventId,
+    providerUpdatedMs: args.sourceUpdatedMs,
+  };
+  if (existing) await ctx.db.patch(existing._id, value);
+  else {
+    await ctx.db.insert("recurringSeries", {
+      userId: args.userId,
+      calendarId: calendar.googleCalendarId,
+      googleEventId: args.providerEventId,
+      ...value,
+    });
+  }
+  if (args.replacedEventId) {
+    const replaced = await ctx.db.get(args.replacedEventId);
+    if (
+      replaced?.userId === args.userId &&
+      replaced.connectionId === args.connectionId &&
+      replaced.localCalendarId === args.localCalendarId &&
+      (replaced.providerEventId ?? replaced.googleEventId) === args.providerEventId
+    ) {
+      await ctx.db.delete(replaced._id);
+    }
+  }
   return null;
 }
 

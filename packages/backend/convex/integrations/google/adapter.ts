@@ -97,6 +97,23 @@ function conferenceChange(
   return conference === "add" || conference === "remove" ? conference : undefined;
 }
 
+function preserveConcurrentAttendees(
+  live: NonNullable<RawEvent["attendees"]>,
+  requested: { email: string; displayName?: string; optional?: boolean }[],
+  knownAttendeeEmails: readonly string[] | undefined,
+): void {
+  if (!knownAttendeeEmails) return;
+  const known = new Set(knownAttendeeEmails.map((email) => email.toLowerCase()));
+  const desired = new Set(requested.map((attendee) => attendee.email.toLowerCase()));
+  for (const attendee of live) {
+    const email = attendee.email?.toLowerCase();
+    if (email && !known.has(email) && !desired.has(email)) {
+      requested.push({ email: attendee.email! });
+      desired.add(email);
+    }
+  }
+}
+
 export class GoogleCalendarAdapter implements CalendarProviderAdapter {
   readonly provider = "google" as const;
   readonly capabilities = GOOGLE_CAPABILITIES;
@@ -166,6 +183,33 @@ export class GoogleCalendarAdapter implements CalendarProviderAdapter {
     validateTimePair(request.event, true);
     const { event, calendarId, idempotencyKey } = request;
     const allDay = event.allDay ?? false;
+    let attendees: RawEvent["attendees"] = event.attendees?.map((attendee) => ({
+      ...attendee,
+    }));
+    if (request.attendeeSourceRef) {
+      const source = await this.readRaw(request.attendeeSourceRef);
+      if (source.attendeesOmitted) {
+        throw new ProviderError(
+          "validation",
+          "The provider returned only part of the attendee list, so the series cannot be split safely",
+        );
+      }
+      if (event.attendees === undefined) {
+        attendees = source.attendees;
+      } else {
+        const requested = event.attendees.map((attendee) => ({ ...attendee }));
+        preserveConcurrentAttendees(
+          source.attendees ?? [],
+          requested,
+          request.knownAttendeeEmails,
+        );
+        attendees = mergeLiveAttendees(source.attendees ?? [], requested);
+      }
+    }
+    attendees = attendees?.filter(
+      (attendee): attendee is typeof attendee & { email: string } =>
+        Boolean(attendee.email),
+    );
     const body: CalendarEventCreateBody = {
       id: idempotencyKey
         ? googleEventIdForOperation(idempotencyKey)
@@ -178,7 +222,7 @@ export class GoogleCalendarAdapter implements CalendarProviderAdapter {
       colorId: event.color,
       visibility: event.visibility,
       transparency: transparencyFor(event),
-      attendees: event.attendees?.map((attendee) => ({ ...attendee })),
+      attendees,
       recurrence: event.recurrence ? [...event.recurrence] : undefined,
     };
     try {
@@ -230,22 +274,13 @@ export class GoogleCalendarAdapter implements CalendarProviderAdapter {
           "The provider returned only part of the attendee list, so membership cannot be replaced safely",
         );
       }
-      const liveUpdatedMs = live?.updated
-        ? new Date(live.updated).getTime()
-        : undefined;
-      if (
-        request.expectedUpdatedMs !== undefined &&
-        liveUpdatedMs !== request.expectedUpdatedMs
-      ) {
-        throw new ProviderError(
-          "conflict",
-          "The event changed after the attendee update was prepared",
-        );
-      }
-      attendees = mergeLiveAttendees(
+      const requested = patch.attendees.map((attendee) => ({ ...attendee }));
+      preserveConcurrentAttendees(
         live?.attendees ?? [],
-        patch.attendees.map((attendee) => ({ ...attendee })),
+        requested,
+        request.knownAttendeeEmails,
       );
+      attendees = mergeLiveAttendees(live?.attendees ?? [], requested);
     }
 
     const googlePatch: CalendarEventPatchBody = {
@@ -267,6 +302,20 @@ export class GoogleCalendarAdapter implements CalendarProviderAdapter {
       googleEventMatchesPatch(live, googlePatch, conference)
     ) {
       return providerEvent(live, ref.calendarId);
+    }
+
+    const liveUpdatedMs = live?.updated
+      ? new Date(live.updated).getTime()
+      : undefined;
+    if (
+      (patch.attendees !== undefined || patch.recurrence !== undefined) &&
+      request.expectedUpdatedMs !== undefined &&
+      liveUpdatedMs !== request.expectedUpdatedMs
+    ) {
+      throw new ProviderError(
+        "conflict",
+        "The event changed after this update was prepared",
+      );
     }
 
     try {

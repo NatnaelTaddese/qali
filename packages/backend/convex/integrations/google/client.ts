@@ -562,7 +562,7 @@ export type CalendarEventCreateBody = {
   visibility?: string;
   /** "opaque" (busy) | "transparent" (free). Omitted = Google's default. */
   transparency?: string;
-  attendees?: { email: string; displayName?: string; optional?: boolean }[];
+  attendees?: RawAttendee[];
   recurrence?: string[];
 };
 

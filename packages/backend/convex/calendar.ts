@@ -14,10 +14,16 @@ import {
   query,
 } from "./_generated/server";
 import {
+  claimCalendarOperationHandler,
+  deleteProviderEventMirrorHandler,
   deleteEventRowHandler,
   mirrorProviderEventHandler,
+  resolveCreateTargetHandler,
+  resolveEventWriteTargetHandler,
   setCalendarSelectedHandler,
+  settleCalendarOperationHandler,
   upsertEventHandler,
+  upsertProviderRecurringSeriesHandler,
   upsertRecurringSeriesHandler,
 } from "./domains/calendar/mutations";
 import {
@@ -128,6 +134,79 @@ export const mirrorProviderEvent = internalMutation({
     event: providerEventValidator,
   },
   handler: (ctx, args) => mirrorProviderEventHandler(ctx, args),
+});
+
+export const resolveCreateTarget = internalMutation({
+  args: {
+    userId: v.string(),
+    requestedCalendarId: v.optional(v.string()),
+  },
+  handler: (ctx, args) => resolveCreateTargetHandler(ctx, args),
+});
+
+export const resolveEventWriteTarget = internalMutation({
+  args: { userId: v.string(), eventId: v.id("events") },
+  handler: (ctx, args) => resolveEventWriteTargetHandler(ctx, args),
+});
+
+export const claimCalendarOperation = internalMutation({
+  args: {
+    userId: v.string(),
+    connectionId: v.id("calendarConnections"),
+    localCalendarId: v.id("calendars"),
+    providerCalendarId: v.string(),
+    providerEventId: v.optional(v.string()),
+    idempotencyKey: v.string(),
+    kind: v.union(
+      v.literal("create"),
+      v.literal("update"),
+      v.literal("delete"),
+      v.literal("respond"),
+    ),
+    attemptId: v.string(),
+  },
+  handler: (ctx, args) => claimCalendarOperationHandler(ctx, args),
+});
+
+export const settleCalendarOperation = internalMutation({
+  args: {
+    userId: v.string(),
+    connectionId: v.id("calendarConnections"),
+    idempotencyKey: v.string(),
+    attemptId: v.string(),
+    status: v.union(
+      v.literal("succeeded"),
+      v.literal("ambiguous"),
+      v.literal("failed"),
+    ),
+    providerEventId: v.optional(v.string()),
+    error: v.optional(v.string()),
+  },
+  handler: (ctx, args) => settleCalendarOperationHandler(ctx, args),
+});
+
+export const deleteProviderEventMirror = internalMutation({
+  args: {
+    eventId: v.id("events"),
+    userId: v.string(),
+    connectionId: v.id("calendarConnections"),
+    localCalendarId: v.id("calendars"),
+    providerSeriesId: v.optional(v.string()),
+  },
+  handler: (ctx, args) => deleteProviderEventMirrorHandler(ctx, args),
+});
+
+export const upsertProviderRecurringSeries = internalMutation({
+  args: {
+    userId: v.string(),
+    connectionId: v.id("calendarConnections"),
+    localCalendarId: v.id("calendars"),
+    providerEventId: v.string(),
+    recurrence: v.array(v.string()),
+    sourceUpdatedMs: v.number(),
+    replacedEventId: v.optional(v.id("events")),
+  },
+  handler: (ctx, args) => upsertProviderRecurringSeriesHandler(ctx, args),
 });
 
 export const upsertRecurringSeries = internalMutation({

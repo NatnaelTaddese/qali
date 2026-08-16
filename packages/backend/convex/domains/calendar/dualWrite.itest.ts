@@ -20,6 +20,96 @@ const googleEvent = {
 };
 
 describe("calendar dual-write", () => {
+  test("repairs missing neutral event references before returning a write target", async () => {
+    const t = convexTest(schema, modules);
+    const { eventId } = await t.run(async (ctx) => {
+      await ctx.db.insert("calendars", {
+        userId: USER,
+        googleCalendarId: "legacy-primary",
+        accessRole: "owner",
+        primary: true,
+        selected: true,
+      });
+      const eventId = await ctx.db.insert("events", {
+        userId: USER,
+        googleEventId: "legacy-event",
+        calendarId: "legacy-primary",
+        startMs: 1_000,
+        endMs: 2_000,
+        allDay: false,
+        status: "confirmed",
+        googleUpdatedMs: 9,
+      });
+      return { eventId };
+    });
+
+    const target = await t.mutation(internal.calendar.resolveEventWriteTarget, {
+      userId: USER,
+      eventId,
+    });
+    expect(target).toMatchObject({
+      providerCalendarId: "legacy-primary",
+      providerEventId: "legacy-event",
+    });
+    expect(target?.connectionId).toBeDefined();
+    expect(target?.localCalendarId).toBeDefined();
+
+    const repaired = await t.run((ctx) => ctx.db.get(eventId));
+    expect(repaired).toMatchObject({
+      connectionId: target?.connectionId,
+      localCalendarId: target?.localCalendarId,
+      providerEventId: "legacy-event",
+      providerUpdatedMs: 9,
+    });
+  });
+
+  test("claims and settles one authoritative calendar operation per assistant key", async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(internal.googleSync.reconcileCalendars, {
+      userId: USER,
+      calendars: [
+        {
+          googleCalendarId: "primary",
+          primary: true,
+          accessRole: "owner",
+        },
+      ],
+    });
+    const target = await t.mutation(internal.calendar.resolveCreateTarget, {
+      userId: USER,
+    });
+    const claim = await t.mutation(internal.calendar.claimCalendarOperation, {
+      userId: USER,
+      ...target,
+      idempotencyKey: "assistant-operation-1",
+      kind: "create",
+      attemptId: "attempt-1",
+    });
+    expect(claim).toMatchObject({ state: "claimed", reconcileOnly: false });
+    expect(
+      await t.mutation(internal.calendar.settleCalendarOperation, {
+        userId: USER,
+        connectionId: target.connectionId,
+        idempotencyKey: "assistant-operation-1",
+        attemptId: "attempt-1",
+        status: "succeeded",
+        providerEventId: "provider-event-1",
+      }),
+    ).toBe(true);
+
+    const replay = await t.mutation(internal.calendar.claimCalendarOperation, {
+      userId: USER,
+      ...target,
+      idempotencyKey: "assistant-operation-1",
+      kind: "create",
+      attemptId: "attempt-2",
+    });
+    expect(replay).toEqual({
+      state: "succeeded",
+      providerEventId: "provider-event-1",
+    });
+  });
+
   test("upsertEvent stamps the neutral mirror and lazily creates the connection", async () => {
     const t = convexTest(schema, modules);
 

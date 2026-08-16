@@ -12,8 +12,34 @@ import { z } from "zod";
 import { FeaturePreview } from "@/components/feature-preview";
 import { Mascot } from "@/components/mascot";
 
+const SITE_URL = "https://myqali.com";
+const OG_TITLE = "qali — the AI-native calendar";
+const OG_DESCRIPTION =
+  "qali is an AI-native calendar for Google Calendar. Tell it what you need in plain language and it schedules, reschedules, and finds time for you.";
+// Wire an absolute og:image now; drop the 1200×630 card at public/og.png later.
+const OG_IMAGE = `${SITE_URL}/og.png`;
+
 export const Route = createFileRoute("/")({
   component: LandingPage,
+  head: () => ({
+    meta: [
+      { property: "og:type", content: "website" },
+      { property: "og:site_name", content: "qali" },
+      { property: "og:url", content: `${SITE_URL}/` },
+      { property: "og:title", content: OG_TITLE },
+      { property: "og:description", content: OG_DESCRIPTION },
+      { property: "og:image", content: OG_IMAGE },
+      {
+        property: "og:image:alt",
+        content: "qali — the AI-native calendar for Google Calendar",
+      },
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: OG_TITLE },
+      { name: "twitter:description", content: OG_DESCRIPTION },
+      { name: "twitter:image", content: OG_IMAGE },
+    ],
+    links: [{ rel: "canonical", href: `${SITE_URL}/` }],
+  }),
 });
 
 function LandingPage() {

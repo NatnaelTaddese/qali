@@ -22,32 +22,10 @@ import {
   internalQuery,
   type MutationCtx,
 } from "./_generated/server";
+import { ensureGoogleConnection } from "./domains/calendar/connections";
 
 const USER_BATCH = 50;
 const ROW_BATCH = 500;
-
-/** Find or create the user's single Google connection (connection == login grant). */
-async function ensureConnection(
-  ctx: MutationCtx,
-  userId: string,
-): Promise<Id<"calendarConnections">> {
-  const existing = await ctx.db
-    .query("calendarConnections")
-    .withIndex("by_user_and_provider", (q) =>
-      q.eq("userId", userId).eq("provider", "google"),
-    )
-    .first();
-  if (existing) return existing._id;
-  const now = Date.now();
-  return await ctx.db.insert("calendarConnections", {
-    userId,
-    provider: "google",
-    status: "active",
-    capabilities: { contacts: true, idempotentCreate: true },
-    createdAt: now,
-    updatedAt: now,
-  });
-}
 
 /** Copy the user's single `syncState` row into a connection-scoped one. */
 async function ensureConnectionSyncState(
@@ -112,7 +90,7 @@ export const enqueueConnectionBackfill = internalMutation({
 export const backfillUser = internalMutation({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
-    const connectionId = await ensureConnection(ctx, args.userId);
+    const connectionId = await ensureGoogleConnection(ctx, args.userId);
     await ensureConnectionSyncState(ctx, args.userId, connectionId);
 
     const calendars = await ctx.db

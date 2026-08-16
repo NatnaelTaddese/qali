@@ -16,6 +16,7 @@ import type { MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import { googleEventIdForOperation } from "../../lib/assistantLogic";
 import { consumeRateLimit } from "../../infrastructure/rateLimit";
+import { ensureGoogleConnection } from "../calendar/connections";
 import { clearBookingNotifications } from "../notifications/model";
 import {
   ACCEPT_LEASE_MS,
@@ -213,6 +214,9 @@ export async function requestBookingHandler(
   }
 
   const token = crypto.randomUUID();
+  // Dual-write: stamp the host's connection so the row matches the backfilled
+  // ones. providerEventId is set later, when acceptance creates the event.
+  const connectionId = await ensureGoogleConnection(ctx, page.userId);
   const bookingId = await ctx.db.insert("bookings", {
     hostUserId: page.userId,
     startMs: args.startMs,
@@ -223,6 +227,7 @@ export async function requestBookingHandler(
     note: note || undefined,
     status: "pending",
     token,
+    connectionId,
     createdAt: Date.now(),
   });
   // Surface the request in the host's notification bell. Times render in the
@@ -310,10 +315,14 @@ export async function markAcceptedHandler(
   ) {
     return false;
   }
+  // Dual-write the neutral mirror of the created event alongside the Google id.
+  const connectionId = await ensureGoogleConnection(ctx, args.hostUserId);
   await ctx.db.patch(args.bookingId, {
     status: "accepted",
     googleEventId: args.googleEventId,
     calendarId: args.calendarId,
+    connectionId,
+    providerEventId: args.googleEventId,
     decidedAt: Date.now(),
     acceptAttemptId: undefined,
     acceptLeaseExpiresAt: undefined,

@@ -20,6 +20,7 @@ import {
   fetchOtherContactsPage,
   SyncTokenExpiredError,
 } from "../../lib/google";
+import { ensureGoogleConnection } from "../calendar/connections";
 import { googleEventValidator } from "../calendar/validators";
 
 // Validators for data pushed from actions into mutations (mapped Google shapes).
@@ -1090,6 +1091,8 @@ export const reconcileCalendars = internalMutation({
     ctx,
     args,
   ): Promise<{ googleCalendarId: string; syncToken?: string }[]> => {
+    // Dual-write: newly discovered calendars carry the neutral mirror too.
+    const connectionId = await ensureGoogleConnection(ctx, args.userId);
     const existingCalendars = await ctx.db
       .query("calendars")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
@@ -1130,6 +1133,8 @@ export const reconcileCalendars = internalMutation({
           userId: args.userId,
           selected: cal.googleSelected ?? false,
           ...cal,
+          connectionId,
+          providerCalendarId: cal.googleCalendarId,
         });
         stored.push({ googleCalendarId: cal.googleCalendarId });
       }
@@ -1274,7 +1279,11 @@ export const commitCalendarFullResync = internalMutation({
       await ctx.db.patch(row._id, {
         syncGeneration: args.syncGeneration,
         ...(args.syncToken !== undefined
-          ? { syncToken: args.syncToken, lastSyncAt: Date.now() }
+          ? {
+              syncToken: args.syncToken,
+              syncCursor: args.syncToken, // neutral mirror
+              lastSyncAt: Date.now(),
+            }
           : {}),
       });
     }
@@ -1298,6 +1307,7 @@ export const setCalendarSyncToken = internalMutation({
     if (row) {
       await ctx.db.patch(row._id, {
         syncToken: args.syncToken,
+        syncCursor: args.syncToken, // neutral mirror
         lastSyncAt: Date.now(),
       });
     }
@@ -1596,6 +1606,9 @@ export const upsertEventsPage = internalMutation({
     syncGeneration: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<null> => {
+    // Dual-write: resolve the connection once per page, then stamp the neutral
+    // mirror on every synced row alongside the Google-named columns.
+    const connectionId = await ensureGoogleConnection(ctx, args.userId);
     const harvested: PersonInput[] = [];
     for (const e of args.events) {
       const existing = await ctx.db
@@ -1613,20 +1626,20 @@ export const upsertEventsPage = internalMutation({
         }
         continue;
       }
+      const doc = {
+        userId: args.userId,
+        ...e,
+        syncGeneration: args.syncGeneration,
+        connectionId,
+        providerEventId: e.googleEventId,
+        providerUpdatedMs: e.googleUpdatedMs,
+      };
       if (existing) {
         // A mapped Google event is an authoritative snapshot. Replacing the row
         // also clears optional fields that Google removed from the event.
-        await ctx.db.replace(existing._id, {
-          userId: args.userId,
-          ...e,
-          syncGeneration: args.syncGeneration,
-        });
+        await ctx.db.replace(existing._id, doc);
       } else {
-        await ctx.db.insert("events", {
-          userId: args.userId,
-          ...e,
-          syncGeneration: args.syncGeneration,
-        });
+        await ctx.db.insert("events", doc);
       }
       harvested.push(...collectEventPeople(e));
     }

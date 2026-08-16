@@ -4,10 +4,10 @@ Run workspace `bun run` commands from the repository root. Run `bunx convex`
 commands from `packages/backend`. These commands document production work; this
 source change does not run a deploy or backfill.
 
-## 1. Preflight and dry run
+## 1. Read-only preflight
 
-Confirm the target deployment and a clean, reviewed diff. Never use `--push`
-with a verification command.
+Confirm a clean, reviewed diff. Never use `--push` or a deploy command for
+source verification.
 
 ```sh
 git status --short
@@ -16,24 +16,26 @@ bun run check-types
 bun run build
 ```
 
-Then select the production deployment explicitly and run Convex checks from
-`packages/backend`:
+Run the Convex generator in read-only mode from `packages/backend`. It prints
+generated output, typechecks the schema/functions, does not write `_generated`,
+does not prompt for a deploy, and does not modify any deployment:
 
 ```sh
-export CONVEX_DEPLOYMENT="prod:<production-deployment>"
-bunx convex codegen --typecheck enable
-bunx convex deploy --dry-run --typecheck enable --codegen enable
+bunx convex codegen --dry-run --typecheck enable
 ```
 
-Stop if tests fail, the dry run targets the wrong project, reports an unexpected
-schema deletion, or production does not have a current backup/export.
+Stop if tests or codegen fail, the reviewed schema contains an unexpected
+deletion, or production does not have a current backup/export. Do not set a
+production deployment for read-only source verification.
 
 ## 2. Deploy expand/cutover code
 
-Deploy the additive schema, dual writes, neutral connection sync, staged
-indexes, backfill functions, and all queue-drain shims together:
+This is an actual production deploy, not verification. Confirm the target in a
+separate operator step, then deploy the additive schema, dual writes, neutral
+connection sync, staged indexes, backfill functions, and all queue-drain shims:
 
 ```sh
+export CONVEX_DEPLOYMENT="prod:<production-deployment>"
 bunx convex deploy --typecheck enable --codegen enable \
   --message "expand provider connections and retain queue-drain shims"
 ```
@@ -97,48 +99,93 @@ and neutral identity columns agree, booking operations reconcile, and a full
 provider sync does not create duplicate events or contacts. Any mismatch blocks
 index activation and contraction.
 
+The `contacts` phase validates one exact source claim for every saved contact
+identity/email, including contacts that share an email. The `people` phase
+validates that each `connection`/`other` source has a provider-contact claim and
+backing `contacts`/`otherContactSources` row. Legacy Other Contacts cannot be
+reconstructed from `people` alone: backfill clears their cursor and reports
+`otherContactsFullSyncRequired` until a safe full Other Contacts sync completes.
+
 ## 5. Activate staged indexes
 
-Wait for all four indexes to show a completed/ready backfill in the Convex
+Wait for every index below to show a completed/ready backfill in the Convex
 dashboard:
 
+- `calendars.by_connection_and_providerCalendarId`
+- `events.by_connection_and_providerEventId`
+- `events.by_connection_and_localCalendarId_and_providerEventId`
+- `events.by_connection_and_localCalendarId_and_providerSeriesId`
 - `events.by_connection_and_localCalendarId_and_endMs`
+- `sharedEvents.by_provider_and_providerCalendarId_and_providerEventId`
+- `sharedEvents.by_provider_and_providerCalendarId_and_startMs`
+- `sharedEvents.by_provider_and_providerCalendarId_and_endMs`
+- `sharedCalendars.by_provider_and_providerCalendarId`
+- `recurringSeries.by_connection_and_providerEventId`
+- `recurringSeries.by_connection_and_localCalendarId_and_providerEventId`
+- `contacts.by_connection_and_providerContactId`
 - `bookingPages.by_targetConnectionId_and_targetCalendarId`
 - `bookings.by_targetConnectionId_and_targetCalendarId_and_startMs`
 - `personSourceClaims.by_connection_and_source_and_providerContactId_and_email`
 
-In a dedicated source change, remove `staged: true` from those declarations,
-run the full preflight, inspect the dry run, and deploy:
+Initial code must use the legacy Google indexes and validate neutral ownership
+in code; Microsoft remains unavailable during this phase. In a dedicated source
+change, remove `staged: true` from those declarations and run the read-only
+preflight. Then confirm the production target and perform the actual activation
+deploy:
 
 ```sh
-bunx convex deploy --dry-run --typecheck enable --codegen enable
+export CONVEX_DEPLOYMENT="prod:<production-deployment>"
 bunx convex deploy --typecheck enable --codegen enable \
   --message "activate provider connection indexes"
 ```
 
-Do not activate an index that is still backfilling. After activation, deploy
-neutral reads one bounded query family at a time and repeat parity plus product
-smoke tests. If a neutral read regresses, redeploy the previous read path; keep
-the additive index and data.
+Do not activate an index that is still backfilling. Activation does not cut over
+reads.
 
-## 6. Drain compatibility targets
+## 6. Cut over neutral reads
+
+After every staged index is active and parity still passes, make a second,
+dedicated source change that replaces Google legacy fallbacks with neutral index
+reads. Cut over one bounded query family at a time, run the read-only preflight,
+then perform an explicitly confirmed production deploy. Repeat parity and
+product smoke tests after each family. If a neutral read regresses, redeploy the
+previous read path; keep the additive index and data.
+
+## 7. Drain compatibility targets
 
 New source must emit only `internal.calendarSync.*`. Keep `googleSync.ts` until
 the Convex scheduler/running-functions views show no `internal.googleSync.*`
 target for at least 24 hours, covering a full engagement-maintenance interval,
 and logs show no missing-function retries.
 
-The retained `googleSync.ts` targets are:
+The retained scheduled `googleSync.ts` targets are:
 
 - Queued pre-cutover targets: `syncUser`, `recomputeEngagement`, `enqueueSyncs`,
   `enqueueEngagementRefresh`, `backfillPeople`,
   `cleanupRemovedCalendarEvents`
-- Short-lived in-flight cross-call targets: `getSyncState`,
-  `clearCalendarEventsBatch`, `clearSharedCalendarEventsBatch`
+- Short-lived in-flight query targets: `getSyncState`,
+  `listCalendarsForUser`, `listEventsPageForEngagement`
+- Short-lived in-flight lease/state targets: `ensureSyncState`,
+  `claimSyncLease`, `recordSyncOutcome`, `claimSharedCalendarSync`,
+  `releaseSharedCalendarLease`, `setSharedCalendarSynced`, `setContactsSync`,
+  `setOtherContactsSync`, `setCalendarSyncToken`
+- Short-lived in-flight reconciliation targets: `reconcileCalendars`,
+  `clearCalendarEventsBatch`, `beginCalendarFullResync`, `upsertEventsPage`,
+  `sweepStaleCalendarEventsBatch`, `commitCalendarFullResync`,
+  `clearSharedCalendarEventsBatch`, `upsertSharedEventsPage`,
+  `beginContactsFullResync`, `upsertContactsPage`,
+  `upsertOtherContactsPage`, `sweepStaleContactsBatch`,
+  `sweepStaleOtherPeopleBatch`, `applyEngagementScores`
 
-After the drain gate, remove `googleSync.ts` and its three compatibility-only
-engine definitions in a dedicated deploy. Restore the exact missing target if
-logs reveal a late queued call.
+After the drain gate, remove `googleSync.ts`,
+`domains/sync/googleCompat.ts`, and the compatibility-only engine definitions in
+a dedicated deploy. Restore the exact missing target if logs reveal a late
+queued call.
+
+`internal.calendarSync.finishLegacySharedFullResync` is the fenced continuation
+that lets an old shared-calendar action finish its generation sweep without
+clearing the live snapshot first. Keep it through the same drain gate and until
+its own scheduled calls are empty.
 
 `backfillConnections.backfillUserEvents` and `backfillUserTail` remain until all
 old backfill schedules drain. The `verifyParity.sampleLimit` argument remains
@@ -150,7 +197,7 @@ schedules it as far as 365 days out and acceptance may schedule it for lease
 expiry. It must remain registered until code has stopped scheduling it and the
 full maximum queue horizon has elapsed; currently it remains permanent.
 
-## 7. Contract storage and wire DTOs
+## 8. Contract storage and wire DTOs
 
 Contract only after all parity phases pass twice, staged indexes are active,
 neutral reads and writes have run without fallback in production, every

@@ -373,4 +373,162 @@ describe("connection backfill", () => {
     expect(progress).toHaveLength(1);
     expect(progress[0]).toMatchObject({ userId: USER, runId: "restartable-run" });
   });
+
+  test("backfills contact-scoped claims and gates legacy Other Contacts on a full sync", async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("syncState", {
+        userId: USER,
+        status: "idle",
+        otherContactsSyncToken: "unsafe-legacy-cursor",
+      });
+      for (const resourceName of ["people/one", "people/two"]) {
+        await ctx.db.insert("contacts", {
+          userId: USER,
+          resourceName,
+          emails: ["duplicate@example.com"],
+          phones: [],
+          syncGeneration: 4,
+        });
+      }
+      await ctx.db.insert("people", {
+        userId: USER,
+        email: "legacy-other@example.com",
+        sources: ["other"],
+        otherSyncGeneration: 2,
+        updatedAt: 1,
+      });
+    });
+    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
+    const connectionId = (await connectionFor(t, USER))!;
+    await t.mutation(internal.backfillConnections.backfillUserRows, {
+      userId: USER,
+      connectionId,
+      phase: "contacts",
+      cursor: null,
+    });
+    await t.mutation(internal.backfillConnections.backfillUserRows, {
+      userId: USER,
+      connectionId,
+      phase: "people",
+      cursor: null,
+    });
+
+    const claims = await t.run((ctx) =>
+      ctx.db.query("personSourceClaims").collect(),
+    );
+    expect(claims.map((row) => row.providerContactId).sort()).toEqual([
+      "people/one",
+      "people/two",
+    ]);
+    expect(
+      await t.query(internal.backfillConnections.verifyParity, {
+        phase: "contacts",
+      }),
+    ).toMatchObject({ mismatches: 0 });
+    const blocked = await t.query(internal.backfillConnections.verifyParity, {
+      phase: "people",
+    });
+    expect(blocked.mismatches).toBe(1);
+    expect(blocked.examples[0]?.reasons).toContain(
+      "otherContactsFullSyncRequired",
+    );
+    const state = await t.run((ctx) =>
+      ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
+        .unique(),
+    );
+    expect(state?.otherContactsCursor).toBeUndefined();
+    expect(state?.otherContactsBackfillRequired).toBe(true);
+
+    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId,
+    });
+    const generation = await t.mutation(
+      internal.calendarSync.beginContactsFullResync,
+      { connectionId, attemptId: attemptId!, feed: "other" },
+    );
+    await t.mutation(internal.calendarSync.upsertContactsPage, {
+      connectionId,
+      attemptId: attemptId!,
+      feed: "other",
+      syncGeneration: generation!,
+      contacts: [
+        {
+          id: "other/exact",
+          deleted: false,
+          emails: ["legacy-other@example.com"],
+          phones: [],
+        },
+      ],
+    });
+    await t.mutation(internal.calendarSync.sweepLegacyOtherPeopleBatch, {
+      connectionId,
+      attemptId: attemptId!,
+      cursor: null,
+    });
+    await t.mutation(internal.calendarSync.commitContactsSync, {
+      connectionId,
+      attemptId: attemptId!,
+      feed: "other",
+      syncGeneration: generation!,
+      syncCursor: "safe-cursor",
+    });
+    expect(
+      await t.query(internal.backfillConnections.verifyParity, {
+        phase: "people",
+      }),
+    ).toMatchObject({ mismatches: 0 });
+  });
+
+  test("backfill never replaces a live neutral heartbeat with a legacy lease", async () => {
+    const t = convexTest(schema, modules);
+    await t.run((ctx) =>
+      ctx.db.insert("syncState", {
+        userId: USER,
+        status: "syncing",
+        contactsSyncToken: "legacy-cursor",
+        syncAttemptId: "legacy-attempt",
+        syncLeaseExpiresAt: Date.now() + 60_000,
+      }),
+    );
+    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
+    const connectionId = (await connectionFor(t, USER))!;
+    await t.run(async (ctx) => {
+      const state = await ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
+        .unique();
+      await ctx.db.patch(state!._id, {
+        status: "idle",
+        syncAttemptId: undefined,
+        syncLeaseExpiresAt: undefined,
+        contactsCursor: "neutral-cursor",
+      });
+    });
+    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId,
+    });
+    await t.mutation(internal.calendarSync.heartbeatSyncLease, {
+      connectionId,
+      attemptId: attemptId!,
+    });
+    const before = await t.run((ctx) =>
+      ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
+        .unique(),
+    );
+    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
+    const after = await t.run((ctx) =>
+      ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
+        .unique(),
+    );
+    expect(after?.syncAttemptId).toBe(attemptId);
+    expect(after?.syncLeaseExpiresAt).toBe(before?.syncLeaseExpiresAt);
+    expect(after?.contactsCursor).toBe("neutral-cursor");
+  });
 });

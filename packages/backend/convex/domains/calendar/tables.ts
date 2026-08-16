@@ -28,6 +28,9 @@ export const calendarTables = {
     // at the start of each full resync; the run stamps re-fetched rows with it
     // and sweeps rows carrying an older value. See syncOneConnectionCalendar.
     syncGeneration: v.optional(v.number()),
+    // The full-resync attempt that reserved `syncGeneration`. The generation is
+    // advanced durably at begin, not commit, so a crashed pass is never reused.
+    syncGenerationAttemptId: v.optional(v.string()),
     // Provider-neutral fields dual-written through production contraction.
     // `providerCalendarId` mirrors `googleCalendarId`; `syncCursor` is the opaque
     // per-calendar cursor that mirrors `syncToken` for legacy Google rows.
@@ -40,10 +43,10 @@ export const calendarTables = {
     .index("by_user", ["userId"])
     .index("by_user_and_googleCalendarId", ["userId", "googleCalendarId"])
     // Canonical connection-scoped calendar lookup.
-    .index("by_connection_and_providerCalendarId", [
-      "connectionId",
-      "providerCalendarId",
-    ]),
+    .index("by_connection_and_providerCalendarId", {
+      fields: ["connectionId", "providerCalendarId"],
+      staged: true,
+    }),
 
   // One row per synced Google Calendar event. See eventDocValidator.
   events: defineTable(eventDocValidator)
@@ -59,22 +62,20 @@ export const calendarTables = {
     ])
     // Retained through expand only. It is under-keyed for providers whose event
     // ids are calendar-scoped; no new read may use it.
-    .index("by_connection_and_providerEventId", [
-      "connectionId",
-      "providerEventId",
-    ])
+    .index("by_connection_and_providerEventId", {
+      fields: ["connectionId", "providerEventId"],
+      staged: true,
+    })
     // Correctly keyed neutral lookups. Calendar identity is required because
     // provider event ids may collide; the range index remains staged.
-    .index("by_connection_and_localCalendarId_and_providerEventId", [
-      "connectionId",
-      "localCalendarId",
-      "providerEventId",
-    ])
-    .index("by_connection_and_localCalendarId_and_providerSeriesId", [
-      "connectionId",
-      "localCalendarId",
-      "providerSeriesId",
-    ])
+    .index("by_connection_and_localCalendarId_and_providerEventId", {
+      fields: ["connectionId", "localCalendarId", "providerEventId"],
+      staged: true,
+    })
+    .index("by_connection_and_localCalendarId_and_providerSeriesId", {
+      fields: ["connectionId", "localCalendarId", "providerSeriesId"],
+      staged: true,
+    })
     .index("by_connection_and_localCalendarId_and_endMs", {
       fields: ["connectionId", "localCalendarId", "endMs"],
       staged: true,
@@ -101,21 +102,18 @@ export const calendarTables = {
     .index("by_calendar_and_start", ["calendarId", "startMs"])
     .index("by_calendar_and_end", ["calendarId", "endMs"])
     .index("by_calendar_and_googleEventId", ["calendarId", "googleEventId"])
-    .index("by_provider_and_providerCalendarId_and_providerEventId", [
-      "provider",
-      "providerCalendarId",
-      "providerEventId",
-    ])
-    .index("by_provider_and_providerCalendarId_and_startMs", [
-      "provider",
-      "providerCalendarId",
-      "startMs",
-    ])
-    .index("by_provider_and_providerCalendarId_and_endMs", [
-      "provider",
-      "providerCalendarId",
-      "endMs",
-    ]),
+    .index("by_provider_and_providerCalendarId_and_providerEventId", {
+      fields: ["provider", "providerCalendarId", "providerEventId"],
+      staged: true,
+    })
+    .index("by_provider_and_providerCalendarId_and_startMs", {
+      fields: ["provider", "providerCalendarId", "startMs"],
+      staged: true,
+    })
+    .index("by_provider_and_providerCalendarId_and_endMs", {
+      fields: ["provider", "providerCalendarId", "endMs"],
+      staged: true,
+    }),
 
   // One row per shared public calendar: its user-independent sync token plus a
   // lease so exactly one user's sync refreshes it at a time.
@@ -132,12 +130,13 @@ export const calendarTables = {
     syncLeaseExpiresAt: v.optional(v.number()),
     syncAttemptId: v.optional(v.string()),
     syncGeneration: v.optional(v.number()),
+    syncGenerationAttemptId: v.optional(v.string()),
   })
     .index("by_googleCalendarId", ["googleCalendarId"])
-    .index("by_provider_and_providerCalendarId", [
-      "provider",
-      "providerCalendarId",
-    ]),
+    .index("by_provider_and_providerCalendarId", {
+      fields: ["provider", "providerCalendarId"],
+      staged: true,
+    }),
 
   // One row per recurring master. Expanded event instances share this rule;
   // keeping it separately avoids duplicating it across every occurrence.
@@ -165,14 +164,13 @@ export const calendarTables = {
     ])
     // Deprecated expand-phase compatibility index; the staged index below is
     // the correctly calendar-keyed successor.
-    .index("by_connection_and_providerEventId", [
-      "connectionId",
-      "providerEventId",
-    ])
+    .index("by_connection_and_providerEventId", {
+      fields: ["connectionId", "providerEventId"],
+      staged: true,
+    })
     // Canonical calendar-keyed neutral lookup.
-    .index("by_connection_and_localCalendarId_and_providerEventId", [
-      "connectionId",
-      "localCalendarId",
-      "providerEventId",
-    ]),
+    .index("by_connection_and_localCalendarId_and_providerEventId", {
+      fields: ["connectionId", "localCalendarId", "providerEventId"],
+      staged: true,
+    }),
 };

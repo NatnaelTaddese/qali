@@ -61,6 +61,12 @@ export const connectionSyncTables = {
     otherContactsLastSyncedAt: v.optional(v.number()),
     contactsGeneration: v.optional(v.number()),
     otherContactsGeneration: v.optional(v.number()),
+    contactsGenerationAttemptId: v.optional(v.string()),
+    otherContactsGenerationAttemptId: v.optional(v.string()),
+    // Legacy Other Contacts stored no provider row identity. Backfill clears the
+    // cursor and sets this gate until a complete provider snapshot materializes
+    // `otherContactSources` and exact claims.
+    otherContactsBackfillRequired: v.optional(v.boolean()),
     status: v.union(
       v.literal("idle"),
       v.literal("syncing"),

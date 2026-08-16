@@ -450,7 +450,6 @@ export async function syncSharedCalendar(
   const claim: {
     attemptId: string | null;
     syncCursor?: string;
-    generation?: number;
   } = await ctx.runMutation(internal.calendarSync.claimSharedCalendarSync, {
     provider,
     providerCalendarId,
@@ -462,9 +461,14 @@ export async function syncSharedCalendar(
   try {
     for (let retry = 0; retry < 2; retry++) {
       try {
-        const generation = full
-          ? ((claim.generation ?? 0) + (retry === 0 ? 0 : 1))
-          : undefined;
+        const generation: number | null = full
+          ? await ctx.runMutation(internal.calendarSync.beginSharedFullResync, {
+              provider,
+              providerCalendarId,
+              attemptId: claim.attemptId,
+            })
+          : null;
+        if (full && generation === null) throw new StaleSyncAttemptError();
         let pageCursor: PageCursor | null = null;
         let commitCursor: SyncCursor | null = null;
         do {
@@ -488,7 +492,7 @@ export async function syncSharedCalendar(
                 providerCalendarId,
                 attemptId: claim.attemptId,
                 events: page.items.map(valueEvent),
-                syncGeneration: generation,
+                syncGeneration: generation ?? undefined,
               },
             );
             if (!wrote) throw new StaleSyncAttemptError();
@@ -496,7 +500,7 @@ export async function syncSharedCalendar(
           pageCursor = page.nextPageCursor;
           commitCursor = page.commitCursor ?? commitCursor;
         } while (pageCursor);
-        if (full && generation !== undefined) {
+        if (full && generation !== null) {
           let sweepCursor: string | null = null;
           let done = false;
           while (!done) {
@@ -527,7 +531,7 @@ export async function syncSharedCalendar(
             providerCalendarId,
             attemptId: claim.attemptId,
             syncCursor: commitCursor ?? undefined,
-            syncGeneration: generation,
+            syncGeneration: generation ?? undefined,
           },
         );
         if (!committed) throw new StaleSyncAttemptError();
@@ -1036,12 +1040,9 @@ export const reconcileCalendars = defineMutation({
     if (!connection || connection.userId !== state.userId) {
       throw new StaleSyncAttemptError();
     }
-    const neutral = await ctx.db
-      .query("calendars")
-      .withIndex("by_connection_and_providerCalendarId", (q) =>
-        q.eq("connectionId", args.connectionId),
-      )
-      .collect();
+    // Neutral indexes on pre-existing tables are staged for the initial deploy.
+    // Google is the only available provider, so the complete legacy user range
+    // remains authoritative until the explicit index/read cutover.
     const legacy = (await ctx.db
       .query("calendars")
       .withIndex("by_user", (q) => q.eq("userId", state.userId))
@@ -1049,17 +1050,10 @@ export const reconcileCalendars = defineMutation({
       (row) =>
         row.connectionId === undefined || row.connectionId === args.connectionId,
     );
-    const existing = [...neutral];
-    const existingIds = new Set(neutral.map((row) => row._id));
-    for (const row of legacy) {
-      if (!existingIds.has(row._id)) existing.push(row);
-    }
+    const existing = legacy;
     const byId = new Map<string, Doc<"calendars">>();
-    for (const row of neutral) {
-      if (row.providerCalendarId) byId.set(row.providerCalendarId, row);
-    }
     for (const row of legacy) {
-      if (!byId.has(row.googleCalendarId)) byId.set(row.googleCalendarId, row);
+      byId.set(row.providerCalendarId ?? row.googleCalendarId, row);
     }
     const seen = new Set(args.calendars.map((row) => row.id));
     const stored: {
@@ -1142,70 +1136,44 @@ export const cleanupRemovedCalendarEvents = defineMutation({
   handler: async (ctx, args): Promise<null> => {
     const connection = await ctx.db.get(args.connectionId);
     if (!connection) return null;
-    const neutralReadded = await ctx.db
+    const readded = await ctx.db
       .query("calendars")
-      .withIndex("by_connection_and_providerCalendarId", (q) =>
+      .withIndex("by_user_and_googleCalendarId", (q) =>
         q
-          .eq("connectionId", args.connectionId)
-          .eq("providerCalendarId", args.providerCalendarId),
+          .eq("userId", connection.userId)
+          .eq("googleCalendarId", args.providerCalendarId),
       )
       .first();
-    const legacyReadded = neutralReadded
-      ? null
-      : await ctx.db
-          .query("calendars")
-          .withIndex("by_user_and_googleCalendarId", (q) =>
-            q
-              .eq("userId", connection.userId)
-              .eq("googleCalendarId", args.providerCalendarId),
-          )
-          .first();
-    if (neutralReadded || legacyReadded) return null;
-    const neutralEvents = await ctx.db
-      .query("events")
-      .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
-        q
-          .eq("connectionId", args.connectionId)
-          .eq("localCalendarId", args.localCalendarId),
-      )
-      .take(BATCH_SIZE);
-    const legacyEvents = await ctx.db
+    if (readded) return null;
+    const events = await ctx.db
       .query("events")
       .withIndex("by_user_and_calendar_and_end", (q) =>
         q
           .eq("userId", connection.userId)
           .eq("calendarId", args.providerCalendarId),
       )
-      .filter((q) => q.eq(q.field("connectionId"), undefined))
       .take(BATCH_SIZE);
-    for (const row of [...neutralEvents, ...legacyEvents]) {
+    for (const row of events) {
+      if (row.connectionId !== undefined && row.connectionId !== args.connectionId)
+        continue;
       await ctx.db.delete(row._id);
     }
-    const neutralSeries = await ctx.db
-      .query("recurringSeries")
-      .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
-        q
-          .eq("connectionId", args.connectionId)
-          .eq("localCalendarId", args.localCalendarId),
-      )
-      .take(BATCH_SIZE);
-    const legacySeries = await ctx.db
+    const series = await ctx.db
       .query("recurringSeries")
       .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
         q
           .eq("userId", connection.userId)
           .eq("calendarId", args.providerCalendarId),
       )
-      .filter((q) => q.eq(q.field("connectionId"), undefined))
       .take(BATCH_SIZE);
-    for (const row of [...neutralSeries, ...legacySeries]) {
+    for (const row of series) {
+      if (row.connectionId !== undefined && row.connectionId !== args.connectionId)
+        continue;
       await ctx.db.delete(row._id);
     }
     if (
-      neutralEvents.length === BATCH_SIZE ||
-      legacyEvents.length === BATCH_SIZE ||
-      neutralSeries.length === BATCH_SIZE ||
-      legacySeries.length === BATCH_SIZE
+      events.length === BATCH_SIZE ||
+      series.length === BATCH_SIZE
     ) {
       await ctx.scheduler.runAfter(
         0,
@@ -1265,7 +1233,12 @@ export const beginCalendarFullResync = defineMutation({
     if (!(await liveState(ctx, args.connectionId, args.attemptId))) return null;
     const calendar = await ctx.db.get(args.localCalendarId);
     if (calendar?.connectionId !== args.connectionId) return null;
-    return (calendar.syncGeneration ?? 0) + 1;
+    const generation = (calendar.syncGeneration ?? 0) + 1;
+    await ctx.db.patch(calendar._id, {
+      syncGeneration: generation,
+      syncGenerationAttemptId: args.attemptId,
+    });
+    return generation;
   },
 });
 
@@ -1281,39 +1254,30 @@ export const upsertEventsPage = defineMutation({
     const state = await liveState(ctx, args.connectionId, args.attemptId);
     const calendar = await ctx.db.get(args.localCalendarId);
     if (!state || calendar?.connectionId !== args.connectionId) return false;
+    if (
+      args.syncGeneration !== undefined &&
+      (calendar.syncGeneration !== args.syncGeneration ||
+        calendar.syncGenerationAttemptId !== args.attemptId)
+    ) return false;
     const harvested: PersonInput[] = [];
     for (const event of args.events) {
       if (event.calendarId !== calendar.providerCalendarId) return false;
-      const existing = await ctx.db
+      const candidates = await ctx.db
         .query("events")
-        .withIndex(
-          "by_connection_and_localCalendarId_and_providerEventId",
-          (q) =>
-            q
-              .eq("connectionId", args.connectionId)
-              .eq("localCalendarId", args.localCalendarId)
-              .eq("providerEventId", event.id),
+        .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+          q
+            .eq("userId", state.userId)
+            .eq("calendarId", calendar.googleCalendarId)
+            .eq("googleEventId", event.id),
         )
-        .unique();
-      const legacyCandidates = existing
-        ? null
-        : await ctx.db
-            .query("events")
-            .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-              q
-                .eq("userId", state.userId)
-                .eq("calendarId", calendar.googleCalendarId)
-                .eq("googleEventId", event.id),
-            )
-            .collect();
-      const legacyExisting = legacyCandidates?.find(
+        .collect();
+      const current = candidates.find(
         (row) =>
           (row.connectionId === undefined ||
             row.connectionId === args.connectionId) &&
           (row.localCalendarId === undefined ||
             row.localCalendarId === args.localCalendarId),
       );
-      const current = existing ?? legacyExisting;
       if (event.status === "cancelled") {
         // A full pass swaps generations only after every page is durable. Leave
         // the old row visible until the final sweep; incremental tombstones can
@@ -1355,6 +1319,10 @@ export const sweepStaleCalendarEventsBatch = defineMutation({
     if (!calendar || calendar.connectionId !== args.connectionId) {
       throw new StaleSyncAttemptError();
     }
+    if (
+      calendar.syncGeneration !== args.keepGeneration ||
+      calendar.syncGenerationAttemptId !== args.attemptId
+    ) throw new StaleSyncAttemptError();
     const page = await ctx.db
       .query("events")
       .withIndex("by_user_and_calendar_and_end", (q) =>
@@ -1389,9 +1357,13 @@ export const commitCalendarFullResync = defineMutation({
   handler: async (ctx, args): Promise<boolean> => {
     if (!(await liveState(ctx, args.connectionId, args.attemptId))) return false;
     const row = await ctx.db.get(args.localCalendarId);
-    if (row?.connectionId !== args.connectionId) return false;
+    if (
+      row?.connectionId !== args.connectionId ||
+      row.syncGeneration !== args.syncGeneration ||
+      row.syncGenerationAttemptId !== args.attemptId
+    ) return false;
     await ctx.db.patch(row._id, {
-      syncGeneration: args.syncGeneration,
+      syncGenerationAttemptId: undefined,
       syncCursor: args.syncCursor,
       syncToken: args.syncCursor,
       lastSyncAt: Date.now(),
@@ -1428,24 +1400,15 @@ export const claimSharedCalendarSync = defineMutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    const neutral = await ctx.db
+    if (args.provider !== "google") {
+      throw new Error("Provider sync requires neutral index activation");
+    }
+    const row = await ctx.db
       .query("sharedCalendars")
-      .withIndex("by_provider_and_providerCalendarId", (q) =>
-        q
-          .eq("provider", args.provider)
-          .eq("providerCalendarId", args.providerCalendarId),
+      .withIndex("by_googleCalendarId", (q) =>
+        q.eq("googleCalendarId", args.providerCalendarId),
       )
-      .unique();
-    const legacy =
-      neutral || args.provider !== "google"
-        ? null
-        : await ctx.db
-            .query("sharedCalendars")
-            .withIndex("by_googleCalendarId", (q) =>
-              q.eq("googleCalendarId", args.providerCalendarId),
-            )
-            .first();
-    const row = neutral ?? legacy;
+      .first();
     if (
       row &&
       (((row.syncLeaseExpiresAt ?? 0) > now && row.syncAttemptId) ||
@@ -1465,7 +1428,6 @@ export const claimSharedCalendarSync = defineMutation({
       return {
         attemptId,
         syncCursor: row.syncCursor ?? row.syncToken,
-        generation: (row.syncGeneration ?? 0) + 1,
       };
     }
     await ctx.db.insert("sharedCalendars", {
@@ -1475,7 +1437,30 @@ export const claimSharedCalendarSync = defineMutation({
       syncAttemptId: attemptId,
       syncLeaseExpiresAt: now + SHARED_LEASE_MS,
     });
-    return { attemptId, generation: 1 };
+    return { attemptId };
+  },
+});
+
+export const beginSharedFullResync = defineMutation({
+  args: {
+    provider: providerValidator,
+    providerCalendarId: v.string(),
+    attemptId: v.string(),
+  },
+  handler: async (ctx, args): Promise<number | null> => {
+    const row = await sharedLease(
+      ctx,
+      args.provider,
+      args.providerCalendarId,
+      args.attemptId,
+    );
+    if (!row) return null;
+    const generation = (row.syncGeneration ?? 0) + 1;
+    await ctx.db.patch(row._id, {
+      syncGeneration: generation,
+      syncGenerationAttemptId: args.attemptId,
+    });
+    return generation;
   },
 });
 
@@ -1485,13 +1470,16 @@ async function sharedLease(
   providerCalendarId: string,
   attemptId: string,
 ) {
+  if (provider !== "google") return null;
   const row = await ctx.db
     .query("sharedCalendars")
-    .withIndex("by_provider_and_providerCalendarId", (q) =>
-      q.eq("provider", provider).eq("providerCalendarId", providerCalendarId),
+    .withIndex("by_googleCalendarId", (q) =>
+      q.eq("googleCalendarId", providerCalendarId),
     )
-    .unique();
+    .first();
   return row?.syncAttemptId === attemptId &&
+    (row.provider ?? "google") === provider &&
+    (row.providerCalendarId ?? row.googleCalendarId) === providerCalendarId &&
     (row.syncLeaseExpiresAt ?? 0) > Date.now()
     ? row
     : null;
@@ -1550,42 +1538,32 @@ export const upsertSharedEventsPage = defineMutation({
     syncGeneration: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<boolean> => {
+    const lease = await sharedLease(
+      ctx,
+      args.provider,
+      args.providerCalendarId,
+      args.attemptId,
+    );
+    if (!lease) return false;
     if (
-      !(await sharedLease(
-        ctx,
-        args.provider,
-        args.providerCalendarId,
-        args.attemptId,
-      ))
+      args.syncGeneration !== undefined &&
+      (lease.syncGeneration !== args.syncGeneration ||
+        lease.syncGenerationAttemptId !== args.attemptId)
     ) return false;
     for (const event of args.events) {
-      const existing = await ctx.db
+      const candidates = await ctx.db
         .query("sharedEvents")
-        .withIndex(
-          "by_provider_and_providerCalendarId_and_providerEventId",
-          (q) =>
-            q
-              .eq("provider", args.provider)
-              .eq("providerCalendarId", args.providerCalendarId)
-              .eq("providerEventId", event.id),
+        .withIndex("by_calendar_and_googleEventId", (q) =>
+          q
+            .eq("calendarId", args.providerCalendarId)
+            .eq("googleEventId", event.id),
         )
-        .unique();
-      const legacyCandidates = existing
-        ? null
-        : await ctx.db
-            .query("sharedEvents")
-            .withIndex("by_calendar_and_googleEventId", (q) =>
-              q
-                .eq("calendarId", args.providerCalendarId)
-                .eq("googleEventId", event.id),
-            )
-            .collect();
-      const legacyExisting = legacyCandidates?.find(
+        .collect();
+      const current = candidates.find(
         (row) =>
           (row.provider ?? "google") === args.provider &&
           (row.providerCalendarId ?? row.calendarId) === args.providerCalendarId,
       );
-      const current = existing ?? legacyExisting;
       if (event.status === "cancelled") {
         if (current && args.syncGeneration === undefined) {
           await ctx.db.delete(current._id);
@@ -1655,13 +1633,16 @@ export const sweepStaleSharedEventsBatch = defineMutation({
     cursor: v.union(v.string(), v.null()),
   },
   handler: async (ctx, args) => {
+    const lease = await sharedLease(
+      ctx,
+      args.provider,
+      args.providerCalendarId,
+      args.attemptId,
+    );
     if (
-      !(await sharedLease(
-        ctx,
-        args.provider,
-        args.providerCalendarId,
-        args.attemptId,
-      ))
+      !lease ||
+      lease.syncGeneration !== args.keepGeneration ||
+      lease.syncGenerationAttemptId !== args.attemptId
     ) throw new StaleSyncAttemptError();
     const page = await ctx.db
       .query("sharedEvents")
@@ -1700,10 +1681,19 @@ export const commitSharedCalendarSync = defineMutation({
       args.attemptId,
     );
     if (!row) return false;
+    if (
+      args.syncGeneration !== undefined &&
+      (row.syncGeneration !== args.syncGeneration ||
+        row.syncGenerationAttemptId !== args.attemptId)
+    ) return false;
     await ctx.db.patch(row._id, {
       syncCursor: args.syncCursor,
       syncToken: args.syncCursor,
       syncGeneration: args.syncGeneration ?? row.syncGeneration,
+      syncGenerationAttemptId:
+        args.syncGeneration === undefined
+          ? row.syncGenerationAttemptId
+          : undefined,
       lastSyncAt: Date.now(),
       syncAttemptId: undefined,
       syncLeaseExpiresAt: undefined,
@@ -1721,11 +1711,31 @@ export const beginContactsFullResync = defineMutation({
   handler: async (ctx, args): Promise<number | null> => {
     const state = await liveState(ctx, args.connectionId, args.attemptId);
     if (!state) return null;
-    return (
+    const generation = (
       (args.feed === "contacts"
         ? state.contactsGeneration
         : state.otherContactsGeneration) ?? 0
     ) + 1;
+    await ctx.db.patch(
+      state._id,
+      args.feed === "contacts"
+        ? {
+            contactsGeneration: generation,
+            contactsGenerationAttemptId: args.attemptId,
+          }
+        : {
+            otherContactsGeneration: generation,
+            otherContactsGenerationAttemptId: args.attemptId,
+          },
+    );
+    await mirrorLegacySyncState(
+      ctx,
+      state.userId,
+      args.feed === "contacts"
+        ? { contactsSyncGeneration: generation }
+        : { otherContactsSyncGeneration: generation },
+    );
+    return generation;
   },
 });
 
@@ -1740,19 +1750,20 @@ export const upsertContactsPage = defineMutation({
   handler: async (ctx, args): Promise<boolean> => {
     const state = await liveState(ctx, args.connectionId, args.attemptId);
     if (!state) return false;
+    if (
+      args.syncGeneration !== undefined &&
+      (args.feed === "contacts"
+        ? state.contactsGeneration !== args.syncGeneration ||
+          state.contactsGenerationAttemptId !== args.attemptId
+        : state.otherContactsGeneration !== args.syncGeneration ||
+          state.otherContactsGenerationAttemptId !== args.attemptId)
+    ) return false;
     const source = args.feed === "contacts" ? "connection" : "other";
     const people: PersonInput[] = [];
     for (const contact of args.contacts as ProviderContact[]) {
       const neutralRow =
         args.feed === "contacts"
-          ? await ctx.db
-              .query("contacts")
-              .withIndex("by_connection_and_providerContactId", (q) =>
-                q
-                  .eq("connectionId", args.connectionId)
-                  .eq("providerContactId", contact.id),
-              )
-              .unique()
+          ? null
           : await ctx.db
               .query("otherContactSources")
               .withIndex("by_connection_and_providerContactId", (q) =>
@@ -1762,7 +1773,7 @@ export const upsertContactsPage = defineMutation({
               )
               .unique();
       const legacyContacts =
-        args.feed === "contacts" && !neutralRow
+        args.feed === "contacts"
           ? await ctx.db
               .query("contacts")
               .withIndex("by_user_and_resourceName", (q) =>
@@ -1867,6 +1878,13 @@ export const sweepStaleContactsBatch = defineMutation({
   handler: async (ctx, args) => {
     const state = await liveState(ctx, args.connectionId, args.attemptId);
     if (!state) throw new StaleSyncAttemptError();
+    if (
+      args.feed === "contacts"
+        ? state.contactsGeneration !== args.keepGeneration ||
+          state.contactsGenerationAttemptId !== args.attemptId
+        : state.otherContactsGeneration !== args.keepGeneration ||
+          state.otherContactsGenerationAttemptId !== args.attemptId
+    ) throw new StaleSyncAttemptError();
     const page =
       args.feed === "contacts"
         ? await ctx.db
@@ -1915,6 +1933,9 @@ export const sweepLegacyOtherPeopleBatch = defineMutation({
   handler: async (ctx, args) => {
     const state = await liveState(ctx, args.connectionId, args.attemptId);
     if (!state) throw new StaleSyncAttemptError();
+    if (state.otherContactsGenerationAttemptId !== args.attemptId) {
+      throw new StaleSyncAttemptError();
+    }
     const page = await ctx.db
       .query("people")
       .withIndex("by_user", (q) => q.eq("userId", state.userId))
@@ -1958,6 +1979,14 @@ export const commitContactsSync = defineMutation({
   handler: async (ctx, args): Promise<boolean> => {
     const state = await liveState(ctx, args.connectionId, args.attemptId);
     if (!state) return false;
+    if (
+      args.syncGeneration !== undefined &&
+      (args.feed === "contacts"
+        ? state.contactsGeneration !== args.syncGeneration ||
+          state.contactsGenerationAttemptId !== args.attemptId
+        : state.otherContactsGeneration !== args.syncGeneration ||
+          state.otherContactsGenerationAttemptId !== args.attemptId)
+    ) return false;
     const now = Date.now();
     const patch =
       args.feed === "contacts"
@@ -1965,12 +1994,24 @@ export const commitContactsSync = defineMutation({
             contactsCursor: args.syncCursor,
             contactsGeneration:
               args.syncGeneration ?? state.contactsGeneration,
+            contactsGenerationAttemptId:
+              args.syncGeneration === undefined
+                ? state.contactsGenerationAttemptId
+                : undefined,
             contactsLastSyncedAt: now,
           }
         : {
             otherContactsCursor: args.syncCursor,
             otherContactsGeneration:
               args.syncGeneration ?? state.otherContactsGeneration,
+            otherContactsGenerationAttemptId:
+              args.syncGeneration === undefined
+                ? state.otherContactsGenerationAttemptId
+                : undefined,
+            otherContactsBackfillRequired:
+              args.syncGeneration === undefined
+                ? state.otherContactsBackfillRequired
+                : false,
             otherContactsLastSyncedAt: now,
           };
     await ctx.db.patch(state._id, patch);

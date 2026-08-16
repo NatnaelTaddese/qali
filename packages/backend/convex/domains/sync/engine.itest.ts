@@ -200,8 +200,8 @@ describe("connection-scoped fake-provider sync", () => {
       await t.run((ctx) =>
         ctx.db
           .query("events")
-          .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
-            q.eq("connectionId", connectionId).eq("localCalendarId", calendarId),
+          .withIndex("by_user_and_calendar_and_end", (q) =>
+            q.eq("userId", userId).eq("calendarId", "calendar"),
           )
           .collect(),
       ),
@@ -237,7 +237,7 @@ describe("connection-scoped fake-provider sync", () => {
     const adapter = new FakeCalendarAdapter([
       {
         items: [
-          event("new"),
+          event("abandoned"),
           { ...event("old"), status: "cancelled" },
         ],
         nextPageCursor: "next" as PageCursor,
@@ -258,27 +258,37 @@ describe("connection-scoped fake-provider sync", () => {
       (
         await ctx.db
           .query("events")
-          .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
-            q.eq("connectionId", connectionId).eq("localCalendarId", calendarId),
+          .withIndex("by_user_and_calendar_and_end", (q) =>
+            q.eq("userId", userId).eq("calendarId", "calendar"),
           )
           .collect()
       ).map((row) => row.providerEventId).sort(),
     );
-    expect(ids).toEqual(["new", "old"]);
+    expect(ids).toEqual(["abandoned", "old"]);
     expect((await t.run((ctx) => ctx.db.get(calendarId)))?.syncCursor).toBeUndefined();
 
+    await t.run(async (ctx) => {
+      const state = await ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
+        .unique();
+      await ctx.db.patch(state!._id, { syncLeaseExpiresAt: Date.now() - 1 });
+    });
+    const nextAttemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+      connectionId,
+    });
     await syncOneConnectionCalendar(
       testActionCtx(t),
       new FakeCalendarAdapter([
         {
-          items: [event("new")],
+          items: [event("fresh")],
           nextPageCursor: null,
           commitCursor: "snapshot-complete" as SyncCursor,
         },
       ]),
       {
         connectionId,
-        attemptId: attemptId!,
+        attemptId: nextAttemptId!,
         localCalendarId: calendarId,
         providerCalendarId: "calendar",
       },
@@ -288,17 +298,14 @@ describe("connection-scoped fake-provider sync", () => {
         (
           await ctx.db
             .query("events")
-            .withIndex(
-              "by_connection_and_localCalendarId_and_providerEventId",
-              (q) =>
-                q
-                  .eq("connectionId", connectionId)
-                  .eq("localCalendarId", calendarId),
+            .withIndex("by_user_and_calendar_and_end", (q) =>
+              q.eq("userId", userId).eq("calendarId", "calendar"),
             )
             .collect()
         ).map((row) => row.providerEventId),
       ),
-    ).toEqual(["new"]);
+    ).toEqual(["fresh"]);
+    expect((await t.run((ctx) => ctx.db.get(calendarId)))?.syncGeneration).toBe(3);
   });
 
   test("falls back to a bounded full pass when the committed cursor expires", async () => {
@@ -665,6 +672,81 @@ describe("connection-aware contact ownership", () => {
     expect(person?.sources).toContain("other");
   });
 
+  test("new contact-feed attempts reserve new generations and sweep abandoned rows", async () => {
+    for (const feed of ["contacts", "other"] as const) {
+      const t = convexTest(schema, modules);
+      const userId = `crash-${feed}`;
+      const connectionId = await setupConnection(t, userId, "google");
+      const first = await t.mutation(internal.calendarSync.claimSyncLease, {
+        connectionId,
+      });
+      const firstGeneration = await t.mutation(
+        internal.calendarSync.beginContactsFullResync,
+        { connectionId, attemptId: first!, feed },
+      );
+      await t.mutation(internal.calendarSync.upsertContactsPage, {
+        connectionId,
+        attemptId: first!,
+        feed,
+        syncGeneration: firstGeneration!,
+        contacts: [
+          {
+            id: "abandoned",
+            deleted: false,
+            emails: [`abandoned-${feed}@example.com`],
+            phones: [],
+          },
+        ],
+      });
+      await t.run(async (ctx) => {
+        const state = await ctx.db
+          .query("connectionSyncState")
+          .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
+          .unique();
+        await ctx.db.patch(state!._id, { syncLeaseExpiresAt: Date.now() - 1 });
+      });
+      const second = await t.mutation(internal.calendarSync.claimSyncLease, {
+        connectionId,
+      });
+      const secondGeneration = await t.mutation(
+        internal.calendarSync.beginContactsFullResync,
+        { connectionId, attemptId: second!, feed },
+      );
+      expect(secondGeneration).toBe(firstGeneration! + 1);
+      await t.mutation(internal.calendarSync.upsertContactsPage, {
+        connectionId,
+        attemptId: second!,
+        feed,
+        syncGeneration: secondGeneration!,
+        contacts: [
+          {
+            id: "current",
+            deleted: false,
+            emails: [`current-${feed}@example.com`],
+            phones: [],
+          },
+        ],
+      });
+      await t.mutation(internal.calendarSync.sweepStaleContactsBatch, {
+        connectionId,
+        attemptId: second!,
+        feed,
+        keepGeneration: secondGeneration!,
+        cursor: null,
+      });
+      const rows = await t.run(async (ctx) =>
+        feed === "contacts"
+          ? await ctx.db.query("contacts").collect()
+          : await ctx.db.query("otherContactSources").collect(),
+      );
+      expect(rows.map((row) => row.providerContactId)).toEqual(["current"]);
+      const claims = await t.run((ctx) =>
+        ctx.db.query("personSourceClaims").collect(),
+      );
+      expect(claims.map((row) => row.providerContactId)).toEqual(["current"]);
+    }
+  });
+
   test("repairs a legacy saved contact and cleans legacy-only Other Contacts", async () => {
     const t = convexTest(schema, modules);
     const userId = "legacy-contact-user";
@@ -698,6 +780,11 @@ describe("connection-aware contact ownership", () => {
           phones: [],
         },
       ],
+    });
+    await t.mutation(internal.calendarSync.beginContactsFullResync, {
+      connectionId,
+      attemptId: attemptId!,
+      feed: "other",
     });
     await t.mutation(internal.calendarSync.sweepLegacyOtherPeopleBatch, {
       connectionId,
@@ -764,7 +851,7 @@ describe("shared generation and engagement maintenance", () => {
         allDay: false,
         status: "confirmed",
         googleUpdatedMs: 1_000,
-        provider: "microsoft",
+        provider: "google",
         providerCalendarId: "holiday",
         providerEventId: "old",
         providerUpdatedMs: 1_000,
@@ -782,7 +869,7 @@ describe("shared generation and engagement maintenance", () => {
     await syncSharedCalendar(
       testActionCtx(t),
       adapter,
-      "microsoft",
+      "google",
       "holiday",
     );
     const rows = await t.run((ctx) => ctx.db.query("sharedEvents").collect());
@@ -790,6 +877,25 @@ describe("shared generation and engagement maintenance", () => {
     const state = await t.run((ctx) => ctx.db.query("sharedCalendars").unique());
     expect(state?.syncAttemptId).toBeUndefined();
     expect(state?.lastSyncAt).toBeUndefined();
+
+    await syncSharedCalendar(
+      testActionCtx(t),
+      new FakeCalendarAdapter([
+        {
+          items: [event("fresh", "holiday")],
+          nextPageCursor: null,
+          commitCursor: "fresh-shared" as SyncCursor,
+        },
+      ]),
+      "google",
+      "holiday",
+    );
+    const refreshed = await t.run((ctx) => ctx.db.query("sharedEvents").collect());
+    expect(refreshed.map((row) => row.providerEventId)).toEqual(["fresh"]);
+    expect(
+      (await t.run((ctx) => ctx.db.query("sharedCalendars").unique()))
+        ?.syncGeneration,
+    ).toBe(2);
   });
 
   test("engagement application resets people absent from the latest aggregate", async () => {

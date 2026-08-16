@@ -396,22 +396,7 @@ export async function upsertEventHandler(
         ? undefined
         : args.event.transparency !== "transparent",
   };
-  const neutral = localCalendar
-    ? await ctx.db
-        .query("events")
-        .withIndex(
-          "by_connection_and_localCalendarId_and_providerEventId",
-          (q) =>
-            q
-              .eq("connectionId", connectionId)
-              .eq("localCalendarId", localCalendar._id)
-              .eq("providerEventId", args.event.googleEventId),
-        )
-        .unique()
-    : null;
-  const legacyCandidates = neutral
-    ? []
-    : await ctx.db
+  const legacyCandidates = await ctx.db
       .query("events")
       .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
         q
@@ -420,9 +405,7 @@ export async function upsertEventHandler(
           .eq("googleEventId", args.event.googleEventId),
       )
       .collect();
-  const existing =
-    neutral ??
-    legacyCandidates.find(
+  const existing = legacyCandidates.find(
       (row) =>
         (row.connectionId === undefined || row.connectionId === connectionId) &&
         (row.localCalendarId === undefined ||
@@ -516,20 +499,7 @@ export async function mirrorProviderEventHandler(
     color: event.color,
     busy: event.busy,
   };
-  const neutral = await ctx.db
-    .query("events")
-    .withIndex(
-      "by_connection_and_localCalendarId_and_providerEventId",
-      (q) =>
-        q
-          .eq("connectionId", connection._id)
-          .eq("localCalendarId", calendar._id)
-          .eq("providerEventId", event.id),
-    )
-    .unique();
-  const legacyCandidates = neutral
-    ? []
-    : await ctx.db
+  const legacyCandidates = await ctx.db
       .query("events")
       .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
         q
@@ -538,9 +508,7 @@ export async function mirrorProviderEventHandler(
           .eq("googleEventId", event.id),
       )
       .collect();
-  const existing =
-    neutral ??
-    legacyCandidates.find(
+  const existing = legacyCandidates.find(
       (row) =>
         (row.connectionId === undefined ||
           row.connectionId === connection._id) &&
@@ -612,20 +580,7 @@ export async function upsertProviderRecurringSeriesHandler(
   ) {
     throw new Error("Recurring series target is invalid");
   }
-  const neutral = await ctx.db
-    .query("recurringSeries")
-    .withIndex(
-      "by_connection_and_localCalendarId_and_providerEventId",
-      (q) =>
-        q
-          .eq("connectionId", args.connectionId)
-          .eq("localCalendarId", args.localCalendarId)
-          .eq("providerEventId", args.providerEventId),
-    )
-    .unique();
-  const legacyCandidates = neutral
-    ? []
-    : await ctx.db
+  const legacyCandidates = await ctx.db
       .query("recurringSeries")
       .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
         q
@@ -634,9 +589,7 @@ export async function upsertProviderRecurringSeriesHandler(
           .eq("googleEventId", args.providerEventId),
       )
       .collect();
-  const existing =
-    neutral ??
-    legacyCandidates.find(
+  const existing = legacyCandidates.find(
       (row) =>
         (row.connectionId === undefined ||
           row.connectionId === args.connectionId) &&
@@ -696,22 +649,7 @@ export async function upsertRecurringSeriesHandler(
       q.eq("userId", args.userId).eq("googleCalendarId", args.calendarId),
     )
     .unique();
-  const neutral = localCalendar
-    ? await ctx.db
-        .query("recurringSeries")
-        .withIndex(
-          "by_connection_and_localCalendarId_and_providerEventId",
-          (q) =>
-            q
-              .eq("connectionId", connectionId)
-              .eq("localCalendarId", localCalendar._id)
-              .eq("providerEventId", args.googleEventId),
-        )
-        .unique()
-    : null;
-  const legacyCandidates = neutral
-    ? []
-    : await ctx.db
+  const legacyCandidates = await ctx.db
       .query("recurringSeries")
       .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
         q
@@ -720,9 +658,7 @@ export async function upsertRecurringSeriesHandler(
           .eq("googleEventId", args.googleEventId),
       )
       .collect();
-  const existing =
-    neutral ??
-    legacyCandidates.find(
+  const existing = legacyCandidates.find(
       (row) =>
         (row.connectionId === undefined || row.connectionId === connectionId) &&
         (row.localCalendarId === undefined ||

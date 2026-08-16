@@ -231,31 +231,15 @@ export async function getEventRecurrenceHandler(
   }
   const recurringEventId = event.recurringEventId;
 
-  const neutralSeries =
-    event.connectionId && event.localCalendarId
-      ? await ctx.db
-          .query("recurringSeries")
-          .withIndex(
-            "by_connection_and_localCalendarId_and_providerEventId",
-            (q) =>
-              q
-                .eq("connectionId", event.connectionId)
-                .eq("localCalendarId", event.localCalendarId)
-                .eq("providerEventId", event.providerSeriesId ?? recurringEventId),
-          )
-          .unique()
-      : null;
-  const series =
-    neutralSeries ??
-    (await ctx.db
-      .query("recurringSeries")
-      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-        q
-          .eq("userId", user._id)
-          .eq("calendarId", event.calendarId)
-          .eq("googleEventId", recurringEventId),
-      )
-      .unique());
+  const series = await ctx.db
+    .query("recurringSeries")
+    .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+      q
+        .eq("userId", user._id)
+        .eq("calendarId", event.calendarId)
+        .eq("googleEventId", recurringEventId),
+    )
+    .unique();
   return series && series.sourceUpdatedMs >= event.googleUpdatedMs
     ? series.recurrence
     : null;

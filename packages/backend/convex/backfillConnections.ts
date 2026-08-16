@@ -68,6 +68,7 @@ const userPhaseValidator = v.union(
   v.literal("bookingPages"),
   v.literal("bookings"),
   v.literal("contacts"),
+  v.literal("people"),
 );
 type UserPhase =
   | "calendars"
@@ -75,7 +76,8 @@ type UserPhase =
   | "recurringSeries"
   | "bookingPages"
   | "bookings"
-  | "contacts";
+  | "contacts"
+  | "people";
 const USER_PHASES: UserPhase[] = [
   "calendars",
   "events",
@@ -83,6 +85,7 @@ const USER_PHASES: UserPhase[] = [
   "bookingPages",
   "bookings",
   "contacts",
+  "people",
 ];
 
 type DiscoveryPage = {
@@ -226,9 +229,48 @@ async function repairConnectionSyncState(
     .query("connectionSyncState")
     .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
     .unique();
-  const value = { userId, ...connectionSyncFields(legacy) };
-  if (row) await ctx.db.patch(row._id, value);
-  else await ctx.db.insert("connectionSyncState", { connectionId, ...value });
+  const fields = connectionSyncFields(legacy);
+  if (row) {
+    // A backfill read can be stale relative to a heartbeat. Never copy a legacy
+    // lease over an operational neutral attempt; the transaction retry also
+    // protects a heartbeat that races this check.
+    if (row.syncAttemptId && (row.syncLeaseExpiresAt ?? 0) > Date.now()) return;
+    const forceOtherFullSync =
+      row.otherContactsBackfillRequired !== false &&
+      (row.otherContactsBackfillRequired === true ||
+        legacy?.otherContactsSyncToken !== undefined ||
+        legacy?.otherContactsSyncGeneration !== undefined ||
+        legacy?.lastOtherContactsSyncAt !== undefined);
+    const patch = {
+      userId,
+      contactsCursor: row.contactsCursor ?? fields.contactsCursor,
+      otherContactsCursor: forceOtherFullSync
+        ? undefined
+        : row.otherContactsCursor ?? fields.otherContactsCursor,
+      contactsLastSyncedAt:
+        row.contactsLastSyncedAt ?? fields.contactsLastSyncedAt,
+      otherContactsLastSyncedAt:
+        row.otherContactsLastSyncedAt ?? fields.otherContactsLastSyncedAt,
+      contactsGeneration: row.contactsGeneration ?? fields.contactsGeneration,
+      otherContactsGeneration:
+        row.otherContactsGeneration ?? fields.otherContactsGeneration,
+      nextSyncDueAt: row.nextSyncDueAt ?? fields.nextSyncDueAt,
+      syncIntervalMs: row.syncIntervalMs ?? fields.syncIntervalMs,
+      otherContactsBackfillRequired: forceOtherFullSync
+        ? true
+        : row.otherContactsBackfillRequired,
+    };
+    await ctx.db.patch(row._id, patch);
+    if (forceOtherFullSync && legacy?.otherContactsSyncToken !== undefined) {
+      await ctx.db.patch(legacy._id, { otherContactsSyncToken: undefined });
+    }
+  } else {
+    await ctx.db.insert("connectionSyncState", {
+      connectionId,
+      userId,
+      ...fields,
+    });
+  }
   const userState = await ctx.db
     .query("userSyncState")
     .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -341,6 +383,40 @@ async function repairBookingOperation(
 
 type ProcessedPage = { isDone: boolean; continueCursor: string };
 
+async function backfillContactClaim(
+  ctx: MutationCtx,
+  contact: Doc<"contacts">,
+  connectionId: Id<"calendarConnections">,
+  emailValue: string,
+): Promise<void> {
+  const email = emailValue.trim().toLowerCase();
+  if (!email) return;
+  const providerContactId = contact.providerContactId ?? contact.resourceName;
+  const candidates = await ctx.db
+    .query("personSourceClaims")
+    .withIndex("by_connection_and_source_and_email", (q) =>
+      q
+        .eq("connectionId", connectionId)
+        .eq("source", "connection")
+        .eq("email", email),
+    )
+    .collect();
+  const exact =
+    candidates.find((claim) => claim.providerContactId === providerContactId) ??
+    candidates.find((claim) => claim.providerContactId === undefined);
+  const value = {
+    userId: contact.userId,
+    connectionId,
+    source: "connection" as const,
+    providerContactId,
+    email,
+    syncGeneration: contact.syncGeneration,
+    updatedAt: Date.now(),
+  };
+  if (exact) await ctx.db.patch(exact._id, value);
+  else await ctx.db.insert("personSourceClaims", value);
+}
+
 async function processUserPage(
   ctx: MutationCtx,
   args: {
@@ -450,6 +526,64 @@ async function processUserPage(
     }
     return page;
   }
+  if (args.phase === "people") {
+    const page = await ctx.db
+      .query("people")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .paginate({ cursor: args.cursor, numItems: ROW_BATCH });
+    let missingOtherMaterialization = false;
+    for (const person of page.page) {
+      if (!person.sources.includes("other")) continue;
+      const claims = await ctx.db
+        .query("personSourceClaims")
+        .withIndex("by_user_and_email_and_source", (q) =>
+          q
+            .eq("userId", args.userId)
+            .eq("email", person.email)
+            .eq("source", "other"),
+        )
+        .collect();
+      let materialized = false;
+      for (const claim of claims) {
+        if (!claim.providerContactId) continue;
+        const source = await ctx.db
+          .query("otherContactSources")
+          .withIndex("by_connection_and_providerContactId", (q) =>
+            q
+              .eq("connectionId", claim.connectionId)
+              .eq("providerContactId", claim.providerContactId!),
+          )
+          .unique();
+        if (source?.emails.includes(person.email)) {
+          materialized = true;
+          break;
+        }
+      }
+      if (!materialized) missingOtherMaterialization = true;
+    }
+    if (missingOtherMaterialization) {
+      const state = await ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_connection", (q) => q.eq("connectionId", args.connectionId))
+        .unique();
+      const live =
+        state?.syncAttemptId && (state.syncLeaseExpiresAt ?? 0) > Date.now();
+      if (state && !live) {
+        await ctx.db.patch(state._id, {
+          otherContactsCursor: undefined,
+          otherContactsBackfillRequired: true,
+        });
+        const legacy = await ctx.db
+          .query("syncState")
+          .withIndex("by_user", (q) => q.eq("userId", args.userId))
+          .unique();
+        if (legacy) {
+          await ctx.db.patch(legacy._id, { otherContactsSyncToken: undefined });
+        }
+      }
+    }
+    return page;
+  }
   const page = await ctx.db
     .query("contacts")
     .withIndex("by_user", (q) => q.eq("userId", args.userId))
@@ -460,6 +594,36 @@ async function processUserPage(
       providerContactId: row.resourceName,
       providerVersion: row.googleEtag,
     });
+    for (const email of row.emails) {
+      await backfillContactClaim(ctx, row, args.connectionId, email);
+      const normalized = email.trim().toLowerCase();
+      if (!normalized) continue;
+      const person = await ctx.db
+        .query("people")
+        .withIndex("by_user_and_email", (q) =>
+          q.eq("userId", args.userId).eq("email", normalized),
+        )
+        .unique();
+      if (person) {
+        await ctx.db.patch(person._id, {
+          displayName: row.displayName ?? person.displayName,
+          photoUrl: row.photoUrl ?? person.photoUrl,
+          sources: person.sources.includes("connection")
+            ? person.sources
+            : [...person.sources, "connection"],
+          updatedAt: Date.now(),
+        });
+      } else {
+        await ctx.db.insert("people", {
+          userId: args.userId,
+          email: normalized,
+          displayName: row.displayName,
+          photoUrl: row.photoUrl,
+          sources: ["connection"],
+          updatedAt: Date.now(),
+        });
+      }
+    }
   }
   return page;
 }
@@ -721,12 +885,14 @@ async function verifyPage(
       .paginate({ cursor, numItems });
     for (const row of page.page) {
       const connection = await ctx.db.get(row.connectionId);
-      add(
-        row._id,
-        !connection || connection.userId !== row.userId
-          ? ["connectionOwner"]
-          : [],
-      );
+      const reasons: string[] = [];
+      if (!connection || connection.userId !== row.userId) {
+        reasons.push("connectionOwner");
+      }
+      if (row.otherContactsBackfillRequired) {
+        reasons.push("otherContactsFullSyncRequired");
+      }
+      add(row._id, reasons);
     }
     return finish(page);
   }
@@ -854,6 +1020,31 @@ async function verifyPage(
       if (row.providerContactId !== row.resourceName)
         reasons.push("providerContactId");
       if (row.providerVersion !== row.googleEtag) reasons.push("providerVersion");
+      if (connections[0]) {
+        for (const emailValue of new Set(row.emails)) {
+          const email = emailValue.trim().toLowerCase();
+          if (!email) continue;
+          const claims = await ctx.db
+            .query("personSourceClaims")
+            .withIndex("by_connection_and_source_and_email", (q) =>
+              q
+                .eq("connectionId", connections[0]!._id)
+                .eq("source", "connection")
+                .eq("email", email),
+            )
+            .collect();
+          const exact = claims.filter(
+            (claim) => claim.providerContactId === row.resourceName,
+          );
+          if (exact.length !== 1) reasons.push(`claim:${email}`);
+          else if (exact[0]!.syncGeneration !== row.syncGeneration) {
+            reasons.push(`claimGeneration:${email}`);
+          }
+          if (claims.some((claim) => claim.providerContactId === undefined)) {
+            reasons.push(`claimIdentity:${email}`);
+          }
+        }
+      }
       add(row._id, reasons);
     }
     return finish(page);
@@ -925,12 +1116,74 @@ async function verifyPage(
     }
     return finish(page);
   }
-  // people carries no provider row identity; this phase still proves discovery
-  // created exactly one Google connection for people-only users.
   const page = await ctx.db.query("people").paginate({ cursor, numItems });
   for (const row of page.page) {
     const connections = await googleConnection(ctx, row.userId);
-    add(row._id, connections.length === 1 ? [] : ["googleConnectionCount"]);
+    const reasons: string[] = [];
+    if (connections.length !== 1) reasons.push("googleConnectionCount");
+    const connection = connections[0];
+    if (connection) {
+      const state = await ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_connection", (q) => q.eq("connectionId", connection._id))
+        .unique();
+      for (const source of ["connection", "other"] as const) {
+        if (!row.sources.includes(source)) continue;
+        const claims = await ctx.db
+          .query("personSourceClaims")
+          .withIndex("by_user_and_email_and_source", (q) =>
+            q.eq("userId", row.userId).eq("email", row.email).eq("source", source),
+          )
+          .collect();
+        if (claims.length === 0) {
+          reasons.push(`${source}Claims`);
+          continue;
+        }
+        if (claims.some((claim) => claim.providerContactId === undefined)) {
+          reasons.push(`${source}ClaimIdentity`);
+        }
+        let materialized = false;
+        for (const claim of claims) {
+          if (claim.connectionId !== connection._id || !claim.providerContactId) {
+            continue;
+          }
+          if (source === "connection") {
+            const contacts = await ctx.db
+              .query("contacts")
+              .withIndex("by_user_and_resourceName", (q) =>
+                q
+                  .eq("userId", row.userId)
+                  .eq("resourceName", claim.providerContactId!),
+            )
+            .collect();
+            materialized = contacts.some((contact) =>
+              contact.emails
+                .map((email) => email.trim().toLowerCase())
+                .includes(row.email),
+            );
+          } else {
+            const other = await ctx.db
+              .query("otherContactSources")
+              .withIndex("by_connection_and_providerContactId", (q) =>
+                q
+                  .eq("connectionId", connection._id)
+                  .eq("providerContactId", claim.providerContactId!),
+              )
+              .unique();
+            materialized =
+              other?.emails
+                .map((email) => email.trim().toLowerCase())
+                .includes(row.email) ?? false;
+          }
+          if (materialized) break;
+        }
+        if (!materialized) reasons.push(`${source}Materialization`);
+      }
+      if (row.sources.includes("other") && state?.otherContactsBackfillRequired) {
+        reasons.push("otherContactsFullSyncRequired");
+      }
+    }
+    add(row._id, reasons);
   }
   return finish(page);
 }

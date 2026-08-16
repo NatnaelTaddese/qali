@@ -21,10 +21,10 @@ export const peopleTables = {
   })
     .index("by_user", ["userId"])
     .index("by_user_and_resourceName", ["userId", "resourceName"])
-    .index("by_connection_and_providerContactId", [
-      "connectionId",
-      "providerContactId",
-    ]),
+    .index("by_connection_and_providerContactId", {
+      fields: ["connectionId", "providerContactId"],
+      staged: true,
+    }),
 
   // A people row is user-scoped, but each provider connection owns its claim on
   // an email independently. Removing one account therefore cannot erase an

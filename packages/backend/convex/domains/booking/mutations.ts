@@ -213,14 +213,19 @@ async function acceptanceTarget(
       ? await ctx.db.get(operation.localCalendarId)
       : null;
     if (!calendar && operation.providerCalendarId) {
+      const providerCalendarId = operation.providerCalendarId;
       calendar = await ctx.db
         .query("calendars")
-        .withIndex("by_connection_and_providerCalendarId", (q) =>
+        .withIndex("by_user_and_googleCalendarId", (q) =>
           q
-            .eq("connectionId", operation.connectionId)
-            .eq("providerCalendarId", operation.providerCalendarId),
+            .eq("userId", booking.hostUserId)
+            .eq("googleCalendarId", providerCalendarId),
         )
-        .unique();
+        .first();
+      if (
+        calendar?.connectionId !== undefined &&
+        calendar.connectionId !== operation.connectionId
+      ) calendar = null;
     }
     if (!calendar && operation.providerCalendarId) {
       calendar = await localCalendarForProviderId(

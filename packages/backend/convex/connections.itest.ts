@@ -179,9 +179,9 @@ describe("connection model expand", () => {
     expect(found?.localCalendarId).toBe(secondCalendarId);
     const indexes = (
       calendarTables.events as unknown as {
-        indexes: { indexDescriptor: string; fields: string[] }[];
+        stagedDbIndexes: { indexDescriptor: string; fields: string[] }[];
       }
-    ).indexes;
+    ).stagedDbIndexes;
     expect(indexes).toContainEqual({
       indexDescriptor: "by_connection_and_localCalendarId_and_providerEventId",
       fields: ["connectionId", "localCalendarId", "providerEventId"],

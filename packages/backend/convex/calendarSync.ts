@@ -6,6 +6,7 @@ import {
   internalQuery,
 } from "./_generated/server";
 import * as definitions from "./domains/sync/engine";
+import * as compat from "./domains/sync/googleCompat";
 
 export {
   CALENDAR_FUTURE_MS,
@@ -70,6 +71,9 @@ export const setCalendarSyncCursor = internalMutation(
 export const claimSharedCalendarSync = internalMutation(
   definitions.claimSharedCalendarSync,
 );
+export const beginSharedFullResync = internalMutation(
+  definitions.beginSharedFullResync,
+);
 export const heartbeatSharedCalendarLease = internalMutation(
   definitions.heartbeatSharedCalendarLease,
 );
@@ -104,3 +108,6 @@ export const applyEngagementScores = internalMutation(
   definitions.applyEngagementScores,
 );
 export const backfillPeople = internalMutation(definitions.backfillPeople);
+export const finishLegacySharedFullResync = internalMutation(
+  compat.finishLegacySharedFullResync,
+);

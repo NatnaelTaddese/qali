@@ -120,12 +120,12 @@ export const pruneSharedCalendarEvents = defineMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const now = Date.now();
+    if (args.provider !== "google") return null;
     const past = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_provider_and_providerCalendarId_and_startMs", (q) =>
+      .withIndex("by_calendar_and_start", (q) =>
         q
-          .eq("provider", args.provider)
-          .eq("providerCalendarId", args.providerCalendarId)
+          .eq("calendarId", args.providerCalendarId)
           .lt("startMs", now - EVENT_RETENTION_MS),
       )
       .take(BATCH_SIZE);
@@ -142,10 +142,9 @@ export const pruneSharedCalendarEvents = defineMutation({
     }
     const future = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_provider_and_providerCalendarId_and_startMs", (q) =>
+      .withIndex("by_calendar_and_start", (q) =>
         q
-          .eq("provider", args.provider)
-          .eq("providerCalendarId", args.providerCalendarId)
+          .eq("calendarId", args.providerCalendarId)
           .gt("startMs", now + EVENT_FUTURE_RETENTION_MS),
       )
       .take(BATCH_SIZE);

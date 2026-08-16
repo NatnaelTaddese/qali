@@ -18,6 +18,10 @@
 - `convex/jobs/` owns recurring maintenance implementations;
   `convex/migrations/` and `backfillConnections.ts` own resumable one-shot data
   changes. Migration code must not become a steady-state domain dependency.
+- `convex/domains/sync/googleCompat.ts` temporarily preserves the exact
+  pre-cutover `internal.googleSync.*` cross-call contracts for actions already
+  running during deployment. Its removal gate is the queue/running-function
+  drain in `MIGRATION_RUNBOOK.md`.
 - `auth.ts` configures Better Auth and exports server helpers. Better Auth HTTP
   routes are registered by `http.ts`; there is intentionally no public
   `api.auth.*` query.
@@ -69,3 +73,10 @@ columns, optional neutral mirrors, legacy tables, and old indexes remain until
 the production backfill and neutral-read verification in
 `MIGRATION_RUNBOOK.md` complete. No schema field, table, or index is removed as
 part of source cleanup.
+
+All neutral indexes added to pre-existing calendar, event, contact, recurring,
+and booking tables are staged for the initial deploy. Runtime reads stay on the
+complete Google legacy indexes until every staged index is ready and a dedicated
+activation deploy has completed; neutral read cutover is a later, separate
+deploy. Microsoft connections remain unavailable until that cutover, while the
+domain and adapter contracts remain provider-neutral.

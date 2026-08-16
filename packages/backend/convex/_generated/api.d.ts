@@ -60,6 +60,7 @@ import type * as jobs_maintenance from "../jobs/maintenance.js";
 import type * as lib_assistantLogic from "../lib/assistantLogic.js";
 import type * as lib_calendars from "../lib/calendars.js";
 import type * as lib_eventReads from "../lib/eventReads.js";
+import type * as lib_functionDefinitions from "../lib/functionDefinitions.js";
 import type * as lib_google from "../lib/google.js";
 import type * as lib_googleCredentials from "../lib/googleCredentials.js";
 import type * as lib_notifications from "../lib/notifications.js";
@@ -129,6 +130,7 @@ declare const fullApi: ApiFromModules<{
   "lib/assistantLogic": typeof lib_assistantLogic;
   "lib/calendars": typeof lib_calendars;
   "lib/eventReads": typeof lib_eventReads;
+  "lib/functionDefinitions": typeof lib_functionDefinitions;
   "lib/google": typeof lib_google;
   "lib/googleCredentials": typeof lib_googleCredentials;
   "lib/notifications": typeof lib_notifications;

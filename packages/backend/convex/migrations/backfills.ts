@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 
 import { internal } from "../_generated/api";
-import { internalMutation } from "../_generated/server";
 import { isSharedPublicCalendar } from "../lib/calendars";
+import { defineMutation } from "../lib/functionDefinitions";
 
 /**
  * One-shot data migrations — run by hand once, then idle. Kept apart from the
@@ -18,7 +18,7 @@ const BATCH_SIZE = 500;
 // Left behind by the move to the unified `people` directory. Absent from
 // schema.ts and read by nothing; clearing every row makes Convex drop the table.
 // `as any` is deliberate: the table is not in the data model — that is the point.
-export const clearEventAttendees = internalMutation({
+export const clearEventAttendees = defineMutation({
   args: {},
   returns: v.object({ deleted: v.number(), done: v.boolean() }),
   handler: async (ctx): Promise<{ deleted: number; done: boolean }> => {
@@ -43,7 +43,7 @@ export const clearEventAttendees = internalMutation({
 // Deletes every per-user copy of a Google public calendar's events (they now
 // live once in `sharedEvents`), then kicks each user's sync so the shared copy
 // is populated promptly rather than only on the next 15-min cron tick.
-export const migratePublicCalendarsToShared = internalMutation({
+export const migratePublicCalendarsToShared = defineMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.object({ deleted: v.number(), done: v.boolean() }),
   handler: async (ctx, args): Promise<{ deleted: number; done: boolean }> => {
@@ -80,7 +80,7 @@ export const migratePublicCalendarsToShared = internalMutation({
 // Delete every sharedEvents row whose calendar no longer classifies as shared,
 // then fan out a sync so those events are re-fetched into each owner's per-user
 // `events` table (guarded by ownership).
-export const purgeNonSharedSharedEvents = internalMutation({
+export const purgeNonSharedSharedEvents = defineMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.object({ deleted: v.number(), done: v.boolean() }),
   handler: async (ctx, args): Promise<{ deleted: number; done: boolean }> => {

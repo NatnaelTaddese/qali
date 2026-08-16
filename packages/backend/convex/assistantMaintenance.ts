@@ -3,4 +3,8 @@
  * Logic in domains/assistant/maintenance.ts; keeps those paths fixed.
  */
 
-export * from "./domains/assistant/maintenance";
+import { internalMutation, mutation } from "./_generated/server";
+import * as definitions from "./domains/assistant/maintenance";
+
+export const deleteThread = mutation(definitions.deleteThread);
+export const pruneAgedThreads = internalMutation(definitions.pruneAgedThreads);

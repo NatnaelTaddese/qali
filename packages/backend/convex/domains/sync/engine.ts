@@ -2,17 +2,15 @@ import { v } from "convex/values";
 
 import { internal } from "../../_generated/api";
 import type { Doc } from "../../_generated/dataModel";
-import {
-  action,
-  internalAction,
-  internalMutation,
-  internalQuery,
-  type ActionCtx,
-  type MutationCtx,
-} from "../../_generated/server";
+import { type ActionCtx, type MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import { isSharedPublicCalendar } from "../../lib/calendars";
 import { getGoogleAccessToken } from "../../lib/googleCredentials";
+import {
+  defineAction,
+  defineMutation,
+  defineQuery,
+} from "../../lib/functionDefinitions";
 import {
   fetchCalendarList,
   fetchCalendarPage,
@@ -820,13 +818,13 @@ export async function syncNowForCurrentUser(ctx: ActionCtx): Promise<null> {
   return null;
 }
 
-export const syncNow = action({
+export const syncNow = defineAction({
   args: {},
   handler: (ctx): Promise<null> => syncNowForCurrentUser(ctx),
 });
 
 /** Per-user sync run, scheduled by the cron. */
-export const syncUser = internalAction({
+export const syncUser = defineAction({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
     await runSyncForUser(ctx, args.userId, false);
@@ -844,7 +842,7 @@ export const syncUser = internalAction({
  * `syncOneCalendar` on its full-resync path, which swaps in the fresh snapshot
  * under a new generation and only then sweeps the old rows — so the grid stays
  * populated throughout instead of blanking. */
-export const forceFullResync = internalAction({
+export const forceFullResync = defineAction({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
     const accessToken = await getGoogleAccessToken(ctx, args.userId);
@@ -875,7 +873,7 @@ export const forceFullResync = internalAction({
  * transactions) and funnels each through the same idempotent `upsertPeopleRows`
  * merge, so it is safe to re-run. Other Contacts need no backfill: their first
  * sync is a full resync. Run by hand from the dashboard after deploying. */
-export const backfillPeople = internalMutation({
+export const backfillPeople = defineMutation({
   args: {
     phase: v.optional(v.union(v.literal("contacts"), v.literal("events"))),
     cursor: v.optional(v.string()),
@@ -922,7 +920,7 @@ export const backfillPeople = internalMutation({
  * upcoming→past transitions settle even when a calendar sees no event changes.
  * Event-driven recompute (in runSyncForUser) handles the common case; this is
  * the safety net for idle calendars. */
-export const enqueueEngagementRefresh = internalMutation({
+export const enqueueEngagementRefresh = defineMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   handler: async (ctx, args): Promise<null> => {
     const page = await ctx.db
@@ -947,7 +945,7 @@ export const enqueueEngagementRefresh = internalMutation({
 /** Fan out a sync for every user whose adaptive interval has elapsed (called by
  * the cron every 15 min). Only due users are scheduled, and the scan is
  * paginated + self-continued so the fan-out stays bounded at any user count. */
-export const enqueueSyncs = internalMutation({
+export const enqueueSyncs = defineMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   handler: async (ctx, args): Promise<null> => {
     const now = Date.now();
@@ -975,7 +973,7 @@ export const enqueueSyncs = internalMutation({
   },
 });
 
-export const getSyncState = internalQuery({
+export const getSyncState = defineQuery({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
     return await ctx.db
@@ -985,7 +983,7 @@ export const getSyncState = internalQuery({
   },
 });
 
-export const ensureSyncState = internalMutation({
+export const ensureSyncState = defineMutation({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
     const existing = await ctx.db
@@ -1014,7 +1012,7 @@ export const ensureSyncState = internalMutation({
  * holds the lease, or `null` if a live run already holds it (a stale lease past
  * its expiry is reclaimable). The holder must pass the returned id back to
  * recordSyncOutcome to release it. Marks the row `syncing` on a successful claim. */
-export const claimSyncLease = internalMutation({
+export const claimSyncLease = defineMutation({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<string | null> => {
     const row = await ctx.db
@@ -1043,7 +1041,7 @@ export const claimSyncLease = internalMutation({
  * the floor; an idle run backs it off toward the cap so quiet users poll Google
  * far less often. No-op if the lease was reclaimed by a newer run (its attempt id
  * no longer matches), so a slow run can't clobber the run that superseded it. */
-export const recordSyncOutcome = internalMutation({
+export const recordSyncOutcome = defineMutation({
   args: {
     userId: v.string(),
     attemptId: v.string(),
@@ -1075,7 +1073,7 @@ export const recordSyncOutcome = internalMutation({
   },
 });
 
-export const listCalendarsForUser = internalQuery({
+export const listCalendarsForUser = defineQuery({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
     return await ctx.db
@@ -1085,7 +1083,7 @@ export const listCalendarsForUser = internalQuery({
   },
 });
 
-export const reconcileCalendars = internalMutation({
+export const reconcileCalendars = defineMutation({
   args: { userId: v.string(), calendars: v.array(calendarValidator) },
   handler: async (
     ctx,
@@ -1164,7 +1162,7 @@ export const reconcileCalendars = internalMutation({
 /** Clear a calendar's events one bounded transaction at a time. Actions loop
  * over this for a full resync; removed-calendar cleanup uses the scheduled
  * wrapper below. */
-export const clearCalendarEventsBatch = internalMutation({
+export const clearCalendarEventsBatch = defineMutation({
   args: { userId: v.string(), googleCalendarId: v.string() },
   handler: async (ctx, args): Promise<boolean> => {
     return await deleteCalendarEventsBatch(
@@ -1177,7 +1175,7 @@ export const clearCalendarEventsBatch = internalMutation({
 
 /** Continue deleting orphaned events unless the calendar was re-added before
  * this scheduled batch ran. */
-export const cleanupRemovedCalendarEvents = internalMutation({
+export const cleanupRemovedCalendarEvents = defineMutation({
   args: { userId: v.string(), googleCalendarId: v.string() },
   handler: async (ctx, args): Promise<null> => {
     const calendar = await ctx.db
@@ -1215,7 +1213,7 @@ export const cleanupRemovedCalendarEvents = internalMutation({
  * persisted here so a crashed resync simply reuses the same number next time
  * (re-stamping present events with it is idempotent). Committed only once the new
  * snapshot is complete, in `commitCalendarFullResync`. */
-export const beginCalendarFullResync = internalMutation({
+export const beginCalendarFullResync = defineMutation({
   args: { userId: v.string(), googleCalendarId: v.string() },
   handler: async (ctx, args): Promise<number> => {
     const row = await ctx.db
@@ -1232,7 +1230,7 @@ export const beginCalendarFullResync = internalMutation({
  * `keepGeneration` (i.e. leftovers from the previous full-resync snapshot). Walks
  * the (userId, calendarId) prefix by cursor so kept rows are skipped exactly once
  * and the sweep always terminates. Returns the next cursor and whether it's done. */
-export const sweepStaleCalendarEventsBatch = internalMutation({
+export const sweepStaleCalendarEventsBatch = defineMutation({
   args: {
     userId: v.string(),
     googleCalendarId: v.string(),
@@ -1261,7 +1259,7 @@ export const sweepStaleCalendarEventsBatch = internalMutation({
 /** Persist the completed full-resync generation (and the fresh sync token, when
  * Google returned one) on the calendar. Called only after the new snapshot is
  * fully written and the previous generation swept. */
-export const commitCalendarFullResync = internalMutation({
+export const commitCalendarFullResync = defineMutation({
   args: {
     userId: v.string(),
     googleCalendarId: v.string(),
@@ -1291,7 +1289,7 @@ export const commitCalendarFullResync = internalMutation({
   },
 });
 
-export const setCalendarSyncToken = internalMutation({
+export const setCalendarSyncToken = defineMutation({
   args: {
     userId: v.string(),
     googleCalendarId: v.string(),
@@ -1342,7 +1340,7 @@ async function deleteSharedCalendarEventsBatch(
  * the `sharedCalendars` row on first sight. This is the transaction that makes
  * "synced once, by one user" true.
  */
-export const claimSharedCalendarSync = internalMutation({
+export const claimSharedCalendarSync = defineMutation({
   args: { googleCalendarId: v.string(), refreshIntervalMs: v.number() },
   returns: v.object({
     claimed: v.boolean(),
@@ -1376,7 +1374,7 @@ export const claimSharedCalendarSync = internalMutation({
   },
 });
 
-export const releaseSharedCalendarLease = internalMutation({
+export const releaseSharedCalendarLease = defineMutation({
   args: { googleCalendarId: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -1393,7 +1391,7 @@ export const releaseSharedCalendarLease = internalMutation({
   },
 });
 
-export const clearSharedCalendarEventsBatch = internalMutation({
+export const clearSharedCalendarEventsBatch = defineMutation({
   args: { googleCalendarId: v.string() },
   returns: v.boolean(),
   handler: async (ctx, args): Promise<boolean> => {
@@ -1403,7 +1401,7 @@ export const clearSharedCalendarEventsBatch = internalMutation({
 
 /** Record a completed shared sync: store the new cursor, stamp the refresh time,
  * and drop the lease. Called on the success path of syncOneSharedCalendar. */
-export const setSharedCalendarSynced = internalMutation({
+export const setSharedCalendarSynced = defineMutation({
   args: {
     googleCalendarId: v.string(),
     syncToken: v.optional(v.string()),
@@ -1431,7 +1429,7 @@ export const setSharedCalendarSynced = internalMutation({
 
 /** The `sharedEvents` twin of `upsertEventsPage`: keyed by (calendarId,
  * googleEventId), no `userId`, no people harvest. */
-export const upsertSharedEventsPage = internalMutation({
+export const upsertSharedEventsPage = defineMutation({
   args: { events: v.array(googleEventValidator) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -1458,7 +1456,7 @@ export const upsertSharedEventsPage = internalMutation({
   },
 });
 
-export const setContactsSync = internalMutation({
+export const setContactsSync = defineMutation({
   args: {
     userId: v.string(),
     syncToken: v.optional(v.string()),
@@ -1484,7 +1482,7 @@ export const setContactsSync = internalMutation({
   },
 });
 
-export const setOtherContactsSync = internalMutation({
+export const setOtherContactsSync = defineMutation({
   args: {
     userId: v.string(),
     syncToken: v.optional(v.string()),
@@ -1516,7 +1514,7 @@ export const setOtherContactsSync = internalMutation({
  * persisting it (persisted on commit via set{Contacts,OtherContacts}Sync). A
  * crashed resync reuses the same number next time, which is safe: re-stamping the
  * present records with it is idempotent and the sweep keeps exactly that set. */
-export const beginContactsFullResync = internalMutation({
+export const beginContactsFullResync = defineMutation({
   args: {
     userId: v.string(),
     feeder: v.union(v.literal("connection"), v.literal("other")),
@@ -1537,7 +1535,7 @@ export const beginContactsFullResync = internalMutation({
 /** Delete one bounded batch of the user's `contacts` whose generation is not
  * `keepGeneration` (connections absent from the latest full snapshot), cascading
  * each into the people directory. Cursor-walked so it always terminates. */
-export const sweepStaleContactsBatch = internalMutation({
+export const sweepStaleContactsBatch = defineMutation({
   args: {
     userId: v.string(),
     keepGeneration: v.number(),
@@ -1566,7 +1564,7 @@ export const sweepStaleContactsBatch = internalMutation({
 /** Drop the "other" source from one bounded batch of people whose Other Contacts
  * generation is stale (they weren't in the latest full snapshot). The person row
  * is deleted only if "other" was its last source. */
-export const sweepStaleOtherPeopleBatch = internalMutation({
+export const sweepStaleOtherPeopleBatch = defineMutation({
   args: {
     userId: v.string(),
     keepGeneration: v.number(),
@@ -1597,7 +1595,7 @@ export const sweepStaleOtherPeopleBatch = internalMutation({
   },
 });
 
-export const upsertEventsPage = internalMutation({
+export const upsertEventsPage = defineMutation({
   args: {
     userId: v.string(),
     events: v.array(googleEventValidator),
@@ -1650,7 +1648,7 @@ export const upsertEventsPage = internalMutation({
   },
 });
 
-export const upsertContactsPage = internalMutation({
+export const upsertContactsPage = defineMutation({
   args: {
     userId: v.string(),
     contacts: v.array(contactValidator),
@@ -1706,7 +1704,7 @@ export const upsertContactsPage = internalMutation({
 /** Merge a page of People API "Other contacts" into the people directory. These
  * never land in the `contacts` table (they aren't saved contacts); they exist
  * only to enrich attendees with a name + avatar. */
-export const upsertOtherContactsPage = internalMutation({
+export const upsertOtherContactsPage = defineMutation({
   args: {
     userId: v.string(),
     contacts: v.array(contactValidator),
@@ -1747,7 +1745,7 @@ type EngagementEventPage = {
   continueCursor: string;
 };
 
-export const listEventsPageForEngagement = internalQuery({
+export const listEventsPageForEngagement = defineQuery({
   args: {
     userId: v.string(),
     sinceMs: v.number(),
@@ -1773,7 +1771,7 @@ export const listEventsPageForEngagement = internalQuery({
   },
 });
 
-export const applyEngagementScores = internalMutation({
+export const applyEngagementScores = defineMutation({
   args: {
     userId: v.string(),
     scores: v.array(
@@ -1854,7 +1852,7 @@ async function recomputeEngagementForUser(
 
 /** Standalone entry point for engagement recompute (dashboard / backfill). The
  * sync path calls the helper directly. */
-export const recomputeEngagement = internalAction({
+export const recomputeEngagement = defineAction({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
     await recomputeEngagementForUser(ctx, args.userId);

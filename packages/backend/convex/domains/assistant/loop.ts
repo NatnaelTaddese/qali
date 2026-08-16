@@ -22,13 +22,14 @@ import { env } from "@qali/env/server";
 
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { action, type ActionCtx } from "../../_generated/server";
+import type { ActionCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import {
   ExternalWriteCommittedError,
   isDefinitiveGoogleFailure,
 } from "../calendar/service";
 import { getGoogleAccessToken } from "../../lib/googleCredentials";
+import { defineAction } from "../../lib/functionDefinitions";
 import {
   ASSISTANT_TOOLS,
   TOOLS_BY_NAME,
@@ -182,7 +183,7 @@ type DeepSeekUsage = {
  * Instead the assistant's row is patched as text arrives, and the panel's
  * subscription re-renders on every patch, which reads the same way.
  */
-export const sendMessage = action({
+export const sendMessage = defineAction({
   args: {
     threadId: v.optional(v.id("assistantThreads")),
     text: v.string(),
@@ -574,7 +575,7 @@ async function runOneTool(
  * made while the assistant was configured can still be confirmed after the key
  * is removed. It is also the only path from the assistant to Google.
  */
-export const confirmAction = action({
+export const confirmAction = defineAction({
   args: {
     actionId: v.id("assistantActions"),
     decision: v.union(v.literal("confirm"), v.literal("discard")),

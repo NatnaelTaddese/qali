@@ -3,4 +3,8 @@
  * keeps api.assistant.* fixed.
  */
 
-export * from "./domains/assistant/loop";
+import { action } from "./_generated/server";
+import * as definitions from "./domains/assistant/loop";
+
+export const sendMessage = action(definitions.sendMessage);
+export const confirmAction = action(definitions.confirmAction);

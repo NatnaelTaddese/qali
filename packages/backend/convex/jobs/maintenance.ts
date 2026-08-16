@@ -2,7 +2,7 @@ import { v } from "convex/values";
 
 import { internal } from "../_generated/api";
 import type { Id, TableNames } from "../_generated/dataModel";
-import { internalMutation } from "../_generated/server";
+import { defineMutation } from "../lib/functionDefinitions";
 
 /**
  * Recurring storage maintenance + the account-deletion purge. All internal,
@@ -23,7 +23,7 @@ const EVENT_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
 // `now`, which only advances, so it never trims events a fresh sync just fetched.
 const EVENT_FUTURE_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
 
-export const enqueueEventPrune = internalMutation({
+export const enqueueEventPrune = defineMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -44,7 +44,7 @@ export const enqueueEventPrune = internalMutation({
   },
 });
 
-export const pruneUserEvents = internalMutation({
+export const pruneUserEvents = defineMutation({
   args: { userId: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -84,7 +84,7 @@ export const pruneUserEvents = internalMutation({
 });
 
 // --- Recurring: prune the shared public-calendar table the same way ---------
-export const enqueueSharedEventPrune = internalMutation({
+export const enqueueSharedEventPrune = defineMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -109,7 +109,7 @@ export const enqueueSharedEventPrune = internalMutation({
   },
 });
 
-export const pruneSharedCalendarEvents = internalMutation({
+export const pruneSharedCalendarEvents = defineMutation({
   args: { calendarId: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -158,7 +158,7 @@ export const pruneSharedCalendarEvents = internalMutation({
 // window, so a later request for that key just re-inserts a fresh counter.
 const RATE_LIMIT_RETENTION_MS = 24 * 60 * 60 * 1000;
 
-export const pruneRateLimits = internalMutation({
+export const pruneRateLimits = defineMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -186,7 +186,7 @@ export const pruneRateLimits = internalMutation({
 // empty; safe to re-run. Passing the account `email` also clears its waitlist row.
 const PURGE_BATCH = 100;
 
-export const purgeUserData = internalMutation({
+export const purgeUserData = defineMutation({
   args: { userId: v.string(), email: v.optional(v.string()) },
   returns: v.object({ done: v.boolean() }),
   handler: async (ctx, args): Promise<{ done: boolean }> => {

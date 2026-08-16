@@ -7,7 +7,10 @@ import type { Infer } from "convex/values";
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
-import { ensureGoogleConnection } from "./connections";
+import {
+  ensureDefaultPrimaryCalendar,
+  ensureGoogleConnection,
+} from "./connections";
 import { googleEventValidator, providerEventValidator } from "./validators";
 
 const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
@@ -48,7 +51,7 @@ export async function resolveCreateTargetHandler(
   if (calendars.length > 500) {
     throw new Error("Too many calendars to choose a write target safely");
   }
-  const calendar = args.requestedCalendarId
+  let calendar = args.requestedCalendarId
     ? calendars.find(
         (row) =>
           row._id === args.requestedCalendarId ||
@@ -56,6 +59,14 @@ export async function resolveCreateTargetHandler(
           row.googleCalendarId === args.requestedCalendarId,
       )
     : calendars.find((row) => row.primary);
+  if (!calendar && !args.requestedCalendarId) {
+    const connectionId = await ensureGoogleConnection(ctx, args.userId);
+    calendar = await ensureDefaultPrimaryCalendar(
+      ctx,
+      args.userId,
+      connectionId,
+    );
+  }
   if (!calendar) throw new Error("Calendar not found");
   if (!WRITABLE_ACCESS_ROLES.has(calendar.accessRole ?? "")) {
     throw new Error("This calendar is read-only");
@@ -163,6 +174,9 @@ export async function claimCalendarOperationHandler(
     localCalendarId: Id<"calendars">;
     providerCalendarId: string;
     providerEventId?: string;
+    targetEventId?: Id<"events">;
+    targetProviderEventId?: string;
+    requestFingerprint: string;
     idempotencyKey: string;
     kind: "create" | "update" | "delete" | "respond";
     attemptId: string;
@@ -196,7 +210,17 @@ export async function claimCalendarOperationHandler(
       (existing.localCalendarId &&
         existing.localCalendarId !== args.localCalendarId) ||
       (existing.providerCalendarId &&
-        existing.providerCalendarId !== args.providerCalendarId)
+        existing.providerCalendarId !== args.providerCalendarId) ||
+      (existing.targetEventId &&
+        existing.targetEventId !== args.targetEventId) ||
+      (existing.targetProviderEventId &&
+        existing.targetProviderEventId !== args.targetProviderEventId) ||
+      (!existing.targetProviderEventId &&
+        existing.kind !== "create" &&
+        existing.providerEventId !== undefined &&
+        existing.providerEventId !== args.targetProviderEventId) ||
+      (existing.requestFingerprint &&
+        existing.requestFingerprint !== args.requestFingerprint)
     ) {
       throw new Error("Calendar operation key was already used for another write");
     }
@@ -220,6 +244,11 @@ export async function claimCalendarOperationHandler(
       mayHaveSucceeded: true,
       localCalendarId: args.localCalendarId,
       providerCalendarId: args.providerCalendarId,
+      targetEventId: existing.targetEventId ?? args.targetEventId,
+      targetProviderEventId:
+        existing.targetProviderEventId ?? args.targetProviderEventId,
+      requestFingerprint:
+        existing.requestFingerprint ?? args.requestFingerprint,
       providerEventId: existing.providerEventId ?? args.providerEventId,
       lastError: undefined,
       updatedAt: Date.now(),
@@ -242,6 +271,9 @@ export async function claimCalendarOperationHandler(
     mayHaveSucceeded: true,
     localCalendarId: args.localCalendarId,
     providerCalendarId: args.providerCalendarId,
+    targetEventId: args.targetEventId,
+    targetProviderEventId: args.targetProviderEventId,
+    requestFingerprint: args.requestFingerprint,
     providerEventId: args.providerEventId,
     createdAt: now,
     updatedAt: now,
@@ -358,16 +390,44 @@ export async function upsertEventHandler(
     providerEventId: args.event.googleEventId,
     providerUpdatedMs: args.event.googleUpdatedMs,
     providerSeriesId: args.event.recurringEventId,
+    color: args.event.colorId,
+    busy:
+      args.event.transparency === undefined
+        ? undefined
+        : args.event.transparency !== "transparent",
   };
-  const existing = await ctx.db
-    .query("events")
-    .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-      q
-        .eq("userId", args.userId)
-        .eq("calendarId", args.event.calendarId)
-        .eq("googleEventId", args.event.googleEventId),
-    )
-    .unique();
+  const neutral = localCalendar
+    ? await ctx.db
+        .query("events")
+        .withIndex(
+          "by_connection_and_localCalendarId_and_providerEventId",
+          (q) =>
+            q
+              .eq("connectionId", connectionId)
+              .eq("localCalendarId", localCalendar._id)
+              .eq("providerEventId", args.event.googleEventId),
+        )
+        .unique()
+    : null;
+  const legacyCandidates = neutral
+    ? []
+    : await ctx.db
+      .query("events")
+      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+        q
+          .eq("userId", args.userId)
+          .eq("calendarId", args.event.calendarId)
+          .eq("googleEventId", args.event.googleEventId),
+      )
+      .collect();
+  const existing =
+    neutral ??
+    legacyCandidates.find(
+      (row) =>
+        (row.connectionId === undefined || row.connectionId === connectionId) &&
+        (row.localCalendarId === undefined ||
+          row.localCalendarId === localCalendar?._id),
+    );
   if (existing) {
     await ctx.db.replace(existing._id, doc);
   } else {
@@ -453,16 +513,39 @@ export async function mirrorProviderEventHandler(
     providerEventId: event.id,
     providerUpdatedMs: event.updatedMs,
     providerSeriesId: event.seriesId,
+    color: event.color,
+    busy: event.busy,
   };
-  const existing = await ctx.db
+  const neutral = await ctx.db
     .query("events")
-    .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-      q
-        .eq("userId", connection.userId)
-        .eq("calendarId", calendar.googleCalendarId)
-        .eq("googleEventId", event.id),
+    .withIndex(
+      "by_connection_and_localCalendarId_and_providerEventId",
+      (q) =>
+        q
+          .eq("connectionId", connection._id)
+          .eq("localCalendarId", calendar._id)
+          .eq("providerEventId", event.id),
     )
     .unique();
+  const legacyCandidates = neutral
+    ? []
+    : await ctx.db
+      .query("events")
+      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+        q
+          .eq("userId", connection.userId)
+          .eq("calendarId", calendar.googleCalendarId)
+          .eq("googleEventId", event.id),
+      )
+      .collect();
+  const existing =
+    neutral ??
+    legacyCandidates.find(
+      (row) =>
+        (row.connectionId === undefined ||
+          row.connectionId === connection._id) &&
+        (row.localCalendarId === undefined || row.localCalendarId === calendar._id),
+    );
   if (existing) await ctx.db.replace(existing._id, legacyEvent);
   else await ctx.db.insert("events", legacyEvent);
   return null;
@@ -529,15 +612,37 @@ export async function upsertProviderRecurringSeriesHandler(
   ) {
     throw new Error("Recurring series target is invalid");
   }
-  const existing = await ctx.db
+  const neutral = await ctx.db
     .query("recurringSeries")
-    .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-      q
-        .eq("userId", args.userId)
-        .eq("calendarId", calendar.googleCalendarId)
-        .eq("googleEventId", args.providerEventId),
+    .withIndex(
+      "by_connection_and_localCalendarId_and_providerEventId",
+      (q) =>
+        q
+          .eq("connectionId", args.connectionId)
+          .eq("localCalendarId", args.localCalendarId)
+          .eq("providerEventId", args.providerEventId),
     )
     .unique();
+  const legacyCandidates = neutral
+    ? []
+    : await ctx.db
+      .query("recurringSeries")
+      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+        q
+          .eq("userId", args.userId)
+          .eq("calendarId", calendar.googleCalendarId)
+          .eq("googleEventId", args.providerEventId),
+      )
+      .collect();
+  const existing =
+    neutral ??
+    legacyCandidates.find(
+      (row) =>
+        (row.connectionId === undefined ||
+          row.connectionId === args.connectionId) &&
+        (row.localCalendarId === undefined ||
+          row.localCalendarId === args.localCalendarId),
+    );
   const value = {
     recurrence: args.recurrence,
     sourceUpdatedMs: args.sourceUpdatedMs,
@@ -582,15 +687,6 @@ export async function upsertRecurringSeriesHandler(
     replacedEventId?: Id<"events">;
   },
 ): Promise<null> {
-  const existing = await ctx.db
-    .query("recurringSeries")
-    .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-      q
-        .eq("userId", args.userId)
-        .eq("calendarId", args.calendarId)
-        .eq("googleEventId", args.googleEventId),
-    )
-    .unique();
   // Dual-write the neutral mirror (connectionId + providerEventId) on both the
   // patch and insert paths, so incremental cache refreshes keep it current too.
   const connectionId = await ensureGoogleConnection(ctx, args.userId);
@@ -600,6 +696,38 @@ export async function upsertRecurringSeriesHandler(
       q.eq("userId", args.userId).eq("googleCalendarId", args.calendarId),
     )
     .unique();
+  const neutral = localCalendar
+    ? await ctx.db
+        .query("recurringSeries")
+        .withIndex(
+          "by_connection_and_localCalendarId_and_providerEventId",
+          (q) =>
+            q
+              .eq("connectionId", connectionId)
+              .eq("localCalendarId", localCalendar._id)
+              .eq("providerEventId", args.googleEventId),
+        )
+        .unique()
+    : null;
+  const legacyCandidates = neutral
+    ? []
+    : await ctx.db
+      .query("recurringSeries")
+      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+        q
+          .eq("userId", args.userId)
+          .eq("calendarId", args.calendarId)
+          .eq("googleEventId", args.googleEventId),
+      )
+      .collect();
+  const existing =
+    neutral ??
+    legacyCandidates.find(
+      (row) =>
+        (row.connectionId === undefined || row.connectionId === connectionId) &&
+        (row.localCalendarId === undefined ||
+          row.localCalendarId === localCalendar?._id),
+    );
   const value = {
     recurrence: args.recurrence,
     sourceUpdatedMs: args.sourceUpdatedMs,

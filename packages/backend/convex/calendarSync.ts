@@ -97,6 +97,9 @@ export const upsertContactsPage = internalMutation(
 export const sweepStaleContactsBatch = internalMutation(
   definitions.sweepStaleContactsBatch,
 );
+export const sweepLegacyOtherPeopleBatch = internalMutation(
+  definitions.sweepLegacyOtherPeopleBatch,
+);
 export const commitContactsSync = internalMutation(
   definitions.commitContactsSync,
 );

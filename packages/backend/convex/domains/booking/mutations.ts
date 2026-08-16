@@ -15,7 +15,11 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import { consumeRateLimit } from "../../infrastructure/rateLimit";
-import { ensureGoogleConnection } from "../calendar/connections";
+import {
+  ensureDefaultPrimaryCalendar,
+  ensureGoogleConnection,
+} from "../calendar/connections";
+import { calendarRequestFingerprint } from "../calendar/operationIdentity";
 import { clearBookingNotifications } from "../notifications/model";
 import {
   ACCEPT_LEASE_MS,
@@ -115,8 +119,9 @@ async function primaryGoogleBookingTarget(
   userId: string,
 ): Promise<BookingTarget> {
   const connectionId = await ensureGoogleConnection(ctx, userId);
-  const calendar = await primaryLocalCalendar(ctx, userId);
-  if (!calendar) throw new Error("No writable primary calendar is available");
+  const calendar =
+    (await primaryLocalCalendar(ctx, userId)) ??
+    (await ensureDefaultPrimaryCalendar(ctx, userId, connectionId));
   return await validateBookingTarget(ctx, userId, connectionId, calendar._id);
 }
 
@@ -151,6 +156,27 @@ async function operationForBooking(
     .query("calendarOperations")
     .withIndex("by_bookingId", (q) => q.eq("bookingId", bookingId))
     .unique();
+}
+
+function bookingAcceptanceFingerprint(
+  booking: Doc<"bookings">,
+  page: Doc<"bookingPages">,
+): string {
+  const label = page.title?.trim() || "Meeting";
+  return calendarRequestFingerprint({
+    summary: `${label} with ${booking.requesterName}`,
+    description: booking.note
+      ? `Booked via qali.\n\n${booking.note}`
+      : "Booked via qali.",
+    startMs: booking.startMs,
+    endMs: booking.endMs,
+    allDay: false,
+    timeZone: page.timeZone,
+    attendees: [
+      { email: booking.requesterEmail, displayName: booking.requesterName },
+    ],
+    notify: "all",
+  });
 }
 
 async function mirrorSucceededAcceptance(
@@ -476,6 +502,13 @@ export async function expireBookingHandler(
     await mirrorSucceededAcceptance(ctx, booking, operation);
     return null;
   }
+  if (
+    operation?.status === "ambiguous" ||
+    (operation?.status === "pending" && operation.mayHaveSucceeded === true) ||
+    (!operation && booking.acceptMayHaveSucceeded === true)
+  ) {
+    return null;
+  }
   const leaseExpiresAt = operation
     ? operation.status === "pending"
       ? operation.leaseExpiresAt
@@ -510,6 +543,13 @@ export async function expirePastBookingsHandler(
     const operation = await operationForBooking(ctx, booking._id);
     if (operation?.status === "succeeded") {
       await mirrorSucceededAcceptance(ctx, booking, operation);
+      continue;
+    }
+    if (
+      operation?.status === "ambiguous" ||
+      (operation?.status === "pending" && operation.mayHaveSucceeded === true) ||
+      (!operation && booking.acceptMayHaveSucceeded === true)
+    ) {
       continue;
     }
     const leaseExpiresAt = operation
@@ -583,6 +623,7 @@ export async function markAcceptedHandler(
       mayHaveSucceeded: booking.acceptMayHaveSucceeded,
       localCalendarId: target.calendar._id,
       providerCalendarId: target.providerCalendarId,
+      requestFingerprint: bookingAcceptanceFingerprint(booking, page),
       createdAt: now,
       updatedAt: now,
     });
@@ -642,9 +683,15 @@ export async function claimBookingAcceptanceHandler(
     await mirrorSucceededAcceptance(ctx, booking, operation);
     return null;
   }
-  if (booking.endMs <= now) return null;
   const page = await pageByUser(ctx, args.hostUserId);
   if (!page) return null;
+  const requestFingerprint = bookingAcceptanceFingerprint(booking, page);
+  if (
+    operation?.requestFingerprint !== undefined &&
+    operation.requestFingerprint !== requestFingerprint
+  ) {
+    throw new Error("Calendar operation key was already used for another write");
+  }
   const liveLedgerLease =
     operation?.status === "pending" &&
     operation.attemptId !== undefined &&
@@ -663,6 +710,7 @@ export async function claimBookingAcceptanceHandler(
   const reconcileOnly = operation
     ? operation.status === "ambiguous" || operation.mayHaveSucceeded === true
     : booking.acceptMayHaveSucceeded === true;
+  if (booking.endMs <= now && !reconcileOnly) return null;
   const busy = await collectBusy(
     ctx,
     page,
@@ -687,6 +735,7 @@ export async function claimBookingAcceptanceHandler(
     mayHaveSucceeded: true,
     localCalendarId: target.calendar._id,
     providerCalendarId: target.providerCalendarId,
+    requestFingerprint: operation?.requestFingerprint ?? requestFingerprint,
     providerEventId: operation?.providerEventId ?? booking.providerEventId,
     lastError: undefined,
     updatedAt: now,
@@ -775,6 +824,7 @@ export async function releaseBookingAcceptanceHandler(
       mayHaveSucceeded: booking.acceptMayHaveSucceeded,
       localCalendarId: target.calendar._id,
       providerCalendarId: target.providerCalendarId,
+      requestFingerprint: bookingAcceptanceFingerprint(booking, page),
       providerEventId: booking.providerEventId,
       createdAt: now,
       updatedAt: now,

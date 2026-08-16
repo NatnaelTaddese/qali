@@ -34,6 +34,9 @@ export const peopleTables = {
     email: v.string(),
     connectionId: v.id("calendarConnections"),
     source: v.union(v.literal("connection"), v.literal("other")),
+    // A provider contact may share an email with another contact. Claims are
+    // therefore contact-scoped; absent only on rows written before this field.
+    providerContactId: v.optional(v.string()),
     syncGeneration: v.optional(v.number()),
     updatedAt: v.number(),
   })
@@ -43,7 +46,11 @@ export const peopleTables = {
       "connectionId",
       "source",
       "email",
-    ]),
+    ])
+    .index("by_connection_and_source_and_providerContactId_and_email", {
+      fields: ["connectionId", "source", "providerContactId", "email"],
+      staged: true,
+    }),
 
   // Other Contacts has no durable app-domain row, so retain just enough source
   // identity to process tombstones and generation sweeps per connection.

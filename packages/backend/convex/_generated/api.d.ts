@@ -35,6 +35,7 @@ import type * as domains_calendar_connectionTables from "../domains/calendar/con
 import type * as domains_calendar_connections from "../domains/calendar/connections.js";
 import type * as domains_calendar_model from "../domains/calendar/model.js";
 import type * as domains_calendar_mutations from "../domains/calendar/mutations.js";
+import type * as domains_calendar_operationIdentity from "../domains/calendar/operationIdentity.js";
 import type * as domains_calendar_queries from "../domains/calendar/queries.js";
 import type * as domains_calendar_recurrence from "../domains/calendar/recurrence.js";
 import type * as domains_calendar_service from "../domains/calendar/service.js";
@@ -112,6 +113,7 @@ declare const fullApi: ApiFromModules<{
   "domains/calendar/connections": typeof domains_calendar_connections;
   "domains/calendar/model": typeof domains_calendar_model;
   "domains/calendar/mutations": typeof domains_calendar_mutations;
+  "domains/calendar/operationIdentity": typeof domains_calendar_operationIdentity;
   "domains/calendar/queries": typeof domains_calendar_queries;
   "domains/calendar/recurrence": typeof domains_calendar_recurrence;
   "domains/calendar/service": typeof domains_calendar_service;

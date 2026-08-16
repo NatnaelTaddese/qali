@@ -94,17 +94,20 @@ export async function readSharedEventsInRange(
       calendar.providerCalendarId ?? calendar.googleCalendarId;
     const page = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_provider_and_providerCalendarId_and_endMs", (q) =>
+      .withIndex("by_calendar_and_end", (q) =>
         q
-          .eq("provider", provider ?? "google")
-          .eq("providerCalendarId", providerCalendarId)
+          .eq("calendarId", calendar.googleCalendarId)
           .gt("endMs", fromMs)
           .lte("endMs", spanEnd),
       )
       .take(budget.remaining + 1);
     spendRowBudget(budget, page.length);
     for (const r of page) {
-      if (r.startMs < toMs) {
+      if (
+        (r.provider ?? "google") === (provider ?? "google") &&
+        (r.providerCalendarId ?? r.calendarId) === providerCalendarId &&
+        r.startMs < toMs
+      ) {
         out.push(sharedAsEvent(r, userId));
       }
     }

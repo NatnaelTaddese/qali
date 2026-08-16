@@ -80,3 +80,37 @@ export async function ensureGoogleConnection(
   await ensureConnectionSyncState(ctx, userId, connectionId);
   return connectionId;
 }
+
+/** A provider's `primary` alias is writable before CalendarList has synced. */
+export async function ensureDefaultPrimaryCalendar(
+  ctx: MutationCtx,
+  userId: string,
+  connectionId: Id<"calendarConnections">,
+): Promise<Doc<"calendars">> {
+  const calendars = await ctx.db
+    .query("calendars")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .take(501);
+  if (calendars.length > 500) {
+    throw new Error("Too many calendars to choose a write target safely");
+  }
+  const existing =
+    calendars.find((row) => row.primary) ??
+    calendars.find(
+      (row) =>
+        (row.providerCalendarId ?? row.googleCalendarId) === "primary" &&
+        (row.connectionId === undefined || row.connectionId === connectionId),
+    );
+  if (existing) return existing;
+  const id = await ctx.db.insert("calendars", {
+    userId,
+    googleCalendarId: "primary",
+    selected: true,
+    primary: true,
+    accessRole: "owner",
+    connectionId,
+    providerCalendarId: "primary",
+    isShared: false,
+  });
+  return (await ctx.db.get(id))!;
+}

@@ -24,6 +24,7 @@ import type {
   ProviderEvent,
 } from "../../integrations/calendar/types";
 import { shiftRecurringMasterRange } from "./recurrence";
+import { calendarRequestFingerprint } from "./operationIdentity";
 
 export type EventCapabilityName =
   | "canEdit"
@@ -196,6 +197,8 @@ async function claimWrite(
   kind: OperationKind,
   operationId: string | undefined,
   providerEventId?: string,
+  targetEventId?: Id<"events">,
+  requestFingerprint = calendarRequestFingerprint({}),
 ) {
   const idempotencyKey = operationId ?? crypto.randomUUID();
   const attemptId = crypto.randomUUID();
@@ -205,6 +208,9 @@ async function claimWrite(
     localCalendarId: target.localCalendarId,
     providerCalendarId: target.providerCalendarId,
     providerEventId,
+    targetEventId,
+    targetProviderEventId: providerEventId,
+    requestFingerprint,
     idempotencyKey,
     kind,
     attemptId,
@@ -373,6 +379,23 @@ export async function createEventOp(
     target,
     "create",
     args.operationId,
+    undefined,
+    undefined,
+    calendarRequestFingerprint({
+      summary: args.summary,
+      startMs: args.startMs,
+      endMs: args.endMs,
+      description: args.description,
+      location: args.location,
+      allDay: args.allDay,
+      colorId: args.colorId,
+      visibility: args.visibility,
+      transparency: args.transparency,
+      recurrence: args.recurrence,
+      attendees: args.attendees,
+      timeZone: args.timeZone,
+      addConference: args.addConference,
+    }),
   );
   let event: ProviderEvent;
   try {
@@ -591,6 +614,25 @@ export async function updateEventOp(
     "update",
     args.operationId,
     target.providerEventId,
+    target.event._id,
+    calendarRequestFingerprint({
+      summary: args.summary,
+      description: args.description,
+      location: args.location,
+      colorId: args.colorId,
+      visibility: args.visibility,
+      transparency: args.transparency,
+      startMs: args.startMs,
+      endMs: args.endMs,
+      allDay: args.allDay,
+      attendees: args.attendees,
+      recurrence: args.recurrence,
+      timeZone: args.timeZone,
+      conference: args.conference,
+      scope,
+      expectedProviderUpdatedMs: expectedUpdatedMs,
+      expectedSeriesUpdatedMs: args.expectedSeriesUpdatedMs,
+    }),
   );
   if (operation.state === "succeeded") {
     try {
@@ -863,6 +905,8 @@ export async function respondToEventOp(
     "respond",
     args.operationId,
     target.providerEventId,
+    target.event._id,
+    calendarRequestFingerprint({ responseStatus: args.responseStatus }),
   );
   try {
     const event =
@@ -959,6 +1003,11 @@ export async function deleteEventOp(
     "delete",
     args.operationId,
     target.providerEventId,
+    target.event._id,
+    calendarRequestFingerprint({
+      scope,
+      expectedSeriesUpdatedMs: args.expectedSeriesUpdatedMs,
+    }),
   );
   if (operation.state === "succeeded") {
     try {
@@ -1129,11 +1178,67 @@ async function authedUser(ctx: ActionCtx): Promise<string> {
   return user._id;
 }
 
+/** Keep the pre-cutover Google-shaped action result at the public facade. */
+export function legacyCalendarActionEvent(event: ProviderEvent) {
+  return {
+    googleEventId: event.id,
+    calendarId: event.calendarId,
+    summary: event.summary,
+    description: event.description,
+    location: event.location,
+    startMs: event.startMs,
+    endMs: event.endMs,
+    allDay: event.allDay,
+    status: event.status,
+    htmlLink: event.htmlLink,
+    colorId: event.color,
+    visibility: event.visibility,
+    transparency:
+      event.busy === undefined
+        ? undefined
+        : event.busy
+          ? "opaque"
+          : "transparent",
+    attendees: event.attendees
+      ?.filter(
+        (attendee): attendee is typeof attendee & { email: string } =>
+          attendee.email !== undefined,
+      )
+      .map((attendee) => ({
+        email: attendee.email,
+        displayName: attendee.displayName,
+        responseStatus: attendee.responseStatus,
+        organizer: attendee.organizer,
+        self: attendee.self,
+        optional: attendee.optional,
+      })),
+    attendeesOmitted: event.attendeesOmitted,
+    googleUpdatedMs: event.updatedMs,
+    organizer: event.organizer,
+    creator: event.creator,
+    guestsCanModify: event.guestsCanModify,
+    guestsCanInviteOthers: event.guestsCanInviteOthers,
+    guestsCanSeeOtherGuests: event.guestsCanSeeOtherGuests,
+    locked: event.locked,
+    eventType: event.eventType,
+    recurringEventId: event.seriesId,
+    hangoutLink:
+      event.conference?.type === "hangoutsMeet"
+        ? event.conference.url
+        : undefined,
+    conferenceUrl: event.conference?.url,
+    conferenceName: event.conference?.name,
+    conferenceType: event.conference?.type,
+  };
+}
+
 export async function createEventHandler(
   ctx: ActionCtx,
   args: CreateEventArgs,
-): Promise<ProviderEvent> {
-  return await createEventOp(ctx, await authedUser(ctx), args);
+): Promise<ReturnType<typeof legacyCalendarActionEvent>> {
+  return legacyCalendarActionEvent(
+    await createEventOp(ctx, await authedUser(ctx), args),
+  );
 }
 
 export async function refreshEventRecurrenceHandler(
@@ -1173,22 +1278,28 @@ export async function refreshEventRecurrenceHandler(
 export async function updateEventTimeHandler(
   ctx: ActionCtx,
   args: UpdateEventTimeArgs,
-): Promise<ProviderEvent> {
-  return await updateEventTimeOp(ctx, await authedUser(ctx), args);
+): Promise<ReturnType<typeof legacyCalendarActionEvent>> {
+  return legacyCalendarActionEvent(
+    await updateEventTimeOp(ctx, await authedUser(ctx), args),
+  );
 }
 
 export async function updateEventHandler(
   ctx: ActionCtx,
   args: UpdateEventArgs,
-): Promise<ProviderEvent> {
-  return await updateEventOp(ctx, await authedUser(ctx), args);
+): Promise<ReturnType<typeof legacyCalendarActionEvent>> {
+  return legacyCalendarActionEvent(
+    await updateEventOp(ctx, await authedUser(ctx), args),
+  );
 }
 
 export async function respondToEventHandler(
   ctx: ActionCtx,
   args: RespondToEventArgs,
-): Promise<ProviderEvent> {
-  return await respondToEventOp(ctx, await authedUser(ctx), args);
+): Promise<ReturnType<typeof legacyCalendarActionEvent>> {
+  return legacyCalendarActionEvent(
+    await respondToEventOp(ctx, await authedUser(ctx), args),
+  );
 }
 
 export async function deleteEventHandler(

@@ -55,6 +55,13 @@ crons.interval(
   {},
 );
 
+crons.interval(
+  "prune settled calendar operations",
+  { hours: 24 },
+  internal.maintenance.pruneCalendarOperations,
+  {},
+);
+
 // Cap the assistant tables: delete conversations untouched for 30 days. The
 // user-driven "new chat discards the prior" path handles the common case; this
 // catches threads left behind rather than replaced.

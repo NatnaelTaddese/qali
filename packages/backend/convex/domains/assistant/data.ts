@@ -409,6 +409,10 @@ export const listEventsForAssistant = defineQuery({
           q.and(
             q.lt(q.field("startMs"), args.endMs),
             q.neq(q.field("status"), "cancelled"),
+            q.or(
+              q.eq(q.field("localCalendarId"), undefined),
+              q.eq(q.field("localCalendarId"), calendar._id),
+            ),
           ),
         )
         .take(remaining + 1);
@@ -694,19 +698,28 @@ export const claimAction = defineMutation({
       return null;
     }
     const operationId = action.operationId ?? crypto.randomUUID();
+    const attemptId = crypto.randomUUID();
     const applyLeaseExpiresAt = Date.now() + ACTION_LEASE_MS;
     await ctx.db.patch(args.actionId, {
       status: "applying",
       operationId,
       attemptCount,
+      attemptId,
       applyLeaseExpiresAt,
     });
     await ctx.scheduler.runAt(
       applyLeaseExpiresAt,
       internal.assistantData.releaseStaleAction,
-      { actionId: args.actionId, applyLeaseExpiresAt },
+      { actionId: args.actionId, attemptId, applyLeaseExpiresAt },
     );
-    return { ...action, operationId, attemptCount };
+    return {
+      ...action,
+      operationId,
+      attemptCount,
+      attemptId,
+      applyLeaseExpiresAt,
+      status: "applying" as const,
+    };
   },
 });
 
@@ -714,15 +727,24 @@ export const claimAction = defineMutation({
 export const settleClaimedAction = defineMutation({
   args: {
     actionId: v.id("assistantActions"),
+    attemptId: v.optional(v.string()),
     status: v.union(v.literal("applied"), v.literal("failed")),
     resultSummary: v.string(),
   },
   handler: async (ctx, args): Promise<null> => {
+    const action = await ctx.db.get(args.actionId);
+    if (
+      action?.status !== "applying" ||
+      (action.attemptId === undefined
+        ? args.attemptId !== undefined
+        : action.attemptId !== args.attemptId)
+    ) return null;
     await ctx.db.patch(args.actionId, {
       status: args.status,
       resultSummary: args.resultSummary,
       decidedAt: Date.now(),
       applyLeaseExpiresAt: undefined,
+      attemptId: undefined,
     });
     return null;
   },
@@ -734,15 +756,22 @@ export const settleClaimedAction = defineMutation({
 export const retryClaimedAction = defineMutation({
   args: {
     actionId: v.id("assistantActions"),
+    attemptId: v.optional(v.string()),
     resultSummary: v.string(),
   },
   handler: async (ctx, args): Promise<null> => {
     const action = await ctx.db.get(args.actionId);
-    if (action?.status === "applying") {
+    if (
+      action?.status === "applying" &&
+      (action.attemptId === undefined
+        ? args.attemptId === undefined
+        : action.attemptId === args.attemptId)
+    ) {
       await ctx.db.patch(args.actionId, {
         status: "pending",
         resultSummary: args.resultSummary.slice(0, 2_000),
         applyLeaseExpiresAt: undefined,
+        attemptId: undefined,
       });
     }
     return null;
@@ -754,18 +783,23 @@ export const retryClaimedAction = defineMutation({
 export const releaseStaleAction = defineMutation({
   args: {
     actionId: v.id("assistantActions"),
+    attemptId: v.optional(v.string()),
     applyLeaseExpiresAt: v.number(),
   },
   handler: async (ctx, args): Promise<null> => {
     const action = await ctx.db.get(args.actionId);
     if (
       action?.status === "applying" &&
+      (action.attemptId === undefined
+        ? args.attemptId === undefined
+        : action.attemptId === args.attemptId) &&
       action.applyLeaseExpiresAt === args.applyLeaseExpiresAt &&
       args.applyLeaseExpiresAt <= Date.now()
     ) {
       await ctx.db.patch(args.actionId, {
         status: "pending",
         applyLeaseExpiresAt: undefined,
+        attemptId: undefined,
         resultSummary:
           "The previous confirmation was interrupted. Retry to reconcile it safely.",
       });

@@ -74,7 +74,11 @@ export const calendarTables = {
       "connectionId",
       "localCalendarId",
       "providerSeriesId",
-    ]),
+    ])
+    .index("by_connection_and_localCalendarId_and_endMs", {
+      fields: ["connectionId", "localCalendarId", "endMs"],
+      staged: true,
+    }),
 
   // One physical copy of a Google *public* calendar's events (holidays,
   // birthdays), shared across every user who selects that calendar. Stored once
@@ -89,6 +93,8 @@ export const calendarTables = {
       providerEventId: v.optional(v.string()),
       providerUpdatedMs: v.optional(v.number()),
       providerSeriesId: v.optional(v.string()),
+      color: v.optional(v.string()),
+      busy: v.optional(v.boolean()),
       syncGeneration: v.optional(v.number()),
     }),
   )

@@ -135,3 +135,83 @@ describe("purgeUserData", () => {
     });
   });
 });
+
+describe("calendar operation retention", () => {
+  test("prunes only aged terminal rows and preserves authority records", async () => {
+    const t = convexTest(schema, modules);
+    const ids = await t.run(async (ctx) => {
+      const connectionId = await ctx.db.insert("calendarConnections", {
+        userId: "retention-user",
+        provider: "google",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const old = Date.now() - 100 * 24 * 60 * 60 * 1000;
+      const insert = (
+        key: string,
+        status: "pending" | "ambiguous" | "succeeded" | "failed",
+        updatedAt = old,
+      ) =>
+        ctx.db.insert("calendarOperations", {
+          connectionId,
+          userId: "retention-user",
+          idempotencyKey: key,
+          kind: "create",
+          status,
+          createdAt: old,
+          updatedAt,
+        });
+      return {
+        succeeded: await insert("succeeded", "succeeded"),
+        failed: await insert("failed", "failed"),
+        pending: await insert("pending", "pending"),
+        ambiguous: await insert("ambiguous", "ambiguous"),
+        recent: await insert("recent", "succeeded", Date.now()),
+      };
+    });
+    await t.mutation(internal.maintenance.pruneCalendarOperations, {});
+    expect(await t.run((ctx) => ctx.db.get(ids.succeeded))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(ids.failed))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(ids.pending))).not.toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(ids.ambiguous))).not.toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(ids.recent))).not.toBeNull();
+  });
+
+  test("preserves an aged terminal operation while its booking is pending", async () => {
+    const t = convexTest(schema, modules);
+    const operationId = await t.run(async (ctx) => {
+      const connectionId = await ctx.db.insert("calendarConnections", {
+        userId: "booking-retention-user",
+        provider: "google",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const bookingId = await ctx.db.insert("bookings", {
+        hostUserId: "booking-retention-user",
+        startMs: 1,
+        endMs: 2,
+        timeZone: "UTC",
+        requesterName: "R",
+        requesterEmail: "r@example.com",
+        status: "pending",
+        token: "retention-token",
+        createdAt: 1,
+      });
+      return await ctx.db.insert("calendarOperations", {
+        connectionId,
+        userId: "booking-retention-user",
+        idempotencyKey: "booking-op",
+        kind: "create",
+        status: "succeeded",
+        bookingId,
+        providerEventId: "event",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+    await t.mutation(internal.maintenance.pruneCalendarOperations, {});
+    expect(await t.run((ctx) => ctx.db.get(operationId))).not.toBeNull();
+  });
+});

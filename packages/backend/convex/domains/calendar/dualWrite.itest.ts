@@ -107,6 +107,7 @@ describe("calendar dual-write", () => {
       ...target,
       idempotencyKey: "assistant-operation-1",
       kind: "create",
+      requestFingerprint: "v1:create-one",
       attemptId: "attempt-1",
     });
     expect(claim).toMatchObject({ state: "claimed", reconcileOnly: false });
@@ -126,11 +127,79 @@ describe("calendar dual-write", () => {
       ...target,
       idempotencyKey: "assistant-operation-1",
       kind: "create",
+      requestFingerprint: "v1:create-one",
       attemptId: "attempt-2",
     });
     expect(replay).toEqual({
       state: "succeeded",
       providerEventId: "provider-event-1",
+    });
+  });
+
+  test("rejects idempotency-key reuse for a changed target or payload", async () => {
+    const t = convexTest(schema, modules);
+    await preparePrimaryCalendar(t);
+    const target = await t.mutation(internal.calendar.resolveCreateTarget, {
+      userId: USER,
+    });
+    await t.mutation(internal.calendar.claimCalendarOperation, {
+      userId: USER,
+      ...target,
+      idempotencyKey: "bound-key",
+      kind: "create",
+      requestFingerprint: "v1:first-payload",
+      attemptId: "first",
+    });
+    await t.run(async (ctx) => {
+      const operation = await ctx.db.query("calendarOperations").unique();
+      await ctx.db.patch(operation!._id, { leaseExpiresAt: 0 });
+    });
+    await expect(
+      t.mutation(internal.calendar.claimCalendarOperation, {
+        userId: USER,
+        ...target,
+        idempotencyKey: "bound-key",
+        kind: "create",
+        requestFingerprint: "v1:changed-payload",
+        attemptId: "second",
+      }),
+    ).rejects.toThrow(/another write/i);
+    const otherCalendarId = await t.run((ctx) =>
+      ctx.db.insert("calendars", {
+        userId: USER,
+        googleCalendarId: "other",
+        providerCalendarId: "other",
+        connectionId: target.connectionId,
+        accessRole: "owner",
+        selected: true,
+      }),
+    );
+    await expect(
+      t.mutation(internal.calendar.claimCalendarOperation, {
+        userId: USER,
+        connectionId: target.connectionId,
+        localCalendarId: otherCalendarId,
+        providerCalendarId: "other",
+        idempotencyKey: "bound-key",
+        kind: "create",
+        requestFingerprint: "v1:first-payload",
+        attemptId: "third",
+      }),
+    ).rejects.toThrow(/another write/i);
+  });
+
+  test("creates a safe primary alias before the first calendar sync", async () => {
+    const t = convexTest(schema, modules);
+    const target = await t.mutation(internal.calendar.resolveCreateTarget, {
+      userId: "new-user",
+    });
+    expect(target.providerCalendarId).toBe("primary");
+    const calendar = await t.run((ctx) => ctx.db.get(target.localCalendarId));
+    expect(calendar).toMatchObject({
+      primary: true,
+      accessRole: "owner",
+      selected: true,
+      providerCalendarId: "primary",
     });
   });
 
@@ -175,6 +244,8 @@ describe("calendar dual-write", () => {
     expect(event?.connectionId).toBe(connectionId);
     expect(event?.providerEventId).toBe("g-evt");
     expect(event?.providerUpdatedMs).toBe(777);
+    expect(event?.color).toBeUndefined();
+    expect(event?.busy).toBeUndefined();
     expect(event?.googleEventId).toBe("g-evt");
   });
 

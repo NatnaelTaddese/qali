@@ -167,6 +167,7 @@ export const pruneSharedCalendarEvents = defineMutation({
 // Drop `bookingRateLimits` rows untouched for a day — well past any active
 // window, so a later request for that key just re-inserts a fresh counter.
 const RATE_LIMIT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const CALENDAR_OPERATION_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 export const pruneRateLimits = defineMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
@@ -185,6 +186,39 @@ export const pruneRateLimits = defineMutation({
       await ctx.scheduler.runAfter(0, internal.maintenance.pruneRateLimits, {
         cursor: page.continueCursor,
       });
+    }
+    return null;
+  },
+});
+
+// Terminal write records only provide retry deduplication for a bounded window.
+// Pending/ambiguous rows and any operation backing a still-pending booking are
+// authority records rather than history and are never pruned.
+export const pruneCalendarOperations = defineMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const cutoff = Date.now() - CALENDAR_OPERATION_RETENTION_MS;
+    const page = await ctx.db
+      .query("calendarOperations")
+      .paginate({ cursor: args.cursor ?? null, numItems: BATCH_SIZE });
+    for (const operation of page.page) {
+      if (
+        (operation.status !== "succeeded" && operation.status !== "failed") ||
+        operation.updatedAt >= cutoff
+      ) continue;
+      if (operation.bookingId) {
+        const booking = await ctx.db.get(operation.bookingId);
+        if (booking?.status === "pending") continue;
+      }
+      await ctx.db.delete(operation._id);
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.maintenance.pruneCalendarOperations,
+        { cursor: page.continueCursor },
+      );
     }
     return null;
   },

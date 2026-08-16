@@ -608,6 +608,7 @@ export const confirmAction = defineAction({
       const summary = await applyProposal(ctx, user._id, action);
       await ctx.runMutation(internal.assistantData.settleClaimedAction, {
         actionId: args.actionId,
+        attemptId: action.attemptId,
         status: "applied",
         resultSummary: summary,
       });
@@ -615,6 +616,7 @@ export const confirmAction = defineAction({
       if (error instanceof ExternalWriteCommittedError) {
         await ctx.runMutation(internal.assistantData.settleClaimedAction, {
           actionId: args.actionId,
+          attemptId: action.attemptId,
           status: "applied",
           resultSummary: `${error.successSummary} The calendar provider accepted it; local sync is catching up.`,
         });
@@ -624,6 +626,7 @@ export const confirmAction = defineAction({
       if (isDefinitiveProviderFailure(error)) {
         await ctx.runMutation(internal.assistantData.settleClaimedAction, {
           actionId: args.actionId,
+          attemptId: action.attemptId,
           status: "failed",
           resultSummary: message,
         });
@@ -631,6 +634,7 @@ export const confirmAction = defineAction({
       }
       await ctx.runMutation(internal.assistantData.retryClaimedAction, {
         actionId: args.actionId,
+        attemptId: action.attemptId,
         resultSummary: message,
       });
       throw error;

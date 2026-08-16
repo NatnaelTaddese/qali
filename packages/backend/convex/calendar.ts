@@ -155,6 +155,9 @@ export const claimCalendarOperation = internalMutation({
     localCalendarId: v.id("calendars"),
     providerCalendarId: v.string(),
     providerEventId: v.optional(v.string()),
+    targetEventId: v.optional(v.id("events")),
+    targetProviderEventId: v.optional(v.string()),
+    requestFingerprint: v.string(),
     idempotencyKey: v.string(),
     kind: v.union(
       v.literal("create"),

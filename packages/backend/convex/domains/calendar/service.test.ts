@@ -16,6 +16,7 @@ import { ProviderError } from "../../integrations/calendar/errors";
 process.env.SKIP_ENV_VALIDATION = "1";
 const service = await import("./service");
 const {
+  legacyCalendarActionEvent,
   truncateRecurrence,
 } = service;
 
@@ -180,6 +181,28 @@ const CREATE_ARGS = {
 };
 
 describe("event creation", () => {
+  test("keeps the legacy Google-shaped public action DTO", () => {
+    const result = legacyCalendarActionEvent({
+      id: "provider-id",
+      calendarId: "primary",
+      startMs: 1,
+      endMs: 2,
+      allDay: false,
+      status: "confirmed",
+      updatedMs: 3,
+      color: "5",
+      busy: false,
+    });
+    expect(result).toMatchObject({
+      googleEventId: "provider-id",
+      calendarId: "primary",
+      googleUpdatedMs: 3,
+      colorId: "5",
+      transparency: "transparent",
+    });
+    expect("id" in result).toBe(false);
+    expect("updatedMs" in result).toBe(false);
+  });
   test("routes a public create op through an injected non-Google adapter", async () => {
     const { ctx, mutations } = createContext();
     let requestedCalendarId: string | undefined;

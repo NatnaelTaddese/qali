@@ -363,7 +363,7 @@ describe("booking acceptance settle", () => {
 });
 
 describe("booking acceptance authority", () => {
-  test("scheduled expiration waits for the operation lease, then expires", async () => {
+  test("ambiguous acceptance stays pending and reconcilable after lease loss", async () => {
     const t = convexTest(schema, modules);
     const { connectionId, calendarId } = await seedHost(t);
     const endMs = Date.now() - 1_000;
@@ -403,6 +403,43 @@ describe("booking acceptance authority", () => {
     await t.run((ctx) =>
       ctx.db.patch(operationId, { leaseExpiresAt: Date.now() - 1 }),
     );
+    await t.mutation(internal.booking.expireBooking, { bookingId });
+    expect((await t.run((ctx) => ctx.db.get(bookingId)))?.status).toBe(
+      "pending",
+    );
+    const retry = await t.mutation(
+      internal.booking.claimBookingAcceptance,
+      { bookingId, hostUserId: HOST, attemptId: "reconcile" },
+    );
+    expect(retry).toMatchObject({
+      operationId: "expiry-op",
+      reconcileOnly: true,
+    });
+  });
+
+  test("a definitively failed past acceptance can expire", async () => {
+    const t = convexTest(schema, modules);
+    const { connectionId, calendarId } = await seedHost(t);
+    const endMs = Date.now() - 1_000;
+    const bookingId = await t.run(async (ctx) => {
+      const bookingId = await ctx.db.insert(
+        "bookings",
+        bookingDoc(HOST, endMs - 30 * 60_000, endMs),
+      );
+      await ctx.db.insert("calendarOperations", {
+        connectionId,
+        userId: HOST,
+        idempotencyKey: "failed-op",
+        kind: "create",
+        status: "failed",
+        bookingId,
+        localCalendarId: calendarId,
+        providerCalendarId: CAL,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return bookingId;
+    });
     await t.mutation(internal.booking.expireBooking, { bookingId });
     expect((await t.run((ctx) => ctx.db.get(bookingId)))?.status).toBe(
       "expired",

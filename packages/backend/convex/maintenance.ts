@@ -19,6 +19,9 @@ export const pruneSharedCalendarEvents = internalMutation(
   jobs.pruneSharedCalendarEvents,
 );
 export const pruneRateLimits = internalMutation(jobs.pruneRateLimits);
+export const pruneCalendarOperations = internalMutation(
+  jobs.pruneCalendarOperations,
+);
 export const purgeUserData = internalMutation(jobs.purgeUserData);
 
 export const clearEventAttendees = internalMutation(

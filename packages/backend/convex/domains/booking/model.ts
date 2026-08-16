@@ -98,9 +98,7 @@ export async function collectBusy(
     .query("calendars")
     .withIndex("by_user", (q) => q.eq("userId", page.userId))
     .collect();
-  const visible = calendars
-    .filter((c) => c.selected)
-    .map((c) => c.googleCalendarId);
+  const visible = calendars.filter((c) => c.selected);
 
   // Overlap is `endMs > fromMs && startMs < toMs`. Range each visible calendar's
   // end index on endMs so a multi-day event that began before the window still
@@ -109,25 +107,34 @@ export async function collectBusy(
   const budget = newRowBudget();
   const spanEnd = toMs + MAX_EVENT_SPAN_MS;
   const busy: Interval[] = [];
-  for (const calendarId of visible) {
+  for (const calendar of visible) {
     const events = await ctx.db
       .query("events")
       .withIndex("by_user_and_calendar_and_end", (q) =>
         q
           .eq("userId", page.userId)
-          .eq("calendarId", calendarId)
+          .eq("calendarId", calendar.googleCalendarId)
           .gt("endMs", fromMs)
           .lte("endMs", spanEnd),
+      )
+      .filter((q) =>
+        q.or(
+          q.eq(q.field("localCalendarId"), undefined),
+          q.eq(q.field("localCalendarId"), calendar._id),
+        ),
       )
       .take(budget.remaining + 1);
     spendRowBudget(budget, events.length);
     for (const event of events) {
       if (event.startMs >= toMs) continue;
-      if (event.googleEventId === excludeGoogleEventId) continue;
+      if ((event.providerEventId ?? event.googleEventId) === excludeGoogleEventId) continue;
       if (event.status === "cancelled") continue;
       // The host marked this one "free" in their own calendar, so it is not a
       // reason to withhold the time.
-      if (event.transparency === "transparent") continue;
+      if (
+        event.busy === false ||
+        (event.busy === undefined && event.transparency === "transparent")
+      ) continue;
       busy.push(
         event.allDay
           ? allDayBusyInterval(event.startMs, event.endMs, page.timeZone)

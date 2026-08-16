@@ -377,6 +377,11 @@ async function processUserPage(
         providerEventId: row.googleEventId,
         providerUpdatedMs: row.googleUpdatedMs,
         providerSeriesId: row.recurringEventId,
+        color: row.colorId,
+        busy:
+          row.transparency === undefined
+            ? undefined
+            : row.transparency !== "transparent",
       });
     }
     return page;
@@ -590,6 +595,11 @@ export const backfillSharedRecords = internalMutation({
         providerEventId: row.googleEventId,
         providerUpdatedMs: row.googleUpdatedMs,
         providerSeriesId: row.recurringEventId,
+        color: row.colorId,
+        busy:
+          row.transparency === undefined
+            ? undefined
+            : row.transparency !== "transparent",
       });
     }
     if (!page.isDone) {
@@ -747,6 +757,13 @@ async function verifyPage(
         reasons.push("providerUpdatedMs");
       if (row.providerSeriesId !== row.recurringEventId)
         reasons.push("providerSeriesId");
+      if (row.color !== row.colorId) reasons.push("color");
+      if (
+        row.busy !==
+        (row.transparency === undefined
+          ? undefined
+          : row.transparency !== "transparent")
+      ) reasons.push("busy");
       add(row._id, reasons);
     }
     return finish(page);
@@ -869,6 +886,13 @@ async function verifyPage(
         reasons.push("providerUpdatedMs");
       if (row.providerSeriesId !== row.recurringEventId)
         reasons.push("providerSeriesId");
+      if (row.color !== row.colorId) reasons.push("color");
+      if (
+        row.busy !==
+        (row.transparency === undefined
+          ? undefined
+          : row.transparency !== "transparent")
+      ) reasons.push("busy");
       add(row._id, reasons);
     }
     return finish(page);

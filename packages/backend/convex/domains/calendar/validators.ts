@@ -163,4 +163,8 @@ export const eventDocValidator = googleEventValidator.extend({
   providerEventId: v.optional(v.string()),
   providerUpdatedMs: v.optional(v.number()),
   providerSeriesId: v.optional(v.string()),
+  // Neutral mirrors of the provider's event colour and free/busy flag. These
+  // remain optional until the connection backfill has reached every legacy row.
+  color: v.optional(v.string()),
+  busy: v.optional(v.boolean()),
 });

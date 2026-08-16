@@ -33,7 +33,7 @@ function PrivacyPage() {
           qali is the data controller for the information described here. If you
           have any question about this policy or want to exercise your rights,
           contact us at{" "}
-          <a href="mailto:privacy@qali.app">privacy@qali.app</a>.
+          <a href="mailto:privacy@myqali.com">privacy@myqali.com</a>.
         </p>
       </LegalSection>
 
@@ -247,7 +247,7 @@ function PrivacyPage() {
         </ul>
         <p>
           To make any of these requests, email{" "}
-          <a href="mailto:privacy@qali.app">privacy@qali.app</a>.
+          <a href="mailto:privacy@myqali.com">privacy@myqali.com</a>.
         </p>
       </LegalSection>
 

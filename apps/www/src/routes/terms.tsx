@@ -170,7 +170,7 @@ function TermsPage() {
       <LegalSection heading="Contact">
         <p>
           Questions about these Terms? Email{" "}
-          <a href="mailto:support@qali.app">support@qali.app</a>.
+          <a href="mailto:support@myqali.com">support@myqali.com</a>.
         </p>
       </LegalSection>
     </LegalPage>

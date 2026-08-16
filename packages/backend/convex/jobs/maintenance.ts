@@ -203,6 +203,8 @@ export const purgeUserData = internalMutation({
     const byUser = (
       table:
         | "syncState"
+        | "connectionSyncState"
+        | "calendarConnections"
         | "calendars"
         | "bookingPages"
         | "contacts"
@@ -216,12 +218,23 @@ export const purgeUserData = internalMutation({
         .take(PURGE_BATCH);
 
     await drain(await byUser("syncState"));
+    // Delete connection children before their parent connection rows. Convex
+    // does not enforce foreign keys, but this ordering prevents retries from
+    // observing orphaned operational state midway through a batched purge.
+    await drain(
+      await ctx.db
+        .query("calendarOperations")
+        .withIndex("by_user_and_status", (q) => q.eq("userId", userId))
+        .take(PURGE_BATCH),
+    );
+    await drain(await byUser("connectionSyncState"));
     await drain(await byUser("calendars"));
     await drain(await byUser("bookingPages"));
     await drain(await byUser("contacts"));
     await drain(await byUser("people"));
     await drain(await byUser("assistantUserState"));
     await drain(await byUser("assistantMessages"));
+    await drain(await byUser("calendarConnections"));
     await drain(
       await ctx.db
         .query("events")

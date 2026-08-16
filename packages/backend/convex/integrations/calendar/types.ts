@@ -18,8 +18,6 @@
  *  - Times are epoch-millis + an all-day flag, never provider date strings.
  */
 
-import type { ProviderError } from "./errors";
-
 export type ProviderId = "google" | "microsoft";
 
 /** Opaque provider cursor. The string is meaningful only to the adapter that
@@ -223,5 +221,3 @@ export interface CalendarProviderAdapter {
     readonly notify?: NotifyScope;
   }): Promise<void>;
 }
-
-export type { ProviderError };

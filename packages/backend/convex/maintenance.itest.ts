@@ -13,6 +13,27 @@ describe("purgeUserData", () => {
     const userId = "victim";
     const email = "victim@example.com";
     await t.run(async (ctx) => {
+      const connectionId = await ctx.db.insert("calendarConnections", {
+        userId,
+        provider: "google",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("connectionSyncState", {
+        connectionId,
+        userId,
+        status: "idle",
+      });
+      await ctx.db.insert("calendarOperations", {
+        connectionId,
+        userId,
+        idempotencyKey: "op",
+        kind: "create",
+        status: "pending",
+        createdAt: 1,
+        updatedAt: 1,
+      });
       await ctx.db.insert("events", {
         userId,
         calendarId: "c",
@@ -75,6 +96,9 @@ describe("purgeUserData", () => {
       expect(await ctx.db.query("contacts").collect()).toHaveLength(0);
       expect(await ctx.db.query("people").collect()).toHaveLength(0);
       expect(await ctx.db.query("bookings").collect()).toHaveLength(0);
+      expect(await ctx.db.query("calendarConnections").collect()).toHaveLength(0);
+      expect(await ctx.db.query("connectionSyncState").collect()).toHaveLength(0);
+      expect(await ctx.db.query("calendarOperations").collect()).toHaveLength(0);
       const calendars = await ctx.db.query("calendars").collect();
       expect(calendars.map((c) => c.userId)).toEqual(["bystander"]);
       const waitlist = await ctx.db.query("waitlist").collect();

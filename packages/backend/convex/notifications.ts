@@ -3,8 +3,8 @@
  * booking request) write a row here, and the header notification bell reads it.
  *
  * This is the stable public facade — it keeps the `api.notifications.*` and
- * `internal.notifications.*` paths (and the `clearBookingNotifications` helper
- * booking depends on) fixed while the logic lives in `domains/notifications/`.
+ * `internal.notifications.*` paths fixed while the logic lives in
+ * `domains/notifications/`.
  */
 
 import { v } from "convex/values";
@@ -19,11 +19,6 @@ import {
   markReadHandler,
 } from "./domains/notifications/mutations";
 import { listHandler, unreadCountHandler } from "./domains/notifications/queries";
-
-export {
-  clearBookingNotifications,
-  type NotificationWithBooking,
-} from "./domains/notifications/model";
 
 export const list = query({
   args: {},

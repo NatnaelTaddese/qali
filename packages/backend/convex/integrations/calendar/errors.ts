@@ -50,15 +50,3 @@ export class ProviderError extends Error {
     return this.options.retryAfterMs;
   }
 }
-
-/** True when the failure means an opaque cursor must be discarded and the
- * caller should fall back to a full resync. */
-export function isCursorExpired(error: unknown): boolean {
-  return error instanceof ProviderError && error.kind === "cursor-expired";
-}
-
-/** True when a create may have landed despite the error, so the caller must
- * reconcile by idempotency key rather than retry. */
-export function isAmbiguousWrite(error: unknown): boolean {
-  return error instanceof ProviderError && error.kind === "ambiguous";
-}

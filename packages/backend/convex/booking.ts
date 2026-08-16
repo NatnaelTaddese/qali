@@ -22,6 +22,7 @@ import {
   expireBookingHandler,
   expirePastBookingsHandler,
   markAcceptedHandler,
+  rejectBookingForHostHandler,
   rejectBookingHandler,
   releaseBookingAcceptanceHandler,
   requestBookingHandler,
@@ -156,8 +157,8 @@ export const markAccepted = internalMutation({
   args: {
     bookingId: v.id("bookings"),
     hostUserId: v.string(),
-    googleEventId: v.string(),
-    calendarId: v.string(),
+    providerEventId: v.string(),
+    providerCalendarId: v.string(),
     attemptId: v.string(),
   },
   handler: (ctx, args) => markAcceptedHandler(ctx, args),
@@ -168,7 +169,6 @@ export const claimBookingAcceptance = internalMutation({
     bookingId: v.id("bookings"),
     hostUserId: v.string(),
     attemptId: v.string(),
-    calendarId: v.string(),
   },
   handler: (ctx, args) => claimBookingAcceptanceHandler(ctx, args),
 });
@@ -179,6 +179,7 @@ export const releaseBookingAcceptance = internalMutation({
     hostUserId: v.string(),
     attemptId: v.string(),
     mayHaveSucceeded: v.boolean(),
+    error: v.optional(v.string()),
   },
   handler: (ctx, args) => releaseBookingAcceptanceHandler(ctx, args),
 });
@@ -191,4 +192,9 @@ export const acceptBooking = action({
 export const rejectBooking = mutation({
   args: { bookingId: v.id("bookings") },
   handler: (ctx, args) => rejectBookingHandler(ctx, args),
+});
+
+export const rejectBookingForHost = internalMutation({
+  args: { bookingId: v.id("bookings"), hostUserId: v.string() },
+  handler: (ctx, args) => rejectBookingForHostHandler(ctx, args),
 });

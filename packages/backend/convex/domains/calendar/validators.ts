@@ -30,6 +30,61 @@ export const personValidator = v.object({
   self: v.optional(v.boolean()),
 });
 
+const providerAttendeeValidator = personValidator.extend({
+  responseStatus: v.optional(
+    v.union(
+      v.literal("needsAction"),
+      v.literal("accepted"),
+      v.literal("tentative"),
+      v.literal("declined"),
+    ),
+  ),
+  organizer: v.optional(v.boolean()),
+  optional: v.optional(v.boolean()),
+});
+
+/** Provider-neutral event returned by a calendar adapter. */
+export const providerEventValidator = v.object({
+  id: v.string(),
+  calendarId: v.string(),
+  summary: v.optional(v.string()),
+  description: v.optional(v.string()),
+  location: v.optional(v.string()),
+  startMs: v.number(),
+  endMs: v.number(),
+  allDay: v.boolean(),
+  timeZone: v.optional(v.string()),
+  status: v.union(
+    v.literal("confirmed"),
+    v.literal("tentative"),
+    v.literal("cancelled"),
+  ),
+  updatedMs: v.number(),
+  htmlLink: v.optional(v.string()),
+  color: v.optional(v.string()),
+  visibility: v.optional(v.string()),
+  busy: v.optional(v.boolean()),
+  attendees: v.optional(v.array(providerAttendeeValidator)),
+  attendeesOmitted: v.optional(v.boolean()),
+  organizer: v.optional(personValidator),
+  creator: v.optional(personValidator),
+  guestsCanModify: v.optional(v.boolean()),
+  guestsCanInviteOthers: v.optional(v.boolean()),
+  guestsCanSeeOtherGuests: v.optional(v.boolean()),
+  locked: v.optional(v.boolean()),
+  eventType: v.optional(v.string()),
+  recurrence: v.optional(v.array(v.string())),
+  seriesId: v.optional(v.string()),
+  originalOccurrenceStartMs: v.optional(v.number()),
+  conference: v.optional(
+    v.object({
+      url: v.optional(v.string()),
+      name: v.optional(v.string()),
+      type: v.optional(v.string()),
+    }),
+  ),
+});
+
 /** One event exactly as Google gave it to us, after mapping. Shared by the
  * `events` table and by every action→mutation boundary that pushes a
  * MappedEvent across, so the shape is declared once and cannot drift. */

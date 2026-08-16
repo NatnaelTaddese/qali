@@ -227,5 +227,9 @@ export async function getBookingContextHandler(
   const conflict = busy.some(
     (b) => b.startMs < booking.endMs && b.endMs > booking.startMs,
   );
-  return { booking, page, conflict };
+  const acceptanceOperation = await ctx.db
+    .query("calendarOperations")
+    .withIndex("by_bookingId", (q) => q.eq("bookingId", booking._id))
+    .unique();
+  return { booking, page, conflict, acceptanceOperation };
 }

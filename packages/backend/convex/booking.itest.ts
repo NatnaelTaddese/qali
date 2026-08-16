@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 
@@ -75,13 +75,30 @@ function eventDoc(
 
 /** Seed a host page + a selected calendar so collectBusy can resolve visibility. */
 async function seedHost(t: ReturnType<typeof convexTest>, userId = HOST) {
-  await t.run(async (ctx) => {
-    await ctx.db.insert("bookingPages", pageDoc(userId));
-    await ctx.db.insert("calendars", {
+  return await t.run(async (ctx) => {
+    const now = Date.now();
+    const connectionId = await ctx.db.insert("calendarConnections", {
+      userId,
+      provider: "google",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const calendarId = await ctx.db.insert("calendars", {
       userId,
       googleCalendarId: CAL,
+      providerCalendarId: CAL,
+      connectionId,
+      primary: true,
+      accessRole: "owner",
       selected: true,
     });
+    await ctx.db.insert("bookingPages", {
+      ...pageDoc(userId),
+      targetConnectionId: connectionId,
+      targetCalendarId: calendarId,
+    });
+    return { connectionId, calendarId };
   });
 }
 
@@ -100,7 +117,6 @@ describe("booking acceptance claim", () => {
       bookingId,
       hostUserId: HOST,
       attemptId: "attempt-1",
-      calendarId: CAL,
     });
     expect(first).not.toBeNull();
     expect(first!.operationId).toEqual(expect.any(String));
@@ -121,7 +137,6 @@ describe("booking acceptance claim", () => {
       bookingId,
       hostUserId: HOST,
       attemptId: "attempt-2",
-      calendarId: CAL,
     });
     expect(second).toBeNull();
   });
@@ -152,7 +167,6 @@ describe("booking acceptance claim", () => {
         bookingId,
         hostUserId,
         attemptId: "a",
-        calendarId: CAL,
       });
 
     expect(await claim(expiredId, HOST)).toBeNull(); // past its end
@@ -176,7 +190,6 @@ describe("booking acceptance claim", () => {
         bookingId,
         hostUserId: HOST,
         attemptId: "a",
-        calendarId: CAL,
       }),
     ).rejects.toThrow(/no longer free/i);
   });
@@ -193,7 +206,6 @@ describe("booking acceptance claim", () => {
       bookingId,
       hostUserId: HOST,
       attemptId: "attempt-1",
-      calendarId: CAL,
     });
     // A lost/uncertain response releases the claim without asserting success.
     await t.mutation(internal.booking.releaseBookingAcceptance, {
@@ -207,11 +219,41 @@ describe("booking acceptance claim", () => {
       bookingId,
       hostUserId: HOST,
       attemptId: "attempt-2",
-      calendarId: CAL,
     });
     // Same operation id → the same client-assigned Google event id on retry, so a
     // create that actually landed reconciles instead of double-booking.
     expect(second!.operationId).toBe(first!.operationId);
+    expect(second!.reconcileOnly).toBe(false);
+  });
+
+  test("an ambiguous retry reclaims the ledger only for reconciliation", async () => {
+    const t = convexTest(schema, modules);
+    await seedHost(t);
+    const start = future();
+    const bookingId = await t.run((ctx) =>
+      ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
+    );
+    const first = await t.mutation(internal.booking.claimBookingAcceptance, {
+      bookingId,
+      hostUserId: HOST,
+      attemptId: "first",
+    });
+    await t.mutation(internal.booking.releaseBookingAcceptance, {
+      bookingId,
+      hostUserId: HOST,
+      attemptId: "first",
+      mayHaveSucceeded: true,
+    });
+
+    const retry = await t.mutation(internal.booking.claimBookingAcceptance, {
+      bookingId,
+      hostUserId: HOST,
+      attemptId: "retry",
+    });
+    expect(retry).toMatchObject({
+      operationId: first!.operationId,
+      reconcileOnly: true,
+    });
   });
 });
 
@@ -227,15 +269,14 @@ describe("booking acceptance settle", () => {
       bookingId,
       hostUserId: HOST,
       attemptId: "holder",
-      calendarId: CAL,
     });
 
     // A stale attempt cannot mark the booking accepted.
     const wrong = await t.mutation(internal.booking.markAccepted, {
       bookingId,
       hostUserId: HOST,
-      googleEventId: "evt_google",
-      calendarId: CAL,
+      providerEventId: "evt_google",
+      providerCalendarId: CAL,
       attemptId: "not-the-holder",
     });
     expect(wrong).toBe(false);
@@ -247,8 +288,8 @@ describe("booking acceptance settle", () => {
     const ok = await t.mutation(internal.booking.markAccepted, {
       bookingId,
       hostUserId: HOST,
-      googleEventId: "evt_google",
-      calendarId: CAL,
+      providerEventId: "evt_google",
+      providerCalendarId: CAL,
       attemptId: "holder",
     });
     expect(ok).toBe(true);
@@ -286,7 +327,6 @@ describe("booking acceptance settle", () => {
       bookingId,
       hostUserId: HOST,
       attemptId: "holder",
-      calendarId: CAL,
     });
 
     // A non-holder release is a no-op — it must not clear the live lease.
@@ -296,9 +336,9 @@ describe("booking acceptance settle", () => {
       attemptId: "stale",
       mayHaveSucceeded: false,
     });
-    expect(
-      (await t.run((ctx) => ctx.db.get(bookingId)))!.acceptAttemptId,
-    ).toBe("holder");
+    expect((await t.run((ctx) => ctx.db.get(bookingId)))!.acceptAttemptId).toBe(
+      "holder",
+    );
 
     // The holder releasing with an ambiguous outcome flags the booking so a
     // later reject cannot contradict a possibly-sent Google invitation.
@@ -319,6 +359,251 @@ describe("booking acceptance settle", () => {
     );
     expect(operation?.status).toBe("ambiguous");
     expect(operation?.mayHaveSucceeded).toBe(true);
+  });
+});
+
+describe("booking acceptance authority", () => {
+  test("scheduled expiration waits for the operation lease, then expires", async () => {
+    const t = convexTest(schema, modules);
+    const { connectionId, calendarId } = await seedHost(t);
+    const endMs = Date.now() - 1_000;
+    const bookingId = await t.run((ctx) =>
+      ctx.db.insert(
+        "bookings",
+        bookingDoc(HOST, endMs - 30 * 60_000, endMs, {
+          acceptAttemptId: "stale-booking-mirror",
+          acceptLeaseExpiresAt: 1,
+        }),
+      ),
+    );
+    const operationId = await t.run((ctx) => {
+      const now = Date.now();
+      return ctx.db.insert("calendarOperations", {
+        connectionId,
+        userId: HOST,
+        idempotencyKey: "expiry-op",
+        kind: "create",
+        status: "pending",
+        bookingId,
+        attemptId: "holder",
+        leaseExpiresAt: now + 60_000,
+        mayHaveSucceeded: true,
+        localCalendarId: calendarId,
+        providerCalendarId: CAL,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    await t.mutation(internal.booking.expireBooking, { bookingId });
+    expect((await t.run((ctx) => ctx.db.get(bookingId)))?.status).toBe(
+      "pending",
+    );
+
+    await t.run((ctx) =>
+      ctx.db.patch(operationId, { leaseExpiresAt: Date.now() - 1 }),
+    );
+    await t.mutation(internal.booking.expireBooking, { bookingId });
+    expect((await t.run((ctx) => ctx.db.get(bookingId)))?.status).toBe(
+      "expired",
+    );
+  });
+
+  test("the ledger blocks rejection during a lease and after ambiguity", async () => {
+    const t = convexTest(schema, modules);
+    await seedHost(t);
+    const start = future();
+    const bookingId = await t.run((ctx) =>
+      ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
+    );
+    await t.mutation(internal.booking.claimBookingAcceptance, {
+      bookingId,
+      hostUserId: HOST,
+      attemptId: "holder",
+    });
+    await expect(
+      t.mutation(internal.booking.rejectBookingForHost, {
+        bookingId,
+        hostUserId: HOST,
+      }),
+    ).rejects.toThrow(/currently being accepted/i);
+
+    await t.mutation(internal.booking.releaseBookingAcceptance, {
+      bookingId,
+      hostUserId: HOST,
+      attemptId: "holder",
+      mayHaveSucceeded: true,
+    });
+    await expect(
+      t.mutation(internal.booking.rejectBookingForHost, {
+        bookingId,
+        hostUserId: HOST,
+      }),
+    ).rejects.toThrow(/may have reached the calendar provider/i);
+  });
+
+  test("rejects foreign, paused, and read-only targets", async () => {
+    const t = convexTest(schema, modules);
+    const target = await seedHost(t);
+    const start = future();
+    const insertBooking = (
+      token: string,
+      overrides: Record<string, unknown> = {},
+    ) =>
+      t.run((ctx) =>
+        ctx.db.insert(
+          "bookings",
+          bookingDoc(HOST, start, start + 30 * 60_000, { token, ...overrides }),
+        ),
+      );
+
+    const foreign = await t.run(async (ctx) => {
+      const connectionId = await ctx.db.insert("calendarConnections", {
+        userId: "other",
+        provider: "google",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const calendarId = await ctx.db.insert("calendars", {
+        userId: "other",
+        googleCalendarId: "other-primary",
+        connectionId,
+        providerCalendarId: "other-primary",
+        primary: true,
+        accessRole: "owner",
+        selected: true,
+      });
+      return { connectionId, calendarId };
+    });
+    const foreignBooking = await insertBooking("foreign", {
+      targetConnectionId: foreign.connectionId,
+      targetCalendarId: foreign.calendarId,
+    });
+    await expect(
+      t.mutation(internal.booking.claimBookingAcceptance, {
+        bookingId: foreignBooking,
+        hostUserId: HOST,
+        attemptId: "foreign",
+      }),
+    ).rejects.toThrow(/target is unavailable/i);
+
+    await t.run((ctx) =>
+      ctx.db.patch(target.connectionId, { status: "paused" }),
+    );
+    const pausedBooking = await insertBooking("paused", {
+      targetConnectionId: target.connectionId,
+      targetCalendarId: target.calendarId,
+    });
+    await expect(
+      t.mutation(internal.booking.claimBookingAcceptance, {
+        bookingId: pausedBooking,
+        hostUserId: HOST,
+        attemptId: "paused",
+      }),
+    ).rejects.toThrow(/target is unavailable/i);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(target.connectionId, { status: "active" });
+      await ctx.db.patch(target.calendarId, {
+        primary: false,
+        accessRole: "reader",
+      });
+    });
+    const readOnlyBooking = await insertBooking("read-only", {
+      targetConnectionId: target.connectionId,
+      targetCalendarId: target.calendarId,
+    });
+    await expect(
+      t.mutation(internal.booking.claimBookingAcceptance, {
+        bookingId: readOnlyBooking,
+        hostUserId: HOST,
+        attemptId: "read-only",
+      }),
+    ).rejects.toThrow(/target is unavailable/i);
+  });
+
+  test("a legacy page persists its primary Google target on request", async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("bookingPages", {
+        ...pageDoc(HOST),
+        slug: "legacy-host",
+      });
+      await ctx.db.insert("calendars", {
+        userId: HOST,
+        googleCalendarId: CAL,
+        primary: true,
+        accessRole: "owner",
+        selected: true,
+      });
+    });
+    const startMs =
+      Math.ceil((Date.now() + 60 * 60_000) / (30 * 60_000)) * (30 * 60_000);
+    await t.mutation(api.booking.requestBooking, {
+      slug: "legacy-host",
+      startMs,
+      name: "Requester",
+      email: "requester@example.com",
+      timeZone: "UTC",
+    });
+
+    await t.run(async (ctx) => {
+      const page = await ctx.db
+        .query("bookingPages")
+        .withIndex("by_user", (q) => q.eq("userId", HOST))
+        .unique();
+      const booking = await ctx.db
+        .query("bookings")
+        .withIndex("by_host_and_start", (q) => q.eq("hostUserId", HOST))
+        .unique();
+      expect(page?.targetConnectionId).toBeDefined();
+      expect(page?.targetCalendarId).toBeDefined();
+      expect(booking).toMatchObject({
+        connectionId: page?.targetConnectionId,
+        targetConnectionId: page?.targetConnectionId,
+        targetCalendarId: page?.targetCalendarId,
+      });
+    });
+  });
+
+  test("accepted provider events mirror through calendar storage", async () => {
+    const t = convexTest(schema, modules);
+    const { connectionId, calendarId } = await seedHost(t);
+    await t.mutation(internal.calendar.mirrorProviderEvent, {
+      connectionId,
+      localCalendarId: calendarId,
+      event: {
+        id: "provider-event",
+        calendarId: CAL,
+        summary: "Intro with Requester",
+        startMs: 10_000,
+        endMs: 20_000,
+        allDay: false,
+        status: "confirmed",
+        updatedMs: 9_000,
+        attendees: [{ email: "requester@example.com" }],
+      },
+    });
+    const event = await t.run((ctx) =>
+      ctx.db
+        .query("events")
+        .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+          q
+            .eq("userId", HOST)
+            .eq("calendarId", CAL)
+            .eq("googleEventId", "provider-event"),
+        )
+        .unique(),
+    );
+    expect(event).toMatchObject({
+      connectionId,
+      localCalendarId: calendarId,
+      providerEventId: "provider-event",
+      googleEventId: "provider-event",
+      providerUpdatedMs: 9_000,
+      googleUpdatedMs: 9_000,
+    });
   });
 });
 

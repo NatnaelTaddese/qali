@@ -60,6 +60,22 @@ export async function listCalendarsHandler(ctx: QueryCtx) {
     .collect();
 }
 
+/** Registry lookup that deliberately hides foreign and inactive connections. */
+export async function getCalendarConnectionForAdapterHandler(
+  ctx: QueryCtx,
+  args: { userId: string; connectionId: Id<"calendarConnections"> },
+): Promise<Doc<"calendarConnections"> | null> {
+  const connection = await ctx.db.get(args.connectionId);
+  if (
+    !connection ||
+    connection.userId !== args.userId ||
+    connection.status !== "active"
+  ) {
+    return null;
+  }
+  return connection;
+}
+
 /** Upcoming events for the current user, read from the synced `events` table. */
 export async function listEventsHandler(ctx: QueryCtx) {
   const user = await authComponent.safeGetAuthUser(ctx);

@@ -15,12 +15,14 @@ import {
 } from "./_generated/server";
 import {
   deleteEventRowHandler,
+  mirrorProviderEventHandler,
   setCalendarSelectedHandler,
   upsertEventHandler,
   upsertRecurringSeriesHandler,
 } from "./domains/calendar/mutations";
 import {
   getEventByIdHandler,
+  getCalendarConnectionForAdapterHandler,
   getEventContextHandler,
   getEventRecurrenceHandler,
   getPrimaryCalendarIdHandler,
@@ -37,7 +39,10 @@ import {
   updateEventHandler,
   updateEventTimeHandler,
 } from "./domains/calendar/service";
-import { googleEventValidator } from "./domains/calendar/validators";
+import {
+  googleEventValidator,
+  providerEventValidator,
+} from "./domains/calendar/validators";
 
 // Re-exported for the web app, which types its calendar grid against it.
 export type { EventView } from "./domains/calendar/model";
@@ -86,6 +91,14 @@ export const getPrimaryCalendarId = internalQuery({
   handler: (ctx, args) => getPrimaryCalendarIdHandler(ctx, args),
 });
 
+export const getCalendarConnectionForAdapter = internalQuery({
+  args: {
+    userId: v.string(),
+    connectionId: v.id("calendarConnections"),
+  },
+  handler: (ctx, args) => getCalendarConnectionForAdapterHandler(ctx, args),
+});
+
 // --- Mutations (our side only) -------------------------------------------
 
 export const setCalendarSelected = mutation({
@@ -106,6 +119,15 @@ export const deleteEventRow = internalMutation({
 export const upsertEvent = internalMutation({
   args: { userId: v.string(), event: googleEventValidator },
   handler: (ctx, args) => upsertEventHandler(ctx, args),
+});
+
+export const mirrorProviderEvent = internalMutation({
+  args: {
+    connectionId: v.id("calendarConnections"),
+    localCalendarId: v.id("calendars"),
+    event: providerEventValidator,
+  },
+  handler: (ctx, args) => mirrorProviderEventHandler(ctx, args),
 });
 
 export const upsertRecurringSeries = internalMutation({

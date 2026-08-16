@@ -4,11 +4,11 @@
 
 import type { Infer } from "convex/values";
 
-import type { Id } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import { ensureGoogleConnection } from "./connections";
-import { googleEventValidator } from "./validators";
+import { googleEventValidator, providerEventValidator } from "./validators";
 
 /** Toggle whether a calendar's events appear on the grid. */
 export async function setCalendarSelectedHandler(
@@ -68,9 +68,7 @@ export async function upsertEventHandler(
   const localCalendar = await ctx.db
     .query("calendars")
     .withIndex("by_user_and_googleCalendarId", (q) =>
-      q
-        .eq("userId", args.userId)
-        .eq("googleCalendarId", args.event.calendarId),
+      q.eq("userId", args.userId).eq("googleCalendarId", args.event.calendarId),
     )
     .unique();
   const doc = {
@@ -96,6 +94,98 @@ export async function upsertEventHandler(
   } else {
     await ctx.db.insert("events", doc);
   }
+  return null;
+}
+
+/** Store an adapter event while legacy calendar readers still use Google-named
+ * columns. This compatibility mapping belongs to storage, not to an integration. */
+export async function mirrorProviderEventHandler(
+  ctx: MutationCtx,
+  args: {
+    connectionId: Id<"calendarConnections">;
+    localCalendarId: Id<"calendars">;
+    event: Infer<typeof providerEventValidator>;
+  },
+): Promise<null> {
+  const connection = await ctx.db.get(args.connectionId);
+  const calendar = await ctx.db.get(args.localCalendarId);
+  if (
+    !connection ||
+    !calendar ||
+    calendar.userId !== connection.userId ||
+    (calendar.connectionId !== undefined &&
+      calendar.connectionId !== connection._id) ||
+    (calendar.providerCalendarId ?? calendar.googleCalendarId) !==
+      args.event.calendarId
+  ) {
+    throw new Error("Calendar event mirror target is invalid");
+  }
+
+  const event = args.event;
+  const legacyEvent: Omit<Doc<"events">, "_id" | "_creationTime"> = {
+    userId: connection.userId,
+    googleEventId: event.id,
+    calendarId: calendar.googleCalendarId,
+    summary: event.summary,
+    description: event.description,
+    location: event.location,
+    startMs: event.startMs,
+    endMs: event.endMs,
+    allDay: event.allDay,
+    status: event.status,
+    htmlLink: event.htmlLink,
+    colorId: event.color,
+    visibility: event.visibility,
+    transparency:
+      event.busy === undefined
+        ? undefined
+        : event.busy
+          ? "opaque"
+          : "transparent",
+    attendees: event.attendees
+      ?.filter((attendee) => attendee.email !== undefined)
+      .map((attendee) => ({
+        email: attendee.email!,
+        displayName: attendee.displayName,
+        responseStatus: attendee.responseStatus,
+        organizer: attendee.organizer,
+        self: attendee.self,
+        optional: attendee.optional,
+      })),
+    attendeesOmitted: event.attendeesOmitted,
+    googleUpdatedMs: event.updatedMs,
+    organizer: event.organizer,
+    creator: event.creator,
+    guestsCanModify: event.guestsCanModify,
+    guestsCanInviteOthers: event.guestsCanInviteOthers,
+    guestsCanSeeOtherGuests: event.guestsCanSeeOtherGuests,
+    locked: event.locked,
+    eventType: event.eventType,
+    recurringEventId: event.seriesId,
+    hangoutLink:
+      event.conference?.type === "hangoutsMeet"
+        ? event.conference.url
+        : undefined,
+    conferenceUrl: event.conference?.url,
+    conferenceName: event.conference?.name,
+    conferenceType: event.conference?.type,
+    connectionId: connection._id,
+    localCalendarId: calendar._id,
+    providerEventId: event.id,
+    providerUpdatedMs: event.updatedMs,
+    providerSeriesId: event.seriesId,
+  };
+  const existing = await ctx.db
+    .query("events")
+    .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+      q
+        .eq("userId", connection.userId)
+        .eq("calendarId", calendar.googleCalendarId)
+        .eq("googleEventId", event.id),
+    )
+    .unique();
+  if (existing) await ctx.db.replace(existing._id, legacyEvent);
+  else await ctx.db.insert("events", legacyEvent);
   return null;
 }
 

@@ -40,8 +40,7 @@ export const calendarOperationTables = {
   // Provider-neutral operation ledger (Interface Risk #1). A write claims a row
   // keyed by its app-minted idempotency key before touching the provider, so a
   // retry after an ambiguous failure reconciles against `status`/provider ids
-  // instead of relying on a Google-compatible event id. Generalizes the current
-  // acceptOperationId / googleEventIdForOperation trick to every provider.
+  // instead of relying on a Google-compatible event id.
   calendarOperations: defineTable({
     connectionId: v.id("calendarConnections"),
     userId: v.string(),
@@ -72,7 +71,7 @@ export const calendarOperationTables = {
     updatedAt: v.number(),
   })
     .index("by_connection_and_key", ["connectionId", "idempotencyKey"])
-    .index("by_bookingId", { fields: ["bookingId"], staged: true })
+    .index("by_bookingId", ["bookingId"])
     .index("by_user_and_status", ["userId", "status"]),
 
   // Durable deduplication/progress for the resumable connection backfill.

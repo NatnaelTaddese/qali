@@ -19,9 +19,14 @@ import { createAuth } from "../../auth";
 export async function getGoogleAccessToken(
   ctx: GenericCtx<DataModel>,
   userId: string,
+  credentialRef?: string,
 ): Promise<string> {
   const { accessToken } = await createAuth(ctx).api.getAccessToken({
-    body: { providerId: "google", userId },
+    body: {
+      providerId: "google",
+      userId,
+      accountId: credentialRef,
+    },
   });
   if (!accessToken) {
     throw new Error("No Google access token available for user");

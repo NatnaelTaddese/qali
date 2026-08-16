@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 
+import { internal } from "./_generated/api";
 import schema from "./schema";
 import { calendarTables } from "./domains/calendar/tables";
 
@@ -14,6 +15,54 @@ const modules = import.meta.glob("./**/*.ts");
  * will write, and a guard against a schema drift that would break it.
  */
 describe("connection model expand", () => {
+  test("adapter resolution exposes only an owned active connection", async () => {
+    const t = convexTest(schema, modules);
+    const connectionId = await t.run((ctx) =>
+      ctx.db.insert("calendarConnections", {
+        userId: "owner",
+        provider: "google",
+        credentialRef: "account-1",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    expect(
+      await t.query(internal.calendar.getCalendarConnectionForAdapter, {
+        userId: "owner",
+        connectionId,
+      }),
+    ).toMatchObject({ credentialRef: "account-1", provider: "google" });
+    expect(
+      await t.query(internal.calendar.getCalendarConnectionForAdapter, {
+        userId: "other",
+        connectionId,
+      }),
+    ).toBeNull();
+
+    await t.run((ctx) => ctx.db.patch(connectionId, { status: "paused" }));
+    expect(
+      await t.query(internal.calendar.getCalendarConnectionForAdapter, {
+        userId: "owner",
+        connectionId,
+      }),
+    ).toBeNull();
+    await t.run((ctx) => ctx.db.patch(connectionId, { status: "error" }));
+    expect(
+      await t.query(internal.calendar.getCalendarConnectionForAdapter, {
+        userId: "owner",
+        connectionId,
+      }),
+    ).toBeNull();
+    await t.run((ctx) => ctx.db.delete(connectionId));
+    expect(
+      await t.query(internal.calendar.getCalendarConnectionForAdapter, {
+        userId: "owner",
+        connectionId,
+      }),
+    ).toBeNull();
+  });
+
   test("a connection links its sync-state and operation rows", async () => {
     const t = convexTest(schema, modules);
     const userId = "user_conn";
@@ -145,8 +194,7 @@ describe("connection model expand", () => {
       }
     ).stagedDbIndexes;
     expect(staged).toContainEqual({
-      indexDescriptor:
-        "by_connection_and_localCalendarId_and_providerEventId",
+      indexDescriptor: "by_connection_and_localCalendarId_and_providerEventId",
       fields: ["connectionId", "localCalendarId", "providerEventId"],
     });
   });

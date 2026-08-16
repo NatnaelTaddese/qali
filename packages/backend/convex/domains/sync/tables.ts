@@ -35,9 +35,9 @@ export const syncTables = {
     nextSyncDueAt: v.optional(v.number()),
     syncIntervalMs: v.optional(v.number()),
     // A run claims this lease before touching Google, so a manual `syncNow`, a
-    // cron-scheduled run, and a workspace-mount sync for the same user cannot
-    // overlap and race each other's token updates. Released in recordSyncOutcome;
-    // a stale lease past its expiry can be reclaimed. See runSyncForUser.
+    // cron-scheduled run, and a workspace-mount sync for the same user could not
+    // overlap. These legacy lease fields remain only through storage contraction;
+    // active leases now live on `connectionSyncState`.
     syncLeaseExpiresAt: v.optional(v.number()),
     syncAttemptId: v.optional(v.string()),
   })

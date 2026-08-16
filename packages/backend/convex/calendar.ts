@@ -33,7 +33,6 @@ import {
   getEventRecurrenceHandler,
   getPrimaryCalendarIdHandler,
   listCalendarsHandler,
-  listEventsHandler,
   listEventsInRangeHandler,
   listSharedEventsForAssistantHandler,
 } from "./domains/calendar/queries";
@@ -65,11 +64,6 @@ export const listSharedEventsForAssistant = internalQuery({
 export const listCalendars = query({
   args: {},
   handler: (ctx) => listCalendarsHandler(ctx),
-});
-
-export const listEvents = query({
-  args: {},
-  handler: (ctx) => listEventsHandler(ctx),
 });
 
 export const listEventsInRange = query({

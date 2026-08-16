@@ -83,9 +83,10 @@ export const bookingTables = {
     // Reserved when acceptance starts and retained with the Google event.
     googleEventId: v.optional(v.string()),
     calendarId: v.optional(v.string()),
-    // Provider-neutral fields (dual-written until cutover). `connectionId` is the
-    // writable connection acceptance created the event on; `providerEventId`
-    // mirrors `googleEventId`. Optional until backfilled.
+    // Provider-neutral fields dual-written through production contraction.
+    // `connectionId` is the writable connection acceptance created the event on;
+    // `providerEventId` mirrors `googleEventId`. Optional until backfill verifies
+    // every production row.
     connectionId: v.optional(v.id("calendarConnections")),
     providerEventId: v.optional(v.string()),
     targetConnectionId: v.optional(v.id("calendarConnections")),

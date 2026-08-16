@@ -84,64 +84,6 @@ export async function getCalendarConnectionForAdapterHandler(
   return connection;
 }
 
-/** Upcoming events for the current user, read from the synced `events` table. */
-export async function listEventsHandler(ctx: QueryCtx) {
-  const user = await authComponent.safeGetAuthUser(ctx);
-  if (!user) {
-    return [];
-  }
-  const selected = await selectedCalendars(ctx, user._id);
-  const selectedLocalIds = new Set(selected.map((calendar) => calendar._id));
-  const selectedLegacyIds = new Set(selected.map((calendar) => calendar.googleCalendarId));
-  const now = Date.now();
-  const personal = (
-    await ctx.db
-      .query("events")
-      .withIndex("by_user_and_start", (q) =>
-        q.eq("userId", user._id).gte("startMs", now),
-      )
-      .order("asc")
-      .take(50)
-  ).filter((event) =>
-    event.localCalendarId
-      ? selectedLocalIds.has(event.localCalendarId)
-      : selectedLegacyIds.has(event.calendarId),
-  );
-  const publicCalendars = selected.filter(
-    (calendar) =>
-      calendar.isShared ?? isSharedPublicCalendar(calendar.googleCalendarId),
-  );
-  const shared: EventView[] = [];
-  for (const calendar of publicCalendars) {
-    const connection = calendar.connectionId
-      ? await ctx.db.get(calendar.connectionId)
-      : null;
-    const rows = await ctx.db
-      .query("sharedEvents")
-      .withIndex("by_calendar_and_start", (q) =>
-        q
-          .eq("calendarId", calendar.googleCalendarId)
-          .gte("startMs", now),
-      )
-      .order("asc")
-      .take(50);
-    shared.push(
-      ...rows
-        .filter(
-          (row) =>
-            (row.provider ?? "google") ===
-              (connection?.provider ?? "google") &&
-            (row.providerCalendarId ?? row.calendarId) ===
-              (calendar.providerCalendarId ?? calendar.googleCalendarId),
-        )
-        .map((row) => sharedAsEvent(row, user._id)),
-    );
-  }
-  return [...personal, ...shared]
-    .sort((a, b) => a.startMs - b.startMs)
-    .slice(0, 50);
-}
-
 /** Events overlapping [startMs, endMs) for the current user, e.g. a week window. */
 export async function listEventsInRangeHandler(
   ctx: QueryCtx,

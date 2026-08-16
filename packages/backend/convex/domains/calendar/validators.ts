@@ -150,14 +150,14 @@ export const eventDocValidator = googleEventValidator.extend({
   // Monotonic per-calendar full-resync marker. A full resync stamps every
   // re-fetched row with a fresh generation, then deletes the rows still carrying
   // an older one — so the previous snapshot stays live for booking conflict
-  // detection until the new one is fully written (see syncOneCalendar). Left
-  // absent on incrementally-written rows; the next full resync re-stamps any that
-  // still exist in Google, so absence never causes a wrongful sweep.
+  // detection until the new one is fully written. See syncOneConnectionCalendar.
+  // Left absent on incrementally-written rows; the next full resync re-stamps any
+  // that still exist in Google, so absence never causes a wrongful sweep.
   syncGeneration: v.optional(v.number()),
   // Provider-neutral fields, dual-written alongside the Google-named columns
-  // above during the connection-model migration and read with legacy fallback
-  // until cutover. `providerEventId` mirrors `googleEventId`, `providerUpdatedMs`
-  // mirrors `googleUpdatedMs`. Optional until backfilled. See Stage 5.
+  // above and read with legacy fallback until production contraction.
+  // `providerEventId` mirrors `googleEventId`, and `providerUpdatedMs` mirrors
+  // `googleUpdatedMs`. Optional until the production backfill is verified.
   connectionId: v.optional(v.id("calendarConnections")),
   localCalendarId: v.optional(v.id("calendars")),
   providerEventId: v.optional(v.string()),

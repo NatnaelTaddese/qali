@@ -12,8 +12,6 @@ export {
   CALENDAR_HISTORY_MS,
   refreshConnectionCalendar,
   syncNowForCurrentUser,
-  syncOneCalendar,
-  syncOneSharedCalendar,
 } from "./domains/sync/engine";
 
 export const syncNow = action(definitions.syncNow);
@@ -28,7 +26,6 @@ export const listActiveConnections = internalQuery(
 export const getConnectionSyncState = internalQuery(
   definitions.getConnectionSyncState,
 );
-export const getSyncState = internalQuery(definitions.getSyncState);
 export const listCalendarsForUser = internalQuery(
   definitions.listCalendarsForUser,
 );
@@ -107,11 +104,3 @@ export const applyEngagementScores = internalMutation(
   definitions.applyEngagementScores,
 );
 export const backfillPeople = internalMutation(definitions.backfillPeople);
-
-// Compatibility endpoints used only by already-enqueued legacy jobs.
-export const clearCalendarEventsBatch = internalMutation(
-  definitions.clearCalendarEventsBatch,
-);
-export const clearSharedCalendarEventsBatch = internalMutation(
-  definitions.clearSharedCalendarEventsBatch,
-);

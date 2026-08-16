@@ -26,12 +26,12 @@ export const calendarTables = {
     lastSyncAt: v.optional(v.number()),
     // Current full-resync generation for this calendar's `events` rows. Bumped
     // at the start of each full resync; the run stamps re-fetched rows with it
-    // and sweeps rows carrying an older value. See syncOneCalendar.
+    // and sweeps rows carrying an older value. See syncOneConnectionCalendar.
     syncGeneration: v.optional(v.number()),
-    // Provider-neutral fields (dual-written until cutover). `providerCalendarId`
-    // mirrors `googleCalendarId`; `syncCursor` is the opaque per-calendar cursor
-    // that mirrors `syncToken` (a Google sync token today, a Graph delta link
-    // later). Optional until backfilled.
+    // Provider-neutral fields dual-written through production contraction.
+    // `providerCalendarId` mirrors `googleCalendarId`; `syncCursor` is the opaque
+    // per-calendar cursor that mirrors `syncToken` for legacy Google rows.
+    // Optional until the production backfill is verified.
     connectionId: v.optional(v.id("calendarConnections")),
     providerCalendarId: v.optional(v.string()),
     syncCursor: v.optional(v.string()),
@@ -39,7 +39,7 @@ export const calendarTables = {
   })
     .index("by_user", ["userId"])
     .index("by_user_and_googleCalendarId", ["userId", "googleCalendarId"])
-    // Staged neutral-id lookup; read by nothing until cutover.
+    // Canonical connection-scoped calendar lookup.
     .index("by_connection_and_providerCalendarId", [
       "connectionId",
       "providerCalendarId",
@@ -63,8 +63,8 @@ export const calendarTables = {
       "connectionId",
       "providerEventId",
     ])
-    // Correctly keyed neutral lookups. Staged and unread until a later deploy;
-    // calendar identity is required because provider event ids may collide.
+    // Correctly keyed neutral lookups. Calendar identity is required because
+    // provider event ids may collide; the range index remains staged.
     .index("by_connection_and_localCalendarId_and_providerEventId", [
       "connectionId",
       "localCalendarId",
@@ -149,8 +149,9 @@ export const calendarTables = {
     // The instance update time that this rule was fetched against. A newer
     // synced instance invalidates the cache and triggers one master refresh.
     sourceUpdatedMs: v.number(),
-    // Provider-neutral fields (dual-written until cutover). `providerEventId`
-    // mirrors `googleEventId`. Optional until backfilled.
+    // Provider-neutral fields dual-written through production contraction.
+    // `providerEventId` mirrors `googleEventId`. Optional until the production
+    // backfill is verified.
     connectionId: v.optional(v.id("calendarConnections")),
     localCalendarId: v.optional(v.id("calendars")),
     providerEventId: v.optional(v.string()),
@@ -168,7 +169,7 @@ export const calendarTables = {
       "connectionId",
       "providerEventId",
     ])
-    // Staged neutral-id lookup; read by nothing until cutover.
+    // Canonical calendar-keyed neutral lookup.
     .index("by_connection_and_localCalendarId_and_providerEventId", [
       "connectionId",
       "localCalendarId",

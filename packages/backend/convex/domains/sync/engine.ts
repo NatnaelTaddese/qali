@@ -327,7 +327,7 @@ async function heartbeat(
   if (!extended) throw new StaleSyncAttemptError();
 }
 
-async function syncOneConnectionCalendar(
+export async function syncOneConnectionCalendar(
   ctx: ActionCtx,
   adapter: CalendarProviderAdapter,
   args: {
@@ -441,7 +441,7 @@ async function syncOneConnectionCalendar(
   return changed;
 }
 
-async function syncSharedCalendar(
+export async function syncSharedCalendar(
   ctx: ActionCtx,
   adapter: CalendarProviderAdapter,
   provider: ProviderId,
@@ -2247,10 +2247,6 @@ export async function refreshConnectionCalendar(
     throw error;
   }
 }
-
-// Old exported helper name retained for imports during the queued-call drain.
-export const syncOneCalendar = syncOneConnectionCalendar;
-export const syncOneSharedCalendar = syncSharedCalendar;
 
 // Old mutation names remain registered as harmless compatibility definitions.
 export const clearCalendarEventsBatch = defineMutation({

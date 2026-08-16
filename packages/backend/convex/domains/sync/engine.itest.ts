@@ -16,7 +16,7 @@ import type {
   SyncPage,
 } from "../../integrations/calendar/types";
 import schema from "../../schema";
-import { syncOneCalendar, syncOneSharedCalendar } from "./engine";
+import { syncOneConnectionCalendar, syncSharedCalendar } from "./engine";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -182,7 +182,7 @@ describe("connection-scoped fake-provider sync", () => {
       },
     ]);
 
-    await syncOneCalendar(testActionCtx(t), adapter, {
+    await syncOneConnectionCalendar(testActionCtx(t), adapter, {
       connectionId,
       attemptId: attemptId!,
       localCalendarId: calendarId,
@@ -247,7 +247,7 @@ describe("connection-scoped fake-provider sync", () => {
     ]);
 
     await expect(
-      syncOneCalendar(testActionCtx(t), adapter, {
+      syncOneConnectionCalendar(testActionCtx(t), adapter, {
         connectionId,
         attemptId: attemptId!,
         localCalendarId: calendarId,
@@ -267,7 +267,7 @@ describe("connection-scoped fake-provider sync", () => {
     expect(ids).toEqual(["new", "old"]);
     expect((await t.run((ctx) => ctx.db.get(calendarId)))?.syncCursor).toBeUndefined();
 
-    await syncOneCalendar(
+    await syncOneConnectionCalendar(
       testActionCtx(t),
       new FakeCalendarAdapter([
         {
@@ -324,7 +324,7 @@ describe("connection-scoped fake-provider sync", () => {
       },
     ]);
 
-    await syncOneCalendar(testActionCtx(t), adapter, {
+    await syncOneConnectionCalendar(testActionCtx(t), adapter, {
       connectionId,
       attemptId: attemptId!,
       localCalendarId: calendarId,
@@ -779,7 +779,7 @@ describe("shared generation and engagement maintenance", () => {
       },
       new Error("shared provider failure"),
     ]);
-    await syncOneSharedCalendar(
+    await syncSharedCalendar(
       testActionCtx(t),
       adapter,
       "microsoft",

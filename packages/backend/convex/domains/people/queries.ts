@@ -1,5 +1,5 @@
 /** Read handlers for the people domain. Plain functions taking a QueryCtx; the
- * root `people.ts` / `contacts.ts` facades wrap each in a Convex `query`. */
+ * root `people.ts` facade wraps them in a Convex `query`. */
 
 import type { QueryCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
@@ -8,9 +8,6 @@ import { authComponent } from "../../auth";
 // the top-N most relevant; a personal directory rarely exceeds it. Bounds the
 // bytes each connected client reads per subscription.
 const PEOPLE_LIMIT = 500;
-
-/** How many contacts the contacts list loads at once. */
-const CONTACTS_LIMIT = 200;
 
 /** The unified people directory for the current user: the email-keyed union of
  * saved Google connections, Other Contacts, and people harvested from calendar
@@ -36,16 +33,4 @@ export async function listPeopleHandler(ctx: QueryCtx) {
     lastMetMs: p.lastMetMs,
     nextMeetingMs: p.nextMeetingMs,
   }));
-}
-
-/** Contacts for the current user, read from the synced `contacts` table. */
-export async function listContactsHandler(ctx: QueryCtx) {
-  const user = await authComponent.safeGetAuthUser(ctx);
-  if (!user) {
-    return [];
-  }
-  return await ctx.db
-    .query("contacts")
-    .withIndex("by_user", (q) => q.eq("userId", user._id))
-    .take(CONTACTS_LIMIT);
 }

@@ -121,58 +121,6 @@ export function toProviderEvent(
   };
 }
 
-/**
- * Reverse of {@link toProviderEvent}: a neutral event back into the Google-shaped
- * `MappedEvent` the synced `events` table stores. Used at cutover so a write that
- * goes through the adapter (which returns a ProviderEvent) can still be mirrored
- * into the row shape the rest of the app reads. For Google the id round-trips
- * exactly (`id` is the `googleEventId`); the neutral `busy` flag becomes
- * `transparency`, and `conference` unfolds back into the flat conference fields.
- */
-export function providerEventToMapped(event: ProviderEvent): MappedEvent {
-  return {
-    googleEventId: event.id,
-    calendarId: event.calendarId,
-    summary: event.summary,
-    description: event.description,
-    location: event.location,
-    startMs: event.startMs,
-    endMs: event.endMs,
-    allDay: event.allDay,
-    status: event.status,
-    htmlLink: event.htmlLink,
-    colorId: event.color,
-    visibility: event.visibility,
-    transparency:
-      event.busy === undefined ? undefined : event.busy ? "opaque" : "transparent",
-    attendees: event.attendees
-      ?.filter((a): a is typeof a & { email: string } => a.email !== undefined)
-      .map((a) => ({
-        email: a.email,
-        displayName: a.displayName,
-        responseStatus: a.responseStatus,
-        organizer: a.organizer,
-        self: a.self,
-        optional: a.optional,
-      })),
-    attendeesOmitted: event.attendeesOmitted,
-    googleUpdatedMs: event.updatedMs,
-    organizer: event.organizer,
-    creator: event.creator,
-    guestsCanModify: event.guestsCanModify,
-    guestsCanInviteOthers: event.guestsCanInviteOthers,
-    guestsCanSeeOtherGuests: event.guestsCanSeeOtherGuests,
-    locked: event.locked,
-    eventType: event.eventType,
-    recurringEventId: event.seriesId,
-    hangoutLink:
-      event.conference?.type === "hangoutsMeet" ? event.conference.url : undefined,
-    conferenceUrl: event.conference?.url,
-    conferenceName: event.conference?.name,
-    conferenceType: event.conference?.type,
-  };
-}
-
 // --- Opaque cursor codecs --------------------------------------------------
 
 export function encodeSyncCursor(token: string): SyncCursor {

@@ -22,20 +22,6 @@ export const MAX_EVENT_RANGE_MS = 400 * 24 * 60 * 60 * 1000;
 // cap per calendar is enough to stay bounded without a density error.
 export const ASSISTANT_SHARED_EVENT_LIMIT = 400;
 
-/** The set of `googleCalendarId`s the user has toggled visible. */
-export async function selectedCalendarIds(
-  ctx: QueryCtx,
-  userId: string,
-): Promise<Set<string>> {
-  const calendars = await ctx.db
-    .query("calendars")
-    .withIndex("by_user", (q) => q.eq("userId", userId))
-    .collect();
-  return new Set(
-    calendars.filter((c) => c.selected).map((c) => c.googleCalendarId),
-  );
-}
-
 export async function selectedCalendars(
   ctx: QueryCtx,
   userId: string,

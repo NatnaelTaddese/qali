@@ -1,6 +1,6 @@
 import { Calendar03Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { Doc } from "@qali/backend/convex/_generated/dataModel";
+import type { Doc, Id } from "@qali/backend/convex/_generated/dataModel";
 import {
   Popover,
   PopoverContent,
@@ -39,8 +39,9 @@ export interface EventControlsProps {
   /** Google `colorId`; undefined means the calendar's own colour. */
   colorId?: string;
   onColorChange: (colorId?: string) => void;
-  calendarId?: string;
-  onCalendarChange: (calendarId: string) => void;
+  calendarId?: Id<"calendars">;
+  providerCalendarId?: string;
+  onCalendarChange: (calendarId: Id<"calendars">) => void;
   /** The whole cluster is inert — the event can't be edited at all. */
   disabled?: boolean;
   /** Whether the calendar may be *changed*, as opposed to merely shown. Moving
@@ -55,6 +56,7 @@ export function EventControls({
   colorId,
   onColorChange,
   calendarId,
+  providerCalendarId,
   onCalendarChange,
   disabled = false,
   canChangeCalendar = false,
@@ -62,8 +64,12 @@ export function EventControls({
   const writable = sortCalendars(calendars.filter((c) => WRITABLE.has(c.accessRole ?? "")));
   // An event can sit on a calendar we can't write to; still name it.
   const selected =
-    writable.find((c) => c.googleCalendarId === calendarId) ??
-    calendars.find((c) => c.googleCalendarId === calendarId);
+    writable.find((c) => c._id === calendarId) ??
+    calendars.find((c) => c._id === calendarId) ??
+    calendars.find(
+      (c) =>
+        (c.providerCalendarId ?? c.googleCalendarId) === providerCalendarId,
+    );
   // With no colour of its own the event inherits its calendar's, so the swatch
   // previews what the grid will actually draw.
   const swatchVar =
@@ -141,7 +147,7 @@ export function EventControls({
               <button
                 key={cal._id}
                 type="button"
-                onClick={() => onCalendarChange(cal.googleCalendarId)}
+                onClick={() => onCalendarChange(cal._id)}
                 className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <span
@@ -151,7 +157,7 @@ export function EventControls({
                 <span className="min-w-0 flex-1 truncate text-sm">
                   {calendarDisplayName(cal)}
                 </span>
-                {cal.googleCalendarId === calendarId && (
+                {cal._id === calendarId && (
                   <HugeiconsIcon icon={Tick02Icon} strokeWidth={2.5} className="size-4" />
                 )}
               </button>

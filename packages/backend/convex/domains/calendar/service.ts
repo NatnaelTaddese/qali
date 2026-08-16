@@ -338,7 +338,7 @@ export interface CreateEventArgs {
   description?: string;
   location?: string;
   allDay?: boolean;
-  calendarId?: string;
+  calendarId?: Id<"calendars">;
   colorId?: string;
   visibility?: string;
   transparency?: string;

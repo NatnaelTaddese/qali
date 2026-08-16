@@ -78,7 +78,7 @@ export function EventCreate({
   // Until the user picks one, the event goes to the primary calendar — resolved
   // here too so the controls can preview its colour.
   const activeCalendarId =
-    draft.calendarId ?? calendars.find((c) => c.primary)?.googleCalendarId;
+    draft.calendarId ?? calendars.find((c) => c.primary)?._id;
   const value: EventFormValue = {
     ...draft,
     calendarId: activeCalendarId,

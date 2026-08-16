@@ -203,6 +203,99 @@ describe("calendar dual-write", () => {
     });
   });
 
+  test("selects the local calendar when provider ids collide across connections", async () => {
+    const t = convexTest(schema, modules);
+    const {
+      firstCalendarId,
+      firstConnectionId,
+      secondCalendarId,
+      secondConnectionId,
+    } = await t.run(async (ctx) => {
+      const firstConnectionId = await ctx.db.insert("calendarConnections", {
+        userId: USER,
+        provider: "google",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const secondConnectionId = await ctx.db.insert("calendarConnections", {
+        userId: USER,
+        provider: "microsoft",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const firstCalendarId = await ctx.db.insert("calendars", {
+        userId: USER,
+        googleCalendarId: "shared-provider-id",
+        providerCalendarId: "shared-provider-id",
+        connectionId: firstConnectionId,
+        accessRole: "owner",
+        primary: true,
+        selected: true,
+      });
+      const secondCalendarId = await ctx.db.insert("calendars", {
+        userId: USER,
+        googleCalendarId: "shared-provider-id",
+        providerCalendarId: "shared-provider-id",
+        connectionId: secondConnectionId,
+        accessRole: "owner",
+        selected: true,
+      });
+      return {
+        firstCalendarId,
+        firstConnectionId,
+        secondCalendarId,
+        secondConnectionId,
+      };
+    });
+
+    const target = await t.mutation(internal.calendar.resolveCreateTarget, {
+      userId: USER,
+      requestedCalendarId: secondCalendarId,
+    });
+    expect(target).toMatchObject({
+      connectionId: secondConnectionId,
+      localCalendarId: secondCalendarId,
+      providerCalendarId: "shared-provider-id",
+    });
+    expect(
+      await t.mutation(internal.calendar.resolveCreateTarget, { userId: USER }),
+    ).toMatchObject({
+      connectionId: firstConnectionId,
+      localCalendarId: firstCalendarId,
+      providerCalendarId: "shared-provider-id",
+    });
+  });
+
+  test("rejects a create target owned by another user", async () => {
+    const t = convexTest(schema, modules);
+    const foreignCalendarId = await t.run(async (ctx) => {
+      const connectionId = await ctx.db.insert("calendarConnections", {
+        userId: "foreign-user",
+        provider: "google",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return await ctx.db.insert("calendars", {
+        userId: "foreign-user",
+        googleCalendarId: "primary",
+        providerCalendarId: "primary",
+        connectionId,
+        accessRole: "owner",
+        selected: true,
+      });
+    });
+
+    await expect(
+      t.mutation(internal.calendar.resolveCreateTarget, {
+        userId: USER,
+        requestedCalendarId: foreignCalendarId,
+      }),
+    ).rejects.toThrow(/not found/i);
+  });
+
   test("upsertEvent stamps the neutral mirror and lazily creates the connection", async () => {
     const t = convexTest(schema, modules);
 

@@ -539,6 +539,53 @@ async function processUserPage(
       .paginate({ cursor: args.cursor, numItems: ROW_BATCH });
     let missingOtherMaterialization = false;
     for (const person of page.page) {
+      if (person.sources.includes("connection")) {
+        const claims = await ctx.db
+          .query("personSourceClaims")
+          .withIndex("by_user_and_email_and_source", (q) =>
+            q
+              .eq("userId", args.userId)
+              .eq("email", person.email)
+              .eq("source", "connection"),
+          )
+          .collect();
+        let backed = false;
+        for (const claim of claims) {
+          const contacts = claim.providerContactId
+            ? await ctx.db
+                .query("contacts")
+                .withIndex("by_user_and_resourceName", (q) =>
+                  q
+                    .eq("userId", args.userId)
+                    .eq("resourceName", claim.providerContactId!),
+                )
+                .collect()
+            : [];
+          const materialized = contacts.some(
+            (contact) =>
+              (contact.connectionId === undefined ||
+                contact.connectionId === claim.connectionId) &&
+              contact.emails.some(
+                (email) => email.trim().toLowerCase() === person.email,
+              ),
+          );
+          if (materialized) backed = true;
+          else await ctx.db.delete(claim._id);
+        }
+        if (!backed) {
+          const sources = person.sources.filter(
+            (source) => source !== "connection",
+          );
+          if (sources.length === 0) {
+            await ctx.db.delete(person._id);
+            continue;
+          }
+          await ctx.db.patch(person._id, {
+            sources,
+            updatedAt: Date.now(),
+          });
+        }
+      }
       if (!person.sources.includes("other")) continue;
       const claims = await ctx.db
         .query("personSourceClaims")

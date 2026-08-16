@@ -61,6 +61,10 @@ The application-supported public Convex API is:
 - `api.people`: `listPeople`
 - `api.waitlist`: `join`
 
+`api.calendar.createEvent.calendarId`, when supplied, is the owned local
+`Id<"calendars">`. Provider-native calendar ids are resolved only after the
+ownership check; omitting it deterministically targets the user's primary.
+
 Better Auth remains exposed only through the HTTP routes registered in
 `http.ts`. Internal functions and CLI-only migration functions are not product
 API. In particular, `googleSync.ts` is a temporary internal queue-drain module,

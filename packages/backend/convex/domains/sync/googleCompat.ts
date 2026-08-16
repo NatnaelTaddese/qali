@@ -124,7 +124,9 @@ async function claimSource(
       q.eq("connectionId", connectionId).eq("source", source).eq("email", email),
     )
     .collect();
-  const exact = claims.find((row) => row.providerContactId === providerContactId);
+  const exact =
+    claims.find((row) => row.providerContactId === providerContactId) ??
+    claims.find((row) => row.providerContactId === undefined);
   const value = {
     userId,
     connectionId,
@@ -154,7 +156,9 @@ async function releaseSource(
       q.eq("connectionId", connectionId).eq("source", source).eq("email", email),
     )
     .collect();
-  const exact = claims.find((row) => row.providerContactId === providerContactId);
+  const exact =
+    claims.find((row) => row.providerContactId === providerContactId) ??
+    claims.find((row) => row.providerContactId === undefined);
   if (exact) await ctx.db.delete(exact._id);
   const remaining = await ctx.db
     .query("personSourceClaims")
@@ -825,6 +829,18 @@ async function upsertContactPage(
       continue;
     }
     const emails = contact.emails.map((email) => email.trim().toLowerCase());
+    for (const email of current?.emails ?? []) {
+      if (!emails.includes(email.trim().toLowerCase())) {
+        await releaseSource(
+          ctx,
+          userId,
+          fence.connectionId,
+          source,
+          contact.resourceName,
+          email,
+        );
+      }
+    }
     for (const email of emails) {
       await claimSource(
         ctx,

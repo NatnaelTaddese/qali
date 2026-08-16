@@ -482,6 +482,93 @@ describe("connection backfill", () => {
     ).toMatchObject({ mismatches: 0 });
   });
 
+  test("removes historical contact emails without dropping a duplicate's claim", async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("syncState", { userId: USER, status: "idle" });
+      await ctx.db.insert("contacts", {
+        userId: USER,
+        resourceName: "people/changed",
+        emails: ["new@example.com"],
+        phones: [],
+      });
+      await ctx.db.insert("contacts", {
+        userId: USER,
+        resourceName: "people/duplicate",
+        emails: ["shared@example.com"],
+        phones: [],
+      });
+    });
+    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
+    const connectionId = (await connectionFor(t, USER))!;
+    await t.run(async (ctx) => {
+      for (const email of [
+        "old@example.com",
+        "shared@example.com",
+        "removed@example.com",
+      ]) {
+        await ctx.db.insert("people", {
+          userId: USER,
+          email,
+          sources: ["connection"],
+          updatedAt: 1,
+        });
+      }
+      for (const [providerContactId, email] of [
+        ["people/changed", "old@example.com"],
+        ["people/changed", "shared@example.com"],
+        ["people/removed", "removed@example.com"],
+      ] as const) {
+        await ctx.db.insert("personSourceClaims", {
+          userId: USER,
+          connectionId,
+          source: "connection",
+          providerContactId,
+          email,
+          updatedAt: 1,
+        });
+      }
+    });
+
+    await t.mutation(internal.backfillConnections.backfillUserRows, {
+      userId: USER,
+      connectionId,
+      phase: "contacts",
+      cursor: null,
+    });
+    await t.mutation(internal.backfillConnections.backfillUserRows, {
+      userId: USER,
+      connectionId,
+      phase: "people",
+      cursor: null,
+    });
+
+    const result = await t.run(async (ctx) => ({
+      people: await ctx.db.query("people").collect(),
+      claims: await ctx.db.query("personSourceClaims").collect(),
+    }));
+    expect(result.people.map((row) => row.email).sort()).toEqual([
+      "new@example.com",
+      "shared@example.com",
+    ]);
+    expect(
+      result.claims
+        .map((row) => `${row.providerContactId}:${row.email}`)
+        .sort(),
+    ).toEqual([
+      "people/changed:new@example.com",
+      "people/duplicate:shared@example.com",
+    ]);
+    expect(
+      result.people.find((row) => row.email === "shared@example.com")?.sources,
+    ).toContain("connection");
+    expect(
+      await t.query(internal.backfillConnections.verifyParity, {
+        phase: "people",
+      }),
+    ).toMatchObject({ mismatches: 0 });
+  });
+
   test("backfill never replaces a live neutral heartbeat with a legacy lease", async () => {
     const t = convexTest(schema, modules);
     await t.run((ctx) =>

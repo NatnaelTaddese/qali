@@ -132,7 +132,7 @@ export const mirrorProviderEvent = internalMutation({
 export const resolveCreateTarget = internalMutation({
   args: {
     userId: v.string(),
-    requestedCalendarId: v.optional(v.string()),
+    requestedCalendarId: v.optional(v.id("calendars")),
   },
   handler: (ctx, args) => resolveCreateTargetHandler(ctx, args),
 });
@@ -227,8 +227,8 @@ export const createEvent = action({
     description: v.optional(v.string()),
     location: v.optional(v.string()),
     allDay: v.optional(v.boolean()),
-    /** Google calendar to create in; defaults to the user's primary. */
-    calendarId: v.optional(v.string()),
+    /** Owned local calendar to create in; defaults to the user's primary. */
+    calendarId: v.optional(v.id("calendars")),
     /** Google event colour override ("1".."11"); absent inherits the calendar. */
     colorId: v.optional(v.string()),
     visibility: v.optional(v.string()),

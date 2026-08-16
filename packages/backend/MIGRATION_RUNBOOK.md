@@ -105,6 +105,9 @@ validates that each `connection`/`other` source has a provider-contact claim and
 backing `contacts`/`otherContactSources` row. Legacy Other Contacts cannot be
 reconstructed from `people` alone: backfill clears their cursor and reports
 `otherContactsFullSyncRequired` until a safe full Other Contacts sync completes.
+Rerunning the `people` phase also removes historical `connection` claims and
+sources whose saved contact no longer carries that email; another contact's
+claim for the same email remains authoritative.
 
 ## 5. Activate staged indexes
 

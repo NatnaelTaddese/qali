@@ -8,7 +8,7 @@ import {
   Sun03Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import type { Doc } from "@qali/backend/convex/_generated/dataModel";
+import type { Doc, Id } from "@qali/backend/convex/_generated/dataModel";
 import type { EventCapabilities } from "@qali/domain/permissions";
 import { WheelPicker } from "@qali/ui/components/motion/wheel-picker";
 import {
@@ -128,7 +128,10 @@ export interface EventFormValue {
   /** Whether the event blocks the user's time (Google's `transparency`). */
   busy: boolean;
   colorId?: string;
-  calendarId?: string;
+  /** Local calendar identity used for create targeting. */
+  calendarId?: Id<"calendars">;
+  /** Provider identity retained only to display legacy event rows. */
+  providerCalendarId?: string;
   guests: Guest[];
   /** null = does not repeat. */
   recurrence: Recurrence | null;
@@ -172,7 +175,8 @@ export function formValueFromEvent(event: CalendarEvent): EventFormValue {
     // Google defaults an unset transparency to busy, so only "transparent" is free.
     busy: event.transparency !== "transparent",
     colorId: event.colorId,
-    calendarId: event.calendarId,
+    calendarId: event.localCalendarId,
+    providerCalendarId: event.calendarId,
     guests: (event.attendees ?? []).map((a) => ({
       email: a.email,
       displayName: a.displayName,
@@ -563,6 +567,7 @@ export function EventForm({
                 colorId={value.colorId}
                 onColorChange={(colorId) => onChange({ colorId })}
                 calendarId={value.calendarId}
+                providerCalendarId={value.providerCalendarId}
                 onCalendarChange={(calendarId) => onChange({ calendarId })}
                 disabled={!canEdit}
                 canChangeCalendar={canChangeCalendar}

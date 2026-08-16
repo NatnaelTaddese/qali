@@ -488,9 +488,9 @@ export function EventDetail({
 
   const colorVar = useEventColor()(event);
   const capabilities = useEventCapabilities()(event);
-  const calendar = calendars.find(
-    (c) => c.googleCalendarId === event.calendarId,
-  );
+  const calendar =
+    calendars.find((c) => c._id === event.localCalendarId) ??
+    calendars.find((c) => c.googleCalendarId === event.calendarId);
 
   const [screen, setScreen] = useState<"main" | "description">("main");
   const mainRef = useRef<HTMLDivElement>(null);
@@ -562,7 +562,7 @@ export function EventDetail({
         isPrivate: event.visibility === "private",
         busy: event.transparency !== "transparent",
         colorId: event.colorId,
-        calendarId: event.calendarId,
+        calendarId: calendar?._id,
         // A copy's invitees start unasked — carrying answers across would claim
         // replies to an event that doesn't exist yet.
         guests: guests.map((g) => ({

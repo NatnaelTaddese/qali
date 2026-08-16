@@ -39,26 +39,30 @@ async function connectionForLegacyCalendar(
   return connectionId;
 }
 
-/** Resolve the legacy public calendar string to an owned, writable local row. */
+/** Resolve an owned local calendar row to a writable provider target. */
 export async function resolveCreateTargetHandler(
   ctx: MutationCtx,
-  args: { userId: string; requestedCalendarId?: string },
+  args: { userId: string; requestedCalendarId?: Id<"calendars"> },
 ) {
-  const calendars = await ctx.db
-    .query("calendars")
-    .withIndex("by_user", (q) => q.eq("userId", args.userId))
-    .take(501);
-  if (calendars.length > 500) {
-    throw new Error("Too many calendars to choose a write target safely");
-  }
   let calendar = args.requestedCalendarId
-    ? calendars.find(
-        (row) =>
-          row._id === args.requestedCalendarId ||
-          row.providerCalendarId === args.requestedCalendarId ||
-          row.googleCalendarId === args.requestedCalendarId,
-      )
-    : calendars.find((row) => row.primary);
+    ? await ctx.db.get(args.requestedCalendarId)
+    : null;
+  if (calendar && calendar.userId !== args.userId) {
+    throw new Error("Calendar not found");
+  }
+  if (!calendar && args.requestedCalendarId) {
+    throw new Error("Calendar not found");
+  }
+  if (!calendar) {
+    const calendars = await ctx.db
+      .query("calendars")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .take(501);
+    if (calendars.length > 500) {
+      throw new Error("Too many calendars to choose a write target safely");
+    }
+    calendar = calendars.find((row) => row.primary) ?? null;
+  }
   if (!calendar && !args.requestedCalendarId) {
     const connectionId = await ensureGoogleConnection(ctx, args.userId);
     calendar = await ensureDefaultPrimaryCalendar(

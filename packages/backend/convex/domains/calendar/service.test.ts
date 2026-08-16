@@ -136,8 +136,7 @@ function liveGoogleEvent(row: Doc<"events">, overrides: Record<string, unknown> 
   };
 }
 
-/** A context for createEventOp: an explicit calendar id is always passed, so
- * getPrimaryCalendarId must never be consulted; only the mirror mutation runs. */
+/** A context for createEventOp: target resolution and mirror writes are stubbed. */
 function createContext() {
   const mutations: Record<string, unknown>[] = [];
   const ctx = {
@@ -147,7 +146,7 @@ function createContext() {
         return {
           connectionId: "connection-1",
           localCalendarId: "local-calendar-1",
-          providerCalendarId: args.requestedCalendarId,
+          providerCalendarId: "primary@example.com",
         };
       }
       if ("kind" in args && "idempotencyKey" in args) {
@@ -174,7 +173,7 @@ function createdGoogleEvent(overrides: Record<string, unknown> = {}) {
 }
 
 const CREATE_ARGS = {
-  calendarId: "primary@example.com",
+  calendarId: "local-calendar-1" as Id<"calendars">,
   summary: "Sync review",
   startMs: Date.parse("2026-09-01T01:00:00.000Z"),
   endMs: Date.parse("2026-09-01T02:00:00.000Z"),

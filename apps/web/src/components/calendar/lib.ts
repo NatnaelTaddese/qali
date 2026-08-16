@@ -517,6 +517,11 @@ export interface PositionedEvent {
   /** How many columns the card fills once it expands right into free space
    * (>= 1). `columnIndex + columnSpan <= columnCount`. */
   columnSpan: number;
+  /** Fraction of a card's width the next lane advances by, in side-by-side
+   * (lane) layout. {@link LANE_ADVANCE_RATIO} for the overlapping fan, or 1 when
+   * the cluster tiles into clean non-overlapping columns (see the tiling rule in
+   * {@link layoutDayEvents}). Shared by every card in a cluster. */
+  laneAdvance: number;
 }
 
 /** Blank strip reserved on the left edge of every day column, so a card never
@@ -547,22 +552,39 @@ export function stackIndentPx(stackIndex: number): number {
  * read as a stack rather than splitting into clean, disconnected halves. */
 export const LANE_ADVANCE_RATIO = 0.62;
 
+/** When two overlapping cards start within this window, the fan's later card
+ * lands on the earlier one's header and hides its title/time. The cluster then
+ * tiles into clean, equal columns instead (advance ratio 1). Kept a touch above
+ * the header's on-screen height at the grid's minimum zoom, so the switch fires
+ * whenever the stagger is too small to keep both cards' details readable — and
+ * errs toward tiling (fully readable) rather than a covered header. */
+export const LANE_TILE_MAX_STAGGER_MS = 30 * MS_PER_MINUTE;
+
+/** Week-view counterpart of {@link LANE_TILE_MAX_STAGGER_MS}. Its narrower
+ * columns cascade rather than fan, and a cascaded card's left sliver is thinner
+ * than a fanned lane's exposed edge, so a covered header reads worse there —
+ * hence a wider window that tiles more eagerly. */
+export const WEEK_LANE_TILE_MAX_STAGGER_MS = 45 * MS_PER_MINUTE;
+
 /** Horizontal box (`left`/`width` as 0–1 fractions of the column) for an event
  * laid out in side-by-side lanes. Cards fan left-to-right and overlap by
- * `1 - LANE_ADVANCE_RATIO` of their width, so each exposes its own left edge
- * while the later card (painted on top) still overlaps it. A card widens across
+ * `1 - advance` of their width, so each exposes its own left edge while the
+ * later card (painted on top) still overlaps it. At `advance` 1 the cards tile
+ * into clean, equal columns with no horizontal overlap (used when a close
+ * stagger would otherwise hide a card's header). A card widens across
  * `columnSpan` lanes when it can expand right into free space; a card that
  * reaches the last lane extends to the column's right edge. */
 export function laneBox(
   columnIndex: number,
   columnCount: number,
   columnSpan: number,
+  advance: number = LANE_ADVANCE_RATIO,
 ): { left: number; width: number } {
   if (columnCount <= 1) return { left: 0, width: 1 };
-  // Width W and step S solve (columnCount-1)·S + W = 1 with S = ratio·W, so the
+  // Width W and step S solve (columnCount-1)·S + W = 1 with S = advance·W, so the
   // fan exactly spans the column and the rightmost card ends flush.
-  const width = 1 / (1 + (columnCount - 1) * LANE_ADVANCE_RATIO);
-  const step = LANE_ADVANCE_RATIO * width;
+  const width = 1 / (1 + (columnCount - 1) * advance);
+  const step = advance * width;
   return { left: columnIndex * step, width: width + (columnSpan - 1) * step };
 }
 
@@ -576,6 +598,7 @@ export function laneBox(
 export function layoutDayEvents(
   events: CalendarEvent[],
   dayStartMs: number,
+  tileMaxStaggerMs: number = LANE_TILE_MAX_STAGGER_MS,
 ): PositionedEvent[] {
   const dayEndMs = dayStartMs + MS_PER_DAY;
   const items = events
@@ -592,6 +615,7 @@ export function layoutDayEvents(
         columnIndex: 0,
         columnCount: 1,
         columnSpan: 1,
+        laneAdvance: LANE_ADVANCE_RATIO,
       };
     })
     .sort((a, b) => a.start - b.start || b.end - b.start - (a.end - a.start));
@@ -631,6 +655,28 @@ export function layoutDayEvents(
       item.columnSpan = Math.max(span, 1);
     }
 
+    // Choose the overlap style for the whole cluster. The fan (cards partially
+    // overlapping, each peeking out on the left) reads best when a comfortable
+    // vertical stagger keeps every earlier card's header above the next card's
+    // top edge. But when two time-overlapping cards start within
+    // LANE_TILE_MAX_STAGGER_MS, the later card lands on the earlier one's
+    // header and buries its title/time — so tile the cluster into clean, equal
+    // columns (advance 1, no horizontal overlap) where both stay readable.
+    let tiled = false;
+    for (let i = 0; i < cluster.length && !tiled; i++) {
+      for (let j = i + 1; j < cluster.length; j++) {
+        const a = cluster[i];
+        const b = cluster[j];
+        const overlap = a.start < b.end && b.start < a.end;
+        if (overlap && Math.abs(a.start - b.start) < tileMaxStaggerMs) {
+          tiled = true;
+          break;
+        }
+      }
+    }
+    const advance = tiled ? 1 : LANE_ADVANCE_RATIO;
+    for (const item of cluster) item.laneAdvance = advance;
+
     cluster = [];
   };
 
@@ -656,6 +702,7 @@ export function layoutDayEvents(
       columnIndex,
       columnCount,
       columnSpan,
+      laneAdvance,
     }) => ({
       event,
       topPct: msToPct(start, dayStartMs),
@@ -666,6 +713,7 @@ export function layoutDayEvents(
       columnIndex,
       columnCount,
       columnSpan,
+      laneAdvance,
     }),
   );
 }

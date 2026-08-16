@@ -49,28 +49,42 @@ export function EventCard({
   reveal,
   onDragStart,
 }: EventCardProps) {
-  const { event, topPct, heightPct, stackIndex, elevation, columnIndex, columnCount, columnSpan } =
-    positioned;
+  const {
+    event,
+    topPct,
+    heightPct,
+    stackIndex,
+    elevation,
+    columnIndex,
+    columnCount,
+    columnSpan,
+    laneAdvance,
+  } = positioned;
   const colorFor = useEventColor();
   const colorVar = colorFor(event);
   // An event the user can't reschedule still opens on tap, but it shouldn't
   // offer a grab cursor or resize edges for a drag that will never happen.
   const { canEdit: draggable, canSeeGuests } = useEventCapabilities()(event);
   const attendees = canSeeGuests ? (event.attendees ?? []).slice(0, 3) : [];
-  // Two overlap modes. Lanes (day view): each cluster fans into side-by-side
-  // lanes that partially overlap, so a card exposes its own left edge while the
-  // later card paints on top — spread out, but still visibly stacked. Cascade
-  // (week view): each deeper card is indented right with its right edge pinned,
-  // so cards behind peek out on the left — the column is too narrow to fan.
+  // Two overlap modes. Lanes: each cluster fans into side-by-side lanes that
+  // partially overlap, so a card exposes its own left edge while the later card
+  // paints on top — spread out, but still visibly stacked. Cascade: each deeper
+  // card is indented right with its right edge pinned, so cards behind peek out
+  // on the left. Day view always uses lanes; week columns are too narrow to fan
+  // and cascade instead — except a cluster whose starts sit too close to stagger
+  // cleanly (laneAdvance === 1, see layoutDayEvents) tiles into clean columns in
+  // both views, so the later card never buries the earlier one's title/time.
+  const tiled = laneAdvance === 1;
+  const useLanes = laneLayout || tiled;
   const indent = stackIndentPx(stackIndex);
-  const box = laneBox(columnIndex, columnCount, columnSpan);
+  const box = laneBox(columnIndex, columnCount, columnSpan, laneAdvance);
   // A fixed strip is reserved on the left of the column (see EVENT_LEFT_GUTTER_PX):
   // the fractional lane box is squeezed into the space right of it, so cards still
   // fan out and end flush on the right while the left edge stays free for painting
   // a neighbouring event. `gutter` is that reserved width; `avail` is what's left.
   const gutter = `${EVENT_LEFT_GUTTER_PX}px`;
   const avail = `(100% - ${gutter})`;
-  const horizontal = laneLayout
+  const horizontal = useLanes
     ? {
         left: `calc(${gutter} + ${box.left} * ${avail} + 2px)`,
         width: `calc(${box.width} * ${avail} - 4px)`,

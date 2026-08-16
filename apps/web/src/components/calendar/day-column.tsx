@@ -11,12 +11,14 @@ import { BookingBlock } from "./booking-block";
 import { EventCard } from "./event-card";
 import { GhostEvent } from "./ghost-event";
 import {
+  LANE_TILE_MAX_STAGGER_MS,
   layoutDayEvents,
   MS_PER_DAY,
   MS_PER_MINUTE,
   SNAP_MS,
   SNAP_MINUTES,
   snappedMsFromOffsetY,
+  WEEK_LANE_TILE_MAX_STAGGER_MS,
   type CalendarEvent,
 } from "./lib";
 import type { Reveal } from "./today-pulse";
@@ -103,9 +105,15 @@ function DayColumnImpl({
       ? view
       : null;
 
+  // Week columns cascade and tile more eagerly than the wider day column; the
+  // threshold that flips a close-starting overlap from cascade to side-by-side
+  // tiles follows the same laneLayout switch used for rendering.
+  const tileMaxStaggerMs = laneLayout
+    ? LANE_TILE_MAX_STAGGER_MS
+    : WEEK_LANE_TILE_MAX_STAGGER_MS;
   const positioned = useMemo(
-    () => layoutDayEvents(events, dayStartMs),
-    [events, dayStartMs],
+    () => layoutDayEvents(events, dayStartMs, tileMaxStaggerMs),
+    [events, dayStartMs, tileMaxStaggerMs],
   );
 
   useEffect(() => {

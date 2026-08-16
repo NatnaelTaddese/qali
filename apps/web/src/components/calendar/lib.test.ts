@@ -6,7 +6,9 @@ import {
   calendarDisplayName,
   type CalendarEvent,
   formatWallClockMinutes,
+  LANE_ADVANCE_RATIO,
   laneBox,
+  WEEK_LANE_TILE_MAX_STAGGER_MS,
   layoutAllDayEvents,
   layoutDayEvents,
   visibleAllDayMetrics,
@@ -347,6 +349,95 @@ describe("layoutDayEvents columns", () => {
   });
 });
 
+describe("layoutDayEvents overlap style", () => {
+  const byId = (layout: ReturnType<typeof layoutDayEvents>) =>
+    Object.fromEntries(layout.map((p) => [String(p.event._id), p]));
+
+  test("a comfortable stagger keeps the overlapping fan", () => {
+    // Starts an hour apart: the later card sits well below the earlier one's
+    // header, so the prettier fan (advance < 1) is retained.
+    const layout = byId(
+      layoutDayEvents(
+        [timedEvent("a", 11, 15, 14, 0), timedEvent("b", 12, 15, 13, 30)],
+        dayStart,
+      ),
+    );
+
+    expect(layout.a.laneAdvance).toBeCloseTo(LANE_ADVANCE_RATIO, 5);
+    expect(layout.b.laneAdvance).toBeCloseTo(LANE_ADVANCE_RATIO, 5);
+  });
+
+  test("a close stagger tiles the cluster into clean columns", () => {
+    // Starts 15 minutes apart: the fan's later card would land on the earlier
+    // one's header, so both switch to full side-by-side tiling (advance 1).
+    const layout = byId(
+      layoutDayEvents(
+        [timedEvent("a", 11, 15, 14, 0), timedEvent("b", 11, 30, 12, 45)],
+        dayStart,
+      ),
+    );
+
+    expect(layout.a.laneAdvance).toBe(1);
+    expect(layout.b.laneAdvance).toBe(1);
+    // Tiled columns don't overlap: card b's left edge starts at card a's right.
+    const a = laneBox(layout.a.columnIndex, layout.a.columnCount, layout.a.columnSpan, layout.a.laneAdvance);
+    const b = laneBox(layout.b.columnIndex, layout.b.columnCount, layout.b.columnSpan, layout.b.laneAdvance);
+    expect(a.left + a.width).toBeCloseTo(b.left, 5);
+  });
+
+  test("a wider stagger threshold (week view) tiles a pair the default keeps fanned", () => {
+    // 40 minutes apart: above the 30-min day default (stays a fan) but within a
+    // 45-min week threshold (tiles). Same events, different threshold argument.
+    const events = [
+      timedEvent("a", 11, 0, 14, 0),
+      timedEvent("b", 11, 40, 13, 0),
+    ];
+
+    const dayLayout = byId(layoutDayEvents(events, dayStart));
+    expect(dayLayout.a.laneAdvance).toBeCloseTo(LANE_ADVANCE_RATIO, 5);
+
+    const weekLayout = byId(
+      layoutDayEvents(events, dayStart, WEEK_LANE_TILE_MAX_STAGGER_MS),
+    );
+    expect(weekLayout.a.laneAdvance).toBe(1);
+    expect(weekLayout.b.laneAdvance).toBe(1);
+  });
+
+  test("a whole cluster tiles when any overlapping pair starts too close", () => {
+    // a↔b are an hour apart (fan-friendly), but c starts right on top of b, so
+    // the entire transitively-linked cluster tiles for consistency.
+    const layout = byId(
+      layoutDayEvents(
+        [
+          timedEvent("a", 9, 0, 12, 0),
+          timedEvent("b", 10, 0, 12, 0),
+          timedEvent("c", 10, 10, 12, 0),
+        ],
+        dayStart,
+      ),
+    );
+
+    expect(layout.a.laneAdvance).toBe(1);
+    expect(layout.b.laneAdvance).toBe(1);
+    expect(layout.c.laneAdvance).toBe(1);
+  });
+
+  test("events that don't overlap in time never tile on a close start alone", () => {
+    // Back-to-back events (same start distance as a tiling case would use) don't
+    // overlap, so they aren't clustered and keep the default fan advance.
+    const layout = byId(
+      layoutDayEvents(
+        [timedEvent("a", 9, 0, 9, 30), timedEvent("b", 9, 30, 10, 0)],
+        dayStart,
+      ),
+    );
+
+    expect(layout.a.columnCount).toBe(1);
+    expect(layout.a.laneAdvance).toBeCloseTo(LANE_ADVANCE_RATIO, 5);
+    expect(layout.b.laneAdvance).toBeCloseTo(LANE_ADVANCE_RATIO, 5);
+  });
+});
+
 describe("laneBox", () => {
   test("a lone card fills the whole column", () => {
     expect(laneBox(0, 1, 1)).toEqual({ left: 0, width: 1 });
@@ -361,6 +452,16 @@ describe("laneBox", () => {
     expect(a.left).toBe(0);
     // The second card starts before the midpoint and ends flush at the right.
     expect(b.left).toBeLessThan(0.5);
+    expect(b.left + b.width).toBeCloseTo(1, 5);
+  });
+
+  test("advance 1 tiles lanes into clean, equal, non-overlapping halves", () => {
+    const a = laneBox(0, 2, 1, 1);
+    const b = laneBox(1, 2, 1, 1);
+
+    expect(a.left).toBe(0);
+    expect(a.width).toBeCloseTo(0.5, 5);
+    expect(b.left).toBeCloseTo(0.5, 5);
     expect(b.left + b.width).toBeCloseTo(1, 5);
   });
 

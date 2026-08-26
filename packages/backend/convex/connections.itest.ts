@@ -40,7 +40,7 @@ describe("connection model expand", () => {
       };
     });
 
-    await t.mutation(internal.calendarSync.ensureSyncState, { userId });
+    await t.mutation(internal.domains.sync.engine.ensureSyncState, { userId });
     const states = await t.run((ctx) =>
       ctx.db
         .query("connectionSyncState")
@@ -71,25 +71,25 @@ describe("connection model expand", () => {
       }),
     );
     expect(
-      await t.query(internal.calendar.getCalendarConnectionForAdapter, {
+      await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
         connectionId,
       }),
     ).toMatchObject({ credentialRef: "account-1", provider: "google" });
     await t.run((ctx) => ctx.db.patch(connectionId, { status: "paused" }));
     expect(
-      await t.query(internal.calendar.getCalendarConnectionForAdapter, {
+      await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
         connectionId,
       }),
     ).toBeNull();
     await t.run((ctx) => ctx.db.patch(connectionId, { status: "error" }));
     expect(
-      await t.query(internal.calendar.getCalendarConnectionForAdapter, {
+      await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
         connectionId,
       }),
     ).toBeNull();
     await t.run((ctx) => ctx.db.delete(connectionId));
     expect(
-      await t.query(internal.calendar.getCalendarConnectionForAdapter, {
+      await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
         connectionId,
       }),
     ).toBeNull();

@@ -108,7 +108,7 @@ describe("purgeUserData", () => {
       });
     });
 
-    const res = await t.mutation(internal.maintenance.purgeUserData, {
+    const res = await t.mutation(internal.jobs.maintenance.purgeUserData, {
       userId,
       email,
     });
@@ -170,7 +170,7 @@ describe("calendar operation retention", () => {
         recent: await insert("recent", "succeeded", Date.now()),
       };
     });
-    await t.mutation(internal.maintenance.pruneCalendarOperations, {});
+    await t.mutation(internal.jobs.maintenance.pruneCalendarOperations, {});
     expect(await t.run((ctx) => ctx.db.get(ids.succeeded))).toBeNull();
     expect(await t.run((ctx) => ctx.db.get(ids.failed))).toBeNull();
     expect(await t.run((ctx) => ctx.db.get(ids.pending))).not.toBeNull();
@@ -211,7 +211,7 @@ describe("calendar operation retention", () => {
         updatedAt: 1,
       });
     });
-    await t.mutation(internal.maintenance.pruneCalendarOperations, {});
+    await t.mutation(internal.jobs.maintenance.pruneCalendarOperations, {});
     expect(await t.run((ctx) => ctx.db.get(operationId))).not.toBeNull();
   });
 });

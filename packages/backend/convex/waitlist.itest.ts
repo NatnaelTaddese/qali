@@ -10,8 +10,8 @@ import { modules } from "../testModules";
 describe("waitlist.join", () => {
   test("dedupes a repeat signup to a single row", async () => {
     const t = convexTest(schema, modules);
-    await t.mutation(api.waitlist.join, { email: "a@example.com" });
-    await t.mutation(api.waitlist.join, { email: "A@Example.com  " });
+    await t.mutation(api.domains.marketing.mutations.join, { email: "a@example.com" });
+    await t.mutation(api.domains.marketing.mutations.join, { email: "A@Example.com  " });
 
     const rows = await t.run(async (ctx) =>
       ctx.db.query("waitlist").collect(),
@@ -23,7 +23,7 @@ describe("waitlist.join", () => {
   test("rejects an invalid email", async () => {
     const t = convexTest(schema, modules);
     await expect(
-      t.mutation(api.waitlist.join, { email: "not-an-email" }),
+      t.mutation(api.domains.marketing.mutations.join, { email: "not-an-email" }),
     ).rejects.toThrow();
   });
 
@@ -39,7 +39,7 @@ describe("waitlist.join", () => {
       });
     });
     await expect(
-      t.mutation(api.waitlist.join, { email: "flood@example.com" }),
+      t.mutation(api.domains.marketing.mutations.join, { email: "flood@example.com" }),
     ).rejects.toThrow();
     // Nothing was written past the cap.
     const rows = await t.run(async (ctx) =>

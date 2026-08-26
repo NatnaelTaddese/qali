@@ -138,7 +138,7 @@ export function eventColorVar(
  * dedupes the underlying subscription, so several components may call this.
  */
 export function useEventColor(): (event: CalendarEvent) => string {
-  const calendars = useQuery(api.calendar.listCalendars);
+  const calendars = useQuery(api.domains.calendar.queries.listCalendars);
   const colors = useMemo(
     () => new Map(calendars?.map((c) => [c.googleCalendarId, c.backgroundColor])),
     [calendars],

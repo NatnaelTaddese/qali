@@ -71,16 +71,16 @@ export function BottomIsland() {
     availabilityRequested ||
     availabilityIntentVersion > 0;
   // This stays live for the dock badge and incoming-request calendar blocks.
-  const pendingBookings = useQuery(api.booking.listPendingBookings);
+  const pendingBookings = useQuery(api.domains.booking.queries.listPendingBookings);
   // Warm settings on interaction intent so the dock knows its final content
   // height before its spring begins. Retain them briefly after close for a
   // smooth reopen, then release both subscriptions.
   const bookingPage = useStableQuery(
-    api.booking.getMyBookingPage,
+    api.domains.booking.queries.getMyBookingPage,
     availabilityDataActive ? {} : "skip",
   );
   const bookingDefaults = useStableQuery(
-    api.booking.bookingPageDefaults,
+    api.domains.booking.queries.bookingPageDefaults,
     availabilityDataActive ? {} : "skip",
   );
   const availabilityReady =
@@ -372,7 +372,7 @@ function NavRow({
   onPrepareAvailability: () => void;
   onOpenAvailability: () => void;
 }) {
-  const syncNow = useAction(api.calendarSync.syncNow);
+  const syncNow = useAction(api.domains.sync.engine.syncNow);
   const [isSyncing, setIsSyncing] = useState(false);
 
   const sync = async () => {

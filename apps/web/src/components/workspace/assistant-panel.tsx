@@ -106,21 +106,21 @@ export function AssistantPanel({
   onNewChat: () => void;
   // The dock owns these subscriptions so the conversation stays warm between
   // opens instead of reloading each time the panel mounts.
-  threads: FunctionReturnType<typeof api.assistantData.listThreads> | undefined;
+  threads: FunctionReturnType<typeof api.domains.assistant.data.listThreads> | undefined;
   messages:
-    | FunctionReturnType<typeof api.assistantData.listMessages>
+    | FunctionReturnType<typeof api.domains.assistant.data.listMessages>
     | undefined;
   actions:
-    | FunctionReturnType<typeof api.assistantData.listPendingActions>
+    | FunctionReturnType<typeof api.domains.assistant.data.listPendingActions>
     | undefined;
   quota:
-    | FunctionReturnType<typeof api.assistantData.monthlyQuota>
+    | FunctionReturnType<typeof api.domains.assistant.data.monthlyQuota>
     | undefined;
 }) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
-  const sendMessage = useAction(api.assistant.sendMessage);
+  const sendMessage = useAction(api.domains.assistant.loop.sendMessage);
   const reduceMotion = useReducedMotion();
   const sendGooFilterId = useId().replace(/[:]/g, "");
 

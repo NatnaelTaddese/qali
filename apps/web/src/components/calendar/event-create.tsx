@@ -49,8 +49,8 @@ export function EventCreate({
   onCancel: () => void;
   onCreated: () => void;
 }) {
-  const createEvent = useAction(api.calendar.createEvent);
-  const calendars = useQuery(api.calendar.listCalendars) ?? [];
+  const createEvent = useAction(api.domains.calendar.service.createEvent);
+  const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
   const [submitting, setSubmitting] = useState(false);
   // Idempotency key for this create intent: minted once and reused across retries
   // (a lost response / re-submit) so the backend dedupes to one Google event

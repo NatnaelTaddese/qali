@@ -442,14 +442,14 @@ describe("connection backfill", () => {
     expect(state?.otherContactsCursor).toBeUndefined();
     expect(state?.otherContactsBackfillRequired).toBe(true);
 
-    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId,
     });
     const generation = await t.mutation(
-      internal.calendarSync.beginContactsFullResync,
+      internal.domains.sync.engine.beginContactsFullResync,
       { connectionId, attemptId: attemptId!, feed: "other" },
     );
-    await t.mutation(internal.calendarSync.upsertContactsPage, {
+    await t.mutation(internal.domains.sync.engine.upsertContactsPage, {
       connectionId,
       attemptId: attemptId!,
       feed: "other",
@@ -463,12 +463,12 @@ describe("connection backfill", () => {
         },
       ],
     });
-    await t.mutation(internal.calendarSync.sweepLegacyOtherPeopleBatch, {
+    await t.mutation(internal.domains.sync.engine.sweepLegacyOtherPeopleBatch, {
       connectionId,
       attemptId: attemptId!,
       cursor: null,
     });
-    await t.mutation(internal.calendarSync.commitContactsSync, {
+    await t.mutation(internal.domains.sync.engine.commitContactsSync, {
       connectionId,
       attemptId: attemptId!,
       feed: "other",
@@ -594,10 +594,10 @@ describe("connection backfill", () => {
         contactsCursor: "neutral-cursor",
       });
     });
-    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId,
     });
-    await t.mutation(internal.calendarSync.heartbeatSyncLease, {
+    await t.mutation(internal.domains.sync.engine.heartbeatSyncLease, {
       connectionId,
       attemptId: attemptId!,
     });

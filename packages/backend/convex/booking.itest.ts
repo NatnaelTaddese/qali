@@ -177,12 +177,12 @@ async function ambiguousBooking(t: ReturnType<typeof convexTest>) {
   const bookingId = await t.run((ctx) =>
     ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
   );
-  const claim = await t.mutation(internal.booking.claimBookingAcceptance, {
+  const claim = await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
     bookingId,
     hostUserId: HOST,
     attemptId: "initial-provider-attempt",
   });
-  await t.mutation(internal.booking.releaseBookingAcceptance, {
+  await t.mutation(internal.domains.booking.mutations.releaseBookingAcceptance, {
     bookingId,
     hostUserId: HOST,
     attemptId: "initial-provider-attempt",
@@ -200,7 +200,7 @@ describe("booking acceptance claim", () => {
       ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
     );
 
-    const first = await t.mutation(internal.booking.claimBookingAcceptance, {
+    const first = await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "attempt-1",
@@ -220,7 +220,7 @@ describe("booking acceptance claim", () => {
     });
 
     // A different attempt cannot claim while the first lease is live.
-    const second = await t.mutation(internal.booking.claimBookingAcceptance, {
+    const second = await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "attempt-2",
@@ -250,7 +250,7 @@ describe("booking acceptance claim", () => {
     );
 
     const claim = (bookingId: Id<"bookings">, hostUserId: string) =>
-      t.mutation(internal.booking.claimBookingAcceptance, {
+      t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
         bookingId,
         hostUserId,
         attemptId: "a",
@@ -273,7 +273,7 @@ describe("booking acceptance claim", () => {
     });
 
     await expect(
-      t.mutation(internal.booking.claimBookingAcceptance, {
+      t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
         bookingId,
         hostUserId: HOST,
         attemptId: "a",
@@ -289,20 +289,20 @@ describe("booking acceptance claim", () => {
       ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
     );
 
-    const first = await t.mutation(internal.booking.claimBookingAcceptance, {
+    const first = await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "attempt-1",
     });
     // A lost/uncertain response releases the claim without asserting success.
-    await t.mutation(internal.booking.releaseBookingAcceptance, {
+    await t.mutation(internal.domains.booking.mutations.releaseBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "attempt-1",
       mayHaveSucceeded: false,
     });
 
-    const second = await t.mutation(internal.booking.claimBookingAcceptance, {
+    const second = await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "attempt-2",
@@ -320,19 +320,19 @@ describe("booking acceptance claim", () => {
     const bookingId = await t.run((ctx) =>
       ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
     );
-    const first = await t.mutation(internal.booking.claimBookingAcceptance, {
+    const first = await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "first",
     });
-    await t.mutation(internal.booking.releaseBookingAcceptance, {
+    await t.mutation(internal.domains.booking.mutations.releaseBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "first",
       mayHaveSucceeded: true,
     });
 
-    const retry = await t.mutation(internal.booking.claimBookingAcceptance, {
+    const retry = await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "retry",
@@ -352,7 +352,7 @@ describe("scheduled booking acceptance reconciliation", () => {
     const bookingId = await t.run((ctx) =>
       ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
     );
-    const claim = await t.mutation(internal.booking.claimBookingAcceptance, {
+    const claim = await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "lost-action",
@@ -367,7 +367,7 @@ describe("scheduled booking acceptance reconciliation", () => {
       return operation;
     });
     const retry = await t.mutation(
-      internal.booking.claimScheduledBookingAcceptance,
+      internal.domains.booking.mutations.claimScheduledBookingAcceptance,
       {
         bookingId,
         attemptId: "scheduled-recovery",
@@ -429,7 +429,7 @@ describe("scheduled booking acceptance reconciliation", () => {
       { bookingId, expectedGeneration: claim.reconcileGeneration },
       adapter,
     );
-    await t.mutation(internal.booking.expireBooking, { bookingId });
+    await t.mutation(internal.domains.booking.mutations.expireBooking, { bookingId });
     expect((await t.run((ctx) => ctx.db.get(bookingId)))?.status).toBe("expired");
     expect(adapter.createKeys).toEqual([]);
   });
@@ -500,14 +500,14 @@ describe("booking acceptance settle", () => {
     const bookingId = await t.run((ctx) =>
       ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
     );
-    await t.mutation(internal.booking.claimBookingAcceptance, {
+    await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "holder",
     });
 
     // A stale attempt cannot mark the booking accepted.
-    const wrong = await t.mutation(internal.booking.markAccepted, {
+    const wrong = await t.mutation(internal.domains.booking.mutations.markAccepted, {
       bookingId,
       hostUserId: HOST,
       providerEventId: "evt_google",
@@ -520,7 +520,7 @@ describe("booking acceptance settle", () => {
     );
 
     // The holder commits, and the accept-lease bookkeeping is cleared.
-    const ok = await t.mutation(internal.booking.markAccepted, {
+    const ok = await t.mutation(internal.domains.booking.mutations.markAccepted, {
       bookingId,
       hostUserId: HOST,
       providerEventId: "evt_google",
@@ -558,14 +558,14 @@ describe("booking acceptance settle", () => {
     const bookingId = await t.run((ctx) =>
       ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
     );
-    await t.mutation(internal.booking.claimBookingAcceptance, {
+    await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "holder",
     });
 
     // A non-holder release is a no-op — it must not clear the live lease.
-    await t.mutation(internal.booking.releaseBookingAcceptance, {
+    await t.mutation(internal.domains.booking.mutations.releaseBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "stale",
@@ -577,7 +577,7 @@ describe("booking acceptance settle", () => {
 
     // The holder releasing with an ambiguous outcome flags the booking so a
     // later reject cannot contradict a possibly-sent Google invitation.
-    await t.mutation(internal.booking.releaseBookingAcceptance, {
+    await t.mutation(internal.domains.booking.mutations.releaseBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "holder",
@@ -630,7 +630,7 @@ describe("booking acceptance authority", () => {
       });
     });
 
-    await t.mutation(internal.booking.expireBooking, { bookingId });
+    await t.mutation(internal.domains.booking.mutations.expireBooking, { bookingId });
     expect((await t.run((ctx) => ctx.db.get(bookingId)))?.status).toBe(
       "pending",
     );
@@ -638,12 +638,12 @@ describe("booking acceptance authority", () => {
     await t.run((ctx) =>
       ctx.db.patch(operationId, { leaseExpiresAt: Date.now() - 1 }),
     );
-    await t.mutation(internal.booking.expireBooking, { bookingId });
+    await t.mutation(internal.domains.booking.mutations.expireBooking, { bookingId });
     expect((await t.run((ctx) => ctx.db.get(bookingId)))?.status).toBe(
       "pending",
     );
     const retry = await t.mutation(
-      internal.booking.claimBookingAcceptance,
+      internal.domains.booking.mutations.claimBookingAcceptance,
       { bookingId, hostUserId: HOST, attemptId: "reconcile" },
     );
     expect(retry).toMatchObject({
@@ -675,7 +675,7 @@ describe("booking acceptance authority", () => {
       });
       return bookingId;
     });
-    await t.mutation(internal.booking.expireBooking, { bookingId });
+    await t.mutation(internal.domains.booking.mutations.expireBooking, { bookingId });
     expect((await t.run((ctx) => ctx.db.get(bookingId)))?.status).toBe(
       "expired",
     );
@@ -688,26 +688,26 @@ describe("booking acceptance authority", () => {
     const bookingId = await t.run((ctx) =>
       ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
     );
-    await t.mutation(internal.booking.claimBookingAcceptance, {
+    await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "holder",
     });
     await expect(
-      t.mutation(internal.booking.rejectBookingForHost, {
+      t.mutation(internal.domains.booking.mutations.rejectBookingForHost, {
         bookingId,
         hostUserId: HOST,
       }),
     ).rejects.toThrow(/currently being accepted/i);
 
-    await t.mutation(internal.booking.releaseBookingAcceptance, {
+    await t.mutation(internal.domains.booking.mutations.releaseBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "holder",
       mayHaveSucceeded: true,
     });
     await expect(
-      t.mutation(internal.booking.rejectBookingForHost, {
+      t.mutation(internal.domains.booking.mutations.rejectBookingForHost, {
         bookingId,
         hostUserId: HOST,
       }),
@@ -753,7 +753,7 @@ describe("booking acceptance authority", () => {
       targetCalendarId: foreign.calendarId,
     });
     await expect(
-      t.mutation(internal.booking.claimBookingAcceptance, {
+      t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
         bookingId: foreignBooking,
         hostUserId: HOST,
         attemptId: "foreign",
@@ -768,7 +768,7 @@ describe("booking acceptance authority", () => {
       targetCalendarId: target.calendarId,
     });
     await expect(
-      t.mutation(internal.booking.claimBookingAcceptance, {
+      t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
         bookingId: pausedBooking,
         hostUserId: HOST,
         attemptId: "paused",
@@ -787,7 +787,7 @@ describe("booking acceptance authority", () => {
       targetCalendarId: target.calendarId,
     });
     await expect(
-      t.mutation(internal.booking.claimBookingAcceptance, {
+      t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
         bookingId: readOnlyBooking,
         hostUserId: HOST,
         attemptId: "read-only",
@@ -812,7 +812,7 @@ describe("booking acceptance authority", () => {
     });
     const startMs =
       Math.ceil((Date.now() + 60 * 60_000) / (30 * 60_000)) * (30 * 60_000);
-    await t.mutation(api.booking.requestBooking, {
+    await t.mutation(api.domains.booking.mutations.requestBooking, {
       slug: "legacy-host",
       startMs,
       name: "Requester",
@@ -842,7 +842,7 @@ describe("booking acceptance authority", () => {
   test("accepted provider events mirror through calendar storage", async () => {
     const t = convexTest(schema, modules);
     const { connectionId, calendarId } = await seedHost(t);
-    await t.mutation(internal.calendar.mirrorProviderEvent, {
+    await t.mutation(internal.domains.calendar.mutations.mirrorProviderEvent, {
       connectionId,
       localCalendarId: calendarId,
       event: {
@@ -890,13 +890,13 @@ describe("booking context conflict detection", () => {
         minNoticeMinutes: 120,
       }),
     );
-    const earlier = await t.query(api.booking.listSlots, {
+    const earlier = await t.query(api.domains.booking.queries.listSlots, {
       slug: "materialized-time",
       fromMs,
       toMs: fromMs + 4 * 60 * 60_000,
       nowMs: fromMs - 3 * 60 * 60_000,
     });
-    const current = await t.query(api.booking.listSlots, {
+    const current = await t.query(api.domains.booking.queries.listSlots, {
       slug: "materialized-time",
       fromMs,
       toMs: fromMs + 4 * 60 * 60_000,
@@ -914,7 +914,7 @@ describe("booking context conflict detection", () => {
     const freeId = await t.run((ctx) =>
       ctx.db.insert("bookings", bookingDoc(HOST, start, end)),
     );
-    const free = await t.query(internal.booking.getBookingContext, {
+    const free = await t.query(internal.domains.booking.queries.getBookingContext, {
       bookingId: freeId,
       hostUserId: HOST,
     });
@@ -927,7 +927,7 @@ describe("booking context conflict detection", () => {
         bookingDoc(HOST, start, end, { token: "tok_busy" }),
       );
     });
-    const busy = await t.query(internal.booking.getBookingContext, {
+    const busy = await t.query(internal.domains.booking.queries.getBookingContext, {
       bookingId: busyId,
       hostUserId: HOST,
     });
@@ -950,7 +950,7 @@ describe("booking context conflict detection", () => {
       return ctx.db.insert("bookings", bookingDoc(HOST, start, end));
     });
 
-    const ctxRow = await t.query(internal.booking.getBookingContext, {
+    const ctxRow = await t.query(internal.domains.booking.queries.getBookingContext, {
       bookingId,
       hostUserId: HOST,
     });

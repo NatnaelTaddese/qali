@@ -116,7 +116,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     const userInteractedRef = useRef(false);
     const [now, setNow] = useState(() => Date.now());
     const [visibleStartIdx, setVisibleStartIdx] = useState(anchorIndex);
-    const people = useQuery(api.people.listPeople) ?? NO_CONTACTS;
+    const people = useQuery(api.domains.people.queries.listPeople) ?? NO_CONTACTS;
     const contactPhotos = useMemo(() => {
       const photos = new Map<string, string>();
       for (const person of people) {
@@ -437,7 +437,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
 
     // The dock already holds this no-argument subscription. Convex shares the
     // live result, so moving the date window never clears and reloads bookings.
-    const bookings = useQuery(api.booking.listPendingBookings) ?? NO_BOOKINGS;
+    const bookings = useQuery(api.domains.booking.queries.listPendingBookings) ?? NO_BOOKINGS;
     const bookingsByDay = useMemo(() => {
       const buckets: (typeof bookings)[] = days.map(() => []);
       for (const booking of bookings) {

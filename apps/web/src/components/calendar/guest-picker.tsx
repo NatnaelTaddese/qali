@@ -149,7 +149,7 @@ export function GuestPicker({
   /** The organiser hid the guest list from other guests. */
   hidden?: boolean;
 }) {
-  const people = useQuery(api.people.listPeople) ?? [];
+  const people = useQuery(api.domains.people.queries.listPeople) ?? [];
   const { data: session } = authClient.useSession();
   const organizer = session?.user;
   const reduce = useReducedMotion();

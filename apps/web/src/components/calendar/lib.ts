@@ -1,5 +1,5 @@
 import type { Id } from "@qali/backend/convex/_generated/dataModel";
-import type { EventView } from "@qali/backend/convex/calendar";
+import type { EventView } from "@qali/backend/convex/domains/calendar/model";
 import {
   addDays,
   addMonths,

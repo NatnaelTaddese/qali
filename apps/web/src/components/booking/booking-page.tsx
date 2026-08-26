@@ -42,7 +42,7 @@ export function BookingPage({
   token: string | null;
   onTokenChange: (token: string | null) => void;
 }) {
-  const page = useQuery(api.booking.getPublicPage, { slug });
+  const page = useQuery(api.domains.booking.queries.getPublicPage, { slug });
   const [nowMs, setNowMs] = useState(Date.now);
   // Refresh min-notice/horizon filtering without creating a millisecond-level
   // stream of query arguments. One minute is tighter than the smallest slot.
@@ -52,7 +52,7 @@ export function BookingPage({
   }, []);
   const fromMs = Math.floor(nowMs / MS_PER_HOUR) * MS_PER_HOUR;
   const availability = useQuery(
-    api.booking.listSlots,
+    api.domains.booking.queries.listSlots,
     page
       ? {
           slug,
@@ -62,7 +62,7 @@ export function BookingPage({
         }
       : "skip",
   );
-  const requestBooking = useMutation(api.booking.requestBooking);
+  const requestBooking = useMutation(api.domains.booking.mutations.requestBooking);
 
   const reduceMotion = useReducedMotion();
   const [use24Hour, setUse24Hour] = useState(storedUse24Hour);

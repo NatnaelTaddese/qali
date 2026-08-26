@@ -39,7 +39,7 @@ export function BookingConfirmation({
   onStartOver: () => void;
 }) {
   const reduceMotion = useReducedMotion();
-  const booking = useQuery(api.booking.getBookingByToken, { token });
+  const booking = useQuery(api.domains.booking.queries.getBookingByToken, { token });
   const [now, setNow] = useState(() => Date.now());
 
   // Scheduled expiration normally drives this through Convex. The local timer

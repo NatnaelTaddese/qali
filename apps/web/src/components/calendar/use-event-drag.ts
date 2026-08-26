@@ -81,7 +81,7 @@ export function useEventDrag(
   days: Date[],
 ): UseEventDrag {
   const { open } = useDock();
-  const updateEventTime = useAction(api.calendar.updateEventTime);
+  const updateEventTime = useAction(api.domains.calendar.service.updateEventTime);
   const capabilitiesOf = useEventCapabilities();
 
   const [overrides, setOverrides] = useState<Record<string, OverrideTimes>>({});

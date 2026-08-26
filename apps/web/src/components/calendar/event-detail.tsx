@@ -141,7 +141,7 @@ function GuestSection({
   const [expanded, setExpanded] = useState(false);
   const guestListRef = useRef<HTMLDivElement>(null);
   const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
-  const people = useQuery(api.people.listPeople) ?? [];
+  const people = useQuery(api.domains.people.queries.listPeople) ?? [];
 
   // Attendees carry no photo, so fill them in from the people directory by email.
   const enriched = useMemo(() => {
@@ -281,7 +281,7 @@ function RsvpControl({
   event: CalendarEvent;
   current?: string;
 }) {
-  const respond = useAction(api.calendar.respondToEvent);
+  const respond = useAction(api.domains.calendar.service.respondToEvent);
   // Held only until the synced row catches up, so the segment moves on click
   // rather than after the round trip to Google.
   const [optimistic, setOptimistic] = useState<string>();
@@ -473,16 +473,16 @@ export function EventDetail({
   onDuplicate: (prefill: EventPrefill, startMs: number, endMs: number) => void;
 }) {
   const reduce = useReducedMotion();
-  const deleteEvent = useAction(api.calendar.deleteEvent);
-  const refreshEventRecurrence = useAction(api.calendar.refreshEventRecurrence);
-  const calendars = useQuery(api.calendar.listCalendars) ?? [];
+  const deleteEvent = useAction(api.domains.calendar.service.deleteEvent);
+  const refreshEventRecurrence = useAction(api.domains.calendar.service.refreshEventRecurrence);
+  const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
   // The dock hands us the row as it was when the event was opened. Subscribing
   // to it means an edit or an RSVP lands in the open panel; the snapshot only
   // covers the first frame, before the query resolves.
-  const live = useQuery(api.calendar.getEventById, { eventId: snapshot._id });
+  const live = useQuery(api.domains.calendar.queries.getEventById, { eventId: snapshot._id });
   const event = live ?? snapshot;
   const recurrenceLines = useQuery(
-    api.calendar.getEventRecurrence,
+    api.domains.calendar.queries.getEventRecurrence,
     event.recurringEventId ? { eventId: event._id } : "skip",
   );
 

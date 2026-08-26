@@ -20,7 +20,7 @@ const googleEvent = {
 };
 
 async function preparePrimaryCalendar(t: ReturnType<typeof convexTest>) {
-  await t.mutation(internal.calendarSync.ensureSyncState, { userId: USER });
+  await t.mutation(internal.domains.sync.engine.ensureSyncState, { userId: USER });
   const connectionId = await t.run(async (ctx) => {
     const connection = await ctx.db
       .query("calendarConnections")
@@ -30,10 +30,10 @@ async function preparePrimaryCalendar(t: ReturnType<typeof convexTest>) {
       .unique();
     return connection!._id;
   });
-  const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+  const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
     connectionId,
   });
-  await t.mutation(internal.calendarSync.reconcileCalendars, {
+  await t.mutation(internal.domains.sync.engine.reconcileCalendars, {
     connectionId,
     attemptId: attemptId!,
     calendars: [
@@ -44,7 +44,7 @@ async function preparePrimaryCalendar(t: ReturnType<typeof convexTest>) {
       },
     ],
   });
-  await t.mutation(internal.calendarSync.recordSyncOutcome, {
+  await t.mutation(internal.domains.sync.engine.recordSyncOutcome, {
     connectionId,
     attemptId: attemptId!,
     status: "idle",
@@ -76,7 +76,7 @@ describe("calendar dual-write", () => {
       return { eventId };
     });
 
-    const target = await t.mutation(internal.calendar.resolveEventWriteTarget, {
+    const target = await t.mutation(internal.domains.calendar.mutations.resolveEventWriteTarget, {
       userId: USER,
       eventId,
     });
@@ -99,10 +99,10 @@ describe("calendar dual-write", () => {
   test("claims and settles one authoritative calendar operation per assistant key", async () => {
     const t = convexTest(schema, modules);
     await preparePrimaryCalendar(t);
-    const target = await t.mutation(internal.calendar.resolveCreateTarget, {
+    const target = await t.mutation(internal.domains.calendar.mutations.resolveCreateTarget, {
       userId: USER,
     });
-    const claim = await t.mutation(internal.calendar.claimCalendarOperation, {
+    const claim = await t.mutation(internal.domains.calendar.mutations.claimCalendarOperation, {
       userId: USER,
       ...target,
       idempotencyKey: "assistant-operation-1",
@@ -112,7 +112,7 @@ describe("calendar dual-write", () => {
     });
     expect(claim).toMatchObject({ state: "claimed", reconcileOnly: false });
     expect(
-      await t.mutation(internal.calendar.settleCalendarOperation, {
+      await t.mutation(internal.domains.calendar.mutations.settleCalendarOperation, {
         userId: USER,
         connectionId: target.connectionId,
         idempotencyKey: "assistant-operation-1",
@@ -122,7 +122,7 @@ describe("calendar dual-write", () => {
       }),
     ).toBe(true);
 
-    const replay = await t.mutation(internal.calendar.claimCalendarOperation, {
+    const replay = await t.mutation(internal.domains.calendar.mutations.claimCalendarOperation, {
       userId: USER,
       ...target,
       idempotencyKey: "assistant-operation-1",
@@ -139,10 +139,10 @@ describe("calendar dual-write", () => {
   test("rejects idempotency-key reuse for a changed target or payload", async () => {
     const t = convexTest(schema, modules);
     await preparePrimaryCalendar(t);
-    const target = await t.mutation(internal.calendar.resolveCreateTarget, {
+    const target = await t.mutation(internal.domains.calendar.mutations.resolveCreateTarget, {
       userId: USER,
     });
-    await t.mutation(internal.calendar.claimCalendarOperation, {
+    await t.mutation(internal.domains.calendar.mutations.claimCalendarOperation, {
       userId: USER,
       ...target,
       idempotencyKey: "bound-key",
@@ -155,7 +155,7 @@ describe("calendar dual-write", () => {
       await ctx.db.patch(operation!._id, { leaseExpiresAt: 0 });
     });
     await expect(
-      t.mutation(internal.calendar.claimCalendarOperation, {
+      t.mutation(internal.domains.calendar.mutations.claimCalendarOperation, {
         userId: USER,
         ...target,
         idempotencyKey: "bound-key",
@@ -175,7 +175,7 @@ describe("calendar dual-write", () => {
       }),
     );
     await expect(
-      t.mutation(internal.calendar.claimCalendarOperation, {
+      t.mutation(internal.domains.calendar.mutations.claimCalendarOperation, {
         userId: USER,
         connectionId: target.connectionId,
         localCalendarId: otherCalendarId,
@@ -190,7 +190,7 @@ describe("calendar dual-write", () => {
 
   test("creates a safe primary alias before the first calendar sync", async () => {
     const t = convexTest(schema, modules);
-    const target = await t.mutation(internal.calendar.resolveCreateTarget, {
+    const target = await t.mutation(internal.domains.calendar.mutations.resolveCreateTarget, {
       userId: "new-user",
     });
     expect(target.providerCalendarId).toBe("primary");
@@ -250,7 +250,7 @@ describe("calendar dual-write", () => {
       };
     });
 
-    const target = await t.mutation(internal.calendar.resolveCreateTarget, {
+    const target = await t.mutation(internal.domains.calendar.mutations.resolveCreateTarget, {
       userId: USER,
       requestedCalendarId: secondCalendarId,
     });
@@ -260,7 +260,7 @@ describe("calendar dual-write", () => {
       providerCalendarId: "shared-provider-id",
     });
     expect(
-      await t.mutation(internal.calendar.resolveCreateTarget, { userId: USER }),
+      await t.mutation(internal.domains.calendar.mutations.resolveCreateTarget, { userId: USER }),
     ).toMatchObject({
       connectionId: firstConnectionId,
       localCalendarId: firstCalendarId,
@@ -289,7 +289,7 @@ describe("calendar dual-write", () => {
     });
 
     await expect(
-      t.mutation(internal.calendar.resolveCreateTarget, {
+      t.mutation(internal.domains.calendar.mutations.resolveCreateTarget, {
         userId: USER,
         requestedCalendarId: foreignCalendarId,
       }),

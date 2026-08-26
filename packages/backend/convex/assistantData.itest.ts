@@ -27,7 +27,7 @@ test("stale assistant attempts cannot settle or reopen a newer claim", async () 
       lastMessageAt: 1,
     }),
   );
-  const actionId = await t.mutation(internal.assistantData.recordProposal, {
+  const actionId = await t.mutation(internal.domains.assistant.data.recordProposal, {
     threadId,
     userId,
     toolCallId: "tool-call",
@@ -35,7 +35,7 @@ test("stale assistant attempts cannot settle or reopen a newer claim", async () 
     input: "{}",
     preview: "Create event",
   });
-  const first = await t.mutation(internal.assistantData.claimAction, {
+  const first = await t.mutation(internal.domains.assistant.data.claimAction, {
     actionId,
     userId,
   });
@@ -43,24 +43,24 @@ test("stale assistant attempts cannot settle or reopen a newer claim", async () 
   await t.run((ctx) =>
     ctx.db.patch(actionId, { applyLeaseExpiresAt: expiredAt }),
   );
-  await t.mutation(internal.assistantData.releaseStaleAction, {
+  await t.mutation(internal.domains.assistant.data.releaseStaleAction, {
     actionId,
     attemptId: first!.attemptId,
     applyLeaseExpiresAt: expiredAt,
   });
-  const second = await t.mutation(internal.assistantData.claimAction, {
+  const second = await t.mutation(internal.domains.assistant.data.claimAction, {
     actionId,
     userId,
   });
   expect(second?.attemptId).not.toBe(first?.attemptId);
 
-  await t.mutation(internal.assistantData.settleClaimedAction, {
+  await t.mutation(internal.domains.assistant.data.settleClaimedAction, {
     actionId,
     attemptId: first!.attemptId,
     status: "failed",
     resultSummary: "stale failure",
   });
-  await t.mutation(internal.assistantData.retryClaimedAction, {
+  await t.mutation(internal.domains.assistant.data.retryClaimedAction, {
     actionId,
     attemptId: first!.attemptId,
     resultSummary: "stale retry",
@@ -70,7 +70,7 @@ test("stale assistant attempts cannot settle or reopen a newer claim", async () 
     attemptId: second!.attemptId,
   });
 
-  await t.mutation(internal.assistantData.settleClaimedAction, {
+  await t.mutation(internal.domains.assistant.data.settleClaimedAction, {
     actionId,
     attemptId: second!.attemptId,
     status: "applied",
@@ -104,7 +104,7 @@ test("an already-stored legacy applying action remains recoverable", async () =>
       createdAt: 1,
     });
   });
-  await t.mutation(internal.assistantData.releaseStaleAction, {
+  await t.mutation(internal.domains.assistant.data.releaseStaleAction, {
     actionId,
     applyLeaseExpiresAt: expiredAt,
   });

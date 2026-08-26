@@ -121,7 +121,7 @@ function Hero() {
 const emailSchema = z.string().email();
 
 function Waitlist() {
-  const join = useMutation(api.waitlist.join);
+  const join = useMutation(api.domains.marketing.mutations.join);
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [joined, setJoined] = useState(false);

@@ -171,7 +171,7 @@ describe("connection-scoped fake-provider sync", () => {
       "calendar",
       "committed-old",
     );
-    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId,
     });
     const adapter = new FakeCalendarAdapter([
@@ -236,7 +236,7 @@ describe("connection-scoped fake-provider sync", () => {
         providerUpdatedMs: 1_000,
       });
     });
-    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId,
     });
     const adapter = new FakeCalendarAdapter([
@@ -279,7 +279,7 @@ describe("connection-scoped fake-provider sync", () => {
         .unique();
       await ctx.db.patch(state!._id, { syncLeaseExpiresAt: Date.now() - 1 });
     });
-    const nextAttemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const nextAttemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId,
     });
     await syncOneConnectionCalendar(
@@ -324,7 +324,7 @@ describe("connection-scoped fake-provider sync", () => {
       "calendar",
       "expired",
     );
-    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId,
     });
     const adapter = new FakeCalendarAdapter([
@@ -375,11 +375,11 @@ describe("connection identity and lease fencing", () => {
       });
       return calendarId;
     });
-    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId,
     });
     const reconciled = await t.mutation(
-      internal.calendarSync.reconcileCalendars,
+      internal.domains.sync.engine.reconcileCalendars,
       {
         connectionId,
         attemptId: attemptId!,
@@ -393,7 +393,7 @@ describe("connection identity and lease fencing", () => {
       },
     );
     expect(reconciled[0]?.localCalendarId).toBe(calendarId);
-    await t.mutation(internal.calendarSync.upsertEventsPage, {
+    await t.mutation(internal.domains.sync.engine.upsertEventsPage, {
       connectionId,
       attemptId: attemptId!,
       localCalendarId: calendarId,
@@ -433,10 +433,10 @@ describe("connection identity and lease fencing", () => {
     const second = await setupConnection(t, userId);
     const firstCalendar = await setupCalendar(t, userId, first, "same-calendar");
     const secondCalendar = await setupCalendar(t, userId, second, "same-calendar");
-    const firstAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const firstAttempt = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId: first,
     });
-    const secondAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const secondAttempt = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId: second,
     });
     for (const [connectionId, localCalendarId, attemptId] of [
@@ -444,7 +444,7 @@ describe("connection identity and lease fencing", () => {
       [second, secondCalendar, secondAttempt],
     ] as const) {
       expect(
-        await t.mutation(internal.calendarSync.upsertEventsPage, {
+        await t.mutation(internal.domains.sync.engine.upsertEventsPage, {
           connectionId,
           attemptId: attemptId!,
           localCalendarId,
@@ -461,7 +461,7 @@ describe("connection identity and lease fencing", () => {
     const t = convexTest(schema, modules);
     const connectionId = await setupConnection(t, "fence-user");
     const calendarId = await setupCalendar(t, "fence-user", connectionId);
-    const stale = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const stale = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId,
     });
     await t.run(async (ctx) => {
@@ -471,12 +471,12 @@ describe("connection identity and lease fencing", () => {
         .unique();
       await ctx.db.patch(state!._id, { syncLeaseExpiresAt: Date.now() - 1 });
     });
-    const current = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const current = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId,
     });
     expect(current).not.toBe(stale);
     expect(
-      await t.mutation(internal.calendarSync.upsertEventsPage, {
+      await t.mutation(internal.domains.sync.engine.upsertEventsPage, {
         connectionId,
         attemptId: stale!,
         localCalendarId: calendarId,
@@ -484,21 +484,21 @@ describe("connection identity and lease fencing", () => {
       }),
     ).toBe(false);
     expect(
-      await t.mutation(internal.calendarSync.setCalendarSyncCursor, {
+      await t.mutation(internal.domains.sync.engine.setCalendarSyncCursor, {
         connectionId,
         attemptId: stale!,
         localCalendarId: calendarId,
         syncCursor: "stale",
       }),
     ).toBe(false);
-    await t.mutation(internal.calendarSync.recordSyncOutcome, {
+    await t.mutation(internal.domains.sync.engine.recordSyncOutcome, {
       connectionId,
       attemptId: stale!,
       status: "idle",
       active: false,
     });
     expect(
-      await t.mutation(internal.calendarSync.claimSyncLease, { connectionId }),
+      await t.mutation(internal.domains.sync.engine.claimSyncLease, { connectionId }),
     ).toBeNull();
   });
 
@@ -506,20 +506,20 @@ describe("connection identity and lease fencing", () => {
     const t = convexTest(schema, modules);
     const first = await setupConnection(t, "partial-user");
     const second = await setupConnection(t, "partial-user");
-    const firstAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const firstAttempt = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId: first,
     });
-    const secondAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const secondAttempt = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId: second,
     });
-    await t.mutation(internal.calendarSync.recordSyncOutcome, {
+    await t.mutation(internal.domains.sync.engine.recordSyncOutcome, {
       connectionId: first,
       attemptId: firstAttempt!,
       status: "error",
       lastError: "failed",
       active: false,
     });
-    await t.mutation(internal.calendarSync.recordSyncOutcome, {
+    await t.mutation(internal.domains.sync.engine.recordSyncOutcome, {
       connectionId: second,
       attemptId: secondAttempt!,
       status: "idle",
@@ -560,7 +560,7 @@ describe("connection identity and lease fencing", () => {
       });
       await ctx.db.delete(calendarId);
     });
-    await t.mutation(internal.calendarSync.cleanupRemovedCalendarEvents, {
+    await t.mutation(internal.domains.sync.engine.cleanupRemovedCalendarEvents, {
       connectionId,
       localCalendarId: calendarId,
       providerCalendarId: "removed",
@@ -589,17 +589,17 @@ describe("connection-aware contact ownership", () => {
     const userId = "contact-user";
     const first = await setupConnection(t, userId);
     const second = await setupConnection(t, userId);
-    const firstAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const firstAttempt = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId: first,
     });
-    const secondAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const secondAttempt = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId: second,
     });
     for (const [connectionId, attemptId, id] of [
       [first, firstAttempt, "first"],
       [second, secondAttempt, "second"],
     ] as const) {
-      await t.mutation(internal.calendarSync.upsertContactsPage, {
+      await t.mutation(internal.domains.sync.engine.upsertContactsPage, {
         connectionId,
         attemptId: attemptId!,
         feed: "contacts",
@@ -613,7 +613,7 @@ describe("connection-aware contact ownership", () => {
         ],
       });
     }
-    await t.mutation(internal.calendarSync.upsertContactsPage, {
+    await t.mutation(internal.domains.sync.engine.upsertContactsPage, {
       connectionId: first,
       attemptId: firstAttempt!,
       feed: "contacts",
@@ -637,10 +637,10 @@ describe("connection-aware contact ownership", () => {
     const t = convexTest(schema, modules);
     const userId = "shared-email-user";
     const connectionId = await setupConnection(t, userId, "google");
-    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId,
     });
-    await t.mutation(internal.calendarSync.upsertContactsPage, {
+    await t.mutation(internal.domains.sync.engine.upsertContactsPage, {
       connectionId,
       attemptId: attemptId!,
       feed: "other",
@@ -654,7 +654,7 @@ describe("connection-aware contact ownership", () => {
     expect(
       await t.run((ctx) => ctx.db.query("personSourceClaims").collect()),
     ).toHaveLength(2);
-    await t.mutation(internal.calendarSync.upsertContactsPage, {
+    await t.mutation(internal.domains.sync.engine.upsertContactsPage, {
       connectionId,
       attemptId: attemptId!,
       feed: "other",
@@ -682,14 +682,14 @@ describe("connection-aware contact ownership", () => {
       const t = convexTest(schema, modules);
       const userId = `crash-${feed}`;
       const connectionId = await setupConnection(t, userId, "google");
-      const first = await t.mutation(internal.calendarSync.claimSyncLease, {
+      const first = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
         connectionId,
       });
       const firstGeneration = await t.mutation(
-        internal.calendarSync.beginContactsFullResync,
+        internal.domains.sync.engine.beginContactsFullResync,
         { connectionId, attemptId: first!, feed },
       );
-      await t.mutation(internal.calendarSync.upsertContactsPage, {
+      await t.mutation(internal.domains.sync.engine.upsertContactsPage, {
         connectionId,
         attemptId: first!,
         feed,
@@ -710,15 +710,15 @@ describe("connection-aware contact ownership", () => {
           .unique();
         await ctx.db.patch(state!._id, { syncLeaseExpiresAt: Date.now() - 1 });
       });
-      const second = await t.mutation(internal.calendarSync.claimSyncLease, {
+      const second = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
         connectionId,
       });
       const secondGeneration = await t.mutation(
-        internal.calendarSync.beginContactsFullResync,
+        internal.domains.sync.engine.beginContactsFullResync,
         { connectionId, attemptId: second!, feed },
       );
       expect(secondGeneration).toBe(firstGeneration! + 1);
-      await t.mutation(internal.calendarSync.upsertContactsPage, {
+      await t.mutation(internal.domains.sync.engine.upsertContactsPage, {
         connectionId,
         attemptId: second!,
         feed,
@@ -732,7 +732,7 @@ describe("connection-aware contact ownership", () => {
           },
         ],
       });
-      await t.mutation(internal.calendarSync.sweepStaleContactsBatch, {
+      await t.mutation(internal.domains.sync.engine.sweepStaleContactsBatch, {
         connectionId,
         attemptId: second!,
         feed,
@@ -770,10 +770,10 @@ describe("connection-aware contact ownership", () => {
         updatedAt: 1,
       });
     });
-    const attemptId = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId,
     });
-    await t.mutation(internal.calendarSync.upsertContactsPage, {
+    await t.mutation(internal.domains.sync.engine.upsertContactsPage, {
       connectionId,
       attemptId: attemptId!,
       feed: "contacts",
@@ -786,12 +786,12 @@ describe("connection-aware contact ownership", () => {
         },
       ],
     });
-    await t.mutation(internal.calendarSync.beginContactsFullResync, {
+    await t.mutation(internal.domains.sync.engine.beginContactsFullResync, {
       connectionId,
       attemptId: attemptId!,
       feed: "other",
     });
-    await t.mutation(internal.calendarSync.sweepLegacyOtherPeopleBatch, {
+    await t.mutation(internal.domains.sync.engine.sweepLegacyOtherPeopleBatch, {
       connectionId,
       attemptId: attemptId!,
       cursor: null,
@@ -832,10 +832,10 @@ describe("shared generation and engagement maintenance", () => {
       }),
     );
     const microsoftAttempt = await t.mutation(
-      internal.calendarSync.claimSyncLease,
+      internal.domains.sync.engine.claimSyncLease,
       { connectionId: microsoftId },
     );
-    const googleAttempt = await t.mutation(internal.calendarSync.claimSyncLease, {
+    const googleAttempt = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId: googleId,
     });
     const reconcile = (
@@ -843,7 +843,7 @@ describe("shared generation and engagement maintenance", () => {
       attemptId: string,
       id: string,
     ) =>
-      t.mutation(internal.calendarSync.reconcileCalendars, {
+      t.mutation(internal.domains.sync.engine.reconcileCalendars, {
         connectionId,
         attemptId,
         calendars: [
@@ -919,41 +919,41 @@ describe("shared generation and engagement maintenance", () => {
         });
       }
     });
-    await t.mutation(internal.calendarSync.markEngagementDirty, { userId });
-    await t.mutation(internal.calendarSync.markEngagementDirty, { userId });
-    const first = await t.mutation(internal.calendarSync.claimEngagement, { userId });
+    await t.mutation(internal.domains.sync.engine.markEngagementDirty, { userId });
+    await t.mutation(internal.domains.sync.engine.markEngagementDirty, { userId });
+    const first = await t.mutation(internal.domains.sync.engine.claimEngagement, { userId });
     expect(first?.generation).toBe(1);
-    await t.mutation(internal.calendarSync.markEngagementDirty, { userId });
+    await t.mutation(internal.domains.sync.engine.markEngagementDirty, { userId });
     expect(
-      await t.mutation(internal.calendarSync.applyEngagementScoreChunk, {
+      await t.mutation(internal.domains.sync.engine.applyEngagementScoreChunk, {
         userId,
         ...first!,
         scores: [{ email: "current@example.com", score: 5, meetingCount: 2 }],
       }),
     ).toBe(false);
     expect(
-      await t.mutation(internal.calendarSync.finishEngagement, {
+      await t.mutation(internal.domains.sync.engine.finishEngagement, {
         userId,
         ...first!,
       }),
     ).toBe(false);
 
-    const second = await t.mutation(internal.calendarSync.claimEngagement, { userId });
+    const second = await t.mutation(internal.domains.sync.engine.claimEngagement, { userId });
     expect(second?.generation).toBe(2);
     expect(
-      await t.mutation(internal.calendarSync.applyEngagementScoreChunk, {
+      await t.mutation(internal.domains.sync.engine.applyEngagementScoreChunk, {
         userId,
         ...second!,
         scores: [{ email: "current@example.com", score: 5, meetingCount: 2 }],
       }),
     ).toBe(true);
     const reset = await t.mutation(
-      internal.calendarSync.resetStaleEngagementScores,
+      internal.domains.sync.engine.resetStaleEngagementScores,
       { userId, ...second!, cursor: null },
     );
     expect(reset?.done).toBe(true);
     expect(
-      await t.mutation(internal.calendarSync.finishEngagement, {
+      await t.mutation(internal.domains.sync.engine.finishEngagement, {
         userId,
         ...second!,
       }),
@@ -984,12 +984,12 @@ describe("shared generation and engagement maintenance", () => {
         googleUpdatedMs: 1,
       }),
     );
-    const claim = await t.mutation(internal.calendarSync.claimSharedCalendarSync, {
+    const claim = await t.mutation(internal.domains.sync.engine.claimSharedCalendarSync, {
       provider: "google",
       providerCalendarId: "holidays",
       refreshIntervalMs: 0,
     });
-    await t.mutation(internal.calendarSync.upsertSharedEventsPage, {
+    await t.mutation(internal.domains.sync.engine.upsertSharedEventsPage, {
       provider: "google",
       providerCalendarId: "holidays",
       attemptId: claim.attemptId!,

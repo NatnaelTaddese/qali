@@ -22,7 +22,7 @@ import { toRRule } from "./rrule";
 /** Args for `updateEvent`, minus the id — built by diffing the form against
  * what the event started as. */
 type EventPatch = Omit<
-  Parameters<ReturnType<typeof useAction<typeof api.calendar.updateEvent>>>[0],
+  Parameters<ReturnType<typeof useAction<typeof api.domains.calendar.service.updateEvent>>>[0],
   "eventId"
 >;
 
@@ -135,8 +135,8 @@ export function EventEdit({
   onCancel: () => void;
   onSaved: () => void;
 }) {
-  const updateEvent = useAction(api.calendar.updateEvent);
-  const calendars = useQuery(api.calendar.listCalendars) ?? [];
+  const updateEvent = useAction(api.domains.calendar.service.updateEvent);
+  const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
   const capabilities = useEventCapabilities()(event);
   // Captured once: the baseline every save diffs against. Re-seeding it from
   // `event` would erase edits in progress each time a sync lands.

@@ -26,7 +26,7 @@ export type { EventCapabilities };
 export function useEventCapabilities(): (
   event: CalendarEvent,
 ) => EventCapabilities {
-  const calendars = useQuery(api.calendar.listCalendars);
+  const calendars = useQuery(api.domains.calendar.queries.listCalendars);
   const byGoogleId = useMemo(
     () => new Map(calendars?.map((c) => [c.googleCalendarId, c])),
     [calendars],

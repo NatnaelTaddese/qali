@@ -1065,44 +1065,4 @@ describe("shared generation and engagement maintenance", () => {
         ?.syncGeneration,
     ).toBe(2);
   });
-
-  test("engagement application resets people absent from the latest aggregate", async () => {
-    const t = convexTest(schema, modules);
-    const userId = "engagement-user";
-    await t.run(async (ctx) => {
-      await ctx.db.insert("people", {
-        userId,
-        email: "stale@example.com",
-        sources: ["attendee"],
-        score: 99,
-        meetingCount: 10,
-        lastMetMs: 100,
-        updatedAt: 0,
-      });
-      await ctx.db.insert("people", {
-        userId,
-        email: "current@example.com",
-        sources: ["attendee"],
-        score: 1,
-        meetingCount: 1,
-        updatedAt: 0,
-      });
-    });
-    await t.mutation(internal.calendarSync.applyEngagementScores, {
-      userId,
-      scores: [
-        { email: "current@example.com", score: 5, meetingCount: 2 },
-      ],
-      cursor: null,
-    });
-    const people = await t.run((ctx) => ctx.db.query("people").collect());
-    expect(people.find((row) => row.email === "stale@example.com")).toMatchObject({
-      score: 0,
-      meetingCount: 0,
-    });
-    expect(people.find((row) => row.email === "current@example.com")).toMatchObject({
-      score: 5,
-      meetingCount: 2,
-    });
-  });
 });

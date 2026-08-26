@@ -1,4 +1,5 @@
 import { convexTest } from "convex-test";
+import { makeFunctionReference } from "convex/server";
 import { describe, expect, test } from "vitest";
 
 import { internal } from "../../convex/_generated/api";
@@ -24,15 +25,21 @@ function bookingDoc(endMs: number) {
   };
 }
 
-/** Queue an entry on the legacy `internal.booking.expireBooking` path, the way
- * pre-cutover `requestBooking` deploys did. One hour out: convex-test backs the
- * queue with real timers, so the time must be far enough not to fire mid-test
- * yet inside the 32-bit delay that Node clamps to ~1ms. */
+/** Queue an entry on the legacy `booking:expireBooking` path, the way
+ * pre-cutover `requestBooking` deploys did. The path is addressable only by
+ * name now that the facade is deleted, so the reference is built by string.
+ * One hour out: convex-test backs the queue with real timers, so the time must
+ * be far enough not to fire mid-test yet inside the 32-bit delay that Node
+ * clamps to ~1ms. */
+const legacyExpireBooking = makeFunctionReference<"mutation">(
+  "booking:expireBooking",
+);
+
 async function seedLegacyJob(t: ReturnType<typeof convexTest>) {
   const runAtMs = Date.now() + HOUR_MS;
   const bookingId: Id<"bookings"> = await t.run(async (ctx) => {
     const id = await ctx.db.insert("bookings", bookingDoc(runAtMs));
-    await ctx.scheduler.runAt(runAtMs, internal.booking.expireBooking, {
+    await ctx.scheduler.runAt(runAtMs, legacyExpireBooking, {
       bookingId: id,
     });
     return id;

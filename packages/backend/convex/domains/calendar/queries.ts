@@ -1,6 +1,5 @@
-/** Read side of the calendar domain. Registration is canonical here; the root
- * `calendar.ts` facade re-exports the same registered objects so the legacy
- * `api.calendar.*` / `internal.calendar.*` paths stay live while they drain. */
+/** Read side of the calendar domain. Registration is canonical here, under
+ * `api.domains.calendar.queries.*` / `internal.domains.calendar.queries.*`. */
 
 import { v } from "convex/values";
 
@@ -308,15 +307,3 @@ export const getEventContext = internalQuery({
   args: { eventId: eventIdArg, userId: v.string() },
   handler: (ctx, args) => getEventContextHandler(ctx, args),
 });
-
-/** Resolve the user's primary calendar id (the email), if it has synced. */
-export async function getPrimaryCalendarIdHandler(
-  ctx: QueryCtx,
-  args: { userId: string },
-): Promise<string | null> {
-  const calendars = await ctx.db
-    .query("calendars")
-    .withIndex("by_user", (q) => q.eq("userId", args.userId))
-    .collect();
-  return calendars.find((c) => c.primary)?.googleCalendarId ?? null;
-}

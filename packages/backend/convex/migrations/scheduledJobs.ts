@@ -1,20 +1,23 @@
-import type { SchedulableFunctionReference } from "convex/server";
+import {
+  makeFunctionReference,
+  type SchedulableFunctionReference,
+} from "convex/server";
 import { v } from "convex/values";
 
 import { internal } from "../_generated/api";
 import { internalMutation, internalQuery } from "../_generated/server";
 
 /**
- * Scheduler-queue tooling for retiring the drain-only root facades
- * (MIGRATION_RUNBOOK.md section 7). `internal.booking.expireBooking` entries
- * are queued as far out as the 365-day booking horizon, so the facade cannot
- * passively drain: at facade-deletion time — after the preview-deployment
- * rehearsal — `migrateExpireBookingSchedules` moves every pending legacy entry
- * to its canonical path. Re-running from a null cursor is a no-op for entries
- * migrated earlier: the canceled originals fail the pending-state filter and
- * their replacements carry the new-path name. The 15-minute
- * `expirePastBookings` cron is the safety net for any entry the migration
- * misses.
+ * Scheduler-queue tooling for the hard cutover that deletes the root facades
+ * (MIGRATION_RUNBOOK.md section 4). Legacy `booking:expireBooking` entries are
+ * queued as far out as the 365-day booking horizon, so they cannot passively
+ * drain: immediately after the cutover deploy — rehearsed first on a preview
+ * deployment — `migrateExpireBookingSchedules` moves every pending legacy
+ * entry to its canonical path. Re-running from a null cursor is a no-op for
+ * entries migrated earlier: the canceled originals fail the pending-state
+ * filter and their replacements carry the new-path name. The 15-minute
+ * `expirePastBookings` cron is the safety net for the window between the
+ * deploy and the migration run, and for any entry the migration misses.
  */
 
 const BATCH_SIZE = 200;
@@ -96,8 +99,8 @@ export const migrateExpireBookingSchedules = internalMutation({
 
 /** Drain-gate sweep: pending-state scheduled-function names, counted by
  * normalized name. Scriptable — feed `continueCursor` back in until `isDone`,
- * summing counts — and run before every facade-deletion deploy: a facade may
- * be deleted only when no pending name still addresses it. */
+ * summing counts — and run after the repoint migration: no pending name may
+ * still address a deleted path. */
 export const listPendingFunctionNames = internalQuery({
   args: {
     cursor: v.optional(v.union(v.string(), v.null())),
@@ -126,8 +129,10 @@ export const listPendingFunctionNames = internalQuery({
  * where the real entries already exist and seeding would double-schedule them.
  * Snapshot export/import does not carry `_scheduled_functions`, so this
  * reconstructs prod-like scheduler state: one legacy-path
- * `internal.booking.expireBooking` entry at `endMs` per pending booking,
- * exactly as pre-cutover `requestBooking` queued them. */
+ * `booking:expireBooking` entry at `endMs` per pending booking, exactly as
+ * pre-cutover `requestBooking` queued them. The deleted path is addressable
+ * only by name, so the reference is built by string; the seeded entries are
+ * never meant to execute — the repoint migration replaces them. */
 export const seedLegacyExpireBookingJobs = internalMutation({
   args: {
     cursor: v.optional(v.union(v.string(), v.null())),
@@ -140,8 +145,11 @@ export const seedLegacyExpireBookingJobs = internalMutation({
       .withIndex("by_status_and_end", (q) => q.eq("status", "pending"))
       .paginate({ cursor: args.cursor ?? null, numItems: args.numItems ?? BATCH_SIZE });
     let seeded = 0;
+    const legacyExpireBooking = makeFunctionReference<"mutation">(
+      "booking:expireBooking",
+    );
     for (const booking of page.page) {
-      await ctx.scheduler.runAt(booking.endMs, internal.booking.expireBooking, {
+      await ctx.scheduler.runAt(booking.endMs, legacyExpireBooking, {
         bookingId: booking._id,
       });
       seeded += 1;

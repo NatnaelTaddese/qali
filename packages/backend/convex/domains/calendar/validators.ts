@@ -5,7 +5,7 @@ import { v } from "convex/values";
  * (rather than in schema.ts) so both the schema and the action→mutation
  * boundaries that push a MappedEvent across can share one definition without a
  * circular import back through schema.ts. `googleEventValidator` is also imported
- * by googleSync (upsert page) and the calendar upsert mutation.
+ * by the sync compat layer (upsert page).
  */
 
 /** An event id in either store: a personal `events` row or a read-only

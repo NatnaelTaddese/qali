@@ -8,10 +8,8 @@ import { isSharedPublicCalendar } from "../domains/calendar/sharedPublicCalendar
  * One-shot data migrations — run by hand once, then idle. Kept apart from the
  * recurring jobs so "things that run forever" and "things you run once" don't
  * mix. Registered here at `internal.migrations.backfills.*`, the path their
- * self-reschedules reference; the root maintenance.ts facade keeps the
- * pre-cutover `internal.maintenance.*` paths live while persisted scheduler
- * entries drain. The connection-model backfill lives separately in
- * backfillConnections.ts.
+ * self-reschedules reference. The connection-model backfill lives separately
+ * in backfillConnections.ts.
  */
 
 const BATCH_SIZE = 500;
@@ -69,7 +67,7 @@ export const migratePublicCalendarsToShared = internalMutation({
     }
     // Final page: fan out a sync for every user so `sharedEvents` fills in now.
     for await (const state of ctx.db.query("userSyncState")) {
-      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.syncUser, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.engine.syncUser, {
         userId: state.userId,
       });
     }
@@ -107,7 +105,7 @@ export const purgeNonSharedSharedEvents = internalMutation({
     // Final page: fan out a sync so purged birthday/secondary events are
     // re-synced into their owners' per-user `events` promptly.
     for await (const state of ctx.db.query("userSyncState")) {
-      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.syncUser, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.engine.syncUser, {
         userId: state.userId,
       });
     }

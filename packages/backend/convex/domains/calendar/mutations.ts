@@ -1,8 +1,7 @@
 /** Write side of the calendar domain that stays local (no provider calls):
  * the visibility toggle and the optimistic-mirror internal mutations.
- * Registration is canonical here; the root `calendar.ts` facade re-exports the
- * same registered objects so the legacy `api.calendar.*` /
- * `internal.calendar.*` paths stay live while they drain. */
+ * Registration is canonical here, under `api.domains.calendar.mutations.*` /
+ * `internal.domains.calendar.mutations.*`. */
 
 import { v, type Infer } from "convex/values";
 
@@ -17,7 +16,7 @@ import {
   ensureDefaultPrimaryCalendar,
   ensureGoogleConnection,
 } from "./connections";
-import { googleEventValidator, providerEventValidator } from "./validators";
+import { providerEventValidator } from "./validators";
 
 const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
 const CALENDAR_OPERATION_LEASE_MS = 10 * 60 * 1000;
@@ -405,87 +404,6 @@ export const setCalendarSelected = mutation({
   handler: (ctx, args) => setCalendarSelectedHandler(ctx, args),
 });
 
-/** Drop the local row as soon as Google accepts the delete, so the card leaves
- * the grid now rather than whenever the next sync happens to run. */
-export async function deleteEventRowHandler(
-  ctx: MutationCtx,
-  args: {
-    eventId: Id<"events">;
-    userId: string;
-    calendarId?: string;
-    recurringEventId?: string;
-  },
-): Promise<null> {
-  const row = await ctx.db.get(args.eventId);
-  if (row && row.userId === args.userId) {
-    await ctx.db.delete(args.eventId);
-  }
-  if (args.recurringEventId) {
-    const series = await ctx.db
-      .query("recurringSeries")
-      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-        q
-          .eq("userId", args.userId)
-          .eq("calendarId", args.calendarId ?? row?.calendarId ?? "")
-          .eq("googleEventId", args.recurringEventId!),
-      )
-      .unique();
-    if (series) await ctx.db.delete(series._id);
-  }
-  return null;
-}
-
-/** Mirror a single event into the synced table (optimistic update after create). */
-export async function upsertEventHandler(
-  ctx: MutationCtx,
-  args: { userId: string; event: Infer<typeof googleEventValidator> },
-): Promise<null> {
-  // Dual-write: stamp the neutral mirror alongside the Google-named columns so
-  // the row stays cutover-ready. Legacy columns remain the source of truth.
-  const connectionId = await ensureGoogleConnection(ctx, args.userId);
-  const localCalendar = await ctx.db
-    .query("calendars")
-    .withIndex("by_user_and_googleCalendarId", (q) =>
-      q.eq("userId", args.userId).eq("googleCalendarId", args.event.calendarId),
-    )
-    .unique();
-  const doc = {
-    userId: args.userId,
-    ...args.event,
-    connectionId,
-    localCalendarId: localCalendar?._id,
-    providerEventId: args.event.googleEventId,
-    providerUpdatedMs: args.event.googleUpdatedMs,
-    providerSeriesId: args.event.recurringEventId,
-    color: args.event.colorId,
-    busy:
-      args.event.transparency === undefined
-        ? undefined
-        : args.event.transparency !== "transparent",
-  };
-  const legacyCandidates = await ctx.db
-      .query("events")
-      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-        q
-          .eq("userId", args.userId)
-          .eq("calendarId", args.event.calendarId)
-          .eq("googleEventId", args.event.googleEventId),
-      )
-      .collect();
-  const existing = legacyCandidates.find(
-      (row) =>
-        (row.connectionId === undefined || row.connectionId === connectionId) &&
-        (row.localCalendarId === undefined ||
-          row.localCalendarId === localCalendar?._id),
-    );
-  if (existing) {
-    await ctx.db.replace(existing._id, doc);
-  } else {
-    await ctx.db.insert("events", doc);
-  }
-  return null;
-}
-
 /** Store an adapter event while legacy calendar readers still use Google-named
  * columns. This compatibility mapping belongs to storage, not to an integration. */
 export async function mirrorProviderEventHandler(
@@ -727,71 +645,3 @@ export const upsertProviderRecurringSeries = internalMutation({
   },
   handler: (ctx, args) => upsertProviderRecurringSeriesHandler(ctx, args),
 });
-
-/** Cache one recurring master's rule for all of its expanded instances. */
-export async function upsertRecurringSeriesHandler(
-  ctx: MutationCtx,
-  args: {
-    userId: string;
-    calendarId: string;
-    googleEventId: string;
-    recurrence: string[];
-    sourceUpdatedMs: number;
-    replacedEventId?: Id<"events">;
-  },
-): Promise<null> {
-  // Dual-write the neutral mirror (connectionId + providerEventId) on both the
-  // patch and insert paths, so incremental cache refreshes keep it current too.
-  const connectionId = await ensureGoogleConnection(ctx, args.userId);
-  const localCalendar = await ctx.db
-    .query("calendars")
-    .withIndex("by_user_and_googleCalendarId", (q) =>
-      q.eq("userId", args.userId).eq("googleCalendarId", args.calendarId),
-    )
-    .unique();
-  const legacyCandidates = await ctx.db
-      .query("recurringSeries")
-      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-        q
-          .eq("userId", args.userId)
-          .eq("calendarId", args.calendarId)
-          .eq("googleEventId", args.googleEventId),
-      )
-      .collect();
-  const existing = legacyCandidates.find(
-      (row) =>
-        (row.connectionId === undefined || row.connectionId === connectionId) &&
-        (row.localCalendarId === undefined ||
-          row.localCalendarId === localCalendar?._id),
-    );
-  const value = {
-    recurrence: args.recurrence,
-    sourceUpdatedMs: args.sourceUpdatedMs,
-    connectionId,
-    localCalendarId: localCalendar?._id,
-    providerEventId: args.googleEventId,
-    providerSeriesId: args.googleEventId,
-    providerUpdatedMs: args.sourceUpdatedMs,
-  };
-  if (existing) {
-    await ctx.db.patch(existing._id, value);
-  } else {
-    await ctx.db.insert("recurringSeries", {
-      userId: args.userId,
-      calendarId: args.calendarId,
-      googleEventId: args.googleEventId,
-      ...value,
-    });
-  }
-  if (args.replacedEventId) {
-    const replaced = await ctx.db.get(args.replacedEventId);
-    if (
-      replaced?.userId === args.userId &&
-      replaced.calendarId === args.calendarId &&
-      replaced.googleEventId === args.googleEventId
-    ) {
-      await ctx.db.delete(args.replacedEventId);
-    }
-  }
-  return null;
-}

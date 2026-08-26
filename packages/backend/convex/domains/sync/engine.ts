@@ -33,7 +33,6 @@ import type {
   ProviderId,
   SyncCursor,
 } from "../../integrations/calendar/types";
-import { defineAction, defineMutation } from "../../shared/functionDefinitions";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const CALENDAR_HISTORY_MS = 180 * DAY_MS;
@@ -902,12 +901,8 @@ export const syncNow = action({
   handler: (ctx): Promise<UserSyncStatus> => syncNowForCurrentUser(ctx),
 });
 
-/**
- * Compatibility action for old user-scoped queued calls. Definition only:
- * domains/sync/jobs.ts and the googleSync drain queue both register it, so it
- * must stay unwrapped here.
- */
-export const syncUser = defineAction({
+/** User-scoped sync pass; the migration fan-outs schedule one per user. */
+export const syncUser = internalAction({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
     await runUser(ctx, args.userId, false);
@@ -1274,11 +1269,11 @@ export const cleanupRemovedCalendarEvents = internalMutation({
 });
 
 /**
- * Drain an orphan cleanup queued before connection-scoped arguments shipped.
- * Definition only: registered by domains/sync/jobs.ts and the googleSync drain
- * queue, so it must stay unwrapped here.
+ * Orphan cleanup addressed by user + Google calendar id rather than by
+ * connection. Still scheduled by live reconcile code against pre-wipe data;
+ * survives only until the legacy data contraction.
  */
-export const cleanupLegacyRemovedCalendarEvents = defineMutation({
+export const cleanupLegacyRemovedCalendarEvents = internalMutation({
   args: { userId: v.string(), googleCalendarId: v.string() },
   handler: async (ctx, args): Promise<null> => {
     const readded = await ctx.db
@@ -1307,7 +1302,7 @@ export const cleanupLegacyRemovedCalendarEvents = defineMutation({
     if (rows.length === BATCH_SIZE || series.length === BATCH_SIZE) {
       await ctx.scheduler.runAfter(
         0,
-        internal.domains.sync.jobs.cleanupLegacyRemovedCalendarEvents,
+        internal.domains.sync.engine.cleanupLegacyRemovedCalendarEvents,
         args,
       );
     }
@@ -2164,42 +2159,6 @@ export const listEventsPageForEngagement = internalQuery({
   },
 });
 
-// Old-shape whole-user score writer superseded by applyEngagementScoreChunk.
-// Definition only: its drain-only registration lives in the calendarSync
-// facade and it gets no canonical path.
-export const applyEngagementScores = defineMutation({
-  args: {
-    userId: v.string(),
-    scores: v.array(
-      v.object({
-        email: v.string(),
-        score: v.number(),
-        meetingCount: v.number(),
-        lastMetMs: v.optional(v.number()),
-        nextMeetingMs: v.optional(v.number()),
-      }),
-    ),
-    cursor: v.union(v.string(), v.null()),
-  },
-  handler: async (ctx, args) => {
-    const byEmail = new Map(args.scores.map((score) => [score.email, score]));
-    const page = await ctx.db
-      .query("people")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .paginate({ cursor: args.cursor, numItems: 200 });
-    for (const person of page.page) {
-      const score = byEmail.get(person.email);
-      await ctx.db.patch(person._id, {
-        score: score?.score ?? 0,
-        meetingCount: score?.meetingCount ?? 0,
-        lastMetMs: score?.lastMetMs,
-        nextMeetingMs: score?.nextMeetingMs,
-      });
-    }
-    return { cursor: page.continueCursor, done: page.isDone };
-  },
-});
-
 type EngagementScore = {
   email: string;
   score: number;
@@ -2250,7 +2209,7 @@ export const markEngagementDirty = internalMutation({
         engagementGeneration: 1,
         updatedAt: now,
       });
-      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.recomputeEngagement, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.engine.recomputeEngagement, {
         userId: args.userId,
         coordinated: true,
       });
@@ -2267,7 +2226,7 @@ export const markEngagementDirty = internalMutation({
       !state.engagementAttemptId ||
       (state.engagementLeaseExpiresAt ?? 0) <= now
     ) {
-      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.recomputeEngagement, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.engine.recomputeEngagement, {
         userId: args.userId,
         coordinated: true,
       });
@@ -2304,7 +2263,7 @@ export const claimEngagement = internalMutation({
     // reclaims it. A completed attempt leaves neither a lease nor dirty work.
     await ctx.scheduler.runAt(
       leaseExpiresAt,
-      internal.domains.sync.jobs.recomputeEngagement,
+      internal.domains.sync.engine.recomputeEngagement,
       { userId: args.userId, coordinated: true },
     );
     return { attemptId, generation };
@@ -2331,7 +2290,7 @@ export const heartbeatEngagement = internalMutation({
     });
     await ctx.scheduler.runAt(
       leaseExpiresAt,
-      internal.domains.sync.jobs.recomputeEngagement,
+      internal.domains.sync.engine.recomputeEngagement,
       { userId: args.userId, coordinated: true },
     );
     return true;
@@ -2439,7 +2398,7 @@ export const finishEngagement = internalMutation({
       updatedAt: Date.now(),
     });
     if (rerun) {
-      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.recomputeEngagement, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.engine.recomputeEngagement, {
         userId: args.userId,
         coordinated: true,
       });
@@ -2539,9 +2498,7 @@ async function recomputeEngagementForUser(
   }
 }
 
-// Definition only: registered by domains/sync/jobs.ts and the googleSync
-// drain queue, so it must stay unwrapped here.
-export const recomputeEngagement = defineAction({
+export const recomputeEngagement = internalAction({
   args: { userId: v.string(), coordinated: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<null> => {
     try {
@@ -2586,9 +2543,7 @@ export const enqueueEngagementRefresh = internalMutation({
   },
 });
 
-// Definition only: registered by domains/sync/jobs.ts and the googleSync
-// drain queue, so it must stay unwrapped here.
-export const backfillPeople = defineMutation({
+export const backfillPeople = internalMutation({
   args: {
     phase: v.optional(v.union(v.literal("contacts"), v.literal("events"))),
     cursor: v.optional(v.string()),
@@ -2624,12 +2579,12 @@ export const backfillPeople = defineMutation({
       }
     }
     if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.backfillPeople, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.engine.backfillPeople, {
         phase,
         cursor: page.continueCursor,
       });
     } else if (phase === "contacts") {
-      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.backfillPeople, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.engine.backfillPeople, {
         phase: "events",
       });
     }

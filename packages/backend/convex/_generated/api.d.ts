@@ -8,14 +8,7 @@
  * @module
  */
 
-import type * as assistant from "../assistant.js";
-import type * as assistantData from "../assistantData.js";
-import type * as assistantMaintenance from "../assistantMaintenance.js";
 import type * as auth from "../auth.js";
-import type * as backfillConnections from "../backfillConnections.js";
-import type * as booking from "../booking.js";
-import type * as calendar from "../calendar.js";
-import type * as calendarSync from "../calendarSync.js";
 import type * as crons from "../crons.js";
 import type * as domains_assistant_data from "../domains/assistant/data.js";
 import type * as domains_assistant_eventLogic from "../domains/assistant/eventLogic.js";
@@ -50,10 +43,7 @@ import type * as domains_notifications_tables from "../domains/notifications/tab
 import type * as domains_people_queries from "../domains/people/queries.js";
 import type * as domains_people_tables from "../domains/people/tables.js";
 import type * as domains_sync_engine from "../domains/sync/engine.js";
-import type * as domains_sync_googleCompat from "../domains/sync/googleCompat.js";
-import type * as domains_sync_jobs from "../domains/sync/jobs.js";
 import type * as domains_sync_tables from "../domains/sync/tables.js";
-import type * as googleSync from "../googleSync.js";
 import type * as healthCheck from "../healthCheck.js";
 import type * as http from "../http.js";
 import type * as infrastructure_rateLimit from "../infrastructure/rateLimit.js";
@@ -71,15 +61,10 @@ import type * as integrations_google_eventHelpers from "../integrations/google/e
 import type * as integrations_google_holidays from "../integrations/google/holidays.js";
 import type * as integrations_google_mappers from "../integrations/google/mappers.js";
 import type * as jobs_maintenance from "../jobs/maintenance.js";
-import type * as maintenance from "../maintenance.js";
 import type * as migrations_backfillConnections from "../migrations/backfillConnections.js";
 import type * as migrations_backfills from "../migrations/backfills.js";
 import type * as migrations_scheduledJobs from "../migrations/scheduledJobs.js";
-import type * as notifications from "../notifications.js";
-import type * as people from "../people.js";
 import type * as shared_eventReads from "../shared/eventReads.js";
-import type * as shared_functionDefinitions from "../shared/functionDefinitions.js";
-import type * as waitlist from "../waitlist.js";
 
 import type {
   ApiFromModules,
@@ -88,14 +73,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  assistant: typeof assistant;
-  assistantData: typeof assistantData;
-  assistantMaintenance: typeof assistantMaintenance;
   auth: typeof auth;
-  backfillConnections: typeof backfillConnections;
-  booking: typeof booking;
-  calendar: typeof calendar;
-  calendarSync: typeof calendarSync;
   crons: typeof crons;
   "domains/assistant/data": typeof domains_assistant_data;
   "domains/assistant/eventLogic": typeof domains_assistant_eventLogic;
@@ -130,10 +108,7 @@ declare const fullApi: ApiFromModules<{
   "domains/people/queries": typeof domains_people_queries;
   "domains/people/tables": typeof domains_people_tables;
   "domains/sync/engine": typeof domains_sync_engine;
-  "domains/sync/googleCompat": typeof domains_sync_googleCompat;
-  "domains/sync/jobs": typeof domains_sync_jobs;
   "domains/sync/tables": typeof domains_sync_tables;
-  googleSync: typeof googleSync;
   healthCheck: typeof healthCheck;
   http: typeof http;
   "infrastructure/rateLimit": typeof infrastructure_rateLimit;
@@ -151,15 +126,10 @@ declare const fullApi: ApiFromModules<{
   "integrations/google/holidays": typeof integrations_google_holidays;
   "integrations/google/mappers": typeof integrations_google_mappers;
   "jobs/maintenance": typeof jobs_maintenance;
-  maintenance: typeof maintenance;
   "migrations/backfillConnections": typeof migrations_backfillConnections;
   "migrations/backfills": typeof migrations_backfills;
   "migrations/scheduledJobs": typeof migrations_scheduledJobs;
-  notifications: typeof notifications;
-  people: typeof people;
   "shared/eventReads": typeof shared_eventReads;
-  "shared/functionDefinitions": typeof shared_functionDefinitions;
-  waitlist: typeof waitlist;
 }>;
 
 /**

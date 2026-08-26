@@ -83,13 +83,13 @@ export function AvailabilityEditProvider({ children }: { children: ReactNode }) 
   // The override write reflects into the local query at once, so a painted
   // block appears the instant it's drawn instead of after the round trip; the
   // real result reconciles it with no flicker.
-  const setOverride = useMutation(api.booking.setOverride).withOptimisticUpdate(
+  const setOverride = useMutation(api.domains.booking.mutations.setOverride).withOptimisticUpdate(
     (store, { dateKey, intervals }) => {
-      const existing = store.getQuery(api.booking.listMyOverrides, NO_ARGS);
+      const existing = store.getQuery(api.domains.booking.queries.listMyOverrides, NO_ARGS);
       if (existing === undefined) return;
       const without = existing.filter((o) => o.dateKey !== dateKey);
       if (intervals === undefined) {
-        store.setQuery(api.booking.listMyOverrides, NO_ARGS, without);
+        store.setQuery(api.domains.booking.queries.listMyOverrides, NO_ARGS, without);
         return;
       }
       const prior = existing.find((o) => o.dateKey === dateKey);
@@ -100,14 +100,14 @@ export function AvailabilityEditProvider({ children }: { children: ReactNode }) 
         dateKey,
         intervals,
       };
-      store.setQuery(api.booking.listMyOverrides, NO_ARGS, [...without, doc]);
+      store.setQuery(api.domains.booking.queries.listMyOverrides, NO_ARGS, [...without, doc]);
     },
   );
 
   // Only live while painting: the grid is inert to availability otherwise.
-  const page = useQuery(api.booking.getMyBookingPage, editing ? NO_ARGS : "skip");
+  const page = useQuery(api.domains.booking.queries.getMyBookingPage, editing ? NO_ARGS : "skip");
   const overrides = useQuery(
-    api.booking.listMyOverrides,
+    api.domains.booking.queries.listMyOverrides,
     editing ? NO_ARGS : "skip",
   );
 

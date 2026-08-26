@@ -5,9 +5,9 @@
   "license": "ISC",
   "author": "",
   "scripts": {
-    "check-types": "tsc -p convex/tsconfig.json --noEmit",
-    "test": "bun test convex && vitest run",
-    "test:unit": "bun test convex",
+    "check-types": "tsc -p convex/tsconfig.json --noEmit && tsc -p tests/tsconfig.json --noEmit",
+    "test": "bun test tests && vitest run",
+    "test:unit": "bun test tests",
     "test:integration": "vitest run",
     "dev": "convex dev",
     "dev:setup": "convex dev --configure --until-success",

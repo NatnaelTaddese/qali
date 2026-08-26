@@ -75,6 +75,7 @@ export const assistantTables = {
     // Stable across retries and used as Google's client-selected event ID.
     operationId: v.optional(v.string()),
     attemptCount: v.optional(v.number()),
+    attemptId: v.optional(v.string()),
     applyLeaseExpiresAt: v.optional(v.number()),
     // `applying` is the claim a confirm click takes before it calls Google, so
     // a double-click can't send the same invitation twice.

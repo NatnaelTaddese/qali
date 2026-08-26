@@ -57,9 +57,9 @@ interface DayRow {
   endMin: number;
 }
 
-type BookingPage = FunctionReturnType<typeof api.booking.getMyBookingPage>;
+type BookingPage = FunctionReturnType<typeof api.domains.booking.queries.getMyBookingPage>;
 type BookingDefaults = FunctionReturnType<
-  typeof api.booking.bookingPageDefaults
+  typeof api.domains.booking.queries.bookingPageDefaults
 >;
 
 interface AvailabilityPanelProps {
@@ -204,7 +204,7 @@ function AvailabilityForm({
   pendingBookings: Booking[];
   page: BookingPage;
 }) {
-  const upsert = useMutation(api.booking.upsertBookingPage);
+  const upsert = useMutation(api.domains.booking.mutations.upsertBookingPage);
   const { setEditing } = useAvailabilityEdit();
   const reduce = useReducedMotion();
   const initial = page ?? defaults;
@@ -290,7 +290,7 @@ function AvailabilityForm({
     persistedSlug !== undefined && normalized === persistedSlug;
   // Skip the round trip until there is something worth checking.
   const check = useQuery(
-    api.booking.checkSlugAvailable,
+    api.domains.booking.queries.checkSlugAvailable,
     normalized.length >= 3 && !slugUnchanged ? { slug: normalized } : "skip",
   );
 

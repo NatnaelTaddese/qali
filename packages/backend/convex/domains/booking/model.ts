@@ -21,7 +21,7 @@ import {
   MAX_EVENT_SPAN_MS,
   newRowBudget,
   spendRowBudget,
-} from "../../lib/eventReads";
+} from "../../shared/eventReads";
 
 /** Settings a new page starts on: business hours, half-hour slots, two hours'
  * notice, two months ahead. */
@@ -48,6 +48,8 @@ export const MAX_REQUESTS_PER_PAGE = 20;
 export const MAX_PENDING_BOOKINGS = 500;
 export const EXPIRATION_BATCH_SIZE = 100;
 export const ACCEPT_LEASE_MS = 2 * 60 * 1000;
+export const ACCEPT_RECONCILE_MAX_ATTEMPTS = 5;
+export const ACCEPT_RECONCILE_BASE_DELAY_MS = 30 * 1000;
 
 export const slotSettingsValidator = {
   slotMinutes: v.number(),
@@ -92,15 +94,13 @@ export async function collectBusy(
   fromMs: number,
   toMs: number,
   excludeBookingId?: Id<"bookings">,
-  excludeGoogleEventId?: string,
+  excludeProviderEventId?: string,
 ): Promise<Interval[]> {
   const calendars = await ctx.db
     .query("calendars")
     .withIndex("by_user", (q) => q.eq("userId", page.userId))
     .collect();
-  const visible = calendars
-    .filter((c) => c.selected)
-    .map((c) => c.googleCalendarId);
+  const visible = calendars.filter((c) => c.selected);
 
   // Overlap is `endMs > fromMs && startMs < toMs`. Range each visible calendar's
   // end index on endMs so a multi-day event that began before the window still
@@ -109,13 +109,13 @@ export async function collectBusy(
   const budget = newRowBudget();
   const spanEnd = toMs + MAX_EVENT_SPAN_MS;
   const busy: Interval[] = [];
-  for (const calendarId of visible) {
+  for (const calendar of visible) {
     const events = await ctx.db
       .query("events")
-      .withIndex("by_user_and_calendar_and_end", (q) =>
+      .withIndex("by_connection_and_localCalendarId_and_endMs", (q) =>
         q
-          .eq("userId", page.userId)
-          .eq("calendarId", calendarId)
+          .eq("connectionId", calendar.connectionId)
+          .eq("localCalendarId", calendar._id)
           .gt("endMs", fromMs)
           .lte("endMs", spanEnd),
       )
@@ -123,11 +123,14 @@ export async function collectBusy(
     spendRowBudget(budget, events.length);
     for (const event of events) {
       if (event.startMs >= toMs) continue;
-      if (event.googleEventId === excludeGoogleEventId) continue;
+      if (
+        excludeProviderEventId !== undefined &&
+        event.providerEventId === excludeProviderEventId
+      ) continue;
       if (event.status === "cancelled") continue;
       // The host marked this one "free" in their own calendar, so it is not a
-      // reason to withhold the time.
-      if (event.transparency === "transparent") continue;
+      // reason to withhold the time. Absent `busy` means busy.
+      if (event.busy === false) continue;
       busy.push(
         event.allDay
           ? allDayBusyInterval(event.startMs, event.endMs, page.timeZone)
@@ -163,6 +166,7 @@ export async function slotGrid(
   page: Doc<"bookingPages">,
   fromMs: number,
   toMs: number,
+  nowMs: number,
 ): Promise<SlotOption[]> {
   // Only the overrides whose date falls in the rendered window matter, and the
   // window is capped at MAX_SLOT_RANGE_MS — so bound the scan to that date range
@@ -192,7 +196,7 @@ export async function slotGrid(
     horizonDays: page.horizonDays,
     fromMs,
     toMs,
-    nowMs: Date.now(),
+    nowMs,
   });
 }
 

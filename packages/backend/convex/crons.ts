@@ -4,28 +4,28 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
-// Refresh every registered user's Google calendar + contacts on an interval.
+// Refresh due calendar-provider connections and their supported data feeds.
 crons.interval(
-  "sync google data",
+  "sync provider connections",
   { minutes: 15 },
-  internal.googleSync.enqueueSyncs,
+  internal.domains.sync.engine.enqueueSyncs,
   {},
 );
 
 crons.interval(
   "expire past booking requests",
   { minutes: 15 },
-  internal.booking.expirePastBookings,
+  internal.domains.booking.mutations.expirePastBookings,
   {},
 );
 
 // Slow re-rank so recency decay + upcoming→past transitions settle on calendars
-// that see no event changes. Event-driven recompute in runSyncForUser covers the
-// common case; this is the idle-calendar safety net.
+// that see no event changes. Event-driven recompute after a connection sync
+// covers the common case; this is the idle-calendar safety net.
 crons.interval(
   "refresh people ranking",
   { hours: 24 },
-  internal.googleSync.enqueueEngagementRefresh,
+  internal.domains.sync.engine.enqueueEngagementRefresh,
   {},
 );
 
@@ -34,7 +34,7 @@ crons.interval(
 crons.interval(
   "prune aged-out events",
   { hours: 24 },
-  internal.maintenance.enqueueEventPrune,
+  internal.jobs.maintenance.enqueueEventPrune,
   {},
 );
 
@@ -42,7 +42,7 @@ crons.interval(
 crons.interval(
   "prune aged-out shared events",
   { hours: 24 },
-  internal.maintenance.enqueueSharedEventPrune,
+  internal.jobs.maintenance.enqueueSharedEventPrune,
   {},
 );
 
@@ -51,7 +51,14 @@ crons.interval(
 crons.interval(
   "prune stale rate limits",
   { hours: 24 },
-  internal.maintenance.pruneRateLimits,
+  internal.jobs.maintenance.pruneRateLimits,
+  {},
+);
+
+crons.interval(
+  "prune settled calendar operations",
+  { hours: 24 },
+  internal.jobs.maintenance.pruneCalendarOperations,
   {},
 );
 
@@ -61,7 +68,7 @@ crons.interval(
 crons.interval(
   "prune old assistant threads",
   { hours: 24 },
-  internal.assistantMaintenance.pruneAgedThreads,
+  internal.domains.assistant.maintenance.pruneAgedThreads,
   {},
 );
 

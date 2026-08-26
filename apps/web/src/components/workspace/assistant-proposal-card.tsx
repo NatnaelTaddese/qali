@@ -47,7 +47,7 @@ function targetEventId(action: AssistantAction): Id<"events"> | null {
  * made this becomes the record of it without any local state to keep in sync.
  */
 export function AssistantProposalCard({ action }: { action: AssistantAction }) {
-  const confirmAction = useAction(api.assistant.confirmAction);
+  const confirmAction = useAction(api.domains.assistant.loop.confirmAction);
   const { reveal } = useDock();
   const [busy, setBusy] = useState<"confirm" | "discard" | null>(null);
 
@@ -56,7 +56,7 @@ export function AssistantProposalCard({ action }: { action: AssistantAction }) {
   // the calendar uses; a create (or an id we can't load yet) stays neutral.
   const eventId = targetEventId(action);
   const targetEvent = useQuery(
-    api.calendar.getEventById,
+    api.domains.calendar.queries.getEventById,
     eventId ? { eventId } : "skip",
   );
   const colorFor = useEventColor();

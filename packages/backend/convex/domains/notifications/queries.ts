@@ -1,11 +1,12 @@
-/** Read handlers for the notifications domain. Plain functions taking a
- * QueryCtx; the root `notifications.ts` wraps each in a Convex `query`. */
+/** Read side of the notifications domain: plain handlers plus the canonical
+ * `query` registrations. The root `notifications.ts` facade re-exports the
+ * registered objects so the legacy `api.notifications.*` paths stay live. */
 
-import type { QueryCtx } from "../../_generated/server";
+import { query, type QueryCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
-import { selectVisibleNotifications } from "../../lib/notifications";
 import {
   MAX_NOTIFICATIONS,
+  selectVisibleNotifications,
   UNREAD_CAP,
   type NotificationWithBooking,
 } from "./model";
@@ -45,6 +46,11 @@ export async function listHandler(
   );
 }
 
+export const list = query({
+  args: {},
+  handler: (ctx) => listHandler(ctx),
+});
+
 /** Unread count for the badge, capped so it never scans the whole table. */
 export async function unreadCountHandler(ctx: QueryCtx): Promise<number> {
   const user = await authComponent.safeGetAuthUser(ctx);
@@ -59,3 +65,8 @@ export async function unreadCountHandler(ctx: QueryCtx): Promise<number> {
     .take(UNREAD_CAP);
   return unread.length;
 }
+
+export const unreadCount = query({
+  args: {},
+  handler: (ctx) => unreadCountHandler(ctx),
+});

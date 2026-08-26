@@ -5,14 +5,15 @@ import { useCallback, useMemo } from "react";
 import type { CalendarEvent } from "./lib";
 
 /**
- * Google's event colors are a fixed palette of 11 (`colorId` "1".."11"), and
+ * Google's event colors are a fixed palette of 11 (`color` "1".."11"), and
  * calendars carry an arbitrary `backgroundColor` hex. Rather than render those
  * saturated defaults, each source hex is converted to oklch and snapped to the
  * nearest hue in the app's `--event-*` palette (defined in globals.css), which
  * shares one lightness/chroma band so the grid reads as a single system.
  */
 
-/** Google Calendar's stable event-color hexes, keyed by `colorId`. */
+/** Google Calendar's stable event-color hexes, keyed by the provider palette
+ * key stored in `event.color`. */
 const GOOGLE_EVENT_COLORS: Record<string, string> = {
   "1": "#7986cb", // Lavender
   "2": "#33b679", // Sage
@@ -91,46 +92,51 @@ export function snapToPalette(hex: string): string {
 }
 
 /**
- * The colours the create panel can offer, one Google `colorId` per palette hue
- * it can actually produce. Derived by inverting `snapToPalette` over Google's
- * palette rather than listing `--event-*` directly: several Google colours snap
- * to the same hue (first wins), and at least one app hue has no Google colour
- * at all — offering it would save a colour that renders as its neighbour.
+ * The colours the create panel can offer, one Google `color` key per palette
+ * hue it can actually produce. Derived by inverting `snapToPalette` over
+ * Google's palette rather than listing `--event-*` directly: several Google
+ * colours snap to the same hue (first wins), and at least one app hue has no
+ * Google colour at all — offering it would save a colour that renders as its
+ * neighbour.
  */
-export const EVENT_COLOR_CHOICES: { colorId: string; colorVar: string }[] =
+export const EVENT_COLOR_CHOICES: { color: string; colorVar: string }[] =
   (() => {
     const byVar = new Map<string, string>();
-    for (const [colorId, hex] of Object.entries(GOOGLE_EVENT_COLORS)) {
+    for (const [color, hex] of Object.entries(GOOGLE_EVENT_COLORS)) {
       const colorVar = snapToPalette(hex);
-      if (!byVar.has(colorVar)) byVar.set(colorVar, colorId);
+      if (!byVar.has(colorVar)) byVar.set(colorVar, color);
     }
     const order = [...PALETTE_HUES.map((_, i) => `--event-${i + 1}`), NEUTRAL_VAR];
     return order
       .filter((colorVar) => byVar.has(colorVar))
-      .map((colorVar) => ({ colorVar, colorId: byVar.get(colorVar) as string }));
+      .map((colorVar) => ({ colorVar, color: byVar.get(colorVar) as string }));
   })();
 
-/** Deterministic palette entry for a calendar id, used when Google gave us no
+/** Deterministic palette entry for an id, used when the provider gave us no
  * color at all (e.g. an event created locally before its calendar synced). */
-function hashedVar(calendarId: string): string {
+function hashedVar(id: string): string {
   let hash = 0;
-  for (const ch of calendarId) {
+  for (const ch of id) {
     hash = (hash * 31 + ch.charCodeAt(0)) | 0;
   }
   return `--event-${(Math.abs(hash) % PALETTE_HUES.length) + 1}`;
 }
 
 /**
- * Resolve an event to a palette variable: its own Google `colorId` first, then
- * its calendar's color, then a hash of the calendar id.
+ * Resolve an event to a palette variable: its own `color` first, then its
+ * calendar's color, then a hash of the calendar id. The color map is keyed by
+ * the local calendar `_id` — provider calendar strings collide across
+ * connections.
  */
 export function eventColorVar(
   event: CalendarEvent,
   calendarColors?: Map<string, string | undefined>,
 ): string {
-  const own = event.colorId ? GOOGLE_EVENT_COLORS[event.colorId] : undefined;
-  const hex = own ?? calendarColors?.get(event.calendarId);
-  return hex ? snapToPalette(hex) : hashedVar(event.calendarId);
+  const own = event.color ? GOOGLE_EVENT_COLORS[event.color] : undefined;
+  const hex =
+    own ??
+    (event.localCalendarId ? calendarColors?.get(event.localCalendarId) : undefined);
+  return hex ? snapToPalette(hex) : hashedVar(event.localCalendarId ?? event._id);
 }
 
 /**
@@ -138,9 +144,12 @@ export function eventColorVar(
  * dedupes the underlying subscription, so several components may call this.
  */
 export function useEventColor(): (event: CalendarEvent) => string {
-  const calendars = useQuery(api.calendar.listCalendars);
+  const calendars = useQuery(api.domains.calendar.queries.listCalendars);
   const colors = useMemo(
-    () => new Map(calendars?.map((c) => [c.googleCalendarId, c.backgroundColor])),
+    () =>
+      new Map<string, string | undefined>(
+        calendars?.map((c) => [c._id, c.backgroundColor]) ?? [],
+      ),
     [calendars],
   );
   return useCallback((event: CalendarEvent) => eventColorVar(event, colors), [colors]);
@@ -148,10 +157,10 @@ export function useEventColor(): (event: CalendarEvent) => string {
 
 /** Palette variable for a calendar itself (dots and toggles in the header). */
 export function calendarColorVar(calendar: {
-  googleCalendarId: string;
+  _id: string;
   backgroundColor?: string;
 }): string {
   return calendar.backgroundColor
     ? snapToPalette(calendar.backgroundColor)
-    : hashedVar(calendar.googleCalendarId);
+    : hashedVar(calendar._id);
 }

@@ -30,8 +30,8 @@ const COLLAPSED_NOTE_LINES = 3;
 const COLLAPSED_NOTE_HEIGHT = "3.75rem";
 
 function useBookingDecision(onDone: (booking: Booking) => void) {
-  const acceptBooking = useAction(api.booking.acceptBooking);
-  const rejectBooking = useMutation(api.booking.rejectBooking);
+  const acceptBooking = useAction(api.domains.booking.service.acceptBooking);
+  const rejectBooking = useMutation(api.domains.booking.mutations.rejectBooking);
   const [busy, setBusy] = useState<{
     bookingId: Booking["_id"];
     decision: BookingDecision;
@@ -83,7 +83,7 @@ export function BookingRequestPanel({
 }) {
   // The dock holds a snapshot taken when the block was clicked; subscribe so a
   // decision made elsewhere (or a second tab) is reflected here.
-  const live = useQuery(api.booking.listMyBookings, {
+  const live = useQuery(api.domains.booking.queries.listMyBookings, {
     startMs: snapshot.startMs,
     endMs: snapshot.endMs + 1,
   });

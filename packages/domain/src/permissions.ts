@@ -32,7 +32,7 @@ export interface EventLike {
   guestsCanSeeOtherGuests?: boolean;
   locked?: boolean;
   eventType?: string;
-  recurringEventId?: string;
+  providerSeriesId?: string;
 }
 
 export interface CalendarLike {
@@ -110,7 +110,7 @@ export function eventCapabilities(
     canRespond: writableCalendar && selfAttendee !== undefined,
     // We sync with singleEvents=true, so a recurring row is one expanded
     // instance and never carries its own rule — there is nothing here to edit.
-    canChangeRecurrence: canEdit && event.recurringEventId === undefined,
+    canChangeRecurrence: canEdit && event.providerSeriesId === undefined,
     isOrganizer,
     selfResponse: selfAttendee?.responseStatus,
     readOnlyReason,

@@ -54,7 +54,7 @@ type CreateSeed = { dayStartMs: number; events: CalendarEvent[] };
 /** A request to scroll the calendar to an item and pulse it. `startMs` locates
  * the day/time to scroll to (omitted for an item with no time — it only pulses
  * if already on screen); `flashId` is the item's reveal key (an event `_id` or
- * `googleEventId`, or a booking `_id`). */
+ * `providerEventId`, or a booking `_id`). */
 export type RevealInput = { startMs?: number; flashId: string };
 
 interface DockContextValue {

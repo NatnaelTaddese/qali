@@ -1,16 +1,15 @@
 /**
  * Calendar domain model: the shared read helpers and the unified event view.
- * No Convex function wrappers here — those stay at the root facade `calendar.ts`.
+ * No Convex function wrappers here — those stay in the domain's queries.ts.
  */
 
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { QueryCtx } from "../../_generated/server";
-import { isSharedPublicCalendar } from "../../lib/calendars";
 import {
   MAX_EVENT_SPAN_MS,
   type RowBudget,
   spendRowBudget,
-} from "../../lib/eventReads";
+} from "../../shared/eventReads";
 
 // The window is caller-supplied, so bound it: the widest legitimate view (a
 // 7-month month-grid, see QUERY_SIDE_MONTHS on the client) is ~214 days, so 400
@@ -22,18 +21,14 @@ export const MAX_EVENT_RANGE_MS = 400 * 24 * 60 * 60 * 1000;
 // cap per calendar is enough to stay bounded without a density error.
 export const ASSISTANT_SHARED_EVENT_LIMIT = 400;
 
-/** The set of `googleCalendarId`s the user has toggled visible. */
-export async function selectedCalendarIds(
+export async function selectedCalendars(
   ctx: QueryCtx,
   userId: string,
-): Promise<Set<string>> {
-  const calendars = await ctx.db
+): Promise<Doc<"calendars">[]> {
+  return (await ctx.db
     .query("calendars")
     .withIndex("by_user", (q) => q.eq("userId", userId))
-    .collect();
-  return new Set(
-    calendars.filter((c) => c.selected).map((c) => c.googleCalendarId),
-  );
+    .collect()).filter((calendar) => calendar.selected);
 }
 
 /**
@@ -50,18 +45,26 @@ export type EventView = Omit<Doc<"events">, "_id"> & {
 };
 
 /** Present a shared (public-calendar) row in the unified {@link EventView} shape.
- * `sharedEvents` has every field `events` does except `userId` (stamped here to
- * the reader) and the id brand — so no cast is needed. */
+ * `userId` is stamped to the reader, and the local identity (`connectionId`,
+ * `localCalendarId`) comes from the reader's own `calendars` row for the shared
+ * calendar — a shared row carries none of its own, and clients join calendar
+ * metadata on `localCalendarId` uniformly. */
 export function sharedAsEvent(
   row: Doc<"sharedEvents">,
   userId: string,
+  calendar: Doc<"calendars">,
 ): EventView {
-  return { ...row, userId };
+  return {
+    ...row,
+    userId,
+    connectionId: calendar.connectionId,
+    localCalendarId: calendar._id,
+  };
 }
 
 /** Selected public calendars' events overlapping [fromMs, toMs). These live once
- * in `sharedEvents` (not per-user), so we read them by calendar id and merge into
- * the caller's own events. Cancelled shared events are never stored.
+ * in `sharedEvents` (not per-user), so we read them by provider identity and
+ * merge into the caller's own events. Cancelled shared events are never stored.
  *
  * Ranged on `endMs` (not `startMs`) so a multi-day holiday that began before the
  * window is still returned; the far side is bounded by `MAX_EVENT_SPAN_MS` and the
@@ -69,26 +72,37 @@ export function sharedAsEvent(
 export async function readSharedEventsInRange(
   ctx: QueryCtx,
   userId: string,
-  publicCalendarIds: string[],
+  publicCalendars: Doc<"calendars">[],
   fromMs: number,
   toMs: number,
   budget: RowBudget,
 ): Promise<EventView[]> {
   const spanEnd = toMs + MAX_EVENT_SPAN_MS;
   const out: EventView[] = [];
-  for (const calendarId of publicCalendarIds) {
+  for (const calendar of publicCalendars) {
+    const connectionId = calendar.connectionId;
+    const providerCalendarId = calendar.providerCalendarId;
+    if (connectionId === undefined || providerCalendarId === undefined) {
+      continue;
+    }
+    const connection = await ctx.db.get(connectionId);
+    if (!connection) continue;
     const page = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_end", (q) =>
-        q.eq("calendarId", calendarId).gt("endMs", fromMs).lte("endMs", spanEnd),
+      .withIndex("by_provider_and_providerCalendarId_and_endMs", (q) =>
+        q
+          .eq("provider", connection.provider)
+          .eq("providerCalendarId", providerCalendarId)
+          .gt("endMs", fromMs)
+          .lte("endMs", spanEnd),
       )
       .take(budget.remaining + 1);
     spendRowBudget(budget, page.length);
     for (const r of page) {
-      if (r.startMs < toMs) out.push(sharedAsEvent(r, userId));
+      if (r.startMs < toMs) {
+        out.push(sharedAsEvent(r, userId, calendar));
+      }
     }
   }
   return out;
 }
-
-export { isSharedPublicCalendar };

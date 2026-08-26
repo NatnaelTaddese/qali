@@ -8,7 +8,7 @@ import {
   Sun03Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import type { Doc } from "@qali/backend/convex/_generated/dataModel";
+import type { Id } from "@qali/backend/convex/_generated/dataModel";
 import type { EventCapabilities } from "@qali/domain/permissions";
 import { WheelPicker } from "@qali/ui/components/motion/wheel-picker";
 import {
@@ -26,7 +26,12 @@ import { EventControls } from "./event-controls";
 import { FreeBusyToggle } from "./free-busy-toggle";
 import { GuestPicker, type Guest } from "./guest-picker";
 import { GoogleMeetIcon } from "./google-meet-icon";
-import { type CalendarEvent, MS_PER_DAY, SNAP_MS } from "./lib";
+import {
+  type CalendarEvent,
+  type CalendarListItem,
+  MS_PER_DAY,
+  SNAP_MS,
+} from "./lib";
 import {
   dockVariants,
   dockVariantsReduced,
@@ -119,16 +124,18 @@ export interface EventFormValue {
    * switch: `false` shows the location input, `true` swaps it for the Meet chip.
    * On create this is the intent to mint a link; on edit it toggles one on/off. */
   meet: boolean;
-  /** An already-minted Meet URL, for display. Only set on an existing event. */
-  hangoutLink?: string;
+  /** An already-minted conference URL, for display. Only set on an existing
+   * event. */
+  conferenceUrl?: string;
   startMs: number;
   endMs: number;
   allDay: boolean;
   isPrivate: boolean;
-  /** Whether the event blocks the user's time (Google's `transparency`). */
+  /** Whether the event blocks the user's time. */
   busy: boolean;
-  colorId?: string;
-  calendarId?: string;
+  color?: string;
+  /** Local calendar identity used for create targeting. */
+  calendarId?: Id<"calendars">;
   guests: Guest[];
   /** null = does not repeat. */
   recurrence: Recurrence | null;
@@ -161,18 +168,18 @@ export function formValueFromEvent(event: CalendarEvent): EventFormValue {
     summary: event.summary ?? "",
     description: event.description ?? "",
     location: event.location ?? "",
-    meet: Boolean(event.hangoutLink),
-    hangoutLink: event.hangoutLink,
+    meet: event.conferenceType === "hangoutsMeet",
+    conferenceUrl: event.conferenceUrl,
     startMs: event.allDay ? fromUtcMidnight(event.startMs) : event.startMs,
     endMs: event.allDay
       ? fromUtcMidnight(event.endMs - MS_PER_DAY)
       : event.endMs,
     allDay: event.allDay,
     isPrivate: event.visibility === "private",
-    // Google defaults an unset transparency to busy, so only "transparent" is free.
-    busy: event.transparency !== "transparent",
-    colorId: event.colorId,
-    calendarId: event.calendarId,
+    // An unset busy means busy; only an explicit false is free.
+    busy: event.busy !== false,
+    color: event.color,
+    calendarId: event.localCalendarId,
     guests: (event.attendees ?? []).map((a) => ({
       email: a.email,
       displayName: a.displayName,
@@ -197,7 +204,7 @@ export interface EventFormProps {
   onChangeRange: (startMs: number, endMs: number) => void;
   onSubmit: (event: React.FormEvent) => void;
   capabilities: EventCapabilities;
-  calendars: Doc<"calendars">[];
+  calendars: CalendarListItem[];
   /** Rendered above the title row; editing puts its back button here. */
   header?: ReactNode;
   /** The bottom-right button cluster. */
@@ -533,7 +540,7 @@ export function EventForm({
             <WhereRow
               location={value.location}
               meet={value.meet}
-              hangoutLink={value.hangoutLink}
+              conferenceUrl={value.conferenceUrl}
               canEdit={canEdit}
               onLocationChange={(location) => onChange({ location })}
               onMeetChange={(meet) => onChange({ meet })}
@@ -560,8 +567,8 @@ export function EventForm({
             <div className="flex items-center gap-1 border-2 rounded-xl -ml-2">
               <EventControls
                 calendars={calendars}
-                colorId={value.colorId}
-                onColorChange={(colorId) => onChange({ colorId })}
+                color={value.color}
+                onColorChange={(color) => onChange({ color })}
                 calendarId={value.calendarId}
                 onCalendarChange={(calendarId) => onChange({ calendarId })}
                 disabled={!canEdit}
@@ -650,14 +657,14 @@ function SettingRow({
 function WhereRow({
   location,
   meet,
-  hangoutLink,
+  conferenceUrl,
   canEdit,
   onLocationChange,
   onMeetChange,
 }: {
   location: string;
   meet: boolean;
-  hangoutLink?: string;
+  conferenceUrl?: string;
   canEdit: boolean;
   onLocationChange: (location: string) => void;
   onMeetChange: (meet: boolean) => void;
@@ -678,9 +685,9 @@ function WhereRow({
           background breathing room. */}
       <div className="-ml-2 flex min-w-0 flex-1 items-center">
         {meet ? (
-          hangoutLink ? (
+          conferenceUrl ? (
             <a
-              href={hangoutLink}
+              href={conferenceUrl}
               target="_blank"
               rel="noreferrer"
               className="truncate rounded-lg px-2 py-1 text-sm font-medium text-emerald-600 hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring dark:text-emerald-400"

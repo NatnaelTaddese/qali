@@ -1,17 +1,19 @@
-/** Read handlers for the booking domain. Plain functions; the root `booking.ts`
- * wraps each in a Convex `query` / `internalQuery`. */
+/** Booking domain reads. Canonical registration for the booking queries; the
+ * root `booking.ts` facade re-exports the same registered objects on the
+ * legacy `api.booking.*` / `internal.booking.*` paths while they drain. */
 
 import type { SlotOption } from "@qali/domain/availability";
 import { normalizeSlug, slugError } from "@qali/domain/slug";
+import { v } from "convex/values";
 
 import type { Doc, Id } from "../../_generated/dataModel";
-import type { QueryCtx } from "../../_generated/server";
+import { internalQuery, query, type QueryCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import {
   MAX_EVENT_SPAN_MS,
   newRowBudget,
   spendRowBudget,
-} from "../../lib/eventReads";
+} from "../../shared/eventReads";
 import {
   collectBusy,
   DEFAULT_PAGE,
@@ -32,6 +34,18 @@ export async function getMyBookingPageHandler(
   }
   return await pageByUser(ctx, user._id);
 }
+
+export const getMyBookingPage = query({
+  args: {},
+  handler: (ctx) => getMyBookingPageHandler(ctx),
+});
+
+/** The same page for an already verified host id, so the assistant loop reads
+ * it without resolving the session a second time. */
+export const getBookingPageForHost = internalQuery({
+  args: { hostUserId: v.string() },
+  handler: (ctx, args) => pageByUser(ctx, args.hostUserId),
+});
 
 /** Whether `slug` is free for the caller to take. Requires a session: the
  * public page already reveals which slugs exist, but there is no reason to hand
@@ -56,6 +70,11 @@ export async function checkSlugAvailableHandler(
   return { available: true, reason: null };
 }
 
+export const checkSlugAvailable = query({
+  args: { slug: v.string() },
+  handler: (ctx, args) => checkSlugAvailableHandler(ctx, args),
+});
+
 /** The defaults a first-time host starts from, so the panel can render a full
  * form before anything is saved. */
 export async function bookingPageDefaultsHandler(ctx: QueryCtx) {
@@ -66,6 +85,11 @@ export async function bookingPageDefaultsHandler(ctx: QueryCtx) {
     displayName: user?.name ?? "",
   };
 }
+
+export const bookingPageDefaults = query({
+  args: {},
+  handler: (ctx) => bookingPageDefaultsHandler(ctx),
+});
 
 /** The caller's date overrides, for the availability panel. */
 export async function listMyOverridesHandler(
@@ -80,6 +104,11 @@ export async function listMyOverridesHandler(
     .withIndex("by_user_and_date", (q) => q.eq("userId", user._id))
     .collect();
 }
+
+export const listMyOverrides = query({
+  args: {},
+  handler: (ctx) => listMyOverridesHandler(ctx),
+});
 
 /** Requests overlapping `[startMs, endMs)`, for the grid layer and the dock.
  * Every status is returned; the caller decides what to show. */
@@ -107,8 +136,26 @@ export async function listMyBookingsHandler(
     .sort((a, b) => a.startMs - b.startMs);
 }
 
+export const listMyBookings = query({
+  args: { startMs: v.number(), endMs: v.number() },
+  handler: (ctx, args) => listMyBookingsHandler(ctx, args),
+});
+
 /** Pending requests ordered by start time. Expiration mutations keep this
  * deterministic query current without reading the wall clock here. */
+export async function listPendingBookingsForHostHandler(
+  ctx: QueryCtx,
+  hostUserId: string,
+): Promise<Doc<"bookings">[]> {
+  return await ctx.db
+    .query("bookings")
+    .withIndex("by_host_and_status_and_start", (q) =>
+      q.eq("hostUserId", hostUserId).eq("status", "pending"),
+    )
+    .order("asc")
+    .take(MAX_PENDING_BOOKINGS);
+}
+
 export async function listPendingBookingsHandler(
   ctx: QueryCtx,
 ): Promise<Doc<"bookings">[]> {
@@ -116,14 +163,19 @@ export async function listPendingBookingsHandler(
   if (!user) {
     return [];
   }
-  return await ctx.db
-    .query("bookings")
-    .withIndex("by_host_and_status_and_start", (q) =>
-      q.eq("hostUserId", user._id).eq("status", "pending"),
-    )
-    .order("asc")
-    .take(MAX_PENDING_BOOKINGS);
+  return await listPendingBookingsForHostHandler(ctx, user._id);
 }
+
+export const listPendingBookings = query({
+  args: {},
+  handler: (ctx) => listPendingBookingsHandler(ctx),
+});
+
+/** The same listing for an already verified host id (the assistant loop). */
+export const listPendingBookingsForHost = internalQuery({
+  args: { hostUserId: v.string() },
+  handler: (ctx, args) => listPendingBookingsForHostHandler(ctx, args.hostUserId),
+});
 
 /**
  * The public face of a booking page. Returns only what the page renders — never
@@ -150,6 +202,11 @@ export async function getPublicPageHandler(
   };
 }
 
+export const getPublicPage = query({
+  args: { slug: v.string() },
+  handler: (ctx, args) => getPublicPageHandler(ctx, args),
+});
+
 /**
  * The slot grid in `[fromMs, toMs)`. Slot starts, a taken/free flag, and the
  * slot length are the entire payload: a visitor can tell that the host is free
@@ -160,7 +217,7 @@ export async function getPublicPageHandler(
  */
 export async function listSlotsHandler(
   ctx: QueryCtx,
-  args: { slug: string; fromMs: number; toMs: number },
+  args: { slug: string; fromMs: number; toMs: number; nowMs?: number },
 ): Promise<{ slotMinutes: number; slots: SlotOption[] }> {
   const page = await pageBySlug(ctx, normalizeSlug(args.slug));
   if (!page || !page.enabled) {
@@ -173,9 +230,21 @@ export async function listSlotsHandler(
   }
   return {
     slotMinutes: page.slotMinutes,
-    slots: await slotGrid(ctx, page, fromMs, toMs),
+    // `fromMs` was already caller-materialized by legacy clients, so it is a
+    // safe compatibility fallback that does not introduce a reactive wall clock.
+    slots: await slotGrid(ctx, page, fromMs, toMs, args.nowMs ?? fromMs),
   };
 }
+
+export const listSlots = query({
+  args: {
+    slug: v.string(),
+    fromMs: v.number(),
+    toMs: v.number(),
+    nowMs: v.optional(v.number()),
+  },
+  handler: (ctx, args) => listSlotsHandler(ctx, args),
+});
 
 /** A requester following their own request. The token is the authorization, so
  * this returns only what the confirmation screen shows. */
@@ -203,6 +272,11 @@ export async function getBookingByTokenHandler(
   };
 }
 
+export const getBookingByToken = query({
+  args: { token: v.string() },
+  handler: (ctx, args) => getBookingByTokenHandler(ctx, args),
+});
+
 /** Whether anything else now occupies a pending booking's slot — a request can
  * sit pending while the host books the time by hand. Used by the accept path. */
 export async function getBookingContextHandler(
@@ -227,5 +301,14 @@ export async function getBookingContextHandler(
   const conflict = busy.some(
     (b) => b.startMs < booking.endMs && b.endMs > booking.startMs,
   );
-  return { booking, page, conflict };
+  const acceptanceOperation = await ctx.db
+    .query("calendarOperations")
+    .withIndex("by_bookingId", (q) => q.eq("bookingId", booking._id))
+    .unique();
+  return { booking, page, conflict, acceptanceOperation };
 }
+
+export const getBookingContext = internalQuery({
+  args: { bookingId: v.id("bookings"), hostUserId: v.string() },
+  handler: (ctx, args) => getBookingContextHandler(ctx, args),
+});

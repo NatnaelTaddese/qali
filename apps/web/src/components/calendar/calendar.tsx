@@ -20,6 +20,7 @@ import { calendarColorVar } from "./colors";
 import {
   addPages,
   calendarDisplayName,
+  type CalendarListItem,
   type CalendarView,
   dayKey,
   eventQueryRange,
@@ -91,9 +92,9 @@ export function CalendarWeekView() {
     [view, anchor],
   );
   const events =
-    useStableQuery(api.calendar.listEventsInRange, queryRange) ?? NO_EVENTS;
+    useStableQuery(api.domains.calendar.queries.listEventsInRange, queryRange) ?? NO_EVENTS;
 
-  const calendars = useStableQuery(api.calendar.listCalendars) ?? [];
+  const calendars = useStableQuery(api.domains.calendar.queries.listCalendars) ?? [];
 
   // Tell the dock which day its Create button should seed a new event on: today
   // when the current page shows it, otherwise the page's own start. The dock
@@ -402,8 +403,8 @@ export function CalendarWeekView() {
   );
 }
 
-function CalendarPicker({ calendars }: { calendars: Doc<"calendars">[] }) {
-  const setSelected = useMutation(api.calendar.setCalendarSelected);
+function CalendarPicker({ calendars }: { calendars: CalendarListItem[] }) {
+  const setSelected = useMutation(api.domains.calendar.mutations.setCalendarSelected);
   const selectedCount = calendars.filter((c) => c.selected).length;
   // Primary first, then alphabetical by display name.
   const sorted = [...calendars].sort((a, b) => {

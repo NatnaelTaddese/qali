@@ -113,7 +113,7 @@ export const pruneAgedThreads = internalMutation({
     if (!page.isDone) {
       await ctx.scheduler.runAfter(
         0,
-        internal.assistantMaintenance.pruneAgedThreads,
+        internal.domains.assistant.maintenance.pruneAgedThreads,
         { cursor: page.continueCursor },
       );
     }

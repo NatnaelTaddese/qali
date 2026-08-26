@@ -7,8 +7,8 @@ import { internalMutation } from "../_generated/server";
 /**
  * Recurring storage maintenance + the account-deletion purge. All internal,
  * self-rescheduling in bounded batches so a run stays under Convex's
- * per-mutation write limits. Registered at `internal.maintenance.*` through the
- * root facade, which is the path crons and self-reschedules reference.
+ * per-mutation write limits. Registered here at `internal.jobs.maintenance.*`,
+ * the path the crons and self-reschedules reference.
  */
 
 const BATCH_SIZE = 500;
@@ -28,15 +28,15 @@ export const enqueueEventPrune = internalMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const page = await ctx.db
-      .query("syncState")
+      .query("userSyncState")
       .paginate({ cursor: args.cursor ?? null, numItems: USER_FANOUT_BATCH });
     for (const row of page.page) {
-      await ctx.scheduler.runAfter(0, internal.maintenance.pruneUserEvents, {
+      await ctx.scheduler.runAfter(0, internal.jobs.maintenance.pruneUserEvents, {
         userId: row.userId,
       });
     }
     if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.maintenance.enqueueEventPrune, {
+      await ctx.scheduler.runAfter(0, internal.jobs.maintenance.enqueueEventPrune, {
         cursor: page.continueCursor,
       });
     }
@@ -59,7 +59,7 @@ export const pruneUserEvents = internalMutation({
       await ctx.db.delete(row._id);
     }
     if (past.length === BATCH_SIZE) {
-      await ctx.scheduler.runAfter(0, internal.maintenance.pruneUserEvents, {
+      await ctx.scheduler.runAfter(0, internal.jobs.maintenance.pruneUserEvents, {
         userId: args.userId,
       });
       return null;
@@ -75,7 +75,7 @@ export const pruneUserEvents = internalMutation({
       await ctx.db.delete(row._id);
     }
     if (future.length === BATCH_SIZE) {
-      await ctx.scheduler.runAfter(0, internal.maintenance.pruneUserEvents, {
+      await ctx.scheduler.runAfter(0, internal.jobs.maintenance.pruneUserEvents, {
         userId: args.userId,
       });
     }
@@ -92,16 +92,24 @@ export const enqueueSharedEventPrune = internalMutation({
       .query("sharedCalendars")
       .paginate({ cursor: args.cursor ?? null, numItems: USER_FANOUT_BATCH });
     for (const row of page.page) {
+      // Rows without neutral identity are pre-cutover leftovers the wipe
+      // removes; never fall back to legacy columns for them.
+      if (row.provider === undefined || row.providerCalendarId === undefined) {
+        continue;
+      }
       await ctx.scheduler.runAfter(
         0,
-        internal.maintenance.pruneSharedCalendarEvents,
-        { calendarId: row.googleCalendarId },
+        internal.jobs.maintenance.pruneSharedCalendarEvents,
+        {
+          provider: row.provider,
+          providerCalendarId: row.providerCalendarId,
+        },
       );
     }
     if (!page.isDone) {
       await ctx.scheduler.runAfter(
         0,
-        internal.maintenance.enqueueSharedEventPrune,
+        internal.jobs.maintenance.enqueueSharedEventPrune,
         { cursor: page.continueCursor },
       );
     }
@@ -110,14 +118,20 @@ export const enqueueSharedEventPrune = internalMutation({
 });
 
 export const pruneSharedCalendarEvents = internalMutation({
-  args: { calendarId: v.string() },
+  args: {
+    provider: v.union(v.literal("google"), v.literal("microsoft")),
+    providerCalendarId: v.string(),
+  },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const now = Date.now();
     const past = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_start", (q) =>
-        q.eq("calendarId", args.calendarId).lt("startMs", now - EVENT_RETENTION_MS),
+      .withIndex("by_provider_and_providerCalendarId_and_startMs", (q) =>
+        q
+          .eq("provider", args.provider)
+          .eq("providerCalendarId", args.providerCalendarId)
+          .lt("startMs", now - EVENT_RETENTION_MS),
       )
       .take(BATCH_SIZE);
     for (const row of past) {
@@ -126,16 +140,17 @@ export const pruneSharedCalendarEvents = internalMutation({
     if (past.length === BATCH_SIZE) {
       await ctx.scheduler.runAfter(
         0,
-        internal.maintenance.pruneSharedCalendarEvents,
-        { calendarId: args.calendarId },
+        internal.jobs.maintenance.pruneSharedCalendarEvents,
+        args,
       );
       return null;
     }
     const future = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_start", (q) =>
+      .withIndex("by_provider_and_providerCalendarId_and_startMs", (q) =>
         q
-          .eq("calendarId", args.calendarId)
+          .eq("provider", args.provider)
+          .eq("providerCalendarId", args.providerCalendarId)
           .gt("startMs", now + EVENT_FUTURE_RETENTION_MS),
       )
       .take(BATCH_SIZE);
@@ -145,8 +160,8 @@ export const pruneSharedCalendarEvents = internalMutation({
     if (future.length === BATCH_SIZE) {
       await ctx.scheduler.runAfter(
         0,
-        internal.maintenance.pruneSharedCalendarEvents,
-        { calendarId: args.calendarId },
+        internal.jobs.maintenance.pruneSharedCalendarEvents,
+        args,
       );
     }
     return null;
@@ -157,6 +172,7 @@ export const pruneSharedCalendarEvents = internalMutation({
 // Drop `bookingRateLimits` rows untouched for a day — well past any active
 // window, so a later request for that key just re-inserts a fresh counter.
 const RATE_LIMIT_RETENTION_MS = 24 * 60 * 60 * 1000;
+const CALENDAR_OPERATION_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 export const pruneRateLimits = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
@@ -172,9 +188,42 @@ export const pruneRateLimits = internalMutation({
       }
     }
     if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.maintenance.pruneRateLimits, {
+      await ctx.scheduler.runAfter(0, internal.jobs.maintenance.pruneRateLimits, {
         cursor: page.continueCursor,
       });
+    }
+    return null;
+  },
+});
+
+// Terminal write records only provide retry deduplication for a bounded window.
+// Pending/ambiguous rows and any operation backing a still-pending booking are
+// authority records rather than history and are never pruned.
+export const pruneCalendarOperations = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const cutoff = Date.now() - CALENDAR_OPERATION_RETENTION_MS;
+    const page = await ctx.db
+      .query("calendarOperations")
+      .paginate({ cursor: args.cursor ?? null, numItems: BATCH_SIZE });
+    for (const operation of page.page) {
+      if (
+        (operation.status !== "succeeded" && operation.status !== "failed") ||
+        operation.updatedAt >= cutoff
+      ) continue;
+      if (operation.bookingId) {
+        const booking = await ctx.db.get(operation.bookingId);
+        if (booking?.status === "pending") continue;
+      }
+      await ctx.db.delete(operation._id);
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.jobs.maintenance.pruneCalendarOperations,
+        { cursor: page.continueCursor },
+      );
     }
     return null;
   },
@@ -202,10 +251,14 @@ export const purgeUserData = internalMutation({
     };
     const byUser = (
       table:
-        | "syncState"
+        | "userSyncState"
+        | "connectionSyncState"
+        | "calendarConnections"
         | "calendars"
         | "bookingPages"
         | "contacts"
+        | "otherContactSources"
+        | "personSourceClaims"
         | "people"
         | "assistantUserState"
         | "assistantMessages",
@@ -215,13 +268,28 @@ export const purgeUserData = internalMutation({
         .withIndex("by_user", (q) => q.eq("userId", userId))
         .take(PURGE_BATCH);
 
-    await drain(await byUser("syncState"));
+    await drain(await byUser("userSyncState"));
+    // Delete connection children before their parent connection rows. Convex
+    // does not enforce foreign keys, but this ordering prevents retries from
+    // observing orphaned operational state midway through a batched purge.
+    await drain(
+      await ctx.db
+        .query("calendarOperations")
+        .withIndex("by_user_and_status", (q) => q.eq("userId", userId))
+        .take(PURGE_BATCH),
+    );
+    await drain(await byUser("connectionSyncState"));
     await drain(await byUser("calendars"));
     await drain(await byUser("bookingPages"));
     await drain(await byUser("contacts"));
+    await drain(await byUser("otherContactSources"));
+    await drain(await byUser("personSourceClaims"));
     await drain(await byUser("people"));
     await drain(await byUser("assistantUserState"));
     await drain(await byUser("assistantMessages"));
+    // Parent connections are removed only after every child table has drained;
+    // retries therefore never strand connection-owned claims or sync state.
+    if (!more) await drain(await byUser("calendarConnections"));
     await drain(
       await ctx.db
         .query("events")
@@ -231,9 +299,7 @@ export const purgeUserData = internalMutation({
     await drain(
       await ctx.db
         .query("recurringSeries")
-        .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-          q.eq("userId", userId),
-        )
+        .withIndex("by_user", (q) => q.eq("userId", userId))
         .take(PURGE_BATCH),
     );
     await drain(
@@ -281,7 +347,7 @@ export const purgeUserData = internalMutation({
 
     if (more) {
       // Waitlist is one row and already handled, so don't pass email again.
-      await ctx.scheduler.runAfter(0, internal.maintenance.purgeUserData, {
+      await ctx.scheduler.runAfter(0, internal.jobs.maintenance.purgeUserData, {
         userId,
       });
       return { done: false };

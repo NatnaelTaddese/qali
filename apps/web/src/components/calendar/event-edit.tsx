@@ -22,7 +22,7 @@ import { toRRule } from "./rrule";
 /** Args for `updateEvent`, minus the id — built by diffing the form against
  * what the event started as. */
 type EventPatch = Omit<
-  Parameters<ReturnType<typeof useAction<typeof api.calendar.updateEvent>>>[0],
+  Parameters<ReturnType<typeof useAction<typeof api.domains.calendar.service.updateEvent>>>[0],
   "eventId"
 >;
 
@@ -53,14 +53,15 @@ export function diffEvent(
   if (next.location !== initial.location) {
     patch.location = next.location.trim() || null;
   }
-  if (next.colorId !== initial.colorId) {
-    patch.colorId = next.colorId ?? null;
+  if (next.color !== initial.color) {
+    // null clears the override back to the calendar's default colour.
+    patch.color = next.color ?? null;
   }
   if (next.isPrivate !== initial.isPrivate) {
     patch.visibility = next.isPrivate ? "private" : null;
   }
   if (next.busy !== initial.busy) {
-    patch.transparency = next.busy ? "opaque" : "transparent";
+    patch.busy = next.busy;
   }
   if (next.meet !== initial.meet) {
     // "meet" asks Google to mint a link; null clears the existing one.
@@ -135,8 +136,8 @@ export function EventEdit({
   onCancel: () => void;
   onSaved: () => void;
 }) {
-  const updateEvent = useAction(api.calendar.updateEvent);
-  const calendars = useQuery(api.calendar.listCalendars) ?? [];
+  const updateEvent = useAction(api.domains.calendar.service.updateEvent);
+  const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
   const capabilities = useEventCapabilities()(event);
   // Captured once: the baseline every save diffs against. Re-seeding it from
   // `event` would erase edits in progress each time a sync lands.
@@ -151,7 +152,7 @@ export function EventEdit({
   const valid = isEventFormValid(value);
   // A recurring row is one expanded instance; saving it asks how far the edit
   // should reach across the series. A plain event has only itself to change.
-  const isRecurring = Boolean(event.recurringEventId);
+  const isRecurring = Boolean(event.providerSeriesId);
 
   const save = (scope: SaveScope) => {
     if (!valid || saving) return;

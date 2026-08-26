@@ -1,0 +1,22 @@
+{
+  /* Typechecks the test tree (bun-test *.test.ts + convex-test *.itest.ts),
+   * which mirrors ../convex. Mirrors the convex tsconfig's environment;
+   * vite-env.d.ts declares the import.meta.glob used by testModules.ts. */
+  "compilerOptions": {
+    "allowJs": true,
+    "strict": true,
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "types": ["node"],
+
+    "target": "ESNext",
+    "lib": ["ES2021", "dom"],
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["./**/*"]
+}

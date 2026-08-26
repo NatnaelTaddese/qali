@@ -1,30 +1,15 @@
-/**
- * Provider-neutral error taxonomy. Every calendar adapter classifies its
- * transport's failures into one of these `kind`s so the domain layer can decide
- * retry / surface / reconcile without knowing whether the provider was Google or
- * Microsoft. A Google 410 and a Graph `syncStateNotFound` both become
- * `cursor-expired`; a 409 and a Graph `ErrorItemAlreadyExists` both become
- * `conflict`.
- */
+/** Provider-neutral failures exposed by calendar adapters. */
 export type ProviderErrorKind =
-  | "authentication" // token missing/expired/revoked — re-auth needed
-  | "permission" // authenticated but not allowed (read-only calendar, etc.)
-  | "validation" // the request itself was malformed/rejected
-  | "not-found" // the target calendar/event does not exist
-  | "conflict" // a write collided (e.g. duplicate idempotency key)
-  | "cursor-expired" // an opaque sync cursor is no longer valid — full resync
-  | "rate-limited" // provider throttled us; see retryAfterMs
-  | "transient" // a retryable network/5xx blip
-  | "ambiguous"; // the write may or may not have landed (lost response)
+  | "authentication"
+  | "permission"
+  | "validation"
+  | "not-found"
+  | "conflict"
+  | "cursor-expired"
+  | "rate-limited"
+  | "transient"
+  | "ambiguous";
 
-/**
- * A classified provider failure. `retryable` and `retryAfterMs` let the caller
- * schedule a retry without re-inspecting the kind. `ambiguous` is deliberately
- * distinct from `transient`: an ambiguous create must be reconciled against its
- * idempotency key rather than blindly retried, because a blind retry could
- * double-book (this is the whole reason the write path carries an idempotency
- * key — see the port's `reconcileAmbiguousCreate`).
- */
 export class ProviderError extends Error {
   constructor(
     readonly kind: ProviderErrorKind,
@@ -51,14 +36,25 @@ export class ProviderError extends Error {
   }
 }
 
-/** True when the failure means an opaque cursor must be discarded and the
- * caller should fall back to a full resync. */
-export function isCursorExpired(error: unknown): boolean {
-  return error instanceof ProviderError && error.kind === "cursor-expired";
+/** True only when the provider conclusively rejected the operation. */
+export function isDefinitiveProviderFailure(error: unknown): boolean {
+  return (
+    error instanceof ProviderError &&
+    error.kind !== "ambiguous" &&
+    error.kind !== "transient" &&
+    error.kind !== "rate-limited"
+  );
 }
 
-/** True when a create may have landed despite the error, so the caller must
- * reconcile by idempotency key rather than retry. */
-export function isAmbiguousWrite(error: unknown): boolean {
-  return error instanceof ProviderError && error.kind === "ambiguous";
+/** The provider committed, but the app's local mirror/reconciliation did not. */
+export class ExternalWriteCommittedError extends Error {
+  constructor(
+    readonly successSummary: string,
+    readonly cause: unknown,
+  ) {
+    super(
+      `The calendar provider accepted the change, but local reconciliation is pending: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    this.name = "ExternalWriteCommittedError";
+  }
 }

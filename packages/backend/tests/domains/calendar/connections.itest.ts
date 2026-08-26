@@ -1,0 +1,169 @@
+import { convexTest } from "convex-test";
+import { describe, expect, test } from "vitest";
+
+import { internal } from "../../../convex/_generated/api";
+import schema from "../../../convex/schema";
+
+import { modules } from "../../testModules";
+
+/** Smoke tests for the connection model: row shapes are insertable and
+ * linkable, and adapter resolution respects connection status. */
+describe("connection model", () => {
+  test("adapter resolution exposes only an active connection", async () => {
+    const t = convexTest(schema, modules);
+    const connectionId = await t.run((ctx) =>
+      ctx.db.insert("calendarConnections", {
+        userId: "owner",
+        provider: "google",
+        credentialRef: "account-1",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    expect(
+      await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
+        connectionId,
+      }),
+    ).toMatchObject({ credentialRef: "account-1", provider: "google" });
+    await t.run((ctx) => ctx.db.patch(connectionId, { status: "paused" }));
+    expect(
+      await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
+        connectionId,
+      }),
+    ).toBeNull();
+    await t.run((ctx) => ctx.db.patch(connectionId, { status: "error" }));
+    expect(
+      await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
+        connectionId,
+      }),
+    ).toBeNull();
+    await t.run((ctx) => ctx.db.delete(connectionId));
+    expect(
+      await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
+        connectionId,
+      }),
+    ).toBeNull();
+  });
+
+  test("a connection links its sync-state and operation rows", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_conn";
+
+    const ids = await t.run(async (ctx) => {
+      const connectionId = await ctx.db.insert("calendarConnections", {
+        userId,
+        provider: "google",
+        credentialRef: "better-auth-account-1",
+        status: "active",
+        capabilities: { contacts: true, idempotentCreate: true },
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("connectionSyncState", {
+        connectionId,
+        userId,
+        status: "idle",
+        nextSyncDueAt: 0,
+        syncIntervalMs: 900_000,
+      });
+      await ctx.db.insert("calendarOperations", {
+        connectionId,
+        userId,
+        idempotencyKey: "op-1",
+        kind: "create",
+        status: "pending",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return { connectionId };
+    });
+
+    await t.run(async (ctx) => {
+      const connection = await ctx.db.get(ids.connectionId);
+      expect(connection?.provider).toBe("google");
+      expect(connection?.capabilities?.contacts).toBe(true);
+
+      const syncState = await ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_connection", (q) =>
+          q.eq("connectionId", ids.connectionId),
+        )
+        .unique();
+      expect(syncState?.status).toBe("idle");
+
+      const op = await ctx.db
+        .query("calendarOperations")
+        .withIndex("by_connection_and_key", (q) =>
+          q.eq("connectionId", ids.connectionId).eq("idempotencyKey", "op-1"),
+        )
+        .unique();
+      expect(op?.status).toBe("pending");
+    });
+  });
+
+  test("neutral event identity includes the local calendar and cannot collide", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_dual";
+
+    const { connectionId, firstCalendarId, secondCalendarId } = await t.run(
+      async (ctx) => {
+        const connectionId = await ctx.db.insert("calendarConnections", {
+          userId,
+          provider: "google",
+          status: "active",
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        const firstCalendarId = await ctx.db.insert("calendars", {
+          userId,
+          selected: true,
+          connectionId,
+          providerCalendarId: "first",
+          isShared: false,
+        });
+        const secondCalendarId = await ctx.db.insert("calendars", {
+          userId,
+          selected: true,
+          connectionId,
+          providerCalendarId: "second",
+          isShared: false,
+        });
+        return { connectionId, firstCalendarId, secondCalendarId };
+      },
+    );
+
+    for (const [localCalendarId, startMs] of [
+      [firstCalendarId, 1_000],
+      [secondCalendarId, 3_000],
+    ] as const) {
+      await t.run((ctx) =>
+        ctx.db.insert("events", {
+          userId,
+          startMs,
+          endMs: startMs + 1_000,
+          allDay: false,
+          status: "confirmed",
+          connectionId,
+          localCalendarId,
+          providerEventId: "same-provider-id",
+          providerUpdatedMs: 1_000,
+        }),
+      );
+    }
+
+    const found = await t.run((ctx) =>
+      ctx.db
+        .query("events")
+        .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
+          q
+            .eq("connectionId", connectionId)
+            .eq("localCalendarId", secondCalendarId)
+            .eq("providerEventId", "same-provider-id"),
+        )
+        .unique(),
+    );
+    expect(found?.localCalendarId).toBe(secondCalendarId);
+    expect(found?.startMs).toBe(3_000);
+  });
+});

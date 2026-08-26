@@ -1,5 +1,36 @@
-import type { Id } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
+
+export function connectionSyncFields(): Omit<
+  Doc<"connectionSyncState">,
+  "_id" | "_creationTime" | "connectionId" | "userId"
+> {
+  return {
+    status: "idle",
+    nextSyncDueAt: 0,
+    syncIntervalMs: 15 * 60 * 1000,
+  };
+}
+
+/** Ensure the connection's operational state exists in the same transaction.
+ * A new connection begins with clean cursors and generations so it never skips
+ * its first provider snapshot. */
+export async function ensureConnectionSyncState(
+  ctx: MutationCtx,
+  userId: string,
+  connectionId: Id<"calendarConnections">,
+): Promise<Id<"connectionSyncState">> {
+  const existing = await ctx.db
+    .query("connectionSyncState")
+    .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
+    .unique();
+  if (existing) return existing._id;
+  return await ctx.db.insert("connectionSyncState", {
+    connectionId,
+    userId,
+    ...connectionSyncFields(),
+  });
+}
 
 /**
  * Find (or lazily create) the user's single Google calendar connection.
@@ -20,9 +51,12 @@ export async function ensureGoogleConnection(
       q.eq("userId", userId).eq("provider", "google"),
     )
     .first();
-  if (existing) return existing._id;
+  if (existing) {
+    await ensureConnectionSyncState(ctx, userId, existing._id);
+    return existing._id;
+  }
   const now = Date.now();
-  return await ctx.db.insert("calendarConnections", {
+  const connectionId = await ctx.db.insert("calendarConnections", {
     userId,
     provider: "google",
     status: "active",
@@ -30,4 +64,41 @@ export async function ensureGoogleConnection(
     createdAt: now,
     updatedAt: now,
   });
+  await ensureConnectionSyncState(ctx, userId, connectionId);
+  return connectionId;
+}
+
+/** A provider's `primary` alias is writable before CalendarList has synced. */
+export async function ensureDefaultPrimaryCalendar(
+  ctx: MutationCtx,
+  userId: string,
+  connectionId: Id<"calendarConnections">,
+): Promise<Doc<"calendars">> {
+  const calendars = await ctx.db
+    .query("calendars")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .take(501);
+  if (calendars.length > 500) {
+    throw new Error("Too many calendars to choose a write target safely");
+  }
+  const existing =
+    calendars.find(
+      (row) => row.primary && row.connectionId === connectionId,
+    ) ??
+    calendars.find(
+      (row) =>
+        row.providerCalendarId === "primary" &&
+        row.connectionId === connectionId,
+    );
+  if (existing) return existing;
+  const id = await ctx.db.insert("calendars", {
+    userId,
+    selected: true,
+    primary: true,
+    accessRole: "owner",
+    connectionId,
+    providerCalendarId: "primary",
+    isShared: false,
+  });
+  return (await ctx.db.get(id))!;
 }

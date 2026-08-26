@@ -1,5 +1,7 @@
+import type { api } from "@qali/backend/convex/_generated/api";
 import type { Id } from "@qali/backend/convex/_generated/dataModel";
-import type { EventView } from "@qali/backend/convex/calendar";
+import type { EventView } from "@qali/backend/convex/domains/calendar/model";
+import type { FunctionReturnType } from "convex/server";
 import {
   addDays,
   addMonths,
@@ -27,15 +29,26 @@ export function editableEventId(id: string): Id<"events"> {
   return id as Id<"events">;
 }
 
-/** User-facing Google calendar name, including a per-user override when one
- * exists. */
+/** One row of the `listCalendars` DTO — the only calendar shape the web app
+ * sees. Derived from the query so the fields can never drift from the server. */
+export type CalendarListItem = FunctionReturnType<
+  typeof api.domains.calendar.queries.listCalendars
+>[number];
+
+/** User-facing calendar name, including a per-user override when one exists.
+ * `providerCalendarId` is optional only for the transitional schema: a
+ * pre-cutover row without one renders nameless rather than borrowing a legacy
+ * field. */
 export function calendarDisplayName(calendar: {
-  googleCalendarId: string;
+  providerCalendarId?: string;
   summary?: string;
   summaryOverride?: string;
 }): string {
   return (
-    calendar.summaryOverride ?? calendar.summary ?? calendar.googleCalendarId
+    calendar.summaryOverride ??
+    calendar.summary ??
+    calendar.providerCalendarId ??
+    ""
   );
 }
 

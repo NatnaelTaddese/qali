@@ -9,7 +9,7 @@ import { cn } from "@qali/ui/lib/utils";
 import { useMutation, useQuery } from "convex/react";
 import { format } from "date-fns";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Avatar } from "@/components/calendar/avatar";
@@ -42,20 +42,27 @@ export function BookingPage({
   token: string | null;
   onTokenChange: (token: string | null) => void;
 }) {
-  const page = useQuery(api.booking.getPublicPage, { slug });
-  // Floored to the hour so the subscription argument is stable across renders
-  // rather than a new millisecond each time.
-  const fromMs = useMemo(
-    () => Math.floor(Date.now() / MS_PER_HOUR) * MS_PER_HOUR,
-    [],
-  );
+  const page = useQuery(api.domains.booking.queries.getPublicPage, { slug });
+  const [nowMs, setNowMs] = useState(Date.now);
+  // Refresh min-notice/horizon filtering without creating a millisecond-level
+  // stream of query arguments. One minute is tighter than the smallest slot.
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const fromMs = Math.floor(nowMs / MS_PER_HOUR) * MS_PER_HOUR;
   const availability = useQuery(
-    api.booking.listSlots,
+    api.domains.booking.queries.listSlots,
     page
-      ? { slug, fromMs, toMs: fromMs + WINDOW_DAYS * 24 * MS_PER_HOUR }
+      ? {
+          slug,
+          fromMs,
+          toMs: fromMs + WINDOW_DAYS * 24 * MS_PER_HOUR,
+          nowMs,
+        }
       : "skip",
   );
-  const requestBooking = useMutation(api.booking.requestBooking);
+  const requestBooking = useMutation(api.domains.booking.mutations.requestBooking);
 
   const reduceMotion = useReducedMotion();
   const [use24Hour, setUse24Hour] = useState(storedUse24Hour);

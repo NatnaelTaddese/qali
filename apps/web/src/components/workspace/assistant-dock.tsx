@@ -27,10 +27,10 @@ import {
 } from "./assistant-interactions";
 import { MascotGlyph } from "./mascot-glyph";
 
-type Threads = FunctionReturnType<typeof api.assistantData.listThreads>;
-type Messages = FunctionReturnType<typeof api.assistantData.listMessages>;
-type Actions = FunctionReturnType<typeof api.assistantData.listPendingActions>;
-type Quota = FunctionReturnType<typeof api.assistantData.monthlyQuota>;
+type Threads = FunctionReturnType<typeof api.domains.assistant.data.listThreads>;
+type Messages = FunctionReturnType<typeof api.domains.assistant.data.listMessages>;
+type Actions = FunctionReturnType<typeof api.domains.assistant.data.listPendingActions>;
+type Quota = FunctionReturnType<typeof api.domains.assistant.data.monthlyQuota>;
 
 /**
  * The assistant is its own dock, pinned bottom-right, opening with the gooey
@@ -63,7 +63,7 @@ export function AssistantDock() {
   // The assistant is optional: with no API key configured its dock is not
   // rendered at all. `undefined` (still loading) counts as unavailable so the
   // button doesn't pop into the corner a beat after first paint.
-  const assistantAvailable = useQuery(api.assistantData.isAvailable) === true;
+  const assistantAvailable = useQuery(api.domains.assistant.data.isAvailable) === true;
 
   // The thread id is local to the dock so creating a thread on the first message
   // never remounts the panel mid-conversation.
@@ -78,22 +78,27 @@ export function AssistantDock() {
   // results across argument changes: an old conversation is worse than a brief
   // loading state while a newly created thread subscribes.
   const threads = useStableQuery(
-    api.assistantData.listThreads,
+    api.domains.assistant.data.listThreads,
     assistantAvailable ? {} : "skip",
   );
   const messages = useQuery(
-    api.assistantData.listMessages,
+    api.domains.assistant.data.listMessages,
     assistantAvailable && threadId ? { threadId } : "skip",
   );
   const actions = useQuery(
-    api.assistantData.listPendingActions,
+    api.domains.assistant.data.listPendingActions,
     assistantAvailable && threadId ? { threadId } : "skip",
   );
+  const [quotaNowMs, setQuotaNowMs] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setQuotaNowMs(Date.now()), 5 * 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   // The rolling-30-day message allowance, so the composer can show what's left
   // and block sending once it's spent. Cheap enough to keep warm with the rest.
   const quota = useQuery(
-    api.assistantData.monthlyQuota,
-    assistantAvailable ? {} : "skip",
+    api.domains.assistant.data.monthlyQuota,
+    assistantAvailable ? { nowMs: quotaNowMs } : "skip",
   );
   // Tracks whether the panel is open so ⌘J can always close it — even from the
   // composer, where the editable-target guard would otherwise swallow the key.
@@ -144,7 +149,7 @@ export function AssistantDock() {
     setStartingFresh(false);
   }, []);
 
-  const deleteThread = useMutation(api.assistantMaintenance.deleteThread);
+  const deleteThread = useMutation(api.domains.assistant.maintenance.deleteThread);
   const startNewChat = useCallback(() => {
     // Starting fresh discards the conversation just left: at most a handful of
     // threads ever accumulate, and the 30-day cron mops up any stragglers.

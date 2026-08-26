@@ -49,8 +49,8 @@ export function EventCreate({
   onCancel: () => void;
   onCreated: () => void;
 }) {
-  const createEvent = useAction(api.calendar.createEvent);
-  const calendars = useQuery(api.calendar.listCalendars) ?? [];
+  const createEvent = useAction(api.domains.calendar.service.createEvent);
+  const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
   const [submitting, setSubmitting] = useState(false);
   // Idempotency key for this create intent: minted once and reused across retries
   // (a lost response / re-submit) so the backend dedupes to one Google event
@@ -66,9 +66,9 @@ export function EventCreate({
     meet: false,
     allDay: false,
     isPrivate: false,
-    // Busy is Google's default, so the toggle starts there.
+    // Busy is the provider default, so the toggle starts there.
     busy: true,
-    colorId: undefined,
+    color: undefined,
     calendarId: undefined,
     guests: [],
     recurrence: null,
@@ -78,7 +78,7 @@ export function EventCreate({
   // Until the user picks one, the event goes to the primary calendar — resolved
   // here too so the controls can preview its colour.
   const activeCalendarId =
-    draft.calendarId ?? calendars.find((c) => c.primary)?.googleCalendarId;
+    draft.calendarId ?? calendars.find((c) => c.primary)?._id;
   const value: EventFormValue = {
     ...draft,
     calendarId: activeCalendarId,
@@ -111,10 +111,10 @@ export function EventCreate({
       location: value.meet ? undefined : value.location.trim() || undefined,
       addConference: value.meet || undefined,
       calendarId: activeCalendarId,
-      colorId: value.colorId,
+      color: value.color,
       visibility: value.isPrivate ? "private" : undefined,
-      // Busy is Google's default; only send the override when Free.
-      transparency: value.busy ? undefined : "transparent",
+      // Busy is the provider default; only send the override when Free.
+      busy: value.busy ? undefined : false,
       recurrence: value.recurrence ? toRRule(value.recurrence) : undefined,
       attendees: value.guests.length
         ? value.guests.map((g) => ({

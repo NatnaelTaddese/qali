@@ -1,75 +1,83 @@
 /**
  * Booking acceptance — the one booking operation that talks to a calendar
- * provider, so it is an action, not a mutation. The root `booking.ts` wraps this
- * handler in a Convex `action` at `api.booking.acceptBooking`.
+ * provider, so it is an action, not a mutation. Canonical registration for
+ * `acceptBooking` / `reconcileBookingAcceptance`.
  *
  * The calendar write goes through the provider adapter (via the registry), so
  * this path is provider-neutral: `createEventReconciling` creates the event and,
  * on an ambiguous/conflict failure, reconciles by the operation's idempotency
- * key instead of risking a duplicate. The claim/mark/release lease around it is
- * unchanged. `notify:"all"` makes the provider send its own invitation email,
+ * key instead of risking a duplicate. The claim/mark/release lease lives in the
+ * operation ledger. `notify:"all"` makes the provider send its invitation email,
  * which is the requester's confirmation — the app sends none.
  */
 
+import { v } from "convex/values";
+
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
-import type { ActionCtx } from "../../_generated/server";
+import {
+  action,
+  type ActionCtx,
+  internalAction,
+} from "../../_generated/server";
 import { authComponent } from "../../auth";
-import { ProviderError } from "../../integrations/calendar/errors";
+import {
+  isDefinitiveProviderFailure,
+  ProviderError,
+} from "../../integrations/calendar/errors";
 import { getCalendarAdapter } from "../../integrations/calendar/registry";
 import { createEventReconciling } from "../../integrations/calendar/service";
-import { providerEventToMapped } from "../../integrations/google/mappers";
+import type { CalendarProviderAdapter } from "../../integrations/calendar/types";
+import type { claimBookingAcceptanceHandler } from "./mutations";
 
-export async function acceptBookingHandler(
+type AcceptanceClaim = NonNullable<
+  Awaited<ReturnType<typeof claimBookingAcceptanceHandler>>
+>;
+
+async function executeAcceptanceClaim(
   ctx: ActionCtx,
-  args: { bookingId: Id<"bookings"> },
-): Promise<null> {
-  const user = await authComponent.safeGetAuthUser(ctx);
-  if (!user) {
-    throw new Error("Not authenticated");
-  }
-
-  // Resolve the adapter (the credential broker resolves the token inside it)
-  // before claiming, so a missing/invalid grant fails fast without taking a lease.
-  const adapter = await getCalendarAdapter(ctx, user._id);
-
-  const calendarId =
-    (await ctx.runQuery(internal.calendar.getPrimaryCalendarId, {
-      userId: user._id,
-    })) ?? "primary";
-  const attemptId = crypto.randomUUID();
-  const claimed = await ctx.runMutation(
-    internal.booking.claimBookingAcceptance,
-    {
-      bookingId: args.bookingId,
-      hostUserId: user._id,
-      attemptId,
-      calendarId,
-    },
-  );
-  if (!claimed) {
-    const context = await ctx.runQuery(internal.booking.getBookingContext, {
-      bookingId: args.bookingId,
-      hostUserId: user._id,
-    });
-    if (context?.booking.status === "accepted") return null;
-    throw new Error("This request is unavailable or already being answered");
-  }
+  claimed: AcceptanceClaim,
+  hostUserId: string,
+  attemptId: string,
+  adapter: CalendarProviderAdapter,
+  autonomous: boolean,
+): Promise<void> {
   const {
     booking,
     page,
     operationId,
-    calendarId: claimedCalendarId,
+    connectionId,
+    localCalendarId,
+    providerCalendarId,
+    reconcileOnly,
   } = claimed;
-
   const label = page.title?.trim() || "Meeting";
   let event;
   try {
-    // The operationId is the idempotency key: a retry that already created the
-    // event reconciles instead of double-booking (adapter maps it to Google's
-    // client-assigned event id + 409-as-success).
-    const providerEvent = await createEventReconciling(adapter, {
-      calendarId: claimedCalendarId,
+    if (reconcileOnly) {
+      event =
+        (await adapter.reconcileAmbiguousCreate({
+          calendarId: providerCalendarId,
+          idempotencyKey: operationId,
+        })) ?? undefined;
+    }
+    if (!event && reconcileOnly && !autonomous) {
+      throw new ProviderError(
+        "not-found",
+        "The previous calendar create did not land; retry to create it again",
+      );
+    }
+    if (!event && reconcileOnly && autonomous && booking.endMs <= Date.now()) {
+      throw new ProviderError(
+        "not-found",
+        "The previous calendar create did not land before the booking expired",
+      );
+    }
+    // A scheduled reconciliation that proves the first create did not land may
+    // safely retry with the same provider idempotency key. This cannot send a
+    // duplicate invitation even if a delayed provider write appears later.
+    event ??= await createEventReconciling(adapter, {
+      calendarId: providerCalendarId,
       event: {
         summary: `${label} with ${booking.requesterName}`,
         description: booking.note
@@ -86,44 +94,211 @@ export async function acceptBookingHandler(
       idempotencyKey: operationId,
       notify: "all",
     });
-    event = providerEventToMapped(providerEvent);
 
-    const marked = await ctx.runMutation(internal.booking.markAccepted, {
-      bookingId: args.bookingId,
-      hostUserId: user._id,
-      googleEventId: event.googleEventId,
-      calendarId: claimedCalendarId,
-      attemptId,
-    });
+    const marked = await ctx.runMutation(
+      internal.domains.booking.mutations.markAccepted,
+      {
+        bookingId: booking._id,
+        hostUserId,
+        providerEventId: event.id,
+        providerCalendarId: event.calendarId,
+        attemptId,
+      },
+    );
     if (!marked) throw new Error("Booking acceptance claim was lost");
   } catch (error) {
-    await ctx.runMutation(internal.booking.releaseBookingAcceptance, {
-      bookingId: args.bookingId,
-      hostUserId: user._id,
-      attemptId,
-      // An ambiguous provider failure (a lost response) is the "may have landed"
-      // case — the neutral successor to the old GoogleNetworkError branch.
-      mayHaveSucceeded:
-        event !== undefined ||
-        (error instanceof ProviderError && error.kind === "ambiguous"),
-    });
-    if (event) {
-      throw new Error(
-        `Google accepted the booking, but local confirmation is pending. Retry acceptance to reconcile it safely. ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    await ctx.runMutation(
+      internal.domains.booking.mutations.releaseBookingAcceptance,
+      {
+        bookingId: booking._id,
+        hostUserId,
+        attemptId,
+        mayHaveSucceeded:
+          event !== undefined || !isDefinitiveProviderFailure(error),
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
     throw error;
   }
 
-  // The booking state and the provider event are authoritative. A sync repairs
-  // this optional optimistic mirror if the local write is transiently unavailable.
   try {
-    await ctx.runMutation(internal.calendar.upsertEvent, {
-      userId: user._id,
-      event,
-    });
+    await ctx.runMutation(
+      internal.domains.calendar.mutations.mirrorProviderEvent,
+      {
+        userId: hostUserId,
+        connectionId,
+        localCalendarId,
+        event: {
+          ...event,
+          attendees: event.attendees?.map((attendee) => ({ ...attendee })),
+          recurrence: event.recurrence ? [...event.recurrence] : undefined,
+          organizer: event.organizer ? { ...event.organizer } : undefined,
+          creator: event.creator ? { ...event.creator } : undefined,
+          conference: event.conference ? { ...event.conference } : undefined,
+        },
+      },
+    );
   } catch (error) {
     console.error("[booking] provider accepted event; mirror pending", error);
   }
+}
+
+/** The acceptance flow once the host is known. `hostUserId` must be an already
+ * verified identity — the session user, or the assistant thread's owner — since
+ * the claim mutation treats it as the authorization. */
+export async function acceptBookingForHost(
+  ctx: ActionCtx,
+  args: { bookingId: Id<"bookings">; hostUserId: string },
+): Promise<null> {
+  const attemptId = crypto.randomUUID();
+  const claimed = await ctx.runMutation(
+    internal.domains.booking.mutations.claimBookingAcceptance,
+    {
+      bookingId: args.bookingId,
+      hostUserId: args.hostUserId,
+      attemptId,
+    },
+  );
+  if (!claimed) {
+    const context = await ctx.runQuery(
+      internal.domains.booking.queries.getBookingContext,
+      {
+        bookingId: args.bookingId,
+        hostUserId: args.hostUserId,
+      },
+    );
+    if (
+      context?.booking.status === "accepted" ||
+      context?.acceptanceOperation?.status === "succeeded"
+    ) {
+      return null;
+    }
+    throw new Error("This request is unavailable or already being answered");
+  }
+  let adapter;
+  try {
+    adapter = await getCalendarAdapter(ctx, claimed.connectionId);
+  } catch (error) {
+    await ctx.runMutation(
+      internal.domains.booking.mutations.releaseBookingAcceptance,
+      {
+        bookingId: args.bookingId,
+        hostUserId: args.hostUserId,
+        attemptId,
+        mayHaveSucceeded: claimed.reconcileOnly,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    throw error;
+  }
+
+  await executeAcceptanceClaim(
+    ctx,
+    claimed,
+    args.hostUserId,
+    attemptId,
+    adapter,
+    false,
+  );
+
   return null;
 }
+
+export async function acceptBookingHandler(
+  ctx: ActionCtx,
+  args: { bookingId: Id<"bookings"> },
+): Promise<null> {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+  return await acceptBookingForHost(ctx, {
+    bookingId: args.bookingId,
+    hostUserId: user._id,
+  });
+}
+
+export const acceptBooking = action({
+  args: { bookingId: v.id("bookings") },
+  handler: (ctx, args) => acceptBookingHandler(ctx, args),
+});
+
+export async function reconcileBookingAcceptanceWithAdapter(
+  ctx: ActionCtx,
+  args: { bookingId: Id<"bookings">; expectedGeneration: number },
+  adapter: CalendarProviderAdapter,
+): Promise<void> {
+  const attemptId = crypto.randomUUID();
+  const claimed = await ctx.runMutation(
+    internal.domains.booking.mutations.claimScheduledBookingAcceptance,
+    { ...args, attemptId },
+  );
+  if (!claimed) return;
+  try {
+    await executeAcceptanceClaim(
+      ctx,
+      claimed,
+      claimed.hostUserId,
+      attemptId,
+      adapter,
+      true,
+    );
+  } catch (error) {
+    console.error(
+      `[booking] scheduled acceptance reconciliation failed for ${args.bookingId}:`,
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
+export async function reconcileBookingAcceptanceHandler(
+  ctx: ActionCtx,
+  args: { bookingId: Id<"bookings">; expectedGeneration: number },
+): Promise<null> {
+  const attemptId = crypto.randomUUID();
+  const claimed = await ctx.runMutation(
+    internal.domains.booking.mutations.claimScheduledBookingAcceptance,
+    { ...args, attemptId },
+  );
+  if (!claimed) return null;
+  let adapter: CalendarProviderAdapter;
+  try {
+    adapter = await getCalendarAdapter(ctx, claimed.connectionId);
+  } catch (error) {
+    await ctx.runMutation(
+      internal.domains.booking.mutations.releaseBookingAcceptance,
+      {
+        bookingId: args.bookingId,
+        hostUserId: claimed.hostUserId,
+        attemptId,
+        mayHaveSucceeded: claimed.reconcileOnly,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    return null;
+  }
+  try {
+    await executeAcceptanceClaim(
+      ctx,
+      claimed,
+      claimed.hostUserId,
+      attemptId,
+      adapter,
+      true,
+    );
+  } catch (error) {
+    console.error(
+      `[booking] scheduled acceptance reconciliation failed for ${args.bookingId}:`,
+      error instanceof Error ? error.message : error,
+    );
+  }
+  return null;
+}
+
+export const reconcileBookingAcceptance = internalAction({
+  args: {
+    bookingId: v.id("bookings"),
+    expectedGeneration: v.number(),
+  },
+  handler: (ctx, args) => reconcileBookingAcceptanceHandler(ctx, args),
+});

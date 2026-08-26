@@ -17,10 +17,12 @@
 
 import { z } from "zod";
 
-import { api, internal } from "../../_generated/api";
+import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { ActionCtx } from "../../_generated/server";
+import { acceptBookingForHost } from "../booking/service";
 import {
+  type CalendarServiceDependencies,
   createEventOp,
   deleteEventOp,
   resolveEventForWrite,
@@ -44,7 +46,7 @@ import {
   formatAssistantRepeat,
   isDateKey,
   type AssistantEventRange,
-} from "../../lib/assistantLogic";
+} from "./eventLogic";
 
 // --- Plumbing --------------------------------------------------------------
 
@@ -178,7 +180,7 @@ function writeTool<S extends z.ZodType>(spec: {
       }
 
       const actionId = await tc.ctx.runMutation(
-        internal.assistantData.recordProposal,
+        internal.domains.assistant.data.recordProposal,
         {
           threadId: tc.threadId,
           userId: tc.userId,
@@ -263,10 +265,11 @@ function previewValue(value: string, max = 120): string {
  * case is the difference between an honest answer and offering a slot the user
  * already said no to. */
 function isBusy(
-  event: Pick<Doc<"events">, "status" | "transparency" | "attendees">,
+  event: Pick<Doc<"events">, "status" | "busy" | "attendees">,
 ): boolean {
   if (event.status === "cancelled") return false;
-  if (event.transparency === "transparent") return false;
+  // Absent `busy` means busy; only an explicit false marks the event free.
+  if (event.busy === false) return false;
   const self = event.attendees?.find((a) => a.self);
   if (self?.responseStatus === "declined") return false;
   return true;
@@ -294,12 +297,12 @@ const listEvents = readTool({
     // which live in a separate deduplicated table. Merged so the assistant sees
     // holidays alongside the user's own events.
     const [personal, shared] = await Promise.all([
-      tc.ctx.runQuery(internal.assistantData.listEventsForAssistant, {
+      tc.ctx.runQuery(internal.domains.assistant.data.listEventsForAssistant, {
         userId: tc.userId,
         startMs: args.fromMs,
         endMs: args.toMs,
       }),
-      tc.ctx.runQuery(internal.calendar.listSharedEventsForAssistant, {
+      tc.ctx.runQuery(internal.domains.calendar.queries.listSharedEventsForAssistant, {
         userId: tc.userId,
         startMs: args.fromMs,
         endMs: args.toMs,
@@ -320,10 +323,10 @@ const listEvents = readTool({
       when: formatRange(e.startMs, e.endMs, tc.timeZone, e.allDay),
       allDay: e.allDay,
       location: e.location,
-      recurring: Boolean(e.recurringEventId),
+      recurring: Boolean(e.providerSeriesId),
       isOrganizer: e.organizer?.self ?? false,
       guests: e.attendees?.map((a) => a.email) ?? [],
-      meetLink: e.hangoutLink,
+      meetLink: e.conferenceUrl,
     }));
   },
 });
@@ -370,23 +373,23 @@ const findFreeTime = readTool({
     const durationMs = args.durationMinutes * MS_PER_MINUTE;
 
     const [personal, shared, bookings] = await Promise.all([
-      tc.ctx.runQuery(internal.assistantData.listEventsForAssistant, {
+      tc.ctx.runQuery(internal.domains.assistant.data.listEventsForAssistant, {
         userId: tc.userId,
         startMs: args.fromMs,
         endMs: args.toMs,
       }),
-      tc.ctx.runQuery(internal.calendar.listSharedEventsForAssistant, {
+      tc.ctx.runQuery(internal.domains.calendar.queries.listSharedEventsForAssistant, {
         userId: tc.userId,
         startMs: args.fromMs,
         endMs: args.toMs,
       }),
-      tc.ctx.runQuery(internal.assistantData.listBookingBlocksForAssistant, {
+      tc.ctx.runQuery(internal.domains.assistant.data.listBookingBlocksForAssistant, {
         userId: tc.userId,
         startMs: args.fromMs,
         endMs: args.toMs,
       }),
     ]);
-    // Holidays are transparency:"transparent", so isBusy drops them and they
+    // Holidays are marked free (busy === false), so isBusy drops them and they
     // never block a slot — but a holiday marked busy correctly would.
     const rows = [...personal, ...shared];
     const busy = mergeIntervals(
@@ -460,7 +463,10 @@ const searchContacts = readTool({
   }),
   async run(tc, args) {
     const needle = args.query.trim().toLowerCase();
-    const rows = await tc.ctx.runQuery(api.people.listPeople, {});
+    const rows = await tc.ctx.runQuery(
+      internal.domains.people.queries.listPeopleForUser,
+      { userId: tc.userId },
+    );
     return rows
       .filter(
         (p) =>
@@ -480,7 +486,10 @@ const getAvailabilitySettings = readTool({
     "the user asks about their booking link or the hours they publish.",
   schema: z.object({}),
   async run(tc) {
-    return await tc.ctx.runQuery(api.booking.getMyBookingPage, {});
+    return await tc.ctx.runQuery(
+      internal.domains.booking.queries.getBookingPageForHost,
+      { hostUserId: tc.userId },
+    );
   },
 });
 
@@ -492,7 +501,10 @@ const listPendingBookings = readTool({
     "when the user asks who wants to meet or what needs their reply.",
   schema: z.object({}),
   async run(tc) {
-    const rows = await tc.ctx.runQuery(api.booking.listPendingBookings, {});
+    const rows = await tc.ctx.runQuery(
+      internal.domains.booking.queries.listPendingBookingsForHost,
+      { hostUserId: tc.userId },
+    );
     return rows.map((b) => ({
       bookingId: b._id,
       requesterName: b.requesterName,
@@ -739,7 +751,7 @@ const updateEvent = writeTool({
       );
     }
     const scope =
-      row.recurringEventId && args.scope && args.scope !== "thisEvent"
+      row.providerSeriesId && args.scope && args.scope !== "thisEvent"
         ? args.scope === "allEvents"
           ? " (whole series)"
           : " (this and following)"
@@ -749,16 +761,16 @@ const updateEvent = writeTool({
   async storedArgs(tc, args) {
     if (args.guestEmails === undefined && args.repeat === undefined) return {};
     const row = await requireEditable(tc, args.eventId);
-    if (args.repeat !== undefined && row.recurringEventId !== undefined) {
+    if (args.repeat !== undefined && row.providerSeriesId !== undefined) {
       throw new Error("This event is already part of a recurring series");
     }
     const editsSeries =
-      row.recurringEventId !== undefined &&
+      row.providerSeriesId !== undefined &&
       args.scope !== undefined &&
       args.scope !== "thisEvent";
     const expectedSeriesUpdatedMs = editsSeries
       ? await tc.ctx.runQuery(
-          internal.assistantData.getRecurringSeriesVersion,
+          internal.domains.assistant.data.getRecurringSeriesVersion,
           { userId: tc.userId, eventId: row._id },
         )
       : null;
@@ -768,7 +780,7 @@ const updateEvent = writeTool({
       );
     }
     return {
-      expectedGoogleUpdatedMs: row.googleUpdatedMs,
+      expectedProviderUpdatedMs: row.providerUpdatedMs,
       ...(args.repeat === undefined
         ? {}
         : {
@@ -833,7 +845,7 @@ const deleteEvent = writeTool({
       ["canDelete", "canRemoveSelf"],
     );
     const guests = row.attendees?.length ?? 0;
-    const recurring = row.recurringEventId !== undefined;
+    const recurring = row.providerSeriesId !== undefined;
     if (!recurring && args.scope !== "thisEvent") {
       throw new Error("A non-recurring event only has one occurrence");
     }
@@ -865,7 +877,7 @@ const deleteEvent = writeTool({
     if (args.scope !== "thisAndFollowing") return {};
     const row = await requireEditable(tc, args.eventId);
     const expectedSeriesUpdatedMs = await tc.ctx.runQuery(
-      internal.assistantData.getRecurringSeriesVersion,
+      internal.domains.assistant.data.getRecurringSeriesVersion,
       { userId: tc.userId, eventId: row._id },
     );
     if (expectedSeriesUpdatedMs === null) {
@@ -892,7 +904,7 @@ const decideBookingRequest = writeTool({
     "requester. Neither happens until the user confirms.",
   schema: decideBookingSchema,
   async preview(tc, args) {
-    const context = await tc.ctx.runQuery(internal.booking.getBookingContext, {
+    const context = await tc.ctx.runQuery(internal.domains.booking.queries.getBookingContext, {
       bookingId: args.bookingId as Id<"bookings">,
       hostUserId: tc.userId,
     });
@@ -941,25 +953,15 @@ export const TOOLS_BY_NAME = new Map(ASSISTANT_TOOLS.map((t) => [t.name, t]));
 export async function applyProposal(
   ctx: ActionCtx,
   userId: string,
-  accessToken: string | undefined,
   action: Doc<"assistantActions">,
+  calendarDependencies?: CalendarServiceDependencies,
 ): Promise<string> {
-  const stored: unknown = JSON.parse(action.input);
-  const raw = await normalizeStoredProposal(
-    ctx,
-    userId,
-    action.tool,
-    stored,
-  );
+  const raw: unknown = JSON.parse(action.input);
   const timeZone =
     typeof raw === "object" && raw !== null && "timeZone" in raw
       ? String((raw as { timeZone: unknown }).timeZone)
       : undefined;
   const operationId = action.operationId ?? String(action._id);
-  const token = () => {
-    if (!accessToken) throw new Error("Google access token is required");
-    return accessToken;
-  };
   const proposalTimeZone = () => {
     if (!timeZone) throw new Error("The proposal is missing its time zone");
     return timeZone;
@@ -979,7 +981,7 @@ export async function applyProposal(
             proposalTimeZone(),
           )
         : storedRecurrence(raw, "recurrence");
-      const event = await createEventOp(ctx, userId, token(), {
+      const event = await createEventOp(ctx, userId, {
         summary: args.summary,
         ...time,
         description: args.description,
@@ -989,7 +991,7 @@ export async function applyProposal(
         recurrence,
         timeZone,
         operationId,
-      });
+      }, calendarDependencies);
       return `Created “${event.summary ?? args.summary}”.`;
     }
     case "update_event": {
@@ -1001,12 +1003,12 @@ export async function applyProposal(
       if (args.repeat && !recurrence) {
         throw new Error("The recurring-event proposal is incomplete");
       }
-      const expectedGoogleUpdatedMs =
+      const expectedProviderUpdatedMs =
         typeof raw === "object" &&
         raw !== null &&
-        "expectedGoogleUpdatedMs" in raw &&
-        typeof raw.expectedGoogleUpdatedMs === "number"
-          ? raw.expectedGoogleUpdatedMs
+        "expectedProviderUpdatedMs" in raw &&
+        typeof raw.expectedProviderUpdatedMs === "number"
+          ? raw.expectedProviderUpdatedMs
           : undefined;
       const expectedSeriesUpdatedMs =
         typeof raw === "object" &&
@@ -1015,7 +1017,7 @@ export async function applyProposal(
         typeof raw.expectedSeriesUpdatedMs === "number"
           ? raw.expectedSeriesUpdatedMs
           : undefined;
-      await updateEventOp(ctx, userId, token(), {
+      await updateEventOp(ctx, userId, {
         eventId: args.eventId as Id<"events">,
         summary: args.summary,
         description: args.description,
@@ -1028,20 +1030,20 @@ export async function applyProposal(
         scope: args.scope,
         timeZone,
         operationId,
-        expectedGoogleUpdatedMs,
+        expectedProviderUpdatedMs,
         expectedSeriesUpdatedMs,
-      });
+      }, calendarDependencies);
       return "Event updated.";
     }
     case "move_event": {
       const args = moveEventSchema.parse(raw);
       const time = assistantRangeToEventTime(args.time);
-      await updateEventOp(ctx, userId, token(), {
+      await updateEventOp(ctx, userId, {
         eventId: args.eventId as Id<"events">,
         ...time,
         timeZone,
         operationId,
-      });
+      }, calendarDependencies);
       return "Event rescheduled.";
     }
     case "delete_event": {
@@ -1053,85 +1055,30 @@ export async function applyProposal(
         typeof raw.expectedSeriesUpdatedMs === "number"
           ? raw.expectedSeriesUpdatedMs
           : undefined;
-      await deleteEventOp(ctx, userId, token(), {
+      await deleteEventOp(ctx, userId, {
         eventId: args.eventId as Id<"events">,
         scope: args.scope,
         operationId,
         expectedSeriesUpdatedMs,
-      });
+      }, calendarDependencies);
       return "Event deleted.";
     }
     case "decide_booking_request": {
       const args = decideBookingSchema.parse(raw);
       const bookingId = args.bookingId as Id<"bookings">;
       if (args.decision === "accept") {
-        await ctx.runAction(api.booking.acceptBooking, { bookingId });
+        // A direct call, not runAction: this action already is the billing
+        // and isolation boundary, and `userId` here is the verified confirmer.
+        await acceptBookingForHost(ctx, { bookingId, hostUserId: userId });
         return "Booking request accepted.";
       }
-      await ctx.runMutation(api.booking.rejectBooking, { bookingId });
+      await ctx.runMutation(
+        internal.domains.booking.mutations.rejectBookingForHost,
+        { bookingId, hostUserId: userId },
+      );
       return "Booking request rejected.";
     }
     default:
       throw new Error(`Unknown proposal type: ${action.tool}`);
   }
-}
-
-/** Pending proposals created before the date-only contract may still be on
- * screen. Normalize only those persisted shapes at apply time; newly generated
- * tool schemas expose the unambiguous `time` union exclusively. */
-export function normalizeLegacyDeleteScope(
-  tool: string,
-  raw: unknown,
-): unknown {
-  return tool === "delete_event" &&
-    typeof raw === "object" &&
-    raw !== null &&
-    !("scope" in raw)
-    ? { ...raw, scope: "thisEvent" }
-    : raw;
-}
-
-async function normalizeStoredProposal(
-  ctx: ActionCtx,
-  userId: string,
-  tool: string,
-  raw: unknown,
-): Promise<unknown> {
-  raw = normalizeLegacyDeleteScope(tool, raw);
-  if (
-    typeof raw !== "object" ||
-    raw === null ||
-    "time" in raw ||
-    !("startMs" in raw) ||
-    !("endMs" in raw) ||
-    typeof raw.startMs !== "number" ||
-    typeof raw.endMs !== "number"
-  ) {
-    return raw;
-  }
-
-  let allDay =
-    tool === "create_event" && "allDay" in raw && raw.allDay === true;
-  if (
-    (tool === "update_event" || tool === "move_event") &&
-    "eventId" in raw &&
-    typeof raw.eventId === "string"
-  ) {
-    const context = await ctx.runQuery(internal.calendar.getEventContext, {
-      eventId: raw.eventId as Id<"events">,
-      userId,
-    });
-    allDay = context?.event.allDay ?? false;
-  }
-
-  return {
-    ...raw,
-    time: allDay
-      ? {
-          kind: "allDay",
-          startDate: new Date(raw.startMs).toISOString().slice(0, 10),
-          endDate: new Date(raw.endMs).toISOString().slice(0, 10),
-        }
-      : { kind: "timed", startMs: raw.startMs, endMs: raw.endMs },
-  };
 }

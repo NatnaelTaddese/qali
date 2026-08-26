@@ -47,14 +47,14 @@ export function shouldActivateNotificationRow(
 
 export function NotificationBell() {
   const notifications =
-    (useStableQuery(api.notifications.list) as NotificationRow[] | undefined) ??
+    (useStableQuery(api.domains.notifications.queries.list) as NotificationRow[] | undefined) ??
     [];
-  const unread = useStableQuery(api.notifications.unreadCount) ?? 0;
+  const unread = useStableQuery(api.domains.notifications.queries.unreadCount) ?? 0;
 
-  const markRead = useMutation(api.notifications.markRead);
-  const markAllRead = useMutation(api.notifications.markAllRead);
-  const dismiss = useMutation(api.notifications.dismiss);
-  const clearAll = useMutation(api.notifications.clearAll);
+  const markRead = useMutation(api.domains.notifications.mutations.markRead);
+  const markAllRead = useMutation(api.domains.notifications.mutations.markAllRead);
+  const dismiss = useMutation(api.domains.notifications.mutations.dismiss);
+  const clearAll = useMutation(api.domains.notifications.mutations.clearAll);
   const { open, reveal } = useDock();
   // The badge lives outside the morphing panel's clip region, so it only renders
   // while the dropdown is closed — where it can't be cut off (and where a

@@ -1,23 +1,25 @@
-/** Read handlers for the calendar domain. Plain functions; the root `calendar.ts`
- * wraps each in a Convex `query` / `internalQuery`. */
+/** Read side of the calendar domain. Registration is canonical here, under
+ * `api.domains.calendar.queries.*` / `internal.domains.calendar.queries.*`. */
+
+import { v } from "convex/values";
 
 import type { Doc, Id } from "../../_generated/dataModel";
-import type { QueryCtx } from "../../_generated/server";
+import { internalQuery, query, type QueryCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import {
   MAX_EVENT_SPAN_MS,
   newRowBudget,
   spendRowBudget,
-} from "../../lib/eventReads";
+} from "../../shared/eventReads";
 import {
   ASSISTANT_SHARED_EVENT_LIMIT,
   type EventView,
-  isSharedPublicCalendar,
   MAX_EVENT_RANGE_MS,
   readSharedEventsInRange,
-  selectedCalendarIds,
+  selectedCalendars,
   sharedAsEvent,
 } from "./model";
+import { eventIdArg } from "./validators";
 
 /** The assistant's view of shared public-calendar (holiday/birthday) events in a
  * range, for the selected calendars. Normalized to the events shape. */
@@ -29,70 +31,90 @@ export async function listSharedEventsForAssistantHandler(
     .query("calendars")
     .withIndex("by_user", (q) => q.eq("userId", args.userId))
     .collect();
-  const publicIds = calendars
-    .filter((c) => c.selected && isSharedPublicCalendar(c.googleCalendarId))
-    .map((c) => c.googleCalendarId);
+  const sharedCalendars = calendars.filter((c) => c.selected && c.isShared);
 
   const out: EventView[] = [];
-  for (const calendarId of publicIds) {
+  for (const calendar of sharedCalendars) {
+    const connectionId = calendar.connectionId;
+    const providerCalendarId = calendar.providerCalendarId;
+    if (connectionId === undefined || providerCalendarId === undefined) {
+      continue;
+    }
+    const connection = await ctx.db.get(connectionId);
+    if (!connection) continue;
     const rows = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_end", (q) =>
-        q.eq("calendarId", calendarId).gt("endMs", args.startMs),
+      .withIndex("by_provider_and_providerCalendarId_and_endMs", (q) =>
+        q
+          .eq("provider", connection.provider)
+          .eq("providerCalendarId", providerCalendarId)
+          .gt("endMs", args.startMs),
       )
       .take(ASSISTANT_SHARED_EVENT_LIMIT);
     for (const r of rows) {
-      if (r.startMs < args.endMs) out.push(sharedAsEvent(r, args.userId));
+      if (r.startMs < args.endMs) {
+        out.push(sharedAsEvent(r, args.userId, calendar));
+      }
     }
   }
   return out.sort((a, b) => a.startMs - b.startMs);
 }
 
-/** The user's connected calendars, for the visibility list in the header. */
+export const listSharedEventsForAssistant = internalQuery({
+  args: { userId: v.string(), startMs: v.number(), endMs: v.number() },
+  handler: (ctx, args) => listSharedEventsForAssistantHandler(ctx, args),
+});
+
+/** The user's connected calendars, for the visibility list in the header.
+ * A deliberate DTO: sync cursors, generations, and lease state stay private. */
 export async function listCalendarsHandler(ctx: QueryCtx) {
   const user = await authComponent.safeGetAuthUser(ctx);
   if (!user) {
     return [];
   }
-  return await ctx.db
+  const calendars = await ctx.db
     .query("calendars")
     .withIndex("by_user", (q) => q.eq("userId", user._id))
     .collect();
+  return calendars.map((calendar) => ({
+    _id: calendar._id,
+    connectionId: calendar.connectionId,
+    providerCalendarId: calendar.providerCalendarId,
+    summary: calendar.summary,
+    summaryOverride: calendar.summaryOverride,
+    backgroundColor: calendar.backgroundColor,
+    primary: calendar.primary,
+    accessRole: calendar.accessRole,
+    timeZone: calendar.timeZone,
+    selected: calendar.selected,
+    providerSelected: calendar.providerSelected,
+    isShared: calendar.isShared,
+  }));
 }
 
-/** Upcoming events for the current user, read from the synced `events` table. */
-export async function listEventsHandler(ctx: QueryCtx) {
-  const user = await authComponent.safeGetAuthUser(ctx);
-  if (!user) {
-    return [];
+export const listCalendars = query({
+  args: {},
+  handler: (ctx) => listCalendarsHandler(ctx),
+});
+
+/** Registry lookup that deliberately hides foreign and inactive connections. */
+export async function getCalendarConnectionForAdapterHandler(
+  ctx: QueryCtx,
+  args: { connectionId: Id<"calendarConnections"> },
+): Promise<Doc<"calendarConnections"> | null> {
+  const connection = await ctx.db.get(args.connectionId);
+  if (!connection || connection.status !== "active") {
+    return null;
   }
-  const selected = await selectedCalendarIds(ctx, user._id);
-  const now = Date.now();
-  const personal = (
-    await ctx.db
-      .query("events")
-      .withIndex("by_user_and_start", (q) =>
-        q.eq("userId", user._id).gte("startMs", now),
-      )
-      .order("asc")
-      .take(50)
-  ).filter((e) => selected.has(e.calendarId));
-  const publicIds = [...selected].filter(isSharedPublicCalendar);
-  const shared: EventView[] = [];
-  for (const calendarId of publicIds) {
-    const rows = await ctx.db
-      .query("sharedEvents")
-      .withIndex("by_calendar_and_start", (q) =>
-        q.eq("calendarId", calendarId).gte("startMs", now),
-      )
-      .order("asc")
-      .take(50);
-    shared.push(...rows.map((r) => sharedAsEvent(r, user._id)));
-  }
-  return [...personal, ...shared]
-    .sort((a, b) => a.startMs - b.startMs)
-    .slice(0, 50);
+  return connection;
 }
+
+export const getCalendarConnectionForAdapter = internalQuery({
+  args: {
+    connectionId: v.id("calendarConnections"),
+  },
+  handler: (ctx, args) => getCalendarConnectionForAdapterHandler(ctx, args),
+});
 
 /** Events overlapping [startMs, endMs) for the current user, e.g. a week window. */
 export async function listEventsInRangeHandler(
@@ -106,41 +128,70 @@ export async function listEventsInRangeHandler(
   if (endMs <= startMs || endMs - startMs > MAX_EVENT_RANGE_MS) {
     throw new Error("Requested calendar range is too large");
   }
-  const selected = await selectedCalendarIds(ctx, user._id);
+  const selected = await selectedCalendars(ctx, user._id);
   // Overlap is `endMs > startMs && startMs < endMs`. Range each calendar's
-  // `by_..._end` index on endMs so a multi-day event that began before the
+  // `by_..._endMs` index on endMs so a multi-day event that began before the
   // window is caught, bound the far side with MAX_EVENT_SPAN_MS, and cap the
   // combined read with one row budget.
   const budget = newRowBudget();
-  const spanEnd = endMs + MAX_EVENT_SPAN_MS;
-  const personalIds = [...selected].filter((id) => !isSharedPublicCalendar(id));
-  const publicIds = [...selected].filter(isSharedPublicCalendar);
-  const personal: EventView[] = [];
-  for (const calendarId of personalIds) {
-    const page = await ctx.db
-      .query("events")
-      .withIndex("by_user_and_calendar_and_end", (q) =>
-        q
-          .eq("userId", user._id)
-          .eq("calendarId", calendarId)
-          .gt("endMs", startMs)
-          .lte("endMs", spanEnd),
-      )
-      .take(budget.remaining + 1);
-    spendRowBudget(budget, page.length);
-    for (const e of page) {
-      if (e.startMs < endMs && e.status !== "cancelled") personal.push(e);
-    }
-  }
+  const personalCalendars = selected.filter((calendar) => !calendar.isShared);
+  const publicCalendars = selected.filter((calendar) => calendar.isShared);
+  const personal = await readPersonalEventsInRange(
+    ctx,
+    user._id,
+    personalCalendars,
+    startMs,
+    endMs,
+    budget,
+  );
   const shared = await readSharedEventsInRange(
     ctx,
     user._id,
-    publicIds,
+    publicCalendars,
     startMs,
     endMs,
     budget,
   );
   return [...personal, ...shared].sort((a, b) => a.startMs - b.startMs);
+}
+
+export const listEventsInRange = query({
+  args: { startMs: v.number(), endMs: v.number() },
+  handler: (ctx, args) => listEventsInRangeHandler(ctx, args),
+});
+
+/** Each calendar's events by its own connection-scoped end index. Rows written
+ * before the provider cutover lack the neutral keys and are simply not seen. */
+export async function readPersonalEventsInRange(
+  ctx: QueryCtx,
+  userId: string,
+  calendars: Doc<"calendars">[],
+  startMs: number,
+  endMs: number,
+  budget = newRowBudget(),
+): Promise<Doc<"events">[]> {
+  const spanEnd = endMs + MAX_EVENT_SPAN_MS;
+  const events: Doc<"events">[] = [];
+  for (const calendar of calendars) {
+    if (calendar.userId !== userId) continue;
+    const page = await ctx.db
+      .query("events")
+      .withIndex("by_connection_and_localCalendarId_and_endMs", (q) =>
+        q
+          .eq("connectionId", calendar.connectionId)
+          .eq("localCalendarId", calendar._id)
+          .gt("endMs", startMs)
+          .lte("endMs", spanEnd),
+      )
+      .take(budget.remaining + 1);
+    spendRowBudget(budget, page.length);
+    for (const event of page) {
+      if (event.startMs < endMs && event.status !== "cancelled") {
+        events.push(event);
+      }
+    }
+  }
+  return events;
 }
 
 /** One event, live. */
@@ -162,12 +213,32 @@ export async function getEventByIdHandler(
   }
   // A shared (public-calendar) event belongs to no user, but it must only be
   // returned to a caller who actually has that calendar selected.
-  const selected = await selectedCalendarIds(ctx, user._id);
-  if (!selected.has(row.calendarId)) {
-    return null;
+  const selected = await selectedCalendars(ctx, user._id);
+  for (const calendar of selected) {
+    if (!calendar.isShared) {
+      continue;
+    }
+    const connectionId = calendar.connectionId;
+    const providerCalendarId = calendar.providerCalendarId;
+    if (connectionId === undefined || providerCalendarId === undefined) {
+      continue;
+    }
+    const connection = await ctx.db.get(connectionId);
+    if (
+      connection &&
+      connection.provider === row.provider &&
+      providerCalendarId === row.providerCalendarId
+    ) {
+      return sharedAsEvent(row, user._id, calendar);
+    }
   }
-  return sharedAsEvent(row, user._id);
+  return null;
 }
+
+export const getEventById = query({
+  args: { eventId: eventIdArg },
+  handler: (ctx, args) => getEventByIdHandler(ctx, args),
+});
 
 /** The cached rule for an expanded recurring instance. `null` is a cache miss. */
 export async function getEventRecurrenceHandler(
@@ -183,24 +254,41 @@ export async function getEventRecurrenceHandler(
   if (!event || !("userId" in event)) {
     return null;
   }
-  if (event.userId !== user._id || !event.recurringEventId) {
+  if (event.userId !== user._id || !event.providerSeriesId) {
     return null;
   }
-  const recurringEventId = event.recurringEventId;
+  const connectionId = event.connectionId;
+  const localCalendarId = event.localCalendarId;
+  const providerSeriesId = event.providerSeriesId;
+  const providerUpdatedMs = event.providerUpdatedMs;
+  if (
+    connectionId === undefined ||
+    localCalendarId === undefined ||
+    providerUpdatedMs === undefined
+  ) {
+    return null;
+  }
 
   const series = await ctx.db
     .query("recurringSeries")
-    .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+    .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
       q
-        .eq("userId", user._id)
-        .eq("calendarId", event.calendarId)
-        .eq("googleEventId", recurringEventId),
+        .eq("connectionId", connectionId)
+        .eq("localCalendarId", localCalendarId)
+        .eq("providerEventId", providerSeriesId),
     )
     .unique();
-  return series && series.sourceUpdatedMs >= event.googleUpdatedMs
+  return series &&
+    series.providerUpdatedMs !== undefined &&
+    series.providerUpdatedMs >= providerUpdatedMs
     ? series.recurrence
     : null;
 }
+
+export const getEventRecurrence = query({
+  args: { eventId: eventIdArg },
+  handler: (ctx, args) => getEventRecurrenceHandler(ctx, args),
+});
 
 /** An event plus the calendar it lives on — everything `eventCapabilities` needs. */
 export async function getEventContextHandler(
@@ -211,23 +299,13 @@ export async function getEventContextHandler(
   if (!event || !("userId" in event) || event.userId !== args.userId) {
     return null;
   }
-  const calendar = await ctx.db
-    .query("calendars")
-    .withIndex("by_user_and_googleCalendarId", (q) =>
-      q.eq("userId", args.userId).eq("googleCalendarId", event.calendarId),
-    )
-    .unique();
+  const calendar = event.localCalendarId
+    ? await ctx.db.get(event.localCalendarId)
+    : null;
   return { event, calendar };
 }
 
-/** Resolve the user's primary calendar id (the email), if it has synced. */
-export async function getPrimaryCalendarIdHandler(
-  ctx: QueryCtx,
-  args: { userId: string },
-): Promise<string | null> {
-  const calendars = await ctx.db
-    .query("calendars")
-    .withIndex("by_user", (q) => q.eq("userId", args.userId))
-    .collect();
-  return calendars.find((c) => c.primary)?.googleCalendarId ?? null;
-}
+export const getEventContext = internalQuery({
+  args: { eventId: eventIdArg, userId: v.string() },
+  handler: (ctx, args) => getEventContextHandler(ctx, args),
+});

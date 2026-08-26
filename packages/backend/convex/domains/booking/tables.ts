@@ -38,9 +38,18 @@ export const bookingTables = {
     // False keeps the row (and the claimed slug) while the page reads as
     // missing to visitors.
     enabled: v.boolean(),
+    // Routing target, nullable forever: the provider cutover nulls the pair
+    // and the primary-target fallback self-heals. Always set or clear both
+    // together — resolution throws when exactly one is present.
+    targetConnectionId: v.optional(v.id("calendarConnections")),
+    targetCalendarId: v.optional(v.id("calendars")),
   })
     .index("by_user", ["userId"])
-    .index("by_slug", ["slug"]),
+    .index("by_slug", ["slug"])
+    .index("by_targetConnectionId_and_targetCalendarId", [
+      "targetConnectionId",
+      "targetCalendarId",
+    ]),
 
   // A single date's replacement for whatever the weekly rules say about that
   // weekday. An empty `intervals` blocks the day outright, which is why this is
@@ -72,27 +81,31 @@ export const bookingTables = {
     // Unguessable handle that lets the requester follow their own request
     // without an account. It is the only key that reads this row publicly.
     token: v.string(),
-    // Reserved when acceptance starts and retained with the Google event.
-    googleEventId: v.optional(v.string()),
-    calendarId: v.optional(v.string()),
-    // Provider-neutral fields (dual-written until cutover). `connectionId` is the
-    // writable connection acceptance created the event on; `providerEventId`
-    // mirrors `googleEventId`. Optional until backfilled.
+    // `connectionId` is the writable connection acceptance created the event
+    // on; `providerEventId` is that event's provider id. Optional forever:
+    // terminal bookings never re-resolve them.
     connectionId: v.optional(v.id("calendarConnections")),
     providerEventId: v.optional(v.string()),
+    // Nullable forever, always as a pair (see bookingPages). The acceptance
+    // target re-resolves through the operation ledger when absent.
+    targetConnectionId: v.optional(v.id("calendarConnections")),
+    targetCalendarId: v.optional(v.id("calendars")),
     decidedAt: v.optional(v.number()),
-    // A stable Google create ID plus a short-lived claimant. Status remains
-    // pending while Google is in flight so existing clients keep rendering the
-    // request correctly and a lost response can be reconciled on retry.
+    // Stable idempotency key for one logical acceptance; keys the
+    // calendarOperations ledger row across retries. Status remains pending
+    // while the provider write is in flight so existing clients keep rendering
+    // the request correctly and a lost response can be reconciled on retry.
     acceptOperationId: v.optional(v.string()),
-    acceptAttemptId: v.optional(v.string()),
-    acceptLeaseExpiresAt: v.optional(v.number()),
-    acceptMayHaveSucceeded: v.optional(v.boolean()),
     createdAt: v.number(),
   })
     .index("by_host_and_start", ["hostUserId", "startMs"])
     .index("by_host_and_end", ["hostUserId", "endMs"])
     .index("by_host_and_status_and_start", ["hostUserId", "status", "startMs"])
     .index("by_status_and_end", ["status", "endMs"])
-    .index("by_token", ["token"]),
+    .index("by_token", ["token"])
+    .index("by_targetConnectionId_and_targetCalendarId_and_startMs", [
+      "targetConnectionId",
+      "targetCalendarId",
+      "startMs",
+    ]),
 };

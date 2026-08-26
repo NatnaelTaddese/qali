@@ -45,6 +45,16 @@ const ASSISTANT_BOOKING_LIMIT = 250;
 const ASSISTANT_CALENDAR_LIMIT = 100;
 const MAX_EVENT_RANGE_MS = 400 * 24 * 60 * 60 * 1000;
 
+export function monthlyUsageAt(
+  state: { monthWindowStartMs?: number; monthCount?: number } | null,
+  nowMs: number,
+): number {
+  return state?.monthWindowStartMs !== undefined &&
+    nowMs - state.monthWindowStartMs < MONTH_WINDOW_MS
+    ? (state.monthCount ?? 0)
+    : 0;
+}
+
 function deriveTitle(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim();
   if (flat.length <= TITLE_MAX) {
@@ -84,9 +94,10 @@ export const isAvailable = query({
  * Mirrors the window logic in `startTurn` so the two never disagree.
  */
 export const monthlyQuota = query({
-  args: {},
+  args: { nowMs: v.optional(v.number()) },
   handler: async (
     ctx,
+    args,
   ): Promise<{ used: number; limit: number; remaining: number }> => {
     const user = await authComponent.safeGetAuthUser(ctx);
     if (!user) {
@@ -96,11 +107,11 @@ export const monthlyQuota = query({
       .query("assistantUserState")
       .withIndex("by_user", (q) => q.eq("userId", user._id))
       .unique();
-    const now = Date.now();
-    const inMonthWindow =
-      state?.monthWindowStartMs !== undefined &&
-      now - state.monthWindowStartMs < MONTH_WINDOW_MS;
-    const used = inMonthWindow ? (state?.monthCount ?? 0) : 0;
+    // Older clients sent `{}`. Keep that call valid without reading a query
+    // wall clock; mutations remain authoritative and a current client supplies
+    // a periodically refreshed time for window rollover display.
+    const now = args.nowMs ?? state?.monthWindowStartMs ?? 0;
+    const used = monthlyUsageAt(state, now);
     return {
       used,
       limit: MAX_TURNS_PER_MONTH,
@@ -400,14 +411,15 @@ export const listEventsForAssistant = internalQuery({
 
     const rows: Doc<"events">[] = [];
     for (const calendar of calendars) {
-      if (!calendar.selected) continue;
+      const connectionId = calendar.connectionId;
+      if (!calendar.selected || connectionId === undefined) continue;
       const remaining = ASSISTANT_EVENT_LIMIT - rows.length;
       const calendarRows = await ctx.db
         .query("events")
-        .withIndex("by_user_and_calendar_and_end", (q) =>
+        .withIndex("by_connection_and_localCalendarId_and_endMs", (q) =>
           q
-            .eq("userId", args.userId)
-            .eq("calendarId", calendar.googleCalendarId)
+            .eq("connectionId", connectionId)
+            .eq("localCalendarId", calendar._id)
             .gt("endMs", args.startMs),
         )
         .filter((q) =>
@@ -466,23 +478,28 @@ export const getRecurringSeriesVersion = internalQuery({
   },
   handler: async (ctx, args): Promise<number | null> => {
     const event = await ctx.db.get(args.eventId);
+    if (!event || event.userId !== args.userId) {
+      return null;
+    }
+    const { connectionId, localCalendarId, providerSeriesId } = event;
     if (
-      !event ||
-      event.userId !== args.userId ||
-      event.recurringEventId === undefined
+      connectionId === undefined ||
+      localCalendarId === undefined ||
+      providerSeriesId === undefined
     ) {
       return null;
     }
+    // The series master's provider event id is the instance's series id.
     const series = await ctx.db
       .query("recurringSeries")
-      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+      .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
         q
-          .eq("userId", args.userId)
-          .eq("calendarId", event.calendarId)
-          .eq("googleEventId", event.recurringEventId!),
+          .eq("connectionId", connectionId)
+          .eq("localCalendarId", localCalendarId)
+          .eq("providerEventId", providerSeriesId),
       )
       .unique();
-    return series?.sourceUpdatedMs ?? null;
+    return series?.providerUpdatedMs ?? null;
   },
 });
 
@@ -699,19 +716,28 @@ export const claimAction = internalMutation({
       return null;
     }
     const operationId = action.operationId ?? crypto.randomUUID();
+    const attemptId = crypto.randomUUID();
     const applyLeaseExpiresAt = Date.now() + ACTION_LEASE_MS;
     await ctx.db.patch(args.actionId, {
       status: "applying",
       operationId,
       attemptCount,
+      attemptId,
       applyLeaseExpiresAt,
     });
     await ctx.scheduler.runAt(
       applyLeaseExpiresAt,
-      internal.assistantData.releaseStaleAction,
-      { actionId: args.actionId, applyLeaseExpiresAt },
+      internal.domains.assistant.data.releaseStaleAction,
+      { actionId: args.actionId, attemptId, applyLeaseExpiresAt },
     );
-    return { ...action, operationId, attemptCount };
+    return {
+      ...action,
+      operationId,
+      attemptCount,
+      attemptId,
+      applyLeaseExpiresAt,
+      status: "applying" as const,
+    };
   },
 });
 
@@ -719,15 +745,24 @@ export const claimAction = internalMutation({
 export const settleClaimedAction = internalMutation({
   args: {
     actionId: v.id("assistantActions"),
+    attemptId: v.optional(v.string()),
     status: v.union(v.literal("applied"), v.literal("failed")),
     resultSummary: v.string(),
   },
   handler: async (ctx, args): Promise<null> => {
+    const action = await ctx.db.get(args.actionId);
+    if (
+      action?.status !== "applying" ||
+      (action.attemptId === undefined
+        ? args.attemptId !== undefined
+        : action.attemptId !== args.attemptId)
+    ) return null;
     await ctx.db.patch(args.actionId, {
       status: args.status,
       resultSummary: args.resultSummary,
       decidedAt: Date.now(),
       applyLeaseExpiresAt: undefined,
+      attemptId: undefined,
     });
     return null;
   },
@@ -739,15 +774,22 @@ export const settleClaimedAction = internalMutation({
 export const retryClaimedAction = internalMutation({
   args: {
     actionId: v.id("assistantActions"),
+    attemptId: v.optional(v.string()),
     resultSummary: v.string(),
   },
   handler: async (ctx, args): Promise<null> => {
     const action = await ctx.db.get(args.actionId);
-    if (action?.status === "applying") {
+    if (
+      action?.status === "applying" &&
+      (action.attemptId === undefined
+        ? args.attemptId === undefined
+        : action.attemptId === args.attemptId)
+    ) {
       await ctx.db.patch(args.actionId, {
         status: "pending",
         resultSummary: args.resultSummary.slice(0, 2_000),
         applyLeaseExpiresAt: undefined,
+        attemptId: undefined,
       });
     }
     return null;
@@ -759,18 +801,23 @@ export const retryClaimedAction = internalMutation({
 export const releaseStaleAction = internalMutation({
   args: {
     actionId: v.id("assistantActions"),
+    attemptId: v.optional(v.string()),
     applyLeaseExpiresAt: v.number(),
   },
   handler: async (ctx, args): Promise<null> => {
     const action = await ctx.db.get(args.actionId);
     if (
       action?.status === "applying" &&
+      (action.attemptId === undefined
+        ? args.attemptId === undefined
+        : action.attemptId === args.attemptId) &&
       action.applyLeaseExpiresAt === args.applyLeaseExpiresAt &&
       args.applyLeaseExpiresAt <= Date.now()
     ) {
       await ctx.db.patch(args.actionId, {
         status: "pending",
         applyLeaseExpiresAt: undefined,
+        attemptId: undefined,
         resultSummary:
           "The previous confirmation was interrupted. Retry to reconcile it safely.",
       });

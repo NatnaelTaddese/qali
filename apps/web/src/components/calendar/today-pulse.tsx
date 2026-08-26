@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { REVEAL_FLASH } from "./motion";
 
 /** A destination the calendar has been asked to reach for. `id` is the target
- * item's key (an event `_id`/`googleEventId`, a booking `_id`, or a day key);
+ * item's key (an event `_id`/`providerEventId`, a booking `_id`, or a day key);
  * `nonce` increments on every reveal so the same target can flash again; `at`
  * is when it was issued, used to decide whether a late-mounting card should
  * still play (see {@link RevealFlash}). */
@@ -28,8 +28,9 @@ interface RevealFlashProps {
   reveal: Reveal;
   /** This item's key(s); the flash plays when `reveal.id` matches any of them.
    * An array covers items with more than one natural key — an event is reached
-   * for by either its Convex `_id` or its `googleEventId`. */
-  targetId: string | readonly string[];
+   * for by either its Convex `_id` or its `providerEventId`. An undefined
+   * member (an event not yet synced) simply never matches. */
+  targetId: string | readonly (string | undefined)[];
   /** Highlight colour + border-radius classes for the overlay. */
   className?: string;
 }

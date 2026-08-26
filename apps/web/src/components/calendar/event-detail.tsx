@@ -483,14 +483,12 @@ export function EventDetail({
   const event = live ?? snapshot;
   const recurrenceLines = useQuery(
     api.domains.calendar.queries.getEventRecurrence,
-    event.recurringEventId ? { eventId: event._id } : "skip",
+    event.providerSeriesId ? { eventId: event._id } : "skip",
   );
 
   const colorVar = useEventColor()(event);
   const capabilities = useEventCapabilities()(event);
-  const calendar =
-    calendars.find((c) => c._id === event.localCalendarId) ??
-    calendars.find((c) => c.googleCalendarId === event.calendarId);
+  const calendar = calendars.find((c) => c._id === event.localCalendarId);
 
   const [screen, setScreen] = useState<"main" | "description">("main");
   const mainRef = useRef<HTMLDivElement>(null);
@@ -503,7 +501,7 @@ export function EventDetail({
   } | null>(null);
 
   useEffect(() => {
-    if (!event.recurringEventId || recurrenceLines !== null) return;
+    if (!event.providerSeriesId || recurrenceLines !== null) return;
 
     let active = true;
     setRecurrenceRefreshFailedFor(undefined);
@@ -514,7 +512,7 @@ export function EventDetail({
     return () => {
       active = false;
     };
-  }, [event._id, event.recurringEventId, recurrenceLines, refreshEventRecurrence]);
+  }, [event._id, event.providerSeriesId, recurrenceLines, refreshEventRecurrence]);
 
   const recurrence = recurrenceLines ? parseRRule(recurrenceLines) : null;
   const recurrenceSummary = recurrence
@@ -560,8 +558,9 @@ export function EventDetail({
         location: event.location ?? "",
         allDay: event.allDay,
         isPrivate: event.visibility === "private",
-        busy: event.transparency !== "transparent",
-        colorId: event.colorId,
+        // An unset busy means busy; only an explicit false is free.
+        busy: event.busy !== false,
+        color: event.color,
         calendarId: calendar?._id,
         // A copy's invitees start unasked — carrying answers across would claim
         // replies to an event that doesn't exist yet.
@@ -583,11 +582,10 @@ export function EventDetail({
       .catch(() => toast.error("Couldn't copy the link"));
   };
 
-  const conferenceUrl = event.conferenceUrl ?? event.hangoutLink;
+  const conferenceUrl = event.conferenceUrl;
+  const isGoogleMeet = event.conferenceType === "hangoutsMeet";
   const conferenceName =
-    event.conferenceName ?? (event.hangoutLink ? "Google Meet" : "Video call");
-  const isGoogleMeet =
-    event.conferenceType === "hangoutsMeet" || Boolean(event.hangoutLink);
+    event.conferenceName ?? (isGoogleMeet ? "Google Meet" : "Video call");
 
   const copyConferenceLink = () => {
     if (!conferenceUrl) return;
@@ -670,9 +668,7 @@ export function EventDetail({
                     <span aria-hidden>·</span>
                   </>
                 )}
-                <span>
-                  {event.transparency === "transparent" ? "Free" : "Busy"}
-                </span>
+                <span>{event.busy === false ? "Free" : "Busy"}</span>
                 {event.visibility === "private" && (
                   <HugeiconsIcon
                     icon={SquareLock01Icon}
@@ -701,7 +697,7 @@ export function EventDetail({
             </p>
           </DetailRow>
 
-          {event.recurringEventId && (
+          {event.providerSeriesId && (
             <DetailRow icon={RepeatIcon}>
               {recurrenceSummary === undefined ? (
                 <Spinner
@@ -816,7 +812,7 @@ export function EventDetail({
 
             <div className="flex items-center gap-2 -mr-2">
               {(capabilities.canDelete || capabilities.canRemoveSelf) && (
-                event.recurringEventId ? (
+                event.providerSeriesId ? (
                   <RecurringDeleteControl
                     label={
                       capabilities.canDelete

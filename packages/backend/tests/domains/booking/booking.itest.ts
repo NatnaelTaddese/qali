@@ -64,19 +64,24 @@ function bookingDoc(
 /** A confirmed, opaque event on a selected calendar, used to make a slot busy. */
 function eventDoc(
   userId: string,
+  target: {
+    connectionId: Id<"calendarConnections">;
+    calendarId: Id<"calendars">;
+  },
   startMs: number,
   endMs: number,
-  googleEventId: string,
+  providerEventId: string,
 ) {
   return {
     userId,
-    calendarId: CAL,
-    googleEventId,
+    connectionId: target.connectionId,
+    localCalendarId: target.calendarId,
+    providerEventId,
+    providerUpdatedMs: 1_000,
     startMs,
     endMs,
     allDay: false,
     status: "confirmed",
-    googleUpdatedMs: 1_000,
   };
 }
 
@@ -93,12 +98,12 @@ async function seedHost(t: ReturnType<typeof convexTest>, userId = HOST) {
     });
     const calendarId = await ctx.db.insert("calendars", {
       userId,
-      googleCalendarId: CAL,
       providerCalendarId: CAL,
       connectionId,
       primary: true,
       accessRole: "owner",
       selected: true,
+      isShared: false,
     });
     await ctx.db.insert("bookingPages", {
       ...pageDoc(userId),
@@ -262,12 +267,12 @@ describe("booking acceptance claim", () => {
 
   test("refuses a slot that another calendar event now occupies", async () => {
     const t = convexTest(schema, modules);
-    await seedHost(t);
+    const target = await seedHost(t);
     const start = future();
     const end = start + 30 * 60_000;
     const bookingId = await t.run(async (ctx) => {
       // A meeting the host booked by hand now overlaps the requested slot.
-      await ctx.db.insert("events", eventDoc(HOST, start, end, "conflict"));
+      await ctx.db.insert("events", eventDoc(HOST, target, start, end, "conflict"));
       return ctx.db.insert("bookings", bookingDoc(HOST, start, end));
     });
 
@@ -341,6 +346,57 @@ describe("booking acceptance claim", () => {
       reconcileOnly: true,
     });
   });
+
+  test("an operation with a nulled local calendar re-resolves it by provider id", async () => {
+    const t = convexTest(schema, modules);
+    const { connectionId, calendarId } = await seedHost(t);
+    const start = future();
+    const bookingId = await t.run((ctx) =>
+      ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
+    );
+    await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
+      bookingId,
+      hostUserId: HOST,
+      attemptId: "attempt-1",
+    });
+    await t.mutation(internal.domains.booking.mutations.releaseBookingAcceptance, {
+      bookingId,
+      hostUserId: HOST,
+      attemptId: "attempt-1",
+      mayHaveSucceeded: false,
+    });
+    // The provider cutover nulls the operation's local calendar reference and
+    // the booking's target pair; the provider calendar id survives.
+    await t.run(async (ctx) => {
+      const operation = await ctx.db
+        .query("calendarOperations")
+        .withIndex("by_bookingId", (q) => q.eq("bookingId", bookingId))
+        .unique();
+      await ctx.db.patch(operation!._id, { localCalendarId: undefined });
+      await ctx.db.patch(bookingId, {
+        targetConnectionId: undefined,
+        targetCalendarId: undefined,
+      });
+    });
+
+    const retry = await t.mutation(internal.domains.booking.mutations.claimBookingAcceptance, {
+      bookingId,
+      hostUserId: HOST,
+      attemptId: "attempt-2",
+    });
+    expect(retry).toMatchObject({
+      connectionId,
+      localCalendarId: calendarId,
+      providerCalendarId: CAL,
+    });
+    const operation = await t.run((ctx) =>
+      ctx.db
+        .query("calendarOperations")
+        .withIndex("by_bookingId", (q) => q.eq("bookingId", bookingId))
+        .unique(),
+    );
+    expect(operation?.localCalendarId).toBe(calendarId);
+  });
 });
 
 describe("scheduled booking acceptance reconciliation", () => {
@@ -362,7 +418,6 @@ describe("scheduled booking acceptance reconciliation", () => {
         .withIndex("by_bookingId", (q) => q.eq("bookingId", bookingId))
         .unique();
       await ctx.db.patch(operation!._id, { leaseExpiresAt: Date.now() - 1 });
-      await ctx.db.patch(bookingId, { acceptLeaseExpiresAt: Date.now() - 1 });
       return operation;
     });
     const retry = await t.mutation(
@@ -518,7 +573,7 @@ describe("booking acceptance settle", () => {
       "pending",
     );
 
-    // The holder commits, and the accept-lease bookkeeping is cleared.
+    // The holder commits, and the ledger lease is cleared.
     const ok = await t.mutation(internal.domains.booking.mutations.markAccepted, {
       bookingId,
       hostUserId: HOST,
@@ -529,13 +584,10 @@ describe("booking acceptance settle", () => {
     expect(ok).toBe(true);
     const row = await t.run((ctx) => ctx.db.get(bookingId));
     expect(row!.status).toBe("accepted");
-    expect(row!.googleEventId).toBe("evt_google");
-    // Dual-write: the neutral mirror is stamped alongside the Google id.
-    expect(row!.connectionId).toBeDefined();
     expect(row!.providerEventId).toBe("evt_google");
-    expect(row!.acceptAttemptId).toBeUndefined();
-    expect(row!.acceptLeaseExpiresAt).toBeUndefined();
-    expect(row!.acceptMayHaveSucceeded).toBeUndefined();
+    expect(row!.connectionId).toBeDefined();
+    expect(row!.targetConnectionId).toBe(row!.connectionId);
+    expect(row!.targetCalendarId).toBeDefined();
     const operation = await t.run((ctx) =>
       ctx.db
         .query("calendarOperations")
@@ -570,21 +622,23 @@ describe("booking acceptance settle", () => {
       attemptId: "stale",
       mayHaveSucceeded: false,
     });
-    expect((await t.run((ctx) => ctx.db.get(bookingId)))!.acceptAttemptId).toBe(
-      "holder",
+    const held = await t.run((ctx) =>
+      ctx.db
+        .query("calendarOperations")
+        .filter((q) => q.eq(q.field("bookingId"), bookingId))
+        .unique(),
     );
+    expect(held?.status).toBe("pending");
+    expect(held?.attemptId).toBe("holder");
 
-    // The holder releasing with an ambiguous outcome flags the booking so a
-    // later reject cannot contradict a possibly-sent Google invitation.
+    // The holder releasing with an ambiguous outcome flags the ledger so a
+    // later reject cannot contradict a possibly-sent provider invitation.
     await t.mutation(internal.domains.booking.mutations.releaseBookingAcceptance, {
       bookingId,
       hostUserId: HOST,
       attemptId: "holder",
       mayHaveSucceeded: true,
     });
-    const row = await t.run((ctx) => ctx.db.get(bookingId));
-    expect(row!.acceptAttemptId).toBeUndefined();
-    expect(row!.acceptMayHaveSucceeded).toBe(true);
     const operation = await t.run((ctx) =>
       ctx.db
         .query("calendarOperations")
@@ -593,6 +647,7 @@ describe("booking acceptance settle", () => {
     );
     expect(operation?.status).toBe("ambiguous");
     expect(operation?.mayHaveSucceeded).toBe(true);
+    expect(operation?.attemptId).toBeUndefined();
   });
 });
 
@@ -602,13 +657,7 @@ describe("booking acceptance authority", () => {
     const { connectionId, calendarId } = await seedHost(t);
     const endMs = Date.now() - 1_000;
     const bookingId = await t.run((ctx) =>
-      ctx.db.insert(
-        "bookings",
-        bookingDoc(HOST, endMs - 30 * 60_000, endMs, {
-          acceptAttemptId: "stale-booking-mirror",
-          acceptLeaseExpiresAt: 1,
-        }),
-      ),
+      ctx.db.insert("bookings", bookingDoc(HOST, endMs - 30 * 60_000, endMs)),
     );
     const operationId = await t.run((ctx) => {
       const now = Date.now();
@@ -738,12 +787,12 @@ describe("booking acceptance authority", () => {
       });
       const calendarId = await ctx.db.insert("calendars", {
         userId: "other",
-        googleCalendarId: "other-primary",
         connectionId,
         providerCalendarId: "other-primary",
         primary: true,
         accessRole: "owner",
         selected: true,
+        isShared: false,
       });
       return { connectionId, calendarId };
     });
@@ -794,25 +843,37 @@ describe("booking acceptance authority", () => {
     ).rejects.toThrow(/target is unavailable/i);
   });
 
-  test("a legacy page persists its primary Google target on request", async () => {
+  test("a page without targets resolves and persists the primary target", async () => {
     const t = convexTest(schema, modules);
     await t.run(async (ctx) => {
+      const now = Date.now();
       await ctx.db.insert("bookingPages", {
         ...pageDoc(HOST),
-        slug: "legacy-host",
+        slug: "self-heal-host",
+      });
+      // Both page targets absent — the cutover nulls the pair — so the request
+      // must fall back to the host's primary calendar and persist it.
+      const connectionId = await ctx.db.insert("calendarConnections", {
+        userId: HOST,
+        provider: "google",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
       });
       await ctx.db.insert("calendars", {
         userId: HOST,
-        googleCalendarId: CAL,
+        connectionId,
+        providerCalendarId: CAL,
         primary: true,
         accessRole: "owner",
         selected: true,
+        isShared: false,
       });
     });
     const startMs =
       Math.ceil((Date.now() + 60 * 60_000) / (30 * 60_000)) * (30 * 60_000);
     await t.mutation(api.domains.booking.mutations.requestBooking, {
-      slug: "legacy-host",
+      slug: "self-heal-host",
       startMs,
       name: "Requester",
       email: "requester@example.com",
@@ -842,6 +903,7 @@ describe("booking acceptance authority", () => {
     const t = convexTest(schema, modules);
     const { connectionId, calendarId } = await seedHost(t);
     await t.mutation(internal.domains.calendar.mutations.mirrorProviderEvent, {
+      userId: HOST,
       connectionId,
       localCalendarId: calendarId,
       event: {
@@ -859,21 +921,20 @@ describe("booking acceptance authority", () => {
     const event = await t.run((ctx) =>
       ctx.db
         .query("events")
-        .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+        .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
           q
-            .eq("userId", HOST)
-            .eq("calendarId", CAL)
-            .eq("googleEventId", "provider-event"),
+            .eq("connectionId", connectionId)
+            .eq("localCalendarId", calendarId)
+            .eq("providerEventId", "provider-event"),
         )
         .unique(),
     );
     expect(event).toMatchObject({
+      userId: HOST,
       connectionId,
       localCalendarId: calendarId,
       providerEventId: "provider-event",
-      googleEventId: "provider-event",
       providerUpdatedMs: 9_000,
-      googleUpdatedMs: 9_000,
     });
   });
 });
@@ -907,7 +968,7 @@ describe("booking context conflict detection", () => {
 
   test("reports a conflict when another event overlaps the pending slot", async () => {
     const t = convexTest(schema, modules);
-    await seedHost(t);
+    const target = await seedHost(t);
     const start = future();
     const end = start + 30 * 60_000;
     const freeId = await t.run((ctx) =>
@@ -920,7 +981,7 @@ describe("booking context conflict detection", () => {
     expect(free!.conflict).toBe(false);
 
     const busyId = await t.run(async (ctx) => {
-      await ctx.db.insert("events", eventDoc(HOST, start, end, "overlap"));
+      await ctx.db.insert("events", eventDoc(HOST, target, start, end, "overlap"));
       return ctx.db.insert(
         "bookings",
         bookingDoc(HOST, start, end, { token: "tok_busy" }),
@@ -935,7 +996,7 @@ describe("booking context conflict detection", () => {
 
   test("detects a multi-day event that began well before the window", async () => {
     const t = convexTest(schema, modules);
-    await seedHost(t);
+    const target = await seedHost(t);
     const start = future();
     const end = start + 30 * 60_000;
     // A vacation that started three days before the slot and runs past it. The
@@ -944,7 +1005,7 @@ describe("booking context conflict detection", () => {
     const bookingId = await t.run(async (ctx) => {
       await ctx.db.insert(
         "events",
-        eventDoc(HOST, start - 3 * 24 * 60 * 60_000, end + 60_000, "vacation"),
+        eventDoc(HOST, target, start - 3 * 24 * 60 * 60_000, end + 60_000, "vacation"),
       );
       return ctx.db.insert("bookings", bookingDoc(HOST, start, end));
     });

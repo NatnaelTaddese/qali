@@ -164,7 +164,7 @@ export function PanelHeader({
             >
               <RevealFlash
                 reveal={reveal}
-                targetId={[event._id, event.googleEventId]}
+                targetId={[event._id, event.providerEventId]}
                 className="rounded-md bg-[color-mix(in_oklab,var(--primary)_45%,transparent)]"
               />
               <span

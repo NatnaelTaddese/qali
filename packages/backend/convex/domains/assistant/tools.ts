@@ -265,10 +265,11 @@ function previewValue(value: string, max = 120): string {
  * case is the difference between an honest answer and offering a slot the user
  * already said no to. */
 function isBusy(
-  event: Pick<Doc<"events">, "status" | "transparency" | "attendees">,
+  event: Pick<Doc<"events">, "status" | "busy" | "attendees">,
 ): boolean {
   if (event.status === "cancelled") return false;
-  if (event.transparency === "transparent") return false;
+  // Absent `busy` means busy; only an explicit false marks the event free.
+  if (event.busy === false) return false;
   const self = event.attendees?.find((a) => a.self);
   if (self?.responseStatus === "declined") return false;
   return true;
@@ -322,10 +323,10 @@ const listEvents = readTool({
       when: formatRange(e.startMs, e.endMs, tc.timeZone, e.allDay),
       allDay: e.allDay,
       location: e.location,
-      recurring: Boolean(e.recurringEventId),
+      recurring: Boolean(e.providerSeriesId),
       isOrganizer: e.organizer?.self ?? false,
       guests: e.attendees?.map((a) => a.email) ?? [],
-      meetLink: e.hangoutLink,
+      meetLink: e.conferenceUrl,
     }));
   },
 });
@@ -388,7 +389,7 @@ const findFreeTime = readTool({
         endMs: args.toMs,
       }),
     ]);
-    // Holidays are transparency:"transparent", so isBusy drops them and they
+    // Holidays are marked free (busy === false), so isBusy drops them and they
     // never block a slot — but a holiday marked busy correctly would.
     const rows = [...personal, ...shared];
     const busy = mergeIntervals(
@@ -750,7 +751,7 @@ const updateEvent = writeTool({
       );
     }
     const scope =
-      row.recurringEventId && args.scope && args.scope !== "thisEvent"
+      row.providerSeriesId && args.scope && args.scope !== "thisEvent"
         ? args.scope === "allEvents"
           ? " (whole series)"
           : " (this and following)"
@@ -760,11 +761,11 @@ const updateEvent = writeTool({
   async storedArgs(tc, args) {
     if (args.guestEmails === undefined && args.repeat === undefined) return {};
     const row = await requireEditable(tc, args.eventId);
-    if (args.repeat !== undefined && row.recurringEventId !== undefined) {
+    if (args.repeat !== undefined && row.providerSeriesId !== undefined) {
       throw new Error("This event is already part of a recurring series");
     }
     const editsSeries =
-      row.recurringEventId !== undefined &&
+      row.providerSeriesId !== undefined &&
       args.scope !== undefined &&
       args.scope !== "thisEvent";
     const expectedSeriesUpdatedMs = editsSeries
@@ -779,7 +780,7 @@ const updateEvent = writeTool({
       );
     }
     return {
-      expectedProviderUpdatedMs: row.providerUpdatedMs ?? row.googleUpdatedMs,
+      expectedProviderUpdatedMs: row.providerUpdatedMs,
       ...(args.repeat === undefined
         ? {}
         : {
@@ -844,7 +845,7 @@ const deleteEvent = writeTool({
       ["canDelete", "canRemoveSelf"],
     );
     const guests = row.attendees?.length ?? 0;
-    const recurring = row.recurringEventId !== undefined;
+    const recurring = row.providerSeriesId !== undefined;
     if (!recurring && args.scope !== "thisEvent") {
       throw new Error("A non-recurring event only has one occurrence");
     }
@@ -955,13 +956,7 @@ export async function applyProposal(
   action: Doc<"assistantActions">,
   calendarDependencies?: CalendarServiceDependencies,
 ): Promise<string> {
-  const stored: unknown = JSON.parse(action.input);
-  const raw = await normalizeStoredProposal(
-    ctx,
-    userId,
-    action.tool,
-    stored,
-  );
+  const raw: unknown = JSON.parse(action.input);
   const timeZone =
     typeof raw === "object" && raw !== null && "timeZone" in raw
       ? String((raw as { timeZone: unknown }).timeZone)
@@ -1014,12 +1009,7 @@ export async function applyProposal(
         "expectedProviderUpdatedMs" in raw &&
         typeof raw.expectedProviderUpdatedMs === "number"
           ? raw.expectedProviderUpdatedMs
-          : typeof raw === "object" &&
-              raw !== null &&
-              "expectedGoogleUpdatedMs" in raw &&
-              typeof raw.expectedGoogleUpdatedMs === "number"
-            ? raw.expectedGoogleUpdatedMs
-            : undefined;
+          : undefined;
       const expectedSeriesUpdatedMs =
         typeof raw === "object" &&
         raw !== null &&
@@ -1091,64 +1081,4 @@ export async function applyProposal(
     default:
       throw new Error(`Unknown proposal type: ${action.tool}`);
   }
-}
-
-/** Pending proposals created before the date-only contract may still be on
- * screen. Normalize only those persisted shapes at apply time; newly generated
- * tool schemas expose the unambiguous `time` union exclusively. */
-export function normalizeLegacyDeleteScope(
-  tool: string,
-  raw: unknown,
-): unknown {
-  return tool === "delete_event" &&
-    typeof raw === "object" &&
-    raw !== null &&
-    !("scope" in raw)
-    ? { ...raw, scope: "thisEvent" }
-    : raw;
-}
-
-async function normalizeStoredProposal(
-  ctx: ActionCtx,
-  userId: string,
-  tool: string,
-  raw: unknown,
-): Promise<unknown> {
-  raw = normalizeLegacyDeleteScope(tool, raw);
-  if (
-    typeof raw !== "object" ||
-    raw === null ||
-    "time" in raw ||
-    !("startMs" in raw) ||
-    !("endMs" in raw) ||
-    typeof raw.startMs !== "number" ||
-    typeof raw.endMs !== "number"
-  ) {
-    return raw;
-  }
-
-  let allDay =
-    tool === "create_event" && "allDay" in raw && raw.allDay === true;
-  if (
-    (tool === "update_event" || tool === "move_event") &&
-    "eventId" in raw &&
-    typeof raw.eventId === "string"
-  ) {
-    const context = await ctx.runQuery(internal.domains.calendar.queries.getEventContext, {
-      eventId: raw.eventId as Id<"events">,
-      userId,
-    });
-    allDay = context?.event.allDay ?? false;
-  }
-
-  return {
-    ...raw,
-    time: allDay
-      ? {
-          kind: "allDay",
-          startDate: new Date(raw.startMs).toISOString().slice(0, 10),
-          endDate: new Date(raw.endMs).toISOString().slice(0, 10),
-        }
-      : { kind: "timed", startMs: raw.startMs, endMs: raw.endMs },
-  };
 }

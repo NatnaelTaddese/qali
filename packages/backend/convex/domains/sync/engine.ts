@@ -99,18 +99,6 @@ async function requireLiveState(
   return state;
 }
 
-async function mirrorLegacySyncState(
-  ctx: MutationCtx,
-  userId: string,
-  patch: Partial<Omit<Doc<"syncState">, "_id" | "_creationTime" | "userId">>,
-): Promise<void> {
-  const row = await ctx.db
-    .query("syncState")
-    .withIndex("by_user", (q) => q.eq("userId", userId))
-    .unique();
-  if (row) await ctx.db.patch(row._id, patch);
-}
-
 function valueEvent(event: ProviderEvent) {
   return {
     ...event,
@@ -122,20 +110,16 @@ function valueEvent(event: ProviderEvent) {
   };
 }
 
-function storedEvent(
-  userId: string,
-  connectionId: Id<"calendarConnections">,
-  localCalendarId: Id<"calendars">,
-  event: ProviderEvent,
-  generation?: number,
-) {
+/** Neutral stored-event fields shared by the personal and shared-event docs
+ * (see storedEventBaseValidator). */
+function storedEventBase(event: ProviderEvent, generation?: number) {
   const attendees = event.attendees
     ?.filter((row): row is typeof row & { email: string } => Boolean(row.email))
     .map((row) => ({ ...row, email: row.email }));
   return {
-    userId,
-    googleEventId: event.id,
-    calendarId: event.calendarId,
+    providerEventId: event.id,
+    providerUpdatedMs: event.updatedMs,
+    providerSeriesId: event.seriesId,
     summary: event.summary,
     description: event.description,
     location: event.location,
@@ -144,13 +128,11 @@ function storedEvent(
     allDay: event.allDay,
     status: event.status,
     htmlLink: event.htmlLink,
-    colorId: event.color,
+    color: event.color,
     visibility: event.visibility,
-    transparency:
-      event.busy === undefined ? undefined : event.busy ? "opaque" : "transparent",
+    busy: event.busy,
     attendees,
     attendeesOmitted: event.attendeesOmitted,
-    googleUpdatedMs: event.updatedMs,
     organizer: event.organizer,
     creator: event.creator,
     guestsCanModify: event.guestsCanModify,
@@ -158,20 +140,25 @@ function storedEvent(
     guestsCanSeeOtherGuests: event.guestsCanSeeOtherGuests,
     locked: event.locked,
     eventType: event.eventType,
-    recurringEventId: event.seriesId,
-    hangoutLink:
-      event.conference?.type === "hangoutsMeet" ? event.conference.url : undefined,
     conferenceUrl: event.conference?.url,
     conferenceName: event.conference?.name,
     conferenceType: event.conference?.type,
     syncGeneration: generation,
+  };
+}
+
+function storedEvent(
+  userId: string,
+  connectionId: Id<"calendarConnections">,
+  localCalendarId: Id<"calendars">,
+  event: ProviderEvent,
+  generation?: number,
+) {
+  return {
+    userId,
     connectionId,
     localCalendarId,
-    providerEventId: event.id,
-    providerUpdatedMs: event.updatedMs,
-    providerSeriesId: event.seriesId,
-    color: event.color,
-    busy: event.busy,
+    ...storedEventBase(event, generation),
   };
 }
 
@@ -255,18 +242,18 @@ async function claimPersonSource(
 ): Promise<void> {
   const email = emailValue.trim().toLowerCase();
   if (!email) return;
-  const candidates = await ctx.db
+  const existing = await ctx.db
     .query("personSourceClaims")
-    .withIndex("by_connection_and_source_and_email", (q) =>
-      q.eq("connectionId", connectionId).eq("source", source).eq("email", email),
+    .withIndex("by_connection_and_source_and_providerContactId_and_email", (q) =>
+      q
+        .eq("connectionId", connectionId)
+        .eq("source", source)
+        .eq("providerContactId", providerContactId)
+        .eq("email", email),
     )
-    .collect();
-  const existing =
-    candidates.find((row) => row.providerContactId === providerContactId) ??
-    candidates.find((row) => row.providerContactId === undefined);
+    .unique();
   if (existing) {
     await ctx.db.patch(existing._id, {
-      providerContactId,
       syncGeneration: generation ?? existing.syncGeneration,
       updatedAt: Date.now(),
     });
@@ -293,15 +280,16 @@ async function releasePersonSource(
 ): Promise<void> {
   const email = emailValue.trim().toLowerCase();
   if (!email) return;
-  const claims = await ctx.db
+  const claim = await ctx.db
     .query("personSourceClaims")
-    .withIndex("by_connection_and_source_and_email", (q) =>
-      q.eq("connectionId", connectionId).eq("source", source).eq("email", email),
+    .withIndex("by_connection_and_source_and_providerContactId_and_email", (q) =>
+      q
+        .eq("connectionId", connectionId)
+        .eq("source", source)
+        .eq("providerContactId", providerContactId)
+        .eq("email", email),
     )
-    .collect();
-  const claim =
-    claims.find((row) => row.providerContactId === providerContactId) ??
-    claims.find((row) => row.providerContactId === undefined);
+    .unique();
   if (claim) await ctx.db.delete(claim._id);
   const remaining = await ctx.db
     .query("personSourceClaims")
@@ -684,28 +672,6 @@ async function syncContactFeed(
           done = result.done;
           changed = changed || result.deleted > 0;
         }
-        if (feed === "other") {
-          let peopleCursor: string | null = null;
-          let peopleDone = false;
-          while (!peopleDone) {
-            await heartbeat(ctx, connectionId, attemptId);
-            const result: {
-              cursor: string | null;
-              done: boolean;
-              deleted: number;
-            } = await ctx.runMutation(
-              internal.domains.sync.engine.sweepLegacyOtherPeopleBatch,
-              {
-                connectionId,
-                attemptId,
-                cursor: peopleCursor,
-              },
-            );
-            peopleCursor = result.cursor;
-            peopleDone = result.done;
-            changed = changed || result.deleted > 0;
-          }
-        }
       }
       const committed: boolean = await ctx.runMutation(
         internal.domains.sync.engine.commitContactsSync,
@@ -952,18 +918,6 @@ export const getConnectionSyncState = internalQuery({
 export const ensureSyncState = internalMutation({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
-    const legacy = await ctx.db
-      .query("syncState")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .unique();
-    if (!legacy) {
-      await ctx.db.insert("syncState", {
-        userId: args.userId,
-        status: "idle",
-        nextSyncDueAt: 0,
-        syncIntervalMs: SYNC_MIN_MS,
-      });
-    }
     const userState = await ctx.db
       .query("userSyncState")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
@@ -1004,13 +958,11 @@ export const claimSyncLease = internalMutation({
     const now = Date.now();
     if (state.syncAttemptId && (state.syncLeaseExpiresAt ?? 0) > now) return null;
     const attemptId = crypto.randomUUID();
-    const patch = {
+    await ctx.db.patch(state._id, {
       status: "syncing" as const,
       syncAttemptId: attemptId,
       syncLeaseExpiresAt: now + SYNC_LEASE_MS,
-    };
-    await ctx.db.patch(state._id, patch);
-    await mirrorLegacySyncState(ctx, state.userId, patch);
+    });
     return attemptId;
   },
 });
@@ -1044,16 +996,14 @@ export const recordSyncOutcome = internalMutation({
     const interval = args.active
       ? SYNC_MIN_MS
       : Math.min((state.syncIntervalMs ?? SYNC_MIN_MS) * 2, SYNC_MAX_MS);
-    const patch = {
+    await ctx.db.patch(state._id, {
       status: args.status,
       lastError: args.status === "error" ? args.lastError : undefined,
       syncIntervalMs: interval,
       nextSyncDueAt: Date.now() + interval,
       syncAttemptId: undefined,
       syncLeaseExpiresAt: undefined,
-    };
-    await ctx.db.patch(state._id, patch);
-    await mirrorLegacySyncState(ctx, state.userId, patch);
+    });
     return null;
   },
 });
@@ -1103,20 +1053,15 @@ export const reconcileCalendars = internalMutation({
     if (!connection || connection.userId !== state.userId) {
       throw new StaleSyncAttemptError();
     }
-    // Neutral indexes on pre-existing tables are staged for the initial deploy.
-    // Google is the only available provider, so the complete legacy user range
-    // remains authoritative until the explicit index/read cutover.
-    const legacy = (await ctx.db
+    const existing = await ctx.db
       .query("calendars")
-      .withIndex("by_user", (q) => q.eq("userId", state.userId))
-      .collect()).filter(
-      (row) =>
-        row.connectionId === undefined || row.connectionId === args.connectionId,
-    );
-    const existing = legacy;
+      .withIndex("by_connection_and_providerCalendarId", (q) =>
+        q.eq("connectionId", args.connectionId),
+      )
+      .collect();
     const byId = new Map<string, Doc<"calendars">>();
-    for (const row of legacy) {
-      byId.set(row.providerCalendarId ?? row.googleCalendarId, row);
+    for (const row of existing) {
+      if (row.providerCalendarId !== undefined) byId.set(row.providerCalendarId, row);
     }
     const seen = new Set(args.calendars.map((row) => row.id));
     const stored: {
@@ -1135,19 +1080,20 @@ export const reconcileCalendars = internalMutation({
         primary: calendar.primary,
         accessRole: calendar.writable ? "writer" : "reader",
         timeZone: calendar.timeZone,
-        googleSelected: calendar.selected,
+        providerSelected: calendar.selected,
         connectionId: args.connectionId,
         providerCalendarId: calendar.id,
         isShared: calendar.shared ?? false,
       };
       let id: Id<"calendars">;
       if (current) {
+        // The local visibility choice (`selected`) is seeded on insert only;
+        // a patch never overwrites later local toggles.
         await ctx.db.patch(current._id, patch);
         id = current._id;
       } else {
         id = await ctx.db.insert("calendars", {
           userId: state.userId,
-          googleCalendarId: calendar.id,
           selected: calendar.selected ?? false,
           ...patch,
         });
@@ -1156,12 +1102,13 @@ export const reconcileCalendars = internalMutation({
       stored.push({
         localCalendarId: id,
         providerCalendarId: calendar.id,
-        syncCursor: current?.syncCursor ?? current?.syncToken,
+        syncCursor: current?.syncCursor,
         shared: calendar.shared ?? false,
       });
     }
     for (const calendar of existing) {
-      if (seen.has(calendar.providerCalendarId ?? calendar.googleCalendarId)) continue;
+      if (calendar.providerCalendarId === undefined) continue;
+      if (seen.has(calendar.providerCalendarId)) continue;
       await ctx.db.delete(calendar._id);
       await ctx.scheduler.runAfter(
         0,
@@ -1169,8 +1116,7 @@ export const reconcileCalendars = internalMutation({
         {
           connectionId: args.connectionId,
           localCalendarId: calendar._id,
-          providerCalendarId:
-            calendar.providerCalendarId ?? calendar.googleCalendarId,
+          providerCalendarId: calendar.providerCalendarId,
         },
       );
     }
@@ -1217,43 +1163,33 @@ export const cleanupRemovedCalendarEvents = internalMutation({
     providerCalendarId: v.string(),
   },
   handler: async (ctx, args): Promise<null> => {
-    const connection = await ctx.db.get(args.connectionId);
-    if (!connection) return null;
     const readded = await ctx.db
       .query("calendars")
-      .withIndex("by_user_and_googleCalendarId", (q) =>
+      .withIndex("by_connection_and_providerCalendarId", (q) =>
         q
-          .eq("userId", connection.userId)
-          .eq("googleCalendarId", args.providerCalendarId),
+          .eq("connectionId", args.connectionId)
+          .eq("providerCalendarId", args.providerCalendarId),
       )
       .first();
     if (readded) return null;
     const events = await ctx.db
       .query("events")
-      .withIndex("by_user_and_calendar_and_end", (q) =>
+      .withIndex("by_connection_and_localCalendarId_and_endMs", (q) =>
         q
-          .eq("userId", connection.userId)
-          .eq("calendarId", args.providerCalendarId),
+          .eq("connectionId", args.connectionId)
+          .eq("localCalendarId", args.localCalendarId),
       )
       .take(BATCH_SIZE);
-    for (const row of events) {
-      if (row.connectionId !== undefined && row.connectionId !== args.connectionId)
-        continue;
-      await ctx.db.delete(row._id);
-    }
+    for (const row of events) await ctx.db.delete(row._id);
     const series = await ctx.db
       .query("recurringSeries")
-      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+      .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
         q
-          .eq("userId", connection.userId)
-          .eq("calendarId", args.providerCalendarId),
+          .eq("connectionId", args.connectionId)
+          .eq("localCalendarId", args.localCalendarId),
       )
       .take(BATCH_SIZE);
-    for (const row of series) {
-      if (row.connectionId !== undefined && row.connectionId !== args.connectionId)
-        continue;
-      await ctx.db.delete(row._id);
-    }
+    for (const row of series) await ctx.db.delete(row._id);
     if (
       events.length === BATCH_SIZE ||
       series.length === BATCH_SIZE
@@ -1261,48 +1197,6 @@ export const cleanupRemovedCalendarEvents = internalMutation({
       await ctx.scheduler.runAfter(
         0,
         internal.domains.sync.engine.cleanupRemovedCalendarEvents,
-        args,
-      );
-    }
-    return null;
-  },
-});
-
-/**
- * Orphan cleanup addressed by user + Google calendar id rather than by
- * connection. Still scheduled by live reconcile code against pre-wipe data;
- * survives only until the legacy data contraction.
- */
-export const cleanupLegacyRemovedCalendarEvents = internalMutation({
-  args: { userId: v.string(), googleCalendarId: v.string() },
-  handler: async (ctx, args): Promise<null> => {
-    const readded = await ctx.db
-      .query("calendars")
-      .withIndex("by_user_and_googleCalendarId", (q) =>
-        q
-          .eq("userId", args.userId)
-          .eq("googleCalendarId", args.googleCalendarId),
-      )
-      .first();
-    if (readded) return null;
-    const rows = await ctx.db
-      .query("events")
-      .withIndex("by_user_and_calendar_and_end", (q) =>
-        q.eq("userId", args.userId).eq("calendarId", args.googleCalendarId),
-      )
-      .take(BATCH_SIZE);
-    for (const row of rows) await ctx.db.delete(row._id);
-    const series = await ctx.db
-      .query("recurringSeries")
-      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-        q.eq("userId", args.userId).eq("calendarId", args.googleCalendarId),
-      )
-      .take(BATCH_SIZE);
-    for (const row of series) await ctx.db.delete(row._id);
-    if (rows.length === BATCH_SIZE || series.length === BATCH_SIZE) {
-      await ctx.scheduler.runAfter(
-        0,
-        internal.domains.sync.engine.cleanupLegacyRemovedCalendarEvents,
         args,
       );
     }
@@ -1349,22 +1243,15 @@ export const upsertEventsPage = internalMutation({
     const harvested: PersonInput[] = [];
     for (const event of args.events) {
       if (event.calendarId !== calendar.providerCalendarId) return false;
-      const candidates = await ctx.db
+      const current = await ctx.db
         .query("events")
-        .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+        .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
           q
-            .eq("userId", state.userId)
-            .eq("calendarId", calendar.googleCalendarId)
-            .eq("googleEventId", event.id),
+            .eq("connectionId", args.connectionId)
+            .eq("localCalendarId", args.localCalendarId)
+            .eq("providerEventId", event.id),
         )
-        .collect();
-      const current = candidates.find(
-        (row) =>
-          (row.connectionId === undefined ||
-            row.connectionId === args.connectionId) &&
-          (row.localCalendarId === undefined ||
-            row.localCalendarId === args.localCalendarId),
-      );
+        .unique();
       if (event.status === "cancelled") {
         // A full pass swaps generations only after every page is durable. Leave
         // the old row visible until the final sweep; incremental tombstones can
@@ -1412,19 +1299,15 @@ export const sweepStaleCalendarEventsBatch = internalMutation({
     ) throw new StaleSyncAttemptError();
     const page = await ctx.db
       .query("events")
-      .withIndex("by_user_and_calendar_and_end", (q) =>
+      .withIndex("by_connection_and_localCalendarId_and_endMs", (q) =>
         q
-          .eq("userId", calendar.userId)
-          .eq("calendarId", calendar.googleCalendarId),
+          .eq("connectionId", args.connectionId)
+          .eq("localCalendarId", args.localCalendarId),
       )
       .paginate({ cursor: args.cursor, numItems: BATCH_SIZE });
     let deleted = 0;
     for (const row of page.page) {
-      if (
-        (row.localCalendarId === undefined ||
-          row.localCalendarId === args.localCalendarId) &&
-        row.syncGeneration !== args.keepGeneration
-      ) {
+      if (row.syncGeneration !== args.keepGeneration) {
         await ctx.db.delete(row._id);
         deleted++;
       }
@@ -1452,7 +1335,6 @@ export const commitCalendarFullResync = internalMutation({
     await ctx.db.patch(row._id, {
       syncGenerationAttemptId: undefined,
       syncCursor: args.syncCursor,
-      syncToken: args.syncCursor,
       lastSyncAt: Date.now(),
     });
     return true;
@@ -1472,7 +1354,6 @@ export const setCalendarSyncCursor = internalMutation({
     if (row?.connectionId !== args.connectionId) return false;
     await ctx.db.patch(row._id, {
       syncCursor: args.syncCursor,
-      syncToken: args.syncCursor,
       lastSyncAt: Date.now(),
     });
     return true;
@@ -1487,13 +1368,12 @@ export const claimSharedCalendarSync = internalMutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    if (args.provider !== "google") {
-      throw new Error("Provider sync requires neutral index activation");
-    }
     const row = await ctx.db
       .query("sharedCalendars")
-      .withIndex("by_googleCalendarId", (q) =>
-        q.eq("googleCalendarId", args.providerCalendarId),
+      .withIndex("by_provider_and_providerCalendarId", (q) =>
+        q
+          .eq("provider", args.provider)
+          .eq("providerCalendarId", args.providerCalendarId),
       )
       .first();
     if (
@@ -1507,18 +1387,15 @@ export const claimSharedCalendarSync = internalMutation({
     const attemptId = crypto.randomUUID();
     if (row) {
       await ctx.db.patch(row._id, {
-        provider: args.provider,
-        providerCalendarId: args.providerCalendarId,
         syncAttemptId: attemptId,
         syncLeaseExpiresAt: now + SHARED_LEASE_MS,
       });
       return {
         attemptId,
-        syncCursor: row.syncCursor ?? row.syncToken,
+        syncCursor: row.syncCursor,
       };
     }
     await ctx.db.insert("sharedCalendars", {
-      googleCalendarId: args.providerCalendarId,
       provider: args.provider,
       providerCalendarId: args.providerCalendarId,
       syncAttemptId: attemptId,
@@ -1557,16 +1434,13 @@ async function sharedLease(
   providerCalendarId: string,
   attemptId: string,
 ) {
-  if (provider !== "google") return null;
   const row = await ctx.db
     .query("sharedCalendars")
-    .withIndex("by_googleCalendarId", (q) =>
-      q.eq("googleCalendarId", providerCalendarId),
+    .withIndex("by_provider_and_providerCalendarId", (q) =>
+      q.eq("provider", provider).eq("providerCalendarId", providerCalendarId),
     )
     .first();
   return row?.syncAttemptId === attemptId &&
-    (row.provider ?? "google") === provider &&
-    (row.providerCalendarId ?? row.googleCalendarId) === providerCalendarId &&
     (row.syncLeaseExpiresAt ?? 0) > Date.now()
     ? row
     : null;
@@ -1638,71 +1512,27 @@ export const upsertSharedEventsPage = internalMutation({
         lease.syncGenerationAttemptId !== args.attemptId)
     ) return false;
     for (const event of args.events) {
-      const candidates = await ctx.db
+      const current = await ctx.db
         .query("sharedEvents")
-        .withIndex("by_calendar_and_googleEventId", (q) =>
-          q
-            .eq("calendarId", args.providerCalendarId)
-            .eq("googleEventId", event.id),
+        .withIndex(
+          "by_provider_and_providerCalendarId_and_providerEventId",
+          (q) =>
+            q
+              .eq("provider", args.provider)
+              .eq("providerCalendarId", args.providerCalendarId)
+              .eq("providerEventId", event.id),
         )
-        .collect();
-      const current = candidates.find(
-        (row) =>
-          (row.provider ?? "google") === args.provider &&
-          (row.providerCalendarId ?? row.calendarId) === args.providerCalendarId,
-      );
+        .unique();
       if (event.status === "cancelled") {
         if (current && args.syncGeneration === undefined) {
           await ctx.db.delete(current._id);
         }
         continue;
       }
-      const doc = {
-        ...storedEvent(
-          "shared",
-          "" as Id<"calendarConnections">,
-          "" as Id<"calendars">,
-          event,
-          args.syncGeneration,
-        ),
-      };
       const sharedDoc = {
-        googleEventId: doc.googleEventId,
-        calendarId: args.providerCalendarId,
-        summary: doc.summary,
-        description: doc.description,
-        location: doc.location,
-        startMs: doc.startMs,
-        endMs: doc.endMs,
-        allDay: doc.allDay,
-        status: doc.status,
-        htmlLink: doc.htmlLink,
-        colorId: doc.colorId,
-        visibility: doc.visibility,
-        transparency: doc.transparency,
-        attendees: doc.attendees,
-        attendeesOmitted: doc.attendeesOmitted,
-        googleUpdatedMs: doc.googleUpdatedMs,
-        organizer: doc.organizer,
-        creator: doc.creator,
-        guestsCanModify: doc.guestsCanModify,
-        guestsCanInviteOthers: doc.guestsCanInviteOthers,
-        guestsCanSeeOtherGuests: doc.guestsCanSeeOtherGuests,
-        locked: doc.locked,
-        eventType: doc.eventType,
-        recurringEventId: doc.recurringEventId,
-        hangoutLink: doc.hangoutLink,
-        conferenceUrl: doc.conferenceUrl,
-        conferenceName: doc.conferenceName,
-        conferenceType: doc.conferenceType,
         provider: args.provider,
         providerCalendarId: args.providerCalendarId,
-        providerEventId: event.id,
-        providerUpdatedMs: event.updatedMs,
-        providerSeriesId: event.seriesId,
-        color: event.color,
-        busy: event.busy,
-        syncGeneration: args.syncGeneration,
+        ...storedEventBase(event, args.syncGeneration),
       };
       if (current) await ctx.db.replace(current._id, sharedDoc);
       else await ctx.db.insert("sharedEvents", sharedDoc);
@@ -1733,18 +1563,14 @@ export const sweepStaleSharedEventsBatch = internalMutation({
     ) throw new StaleSyncAttemptError();
     const page = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_googleEventId", (q) =>
+      .withIndex("by_provider_and_providerCalendarId_and_providerEventId", (q) =>
         q
-          .eq("calendarId", args.providerCalendarId),
+          .eq("provider", args.provider)
+          .eq("providerCalendarId", args.providerCalendarId),
       )
       .paginate({ cursor: args.cursor, numItems: BATCH_SIZE });
     for (const row of page.page) {
-      if (
-        (row.provider === undefined || row.provider === args.provider) &&
-        (row.providerCalendarId === undefined ||
-          row.providerCalendarId === args.providerCalendarId) &&
-        row.syncGeneration !== args.keepGeneration
-      ) {
+      if (row.syncGeneration !== args.keepGeneration) {
         await ctx.db.delete(row._id);
       }
     }
@@ -1775,7 +1601,6 @@ export const commitSharedCalendarSync = internalMutation({
     ) return false;
     await ctx.db.patch(row._id, {
       syncCursor: args.syncCursor,
-      syncToken: args.syncCursor,
       syncGeneration: args.syncGeneration ?? row.syncGeneration,
       syncGenerationAttemptId:
         args.syncGeneration === undefined
@@ -1815,13 +1640,6 @@ export const beginContactsFullResync = internalMutation({
             otherContactsGenerationAttemptId: args.attemptId,
           },
     );
-    await mirrorLegacySyncState(
-      ctx,
-      state.userId,
-      args.feed === "contacts"
-        ? { contactsSyncGeneration: generation }
-        : { otherContactsSyncGeneration: generation },
-    );
     return generation;
   },
 });
@@ -1848,9 +1666,16 @@ export const upsertContactsPage = internalMutation({
     const source = args.feed === "contacts" ? "connection" : "other";
     const people: PersonInput[] = [];
     for (const contact of args.contacts as ProviderContact[]) {
-      const neutralRow =
+      const tableRow =
         args.feed === "contacts"
-          ? null
+          ? await ctx.db
+              .query("contacts")
+              .withIndex("by_connection_and_providerContactId", (q) =>
+                q
+                  .eq("connectionId", args.connectionId)
+                  .eq("providerContactId", contact.id),
+              )
+              .unique()
           : await ctx.db
               .query("otherContactSources")
               .withIndex("by_connection_and_providerContactId", (q) =>
@@ -1859,23 +1684,6 @@ export const upsertContactsPage = internalMutation({
                   .eq("providerContactId", contact.id),
               )
               .unique();
-      const legacyContacts =
-        args.feed === "contacts"
-          ? await ctx.db
-              .query("contacts")
-              .withIndex("by_user_and_resourceName", (q) =>
-                q
-                  .eq("userId", state.userId)
-                  .eq("resourceName", contact.id),
-              )
-              .collect()
-          : null;
-      const legacyContact = legacyContacts?.find(
-        (row) =>
-          row.connectionId === undefined ||
-          row.connectionId === args.connectionId,
-      );
-      const tableRow = neutralRow ?? legacyContact;
       const oldEmails = tableRow?.emails ?? [];
       if (contact.deleted) {
         for (const email of oldEmails.length ? oldEmails : contact.emails) {
@@ -1923,16 +1731,14 @@ export const upsertContactsPage = internalMutation({
       if (args.feed === "contacts") {
         const doc = {
           userId: state.userId,
-          resourceName: contact.id,
+          connectionId: args.connectionId,
+          providerContactId: contact.id,
+          providerVersion: contact.version,
           displayName: contact.displayName,
           emails: nextEmails,
           phones: [...contact.phones],
           photoUrl: contact.photoUrl,
-          googleEtag: contact.version,
           syncGeneration: args.syncGeneration ?? tableRow?.syncGeneration,
-          connectionId: args.connectionId,
-          providerContactId: contact.id,
-          providerVersion: contact.version,
         };
         if (tableRow) await ctx.db.replace(tableRow._id as Id<"contacts">, doc);
         else await ctx.db.insert("contacts", doc);
@@ -1976,7 +1782,9 @@ export const sweepStaleContactsBatch = internalMutation({
       args.feed === "contacts"
         ? await ctx.db
             .query("contacts")
-            .withIndex("by_user", (q) => q.eq("userId", state.userId))
+            .withIndex("by_connection_and_providerContactId", (q) =>
+              q.eq("connectionId", args.connectionId),
+            )
             .paginate({ cursor: args.cursor, numItems: BATCH_SIZE })
         : await ctx.db
             .query("otherContactSources")
@@ -1986,69 +1794,19 @@ export const sweepStaleContactsBatch = internalMutation({
             .paginate({ cursor: args.cursor, numItems: BATCH_SIZE });
     let deleted = 0;
     for (const row of page.page) {
-      if (
-        row.connectionId !== undefined &&
-        row.connectionId !== args.connectionId
-      ) continue;
       if (row.syncGeneration === args.keepGeneration) continue;
+      if (row.providerContactId === undefined) continue;
       for (const email of row.emails) {
         await releasePersonSource(
           ctx,
           state.userId,
           args.connectionId,
           args.feed === "contacts" ? "connection" : "other",
-          row.providerContactId ??
-            ("resourceName" in row ? row.resourceName : ""),
+          row.providerContactId,
           email,
         );
       }
       await ctx.db.delete(row._id);
-      deleted++;
-    }
-    return { cursor: page.continueCursor, done: page.isDone, deleted };
-  },
-});
-
-/** First full Other Contacts sync removes legacy `people.sources: ["other"]`
- * rows that predate contact-scoped claims and were not reclaimed by this pass. */
-export const sweepLegacyOtherPeopleBatch = internalMutation({
-  args: {
-    connectionId: v.id("calendarConnections"),
-    attemptId: v.string(),
-    cursor: v.union(v.string(), v.null()),
-  },
-  handler: async (ctx, args) => {
-    const state = await liveState(ctx, args.connectionId, args.attemptId);
-    if (!state) throw new StaleSyncAttemptError();
-    if (state.otherContactsGenerationAttemptId !== args.attemptId) {
-      throw new StaleSyncAttemptError();
-    }
-    const page = await ctx.db
-      .query("people")
-      .withIndex("by_user", (q) => q.eq("userId", state.userId))
-      .paginate({ cursor: args.cursor, numItems: BATCH_SIZE });
-    let deleted = 0;
-    for (const person of page.page) {
-      if (!person.sources.includes("other")) continue;
-      const claim = await ctx.db
-        .query("personSourceClaims")
-        .withIndex("by_user_and_email_and_source", (q) =>
-          q
-            .eq("userId", state.userId)
-            .eq("email", person.email)
-            .eq("source", "other"),
-        )
-        .first();
-      if (claim) continue;
-      const sources = person.sources.filter((source) => source !== "other");
-      if (sources.length === 0) await ctx.db.delete(person._id);
-      else {
-        await ctx.db.patch(person._id, {
-          sources,
-          otherSyncGeneration: undefined,
-          updatedAt: Date.now(),
-        });
-      }
       deleted++;
     }
     return { cursor: page.continueCursor, done: page.isDone, deleted };
@@ -2095,30 +1853,9 @@ export const commitContactsSync = internalMutation({
               args.syncGeneration === undefined
                 ? state.otherContactsGenerationAttemptId
                 : undefined,
-            otherContactsBackfillRequired:
-              args.syncGeneration === undefined
-                ? state.otherContactsBackfillRequired
-                : false,
             otherContactsLastSyncedAt: now,
           };
     await ctx.db.patch(state._id, patch);
-    await mirrorLegacySyncState(
-      ctx,
-      state.userId,
-      args.feed === "contacts"
-        ? {
-            contactsSyncToken: args.syncCursor,
-            contactsSyncGeneration:
-              args.syncGeneration ?? state.contactsGeneration,
-            lastContactsSyncAt: now,
-          }
-        : {
-            otherContactsSyncToken: args.syncCursor,
-            otherContactsSyncGeneration:
-              args.syncGeneration ?? state.otherContactsGeneration,
-            lastOtherContactsSyncAt: now,
-          },
-    );
     return true;
   },
 });
@@ -2543,55 +2280,6 @@ export const enqueueEngagementRefresh = internalMutation({
   },
 });
 
-export const backfillPeople = internalMutation({
-  args: {
-    phase: v.optional(v.union(v.literal("contacts"), v.literal("events"))),
-    cursor: v.optional(v.string()),
-  },
-  handler: async (ctx, args): Promise<null> => {
-    const phase = args.phase ?? "contacts";
-    const page = await ctx.db
-      .query(phase === "contacts" ? "contacts" : "events")
-      .paginate({ cursor: args.cursor ?? null, numItems: BATCH_SIZE });
-    if (phase === "contacts") {
-      for (const contact of page.page as Doc<"contacts">[]) {
-        await upsertPeople(
-          ctx,
-          contact.userId,
-          "connection",
-          contact.emails.map((email) => ({
-            email,
-            displayName: contact.displayName,
-            photoUrl: contact.photoUrl,
-          })),
-        );
-      }
-    } else {
-      for (const event of page.page as Doc<"events">[]) {
-        await upsertPeople(
-          ctx,
-          event.userId,
-          "attendee",
-          (event.attendees ?? [])
-            .filter((row) => !row.self)
-            .map((row) => ({ email: row.email, displayName: row.displayName })),
-        );
-      }
-    }
-    if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.domains.sync.engine.backfillPeople, {
-        phase,
-        cursor: page.continueCursor,
-      });
-    } else if (phase === "contacts") {
-      await ctx.scheduler.runAfter(0, internal.domains.sync.engine.backfillPeople, {
-        phase: "events",
-      });
-    }
-    return null;
-  },
-});
-
 /** Canonical seam used after provider writes to re-expand a single calendar. */
 export async function refreshConnectionCalendar(
   ctx: ActionCtx,
@@ -2613,14 +2301,15 @@ export async function refreshConnectionCalendar(
     const calendar = calendars.find(
       (row) => row._id === localCalendarId && row.connectionId === connectionId,
     );
-    if (!calendar) throw new Error("Calendar refresh target is unavailable");
+    if (!calendar?.providerCalendarId) {
+      throw new Error("Calendar refresh target is unavailable");
+    }
     const changed = await syncOneConnectionCalendar(ctx, adapter, {
       connectionId,
       attemptId,
       localCalendarId,
-      providerCalendarId:
-        calendar.providerCalendarId ?? calendar.googleCalendarId,
-      syncCursor: calendar.syncCursor ?? calendar.syncToken,
+      providerCalendarId: calendar.providerCalendarId,
+      syncCursor: calendar.syncCursor,
     });
     if (changed) {
       await ctx.runMutation(internal.domains.sync.engine.markEngagementDirty, { userId });

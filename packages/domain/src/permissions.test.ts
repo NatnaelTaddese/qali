@@ -106,7 +106,7 @@ describe("eventCapabilities", () => {
 
   test("a recurring instance carries no rule to change", () => {
     expect(
-      eventCapabilities({ ...mine, recurringEventId: "series-1" }, OWNED)
+      eventCapabilities({ ...mine, providerSeriesId: "series-1" }, OWNED)
         .canChangeRecurrence,
     ).toBe(false);
     expect(eventCapabilities(mine, OWNED).canChangeRecurrence).toBe(true);

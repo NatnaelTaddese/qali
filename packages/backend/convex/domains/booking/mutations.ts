@@ -1,8 +1,6 @@
-/** Booking domain writes. Canonical registration for the booking mutations; the
- * root `booking.ts` facade re-exports the same registered objects on the
- * legacy `api.booking.*` / `internal.booking.*` paths while they drain. The
- * acceptance-claim lease and the expiry continuations reschedule through the
- * canonical `internal.domains.booking.*` paths. */
+/** Booking domain writes. Canonical registration for the booking mutations.
+ * The acceptance-claim lease and the expiry continuations reschedule through
+ * the canonical `internal.domains.booking.*` paths. */
 
 import {
   isValidDayInterval,
@@ -43,19 +41,6 @@ import {
   slotSettingsValidator,
 } from "./model";
 
-async function localCalendarForProviderId(
-  ctx: MutationCtx,
-  userId: string,
-  providerCalendarId: string,
-) {
-  return await ctx.db
-    .query("calendars")
-    .withIndex("by_user_and_googleCalendarId", (q) =>
-      q.eq("userId", userId).eq("googleCalendarId", providerCalendarId),
-    )
-    .unique();
-}
-
 async function primaryLocalCalendar(
   ctx: MutationCtx,
   userId: string,
@@ -69,9 +54,7 @@ async function primaryLocalCalendar(
     throw new Error("Too many calendars to choose a booking target safely");
   }
   return calendars.find(
-    (row) =>
-      row.primary === true &&
-      (row.connectionId === connectionId || row.connectionId === undefined),
+    (row) => row.primary === true && row.connectionId === connectionId,
   );
 }
 
@@ -98,8 +81,7 @@ async function validateBookingTarget(
 ): Promise<BookingTarget> {
   const connection = await ctx.db.get(connectionId);
   const calendar = await ctx.db.get(localCalendarId);
-  const providerCalendarId =
-    calendar?.providerCalendarId ?? calendar?.googleCalendarId;
+  const providerCalendarId = calendar?.providerCalendarId;
   if (
     !connection ||
     connection.userId !== userId ||
@@ -108,27 +90,16 @@ async function validateBookingTarget(
     !providerCalendarId ||
     calendar.userId !== userId ||
     !calendarIsWritable(calendar) ||
-    (calendar.connectionId !== undefined &&
-      calendar.connectionId !== connection._id) ||
+    calendar.connectionId !== connection._id ||
     (expectedProviderCalendarId !== undefined &&
       providerCalendarId !== expectedProviderCalendarId)
   ) {
     throw new Error("Booking calendar target is unavailable");
   }
-  const resolvedProviderCalendarId = providerCalendarId;
-  if (
-    calendar.connectionId === undefined ||
-    calendar.providerCalendarId === undefined
-  ) {
-    await ctx.db.patch(calendar._id, {
-      connectionId: connection._id,
-      providerCalendarId: resolvedProviderCalendarId,
-    });
-  }
   return {
     connection,
     calendar,
-    providerCalendarId: resolvedProviderCalendarId,
+    providerCalendarId,
   };
 }
 
@@ -205,17 +176,16 @@ async function mirrorSucceededAcceptance(
   if (operation.status !== "succeeded" || !operation.providerEventId) return;
   await ctx.db.patch(booking._id, {
     status: "accepted",
-    googleEventId: operation.providerEventId,
     providerEventId: operation.providerEventId,
-    calendarId: operation.providerCalendarId,
     connectionId: operation.connectionId,
     targetConnectionId: operation.connectionId,
-    targetCalendarId: operation.localCalendarId,
+    // The cutover nulls operation.localCalendarId; never copy undefined into
+    // the booking's target pair.
+    ...(operation.localCalendarId !== undefined
+      ? { targetCalendarId: operation.localCalendarId }
+      : {}),
     decidedAt: operation.updatedAt,
     acceptOperationId: operation.idempotencyKey,
-    acceptAttemptId: undefined,
-    acceptLeaseExpiresAt: undefined,
-    acceptMayHaveSucceeded: undefined,
   });
   await clearBookingNotifications(ctx, booking._id);
 }
@@ -231,26 +201,17 @@ async function acceptanceTarget(
       ? await ctx.db.get(operation.localCalendarId)
       : null;
     if (!calendar && operation.providerCalendarId) {
+      // The cutover nulls operation.localCalendarId; the provider calendar id
+      // survives, so re-resolve the row the connection now holds for it.
       const providerCalendarId = operation.providerCalendarId;
       calendar = await ctx.db
         .query("calendars")
-        .withIndex("by_user_and_googleCalendarId", (q) =>
+        .withIndex("by_connection_and_providerCalendarId", (q) =>
           q
-            .eq("userId", booking.hostUserId)
-            .eq("googleCalendarId", providerCalendarId),
+            .eq("connectionId", operation.connectionId)
+            .eq("providerCalendarId", providerCalendarId),
         )
-        .first();
-      if (
-        calendar?.connectionId !== undefined &&
-        calendar.connectionId !== operation.connectionId
-      ) calendar = null;
-    }
-    if (!calendar && operation.providerCalendarId) {
-      calendar = await localCalendarForProviderId(
-        ctx,
-        booking.hostUserId,
-        operation.providerCalendarId,
-      );
+        .unique();
     }
     if (!calendar) throw new Error("Booking calendar target is unavailable");
     return await validateBookingTarget(
@@ -267,25 +228,7 @@ async function acceptanceTarget(
       booking.hostUserId,
       booking.targetConnectionId,
       booking.targetCalendarId,
-      booking.calendarId,
     );
-  }
-  if (booking.calendarId) {
-    const calendar = await localCalendarForProviderId(
-      ctx,
-      booking.hostUserId,
-      booking.calendarId,
-    );
-    const connectionId = booking.targetConnectionId ?? booking.connectionId;
-    if (calendar && connectionId) {
-      return await validateBookingTarget(
-        ctx,
-        booking.hostUserId,
-        connectionId,
-        calendar._id,
-        booking.calendarId,
-      );
-    }
   }
   return await bookingPageTarget(ctx, page);
 }
@@ -582,18 +525,12 @@ export async function expireBookingHandler(
   }
   if (
     operation?.status === "ambiguous" ||
-    (operation?.status === "pending" && operation.mayHaveSucceeded === true) ||
-    (!operation && booking.acceptMayHaveSucceeded === true)
+    (operation?.status === "pending" && operation.mayHaveSucceeded === true)
   ) {
     return null;
   }
-  const leaseExpiresAt = operation
-    ? operation.status === "pending"
-      ? operation.leaseExpiresAt
-      : undefined
-    : booking.acceptAttemptId
-      ? booking.acceptLeaseExpiresAt
-      : undefined;
+  const leaseExpiresAt =
+    operation?.status === "pending" ? operation.leaseExpiresAt : undefined;
   if (leaseExpiresAt && leaseExpiresAt > now) {
     await ctx.scheduler.runAt(
       leaseExpiresAt,
@@ -632,18 +569,12 @@ export async function expirePastBookingsHandler(
     }
     if (
       operation?.status === "ambiguous" ||
-      (operation?.status === "pending" && operation.mayHaveSucceeded === true) ||
-      (!operation && booking.acceptMayHaveSucceeded === true)
+      (operation?.status === "pending" && operation.mayHaveSucceeded === true)
     ) {
       continue;
     }
-    const leaseExpiresAt = operation
-      ? operation.status === "pending"
-        ? operation.leaseExpiresAt
-        : undefined
-      : booking.acceptAttemptId
-        ? booking.acceptLeaseExpiresAt
-        : undefined;
+    const leaseExpiresAt =
+      operation?.status === "pending" ? operation.leaseExpiresAt : undefined;
     if (leaseExpiresAt && leaseExpiresAt > Date.now()) {
       continue;
     }
@@ -665,7 +596,9 @@ export const expirePastBookings = internalMutation({
   handler: (ctx) => expirePastBookingsHandler(ctx),
 });
 
-/** Settle the operation ledger, then dual-write the legacy booking fields. */
+/** Settle the operation ledger and stamp the booking's accepted mirror. The
+ * ledger row is authoritative: without one held by this attempt, the settle
+ * refuses. */
 export async function markAcceptedHandler(
   ctx: MutationCtx,
   args: {
@@ -686,42 +619,14 @@ export async function markAcceptedHandler(
   }
   const page = await pageByUser(ctx, args.hostUserId);
   if (!page) return false;
-  let operation = await operationForBooking(ctx, booking._id);
-  if (operation) {
-    if (
-      operation.status !== "pending" ||
-      operation.attemptId !== args.attemptId ||
-      operation.providerCalendarId !== args.providerCalendarId
-    ) {
-      return false;
-    }
-  } else {
-    if (
-      booking.acceptAttemptId !== args.attemptId ||
-      !booking.acceptOperationId
-    ) {
-      return false;
-    }
-    const target = await acceptanceTarget(ctx, booking, page, null);
-    if (target.providerCalendarId !== args.providerCalendarId) return false;
-    const now = Date.now();
-    const operationId = await ctx.db.insert("calendarOperations", {
-      connectionId: target.connection._id,
-      userId: args.hostUserId,
-      idempotencyKey: booking.acceptOperationId,
-      kind: "create",
-      status: "pending",
-      bookingId: booking._id,
-      attemptId: args.attemptId,
-      leaseExpiresAt: booking.acceptLeaseExpiresAt,
-      mayHaveSucceeded: booking.acceptMayHaveSucceeded,
-      localCalendarId: target.calendar._id,
-      providerCalendarId: target.providerCalendarId,
-      requestFingerprint: bookingAcceptanceFingerprint(booking, page),
-      createdAt: now,
-      updatedAt: now,
-    });
-    operation = (await ctx.db.get(operationId))!;
+  const operation = await operationForBooking(ctx, booking._id);
+  if (
+    !operation ||
+    operation.status !== "pending" ||
+    operation.attemptId !== args.attemptId ||
+    operation.providerCalendarId !== args.providerCalendarId
+  ) {
+    return false;
   }
   const target = await acceptanceTarget(ctx, booking, page, operation);
   const now = Date.now();
@@ -738,17 +643,12 @@ export async function markAcceptedHandler(
   });
   await ctx.db.patch(args.bookingId, {
     status: "accepted",
-    googleEventId: args.providerEventId,
-    calendarId: target.providerCalendarId,
     connectionId: target.connection._id,
     providerEventId: args.providerEventId,
     targetConnectionId: target.connection._id,
     targetCalendarId: target.calendar._id,
     decidedAt: now,
     acceptOperationId: operation.idempotencyKey,
-    acceptAttemptId: undefined,
-    acceptLeaseExpiresAt: undefined,
-    acceptMayHaveSucceeded: undefined,
   });
   await clearBookingNotifications(ctx, args.bookingId);
   return true;
@@ -815,20 +715,16 @@ export async function claimBookingAcceptanceHandler(
     operation?.status === "pending" &&
     operation.attemptId !== undefined &&
     (operation.leaseExpiresAt ?? 0) > now;
-  const liveLegacyLease =
-    !operation &&
-    booking.acceptAttemptId !== undefined &&
-    (booking.acceptLeaseExpiresAt ?? 0) > now;
-  if (liveLedgerLease || liveLegacyLease) return null;
+  if (liveLedgerLease) return null;
 
   const target = await acceptanceTarget(ctx, booking, page, operation);
   const operationId =
     operation?.idempotencyKey ??
     booking.acceptOperationId ??
     crypto.randomUUID();
-  const reconcileOnly = operation
-    ? operation.status === "ambiguous" || operation.mayHaveSucceeded === true
-    : booking.acceptMayHaveSucceeded === true;
+  const reconcileOnly =
+    operation !== null &&
+    (operation.status === "ambiguous" || operation.mayHaveSucceeded === true);
   if (booking.endMs <= now && !reconcileOnly) return null;
   const busy = await collectBusy(
     ctx,
@@ -855,6 +751,8 @@ export async function claimBookingAcceptanceHandler(
     bookingId: booking._id,
     attemptId: args.attemptId,
     leaseExpiresAt,
+    // Conservative until a known provider failure clears it. If this action
+    // disappears, rejection cannot contradict a possibly sent invitation.
     mayHaveSucceeded: true,
     localCalendarId: target.calendar._id,
     providerCalendarId: target.providerCalendarId,
@@ -879,12 +777,6 @@ export async function claimBookingAcceptanceHandler(
   }
   await ctx.db.patch(booking._id, {
     acceptOperationId: operationId,
-    acceptAttemptId: args.attemptId,
-    acceptLeaseExpiresAt: leaseExpiresAt,
-    // Conservative until a known Google failure clears it. If this action
-    // disappears, rejection cannot contradict a possibly sent invitation.
-    acceptMayHaveSucceeded: true,
-    calendarId: target.providerCalendarId,
     connectionId: target.connection._id,
     targetConnectionId: target.connection._id,
     targetCalendarId: target.calendar._id,
@@ -976,43 +868,13 @@ export async function releaseBookingAcceptanceHandler(
   ) {
     return null;
   }
-  let operation = await operationForBooking(ctx, booking._id);
-  if (operation) {
-    if (
-      operation.status !== "pending" ||
-      operation.attemptId !== args.attemptId
-    ) {
-      return null;
-    }
-  } else {
-    if (
-      booking.acceptAttemptId !== args.attemptId ||
-      !booking.acceptOperationId
-    ) {
-      return null;
-    }
-    const page = await pageByUser(ctx, args.hostUserId);
-    if (!page) return null;
-    const target = await acceptanceTarget(ctx, booking, page, null);
-    const now = Date.now();
-    const operationId = await ctx.db.insert("calendarOperations", {
-      connectionId: target.connection._id,
-      userId: args.hostUserId,
-      idempotencyKey: booking.acceptOperationId,
-      kind: "create",
-      status: "pending",
-      bookingId: booking._id,
-      attemptId: args.attemptId,
-      leaseExpiresAt: booking.acceptLeaseExpiresAt,
-      mayHaveSucceeded: booking.acceptMayHaveSucceeded,
-      localCalendarId: target.calendar._id,
-      providerCalendarId: target.providerCalendarId,
-      requestFingerprint: bookingAcceptanceFingerprint(booking, page),
-      providerEventId: booking.providerEventId,
-      createdAt: now,
-      updatedAt: now,
-    });
-    operation = (await ctx.db.get(operationId))!;
+  const operation = await operationForBooking(ctx, booking._id);
+  if (
+    !operation ||
+    operation.status !== "pending" ||
+    operation.attemptId !== args.attemptId
+  ) {
+    return null;
   }
   const now = Date.now();
   await ctx.db.patch(operation._id, {
@@ -1022,11 +884,6 @@ export async function releaseBookingAcceptanceHandler(
     mayHaveSucceeded: args.mayHaveSucceeded,
     lastError: args.error,
     updatedAt: now,
-  });
-  await ctx.db.patch(booking._id, {
-    acceptAttemptId: undefined,
-    acceptLeaseExpiresAt: undefined,
-    acceptMayHaveSucceeded: args.mayHaveSucceeded,
   });
   if (
     args.mayHaveSucceeded &&
@@ -1106,19 +963,16 @@ export async function rejectBookingForHostHandler(
   if (operation?.status === "succeeded") {
     throw new Error("This request has already been answered");
   }
-  const activeLease = operation
-    ? operation.status === "pending" &&
-      operation.attemptId !== undefined &&
-      (operation.leaseExpiresAt ?? 0) > Date.now()
-    : booking.acceptAttemptId !== undefined &&
-      (booking.acceptLeaseExpiresAt ?? 0) > Date.now();
+  const activeLease =
+    operation?.status === "pending" &&
+    operation.attemptId !== undefined &&
+    (operation.leaseExpiresAt ?? 0) > Date.now();
   if (activeLease) {
     throw new Error("This request is currently being accepted");
   }
-  const mayHaveSucceeded = operation
-    ? operation.status === "ambiguous" ||
-      (operation.status === "pending" && operation.mayHaveSucceeded === true)
-    : booking.acceptMayHaveSucceeded === true;
+  const mayHaveSucceeded =
+    operation?.status === "ambiguous" ||
+    (operation?.status === "pending" && operation.mayHaveSucceeded === true);
   if (mayHaveSucceeded) {
     throw new Error(
       "A previous acceptance may have reached the calendar provider. Retry acceptance to reconcile it before rejecting.",

@@ -1,6 +1,6 @@
 import { Calendar03Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { Doc, Id } from "@qali/backend/convex/_generated/dataModel";
+import type { Id } from "@qali/backend/convex/_generated/dataModel";
 import {
   Popover,
   PopoverContent,
@@ -14,13 +14,13 @@ import {
 import { cn } from "@qali/ui/lib/utils";
 
 import { calendarColorVar, EVENT_COLOR_CHOICES } from "./colors";
-import { calendarDisplayName } from "./lib";
+import { calendarDisplayName, type CalendarListItem } from "./lib";
 
 /** Access roles that let us create events on a calendar. */
 const WRITABLE = new Set(["owner", "writer"]);
 
 /** Primary first, then alphabetical — the same order as the header's picker. */
-function sortCalendars(calendars: Doc<"calendars">[]): Doc<"calendars">[] {
+function sortCalendars(calendars: CalendarListItem[]): CalendarListItem[] {
   return [...calendars].sort((a, b) => {
     if (a.primary !== b.primary) return (a.primary ? -1 : 1);
     return calendarDisplayName(a).localeCompare(calendarDisplayName(b));
@@ -35,12 +35,11 @@ export const buttonClass =
 const disabledClass = "opacity-50 hover:bg-transparent hover:text-muted-foreground";
 
 export interface EventControlsProps {
-  calendars: Doc<"calendars">[];
-  /** Google `colorId`; undefined means the calendar's own colour. */
-  colorId?: string;
-  onColorChange: (colorId?: string) => void;
+  calendars: CalendarListItem[];
+  /** Provider palette key; undefined means the calendar's own colour. */
+  color?: string;
+  onColorChange: (color?: string) => void;
   calendarId?: Id<"calendars">;
-  providerCalendarId?: string;
   onCalendarChange: (calendarId: Id<"calendars">) => void;
   /** The whole cluster is inert — the event can't be edited at all. */
   disabled?: boolean;
@@ -53,10 +52,9 @@ export interface EventControlsProps {
 /** Colour and calendar for the event being created or edited. */
 export function EventControls({
   calendars,
-  colorId,
+  color,
   onColorChange,
   calendarId,
-  providerCalendarId,
   onCalendarChange,
   disabled = false,
   canChangeCalendar = false,
@@ -65,15 +63,11 @@ export function EventControls({
   // An event can sit on a calendar we can't write to; still name it.
   const selected =
     writable.find((c) => c._id === calendarId) ??
-    calendars.find((c) => c._id === calendarId) ??
-    calendars.find(
-      (c) =>
-        (c.providerCalendarId ?? c.googleCalendarId) === providerCalendarId,
-    );
+    calendars.find((c) => c._id === calendarId);
   // With no colour of its own the event inherits its calendar's, so the swatch
   // previews what the grid will actually draw.
   const swatchVar =
-    EVENT_COLOR_CHOICES.find((c) => c.colorId === colorId)?.colorVar ??
+    EVENT_COLOR_CHOICES.find((c) => c.color === color)?.colorVar ??
     (selected ? calendarColorVar(selected) : "--event-neutral");
 
   return (
@@ -103,16 +97,16 @@ export function EventControls({
             <Swatch
               colorVar={selected ? calendarColorVar(selected) : "--event-neutral"}
               label="Calendar default"
-              selected={colorId === undefined}
+              selected={color === undefined}
               onSelect={() => onColorChange(undefined)}
             />
             {EVENT_COLOR_CHOICES.map((choice) => (
               <Swatch
-                key={choice.colorId}
+                key={choice.color}
                 colorVar={choice.colorVar}
-                label={`Colour ${choice.colorId}`}
-                selected={colorId === choice.colorId}
-                onSelect={() => onColorChange(choice.colorId)}
+                label={`Colour ${choice.color}`}
+                selected={color === choice.color}
+                onSelect={() => onColorChange(choice.color)}
               />
             ))}
           </div>

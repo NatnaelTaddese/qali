@@ -157,15 +157,9 @@ describe("opaque cursor codec", () => {
     expect(decodeSyncCursor(encodeSyncCursor("s1"))).toBe("s1");
   });
 
-  test("accepts a legacy raw Google sync token without JSON parsing failure", () => {
-    expect(decodeSyncCursor("legacy-google-token" as ReturnType<typeof encodeSyncCursor>)).toBe(
-      "legacy-google-token",
+  test("passes a raw Google sync token through unchanged", () => {
+    expect(decodeSyncCursor("raw-google-token" as ReturnType<typeof encodeSyncCursor>)).toBe(
+      "raw-google-token",
     );
-  });
-
-  test("accepts the superseded JSON sync envelope", () => {
-    expect(
-      decodeSyncCursor('{"s":"old-wrapped-token"}' as ReturnType<typeof encodeSyncCursor>),
-    ).toBe("old-wrapped-token");
   });
 });

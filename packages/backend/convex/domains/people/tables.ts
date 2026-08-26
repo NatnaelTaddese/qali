@@ -4,27 +4,31 @@ import { v } from "convex/values";
 /** Table definitions owned by the people domain (the synced contacts feed and
  * the unified, email-keyed people directory it feeds). Composed into schema.ts. */
 export const peopleTables = {
-  // One row per synced Google contact (People API connection).
+  // One row per synced provider contact (saved-contacts feed).
   contacts: defineTable({
     userId: v.string(),
-    resourceName: v.string(),
+    // TRANSITIONAL: both required at the final schema.
+    connectionId: v.optional(v.id("calendarConnections")),
+    providerContactId: v.optional(v.string()),
     displayName: v.optional(v.string()),
     emails: v.array(v.string()),
     phones: v.array(v.string()),
     photoUrl: v.optional(v.string()),
-    googleEtag: v.optional(v.string()),
-    // Full-resync reconcile marker (see syncState.contactsSyncGeneration).
-    syncGeneration: v.optional(v.number()),
-    connectionId: v.optional(v.id("calendarConnections")),
-    providerContactId: v.optional(v.string()),
+    // Opaque provider change marker (Google etag / Graph version).
     providerVersion: v.optional(v.string()),
+    // Full-resync reconcile marker (see connectionSyncState.contactsGeneration).
+    syncGeneration: v.optional(v.number()),
+    // Legacy columns, unread and unwritten; deleted at the final schema.
+    resourceName: v.optional(v.string()),
+    googleEtag: v.optional(v.string()),
   })
     .index("by_user", ["userId"])
+    // Legacy index, no readers; deleted at the final schema.
     .index("by_user_and_resourceName", ["userId", "resourceName"])
-    .index("by_connection_and_providerContactId", {
-      fields: ["connectionId", "providerContactId"],
-      staged: true,
-    }),
+    .index("by_connection_and_providerContactId", [
+      "connectionId",
+      "providerContactId",
+    ]),
 
   // A people row is user-scoped, but each provider connection owns its claim on
   // an email independently. Removing one account therefore cannot erase an
@@ -47,10 +51,12 @@ export const peopleTables = {
       "source",
       "email",
     ])
-    .index("by_connection_and_source_and_providerContactId_and_email", {
-      fields: ["connectionId", "source", "providerContactId", "email"],
-      staged: true,
-    }),
+    .index("by_connection_and_source_and_providerContactId_and_email", [
+      "connectionId",
+      "source",
+      "providerContactId",
+      "email",
+    ]),
 
   // Other Contacts has no durable app-domain row, so retain just enough source
   // identity to process tombstones and generation sweeps per connection.
@@ -97,10 +103,8 @@ export const peopleTables = {
     // retain stale scores.
     engagementGeneration: v.optional(v.number()),
     updatedAt: v.number(),
-    // Last full-resync generation of the Other Contacts feeder that saw this
-    // person. Only meaningful when `sources` includes "other"; used to reconcile
-    // away the "other" source when an Other Contact disappears across a full
-    // resync (that feeder has no backing table). See syncOtherContacts.
+    // Legacy column, unread and unwritten (its sweeper died with the
+    // contraction); deleted at the final schema.
     otherSyncGeneration: v.optional(v.number()),
   })
     .index("by_user", ["userId"])

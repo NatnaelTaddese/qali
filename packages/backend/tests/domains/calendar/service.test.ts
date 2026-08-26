@@ -16,7 +16,7 @@ import { ProviderError } from "../../../convex/integrations/calendar/errors";
 process.env.SKIP_ENV_VALIDATION = "1";
 const service = await import("../../../convex/domains/calendar/service");
 const {
-  legacyCalendarActionEvent,
+  calendarActionEvent,
   truncateRecurrence,
 } = service;
 
@@ -56,19 +56,18 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
+const PROVIDER_CALENDAR_ID = "primary@example.com";
+
 function eventRow(overrides: Partial<Doc<"events">> = {}): Doc<"events"> {
   return {
     _id: "event-row" as Id<"events">,
     _creationTime: 1,
     userId: "user-1",
-    googleEventId: "google-event",
-    calendarId: "primary@example.com",
     summary: "Pay salary",
     startMs: Date.parse("2026-09-01T01:00:00.000Z"),
     endMs: Date.parse("2026-09-01T02:00:00.000Z"),
     allDay: false,
     status: "confirmed",
-    googleUpdatedMs: Date.parse("2026-08-11T00:00:00.000Z"),
     organizer: { self: true },
     connectionId: "connection-1" as Id<"calendarConnections">,
     localCalendarId: "local-calendar-1" as Id<"calendars">,
@@ -93,17 +92,17 @@ function actionContext(row: Doc<"events">, accessRole = "owner") {
           calendar: {
             _id: row.localCalendarId,
             userId: row.userId,
-            googleCalendarId: row.calendarId,
-            providerCalendarId: row.calendarId,
+            providerCalendarId: PROVIDER_CALENDAR_ID,
             connectionId: row.connectionId,
             selected: true,
+            isShared: false,
             accessRole,
           },
           connectionId: row.connectionId,
           localCalendarId: row.localCalendarId,
-          providerCalendarId: row.calendarId,
+          providerCalendarId: PROVIDER_CALENDAR_ID,
           providerEventId: row.providerEventId,
-          providerSeriesId: row.providerSeriesId ?? row.recurringEventId,
+          providerSeriesId: row.providerSeriesId,
         };
       }
       if ("kind" in args && "idempotencyKey" in args) {
@@ -119,10 +118,10 @@ function actionContext(row: Doc<"events">, accessRole = "owner") {
 
 function liveGoogleEvent(row: Doc<"events">, overrides: Record<string, unknown> = {}) {
   return {
-    id: row.googleEventId,
+    id: row.providerEventId,
     summary: row.summary,
     status: row.status,
-    updated: new Date(row.googleUpdatedMs).toISOString(),
+    updated: new Date(row.providerUpdatedMs!).toISOString(),
     organizer: { self: true },
     start: {
       dateTime: new Date(row.startMs).toISOString(),
@@ -180,8 +179,8 @@ const CREATE_ARGS = {
 };
 
 describe("event creation", () => {
-  test("keeps the legacy Google-shaped public action DTO", () => {
-    const result = legacyCalendarActionEvent({
+  test("returns the provider-neutral public action DTO", () => {
+    const result = calendarActionEvent({
       id: "provider-id",
       calendarId: "primary",
       startMs: 1,
@@ -189,18 +188,22 @@ describe("event creation", () => {
       allDay: false,
       status: "confirmed",
       updatedMs: 3,
+      seriesId: "master-1",
       color: "5",
       busy: false,
     });
     expect(result).toMatchObject({
-      googleEventId: "provider-id",
-      calendarId: "primary",
-      googleUpdatedMs: 3,
-      colorId: "5",
-      transparency: "transparent",
+      providerEventId: "provider-id",
+      providerCalendarId: "primary",
+      providerUpdatedMs: 3,
+      providerSeriesId: "master-1",
+      color: "5",
+      busy: false,
     });
     expect("id" in result).toBe(false);
     expect("updatedMs" in result).toBe(false);
+    expect("googleEventId" in result).toBe(false);
+    expect("transparency" in result).toBe(false);
   });
   test("routes a public create op through an injected non-Google adapter", async () => {
     const { ctx, mutations } = createContext();
@@ -423,7 +426,7 @@ describe("single event recurrence conversion", () => {
       recurrence: ["RRULE:FREQ=MONTHLY"],
       timeZone: "Asia/Shanghai",
       operationId: "operation-1",
-      expectedGoogleUpdatedMs: row.googleUpdatedMs,
+      expectedProviderUpdatedMs: row.providerUpdatedMs,
     });
 
     expect(requests.map((request) => request.method)).toEqual(["GET", "PATCH"]);
@@ -443,7 +446,7 @@ describe("single event recurrence conversion", () => {
         userId: row.userId,
         connectionId: row.connectionId,
         localCalendarId: row.localCalendarId,
-        providerEventId: row.googleEventId,
+        providerEventId: row.providerEventId,
         recurrence: ["RRULE:FREQ=MONTHLY"],
         replacedEventId: row._id,
       }),
@@ -469,14 +472,14 @@ describe("single event recurrence conversion", () => {
         eventId: row._id,
         recurrence: ["RRULE:FREQ=MONTHLY"],
         timeZone: "Asia/Shanghai",
-        expectedGoogleUpdatedMs: row.googleUpdatedMs,
+        expectedProviderUpdatedMs: row.providerUpdatedMs,
       }),
     ).rejects.toThrow("changed after");
     expect(methods).toEqual(["GET"]);
   });
 
   test("does not replace the rule of an existing recurring instance", async () => {
-    const row = eventRow({ recurringEventId: "existing-master" });
+    const row = eventRow({ providerSeriesId: "existing-master" });
     const { ctx } = actionContext(row);
     let fetched = false;
     globalThis.fetch = (async () => {
@@ -519,7 +522,7 @@ describe("scoped recurring updates through a non-Google adapter", () => {
     eventRow({
       startMs: Date.parse("2026-09-08T01:00:00.000Z"),
       endMs: Date.parse("2026-09-08T02:00:00.000Z"),
-      recurringEventId: "series-master",
+      providerSeriesId: "series-master",
     });
   const masterEvent = (): ProviderEvent => ({
     id: "series-master",
@@ -643,7 +646,7 @@ describe("scoped recurring updates through a non-Google adapter", () => {
 
 describe("scoped recurring deletion", () => {
   const recurring = (overrides: Partial<Doc<"events">> = {}) =>
-    eventRow({ recurringEventId: "series-master", ...overrides });
+    eventRow({ providerSeriesId: "series-master", ...overrides });
 
   test("truncation replaces COUNT or UNTIL while retaining the rule", () => {
     expect(
@@ -685,7 +688,9 @@ describe("scoped recurring deletion", () => {
     expect(mutations).toContainEqual(
       expect.objectContaining({ eventId: row._id, userId: row.userId }),
     );
-    expect(mutations.some((args) => "recurringEventId" in args)).toBe(false);
+    expect(mutations.some((args) => args.providerSeriesId !== undefined)).toBe(
+      false,
+    );
   });
 
   test("deletes the master and clears series state for allEvents", async () => {
@@ -803,7 +808,7 @@ describe("scoped recurring deletion", () => {
     await deleteEventOp(ctx, row.userId, "access-token", {
       eventId: row._id,
       scope: "thisAndFollowing",
-      expectedSeriesUpdatedMs: row.googleUpdatedMs,
+      expectedSeriesUpdatedMs: row.providerUpdatedMs,
     });
 
     expect(requests.map((request) => request.method)).toEqual([
@@ -861,7 +866,7 @@ describe("scoped recurring deletion", () => {
     await deleteEventOp(ctx, row.userId, "access-token", {
       eventId: row._id,
       scope: "thisAndFollowing",
-      expectedSeriesUpdatedMs: row.googleUpdatedMs - 1,
+      expectedSeriesUpdatedMs: row.providerUpdatedMs! - 1,
     });
 
     expect(methods).toEqual(["GET", "GET"]);
@@ -904,7 +909,7 @@ describe("scoped recurring deletion", () => {
       deleteEventOp(ctx, row.userId, "access-token", {
         eventId: row._id,
         scope: "thisAndFollowing",
-        expectedSeriesUpdatedMs: row.googleUpdatedMs,
+        expectedSeriesUpdatedMs: row.providerUpdatedMs,
       }),
     ).rejects.toThrow("changed after");
     expect(methods).toEqual(["GET", "GET"]);
@@ -923,7 +928,7 @@ describe("scoped recurring deletion", () => {
       const master = String(input).includes("/events/series-master");
       return Response.json(
         liveGoogleEvent(row, {
-          id: master ? "series-master" : row.googleEventId,
+          id: master ? "series-master" : row.providerEventId,
           originalStartTime: master
             ? undefined
             : {

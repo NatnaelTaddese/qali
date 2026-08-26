@@ -8,9 +8,7 @@ import { internalMutation } from "../_generated/server";
  * Recurring storage maintenance + the account-deletion purge. All internal,
  * self-rescheduling in bounded batches so a run stays under Convex's
  * per-mutation write limits. Registered here at `internal.jobs.maintenance.*`,
- * the path the crons and self-reschedules reference; the root maintenance.ts
- * facade keeps the pre-cutover `internal.maintenance.*` paths live while
- * persisted scheduler entries drain.
+ * the path the crons and self-reschedules reference.
  */
 
 const BATCH_SIZE = 500;
@@ -94,12 +92,17 @@ export const enqueueSharedEventPrune = internalMutation({
       .query("sharedCalendars")
       .paginate({ cursor: args.cursor ?? null, numItems: USER_FANOUT_BATCH });
     for (const row of page.page) {
+      // Rows without neutral identity are pre-cutover leftovers the wipe
+      // removes; never fall back to legacy columns for them.
+      if (row.provider === undefined || row.providerCalendarId === undefined) {
+        continue;
+      }
       await ctx.scheduler.runAfter(
         0,
         internal.jobs.maintenance.pruneSharedCalendarEvents,
         {
-          provider: row.provider ?? "google",
-          providerCalendarId: row.providerCalendarId ?? row.googleCalendarId,
+          provider: row.provider,
+          providerCalendarId: row.providerCalendarId,
         },
       );
     }
@@ -122,12 +125,12 @@ export const pruneSharedCalendarEvents = internalMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const now = Date.now();
-    if (args.provider !== "google") return null;
     const past = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_start", (q) =>
+      .withIndex("by_provider_and_providerCalendarId_and_startMs", (q) =>
         q
-          .eq("calendarId", args.providerCalendarId)
+          .eq("provider", args.provider)
+          .eq("providerCalendarId", args.providerCalendarId)
           .lt("startMs", now - EVENT_RETENTION_MS),
       )
       .take(BATCH_SIZE);
@@ -144,9 +147,10 @@ export const pruneSharedCalendarEvents = internalMutation({
     }
     const future = await ctx.db
       .query("sharedEvents")
-      .withIndex("by_calendar_and_start", (q) =>
+      .withIndex("by_provider_and_providerCalendarId_and_startMs", (q) =>
         q
-          .eq("calendarId", args.providerCalendarId)
+          .eq("provider", args.provider)
+          .eq("providerCalendarId", args.providerCalendarId)
           .gt("startMs", now + EVENT_FUTURE_RETENTION_MS),
       )
       .take(BATCH_SIZE);
@@ -247,11 +251,9 @@ export const purgeUserData = internalMutation({
     };
     const byUser = (
       table:
-        | "syncState"
         | "userSyncState"
         | "connectionSyncState"
         | "calendarConnections"
-        | "connectionBackfillUsers"
         | "calendars"
         | "bookingPages"
         | "contacts"
@@ -266,7 +268,6 @@ export const purgeUserData = internalMutation({
         .withIndex("by_user", (q) => q.eq("userId", userId))
         .take(PURGE_BATCH);
 
-    await drain(await byUser("syncState"));
     await drain(await byUser("userSyncState"));
     // Delete connection children before their parent connection rows. Convex
     // does not enforce foreign keys, but this ordering prevents retries from
@@ -278,7 +279,6 @@ export const purgeUserData = internalMutation({
         .take(PURGE_BATCH),
     );
     await drain(await byUser("connectionSyncState"));
-    await drain(await byUser("connectionBackfillUsers"));
     await drain(await byUser("calendars"));
     await drain(await byUser("bookingPages"));
     await drain(await byUser("contacts"));
@@ -299,9 +299,7 @@ export const purgeUserData = internalMutation({
     await drain(
       await ctx.db
         .query("recurringSeries")
-        .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-          q.eq("userId", userId),
-        )
+        .withIndex("by_user", (q) => q.eq("userId", userId))
         .take(PURGE_BATCH),
     );
     await drain(

@@ -9,8 +9,9 @@ import type {
 } from "../../../convex/integrations/calendar/types";
 
 process.env.SKIP_ENV_VALIDATION = "1";
-const { ASSISTANT_TOOLS, applyProposal, normalizeLegacyDeleteScope } =
-  await import("../../../convex/domains/assistant/tools");
+const { ASSISTANT_TOOLS, applyProposal } = await import(
+  "../../../convex/domains/assistant/tools"
+);
 
 function propertiesFor(name: string): Record<string, unknown> {
   const tool = ASSISTANT_TOOLS.find((candidate) => candidate.name === name);
@@ -51,9 +52,7 @@ describe("assistant confirmed writes", () => {
       endMs: 2_000,
       allDay: false,
       status: "confirmed",
-      googleEventId: "legacy-event-1",
-      calendarId: "legacy-calendar-1",
-      googleUpdatedMs: 10,
+      providerEventId: "provider-event-1",
       providerUpdatedMs: 20,
       organizer: { self: true },
     };
@@ -182,18 +181,6 @@ describe("assistant recurring deletion contract", () => {
     expect(tool.parameters.required).toContain("scope");
   });
 
-  test("defaults legacy pending proposals to one occurrence", () => {
-    expect(
-      normalizeLegacyDeleteScope("delete_event", { eventId: "event-1" }),
-    ).toEqual({ eventId: "event-1", scope: "thisEvent" });
-    expect(
-      normalizeLegacyDeleteScope("delete_event", {
-        eventId: "event-1",
-        scope: "allEvents",
-      }),
-    ).toEqual({ eventId: "event-1", scope: "allEvents" });
-  });
-
   test("previews whole-series cancellation and guest notifications", async () => {
     const tool = ASSISTANT_TOOLS.find(
       (candidate) => candidate.name === "delete_event",
@@ -208,7 +195,7 @@ describe("assistant recurring deletion contract", () => {
           startMs: Date.parse("2026-08-11T01:00:00.000Z"),
           endMs: Date.parse("2026-08-11T01:30:00.000Z"),
           allDay: false,
-          recurringEventId: "series-1",
+          providerSeriesId: "series-1",
           organizer: { self: true },
           attendees: [{ email: "guest@example.com" }],
         },
@@ -223,7 +210,7 @@ describe("assistant recurring deletion contract", () => {
               startMs: Date.parse("2026-08-11T01:00:00.000Z"),
               endMs: Date.parse("2026-08-11T01:30:00.000Z"),
               allDay: false,
-              recurringEventId: "series-1",
+              providerSeriesId: "series-1",
               organizer: { self: true },
               attendees: [{ email: "guest@example.com" }],
             },

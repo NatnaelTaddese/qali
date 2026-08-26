@@ -124,7 +124,7 @@ export function EventCard({
     >
       <RevealFlash
         reveal={reveal}
-        targetId={[event._id, event.googleEventId]}
+        targetId={[event._id, event.providerEventId]}
         className="rounded-lg bg-[color-mix(in_oklab,var(--primary)_45%,transparent)]"
       />
       <span
@@ -142,7 +142,7 @@ export function EventCard({
         <p className="event-card-time truncate text-muted-foreground">
           {`${format(event.startMs, "h:mm")} – ${format(event.endMs, "h:mm a")}`}
         </p>
-        {(attendees.length > 0 || event.hangoutLink) && (
+        {(attendees.length > 0 || event.conferenceUrl) && (
           <div className="event-card-meta mt-auto min-w-0 items-center justify-between gap-1 pt-1">
             {attendees.length > 0 && (
               <span className="event-card-attendees flex min-w-0 items-center">
@@ -161,10 +161,10 @@ export function EventCard({
                 ))}
               </span>
             )}
-            {event.hangoutLink && (
+            {event.conferenceUrl && (
               <span
                 role="img"
-                aria-label="Google Meet attached"
+                aria-label="Video call attached"
                 className="event-card-meeting ml-auto shrink-0 text-muted-foreground/45"
               >
                 <HugeiconsIcon icon={Video01Icon} size={15} strokeWidth={1.8} />

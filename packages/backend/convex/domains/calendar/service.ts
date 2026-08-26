@@ -1,6 +1,6 @@
 /** Connection-aware calendar writes against the provider-neutral adapter port.
- * Registration of the public actions is canonical here; the root `calendar.ts`
- * facade re-exports the same registered objects on the legacy paths. */
+ * Registration of the public actions is canonical here, under
+ * `api.domains.calendar.service.*`. */
 
 import {
   eventCapabilities,
@@ -131,12 +131,14 @@ async function refreshTarget(
 
 async function mirrorEvent(
   ctx: ActionCtx,
+  userId: string,
   target: Pick<CreateTarget, "connectionId" | "localCalendarId">,
   event: ProviderEvent,
   successSummary: string,
 ): Promise<void> {
   try {
     await ctx.runMutation(internal.domains.calendar.mutations.mirrorProviderEvent, {
+      userId,
       connectionId: target.connectionId,
       localCalendarId: target.localCalendarId,
       event: providerEventValue(event),
@@ -160,7 +162,7 @@ async function cacheSeries(
     localCalendarId: target.localCalendarId,
     providerEventId: event.id,
     recurrence: [...recurrence],
-    sourceUpdatedMs: event.updatedMs,
+    providerUpdatedMs: event.updatedMs,
     replacedEventId,
   });
 }
@@ -291,10 +293,6 @@ function eventAttendees(
     .map(({ email, displayName, optional }) => ({ email, displayName, optional }));
 }
 
-function transparencyBusy(value: string | undefined): boolean | undefined {
-  return value === undefined ? undefined : value !== "transparent";
-}
-
 function conferencePatch(
   conference: "meet" | null | undefined,
 ): EventPatch["conference"] | undefined {
@@ -305,8 +303,8 @@ function conferencePatch(
       : "add";
 }
 
-function providerVersion(row: Doc<"events">): number {
-  return row.providerUpdatedMs ?? row.googleUpdatedMs;
+function providerVersion(row: Doc<"events">): number | undefined {
+  return row.providerUpdatedMs;
 }
 
 function toRRuleUntil(ms: number, allDay: boolean): string {
@@ -343,9 +341,9 @@ export interface CreateEventArgs {
   location?: string;
   allDay?: boolean;
   calendarId?: Id<"calendars">;
-  colorId?: string;
+  color?: string;
   visibility?: string;
-  transparency?: string;
+  busy?: boolean;
   recurrence?: string[];
   attendees?: { email: string; displayName?: string }[];
   timeZone?: string;
@@ -392,9 +390,9 @@ export async function createEventOp(
       description: args.description,
       location: args.location,
       allDay: args.allDay,
-      colorId: args.colorId,
+      color: args.color,
       visibility: args.visibility,
-      transparency: args.transparency,
+      busy: args.busy,
       recurrence: args.recurrence,
       attendees: args.attendees,
       timeZone: args.timeZone,
@@ -421,9 +419,9 @@ export async function createEventOp(
           description: args.description,
           location: args.location,
           allDay: args.allDay,
-          color: args.colorId,
+          color: args.color,
           visibility: args.visibility,
-          busy: transparencyBusy(args.transparency),
+          busy: args.busy,
           recurrence: args.recurrence,
           attendees: args.attendees,
           timeZone: args.timeZone,
@@ -457,7 +455,7 @@ export async function createEventOp(
       throw new ExternalWriteCommittedError(`Created “${args.summary}”.`, error);
     }
   } else {
-    await mirrorEvent(ctx, target, event, `Created “${args.summary}”.`);
+    await mirrorEvent(ctx, userId, target, event, `Created “${args.summary}”.`);
   }
   return event;
 }
@@ -478,9 +476,9 @@ export interface UpdateEventArgs {
   summary?: string;
   description?: string | null;
   location?: string | null;
-  colorId?: string | null;
+  color?: string | null;
   visibility?: string | null;
-  transparency?: string;
+  busy?: boolean;
   startMs?: number;
   endMs?: number;
   allDay?: boolean;
@@ -491,8 +489,6 @@ export interface UpdateEventArgs {
   scope?: UpdateEventScope;
   operationId?: string;
   expectedProviderUpdatedMs?: number;
-  /** Stored legacy assistant proposals use this name. */
-  expectedGoogleUpdatedMs?: number;
   expectedSeriesUpdatedMs?: number;
 }
 
@@ -501,9 +497,9 @@ function basePatch(args: UpdateEventArgs): EventPatch {
     summary: args.summary,
     description: args.description,
     location: args.location,
-    color: args.colorId,
+    color: args.color,
     visibility: args.visibility,
-    busy: transparencyBusy(args.transparency),
+    busy: args.busy,
     attendees: args.attendees,
     conference: conferencePatch(args.conference),
   };
@@ -557,8 +553,7 @@ export async function updateEventOp(
   );
   const adapter = await adapterFor(ctx, userId, target.connectionId, dependencies);
   const allDay = args.allDay ?? row.allDay;
-  const expectedUpdatedMs =
-    args.expectedProviderUpdatedMs ?? args.expectedGoogleUpdatedMs;
+  const expectedUpdatedMs = args.expectedProviderUpdatedMs;
   if (
     (args.attendees !== undefined || args.recurrence !== undefined) &&
     expectedUpdatedMs !== undefined &&
@@ -623,9 +618,9 @@ export async function updateEventOp(
       summary: args.summary,
       description: args.description,
       location: args.location,
-      colorId: args.colorId,
+      color: args.color,
       visibility: args.visibility,
-      transparency: args.transparency,
+      busy: args.busy,
       startMs: args.startMs,
       endMs: args.endMs,
       allDay: args.allDay,
@@ -645,7 +640,7 @@ export async function updateEventOp(
         eventId: operation.providerEventId ?? target.providerEventId,
       });
       if (scope === "thisEvent" && args.recurrence === undefined) {
-        await mirrorEvent(ctx, target, event, "Event updated.");
+        await mirrorEvent(ctx, userId, target, event, "Event updated.");
       } else {
         await refreshTarget(ctx, userId, target, dependencies);
       }
@@ -710,7 +705,7 @@ export async function updateEventOp(
         knownAttendeeEmails: row.attendees?.map((attendee) => attendee.email),
       });
       await finishUpdate(ctx, userId, target, operation, event);
-      await mirrorEvent(ctx, target, event, "Event updated.");
+      await mirrorEvent(ctx, userId, target, event, "Event updated.");
       return event;
     }
 
@@ -792,7 +787,7 @@ export async function updateEventOp(
         ? false
         : args.conference === "meet"
           ? true
-          : Boolean(row.conferenceUrl ?? row.hangoutLink);
+          : Boolean(row.conferenceUrl);
     if (addConference) {
       requireCapability(
         adapter.capabilities.conference.create,
@@ -814,14 +809,9 @@ export async function updateEventOp(
         startMs: hasTimeChange ? args.startMs! : row.startMs,
         endMs: hasTimeChange ? args.endMs! : row.endMs,
         allDay,
-        color: carried(args.colorId, row.colorId),
+        color: carried(args.color, row.color),
         visibility: carried(args.visibility, row.visibility),
-        busy:
-          args.transparency === undefined
-            ? row.transparency === undefined
-              ? undefined
-              : row.transparency !== "transparent"
-            : args.transparency !== "transparent",
+        busy: args.busy === undefined ? row.busy : args.busy,
         attendees: tailAttendees,
         recurrence,
         timeZone: effectiveTimeZone,
@@ -931,7 +921,7 @@ export async function respondToEventOp(
     if (operation.state !== "succeeded") {
       await settleWrite(ctx, userId, target, operation, "succeeded", event.id);
     }
-    await mirrorEvent(ctx, target, event, "Invitation response updated.");
+    await mirrorEvent(ctx, userId, target, event, "Invitation response updated.");
     return event;
   } catch (error) {
     if (error instanceof ExternalWriteCommittedError) {
@@ -1182,11 +1172,15 @@ async function authedUser(ctx: ActionCtx): Promise<string> {
   return user._id;
 }
 
-/** Keep the pre-cutover Google-shaped action result at the public facade. */
-export function legacyCalendarActionEvent(event: ProviderEvent) {
+/** The provider-neutral result shape of the public calendar actions.
+ * `providerCalendarId` is the provider's calendar id string, not a local
+ * `calendars` reference. */
+export function calendarActionEvent(event: ProviderEvent) {
   return {
-    googleEventId: event.id,
-    calendarId: event.calendarId,
+    providerEventId: event.id,
+    providerCalendarId: event.calendarId,
+    providerUpdatedMs: event.updatedMs,
+    providerSeriesId: event.seriesId,
     summary: event.summary,
     description: event.description,
     location: event.location,
@@ -1195,14 +1189,9 @@ export function legacyCalendarActionEvent(event: ProviderEvent) {
     allDay: event.allDay,
     status: event.status,
     htmlLink: event.htmlLink,
-    colorId: event.color,
+    color: event.color,
     visibility: event.visibility,
-    transparency:
-      event.busy === undefined
-        ? undefined
-        : event.busy
-          ? "opaque"
-          : "transparent",
+    busy: event.busy,
     attendees: event.attendees
       ?.filter(
         (attendee): attendee is typeof attendee & { email: string } =>
@@ -1217,7 +1206,6 @@ export function legacyCalendarActionEvent(event: ProviderEvent) {
         optional: attendee.optional,
       })),
     attendeesOmitted: event.attendeesOmitted,
-    googleUpdatedMs: event.updatedMs,
     organizer: event.organizer,
     creator: event.creator,
     guestsCanModify: event.guestsCanModify,
@@ -1225,11 +1213,6 @@ export function legacyCalendarActionEvent(event: ProviderEvent) {
     guestsCanSeeOtherGuests: event.guestsCanSeeOtherGuests,
     locked: event.locked,
     eventType: event.eventType,
-    recurringEventId: event.seriesId,
-    hangoutLink:
-      event.conference?.type === "hangoutsMeet"
-        ? event.conference.url
-        : undefined,
     conferenceUrl: event.conference?.url,
     conferenceName: event.conference?.name,
     conferenceType: event.conference?.type,
@@ -1239,8 +1222,8 @@ export function legacyCalendarActionEvent(event: ProviderEvent) {
 export async function createEventHandler(
   ctx: ActionCtx,
   args: CreateEventArgs,
-): Promise<ReturnType<typeof legacyCalendarActionEvent>> {
-  return legacyCalendarActionEvent(
+): Promise<ReturnType<typeof calendarActionEvent>> {
+  return calendarActionEvent(
     await createEventOp(ctx, await authedUser(ctx), args),
   );
 }
@@ -1255,7 +1238,7 @@ export async function refreshEventRecurrenceHandler(
     userId,
   });
   if (!context) throw new Error("Event not found");
-  if (!(context.event.providerSeriesId ?? context.event.recurringEventId)) {
+  if (!context.event.providerSeriesId) {
     return null;
   }
   const target = (await ctx.runMutation(
@@ -1282,8 +1265,8 @@ export async function refreshEventRecurrenceHandler(
 export async function updateEventTimeHandler(
   ctx: ActionCtx,
   args: UpdateEventTimeArgs,
-): Promise<ReturnType<typeof legacyCalendarActionEvent>> {
-  return legacyCalendarActionEvent(
+): Promise<ReturnType<typeof calendarActionEvent>> {
+  return calendarActionEvent(
     await updateEventTimeOp(ctx, await authedUser(ctx), args),
   );
 }
@@ -1291,8 +1274,8 @@ export async function updateEventTimeHandler(
 export async function updateEventHandler(
   ctx: ActionCtx,
   args: UpdateEventArgs,
-): Promise<ReturnType<typeof legacyCalendarActionEvent>> {
-  return legacyCalendarActionEvent(
+): Promise<ReturnType<typeof calendarActionEvent>> {
+  return calendarActionEvent(
     await updateEventOp(ctx, await authedUser(ctx), args),
   );
 }
@@ -1300,8 +1283,8 @@ export async function updateEventHandler(
 export async function respondToEventHandler(
   ctx: ActionCtx,
   args: RespondToEventArgs,
-): Promise<ReturnType<typeof legacyCalendarActionEvent>> {
-  return legacyCalendarActionEvent(
+): Promise<ReturnType<typeof calendarActionEvent>> {
+  return calendarActionEvent(
     await respondToEventOp(ctx, await authedUser(ctx), args),
   );
 }
@@ -1323,11 +1306,13 @@ export const createEvent = action({
     allDay: v.optional(v.boolean()),
     /** Owned local calendar to create in; defaults to the user's primary. */
     calendarId: v.optional(v.id("calendars")),
-    /** Google event colour override ("1".."11"); absent inherits the calendar. */
-    colorId: v.optional(v.string()),
+    /** Provider event colour override (Google: "1".."11"); absent inherits
+     * the calendar. */
+    color: v.optional(v.string()),
     visibility: v.optional(v.string()),
-    /** Google's `transparency`: "transparent" (free); absent = busy (the default). */
-    transparency: v.optional(v.string()),
+    /** Free/busy: `false` marks the event free; absent = the provider default
+     * (busy). Never read with a truthiness check. */
+    busy: v.optional(v.boolean()),
     /** RFC5545 recurrence lines (RRULE), e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO"]. */
     recurrence: v.optional(v.array(v.string())),
     /** Guests to invite. Google emails each one an invitation on create. */
@@ -1341,7 +1326,7 @@ export const createEvent = action({
     ),
     /** Client IANA time zone; Google requires it for recurring timed events. */
     timeZone: v.optional(v.string()),
-    /** Ask Google to mint a Google Meet link; the URL comes back as `hangoutLink`. */
+    /** Ask Google to mint a Google Meet link; the URL comes back as `conferenceUrl`. */
     addConference: v.optional(v.boolean()),
     /** Idempotency key, stable across retries of the same user intent. */
     operationId: v.optional(v.string()),
@@ -1372,11 +1357,12 @@ export const updateEvent = action({
     /** HTML description (bold/italic/underline/links/lists). `null` clears it. */
     description: v.optional(v.union(v.string(), v.null())),
     location: v.optional(v.union(v.string(), v.null())),
-    /** Google event colour ("1".."11"); `null` reverts to the calendar's. */
-    colorId: v.optional(v.union(v.string(), v.null())),
+    /** Provider event colour (Google: "1".."11"); `null` reverts to the
+     * calendar's. */
+    color: v.optional(v.union(v.string(), v.null())),
     visibility: v.optional(v.union(v.string(), v.null())),
-    /** Google's `transparency`: "opaque" (busy) | "transparent" (free). */
-    transparency: v.optional(v.string()),
+    /** Free/busy: `true` = busy, `false` = free; absent leaves it unchanged. */
+    busy: v.optional(v.boolean()),
     /** Send both ends together, or neither. All-day values are UTC-midnight
      * instants with an exclusive end, as `createEvent` expects them. */
     startMs: v.optional(v.number()),
@@ -1411,6 +1397,10 @@ export const updateEvent = action({
         v.literal("allEvents"),
       ),
     ),
+    /** Optimistic-concurrency guard: the `providerUpdatedMs` the proposal
+     * saw. A guest-list or recurrence change made against an older version is
+     * rejected instead of applied blind. */
+    expectedProviderUpdatedMs: v.optional(v.number()),
     /** Idempotency key, stable across retries of the same user intent. */
     operationId: v.optional(v.string()),
   },

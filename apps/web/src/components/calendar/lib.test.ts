@@ -119,19 +119,19 @@ describe("calendarDisplayName", () => {
   test("prefers the user's override, then summary, then calendar id", () => {
     expect(
       calendarDisplayName({
-        googleCalendarId: "primary@example.com",
+        providerCalendarId: "primary@example.com",
         summary: "Primary",
         summaryOverride: "My calendar",
       }),
     ).toBe("My calendar");
     expect(
       calendarDisplayName({
-        googleCalendarId: "team@example.com",
+        providerCalendarId: "team@example.com",
         summary: "Team",
       }),
     ).toBe("Team");
     expect(
-      calendarDisplayName({ googleCalendarId: "fallback@example.com" }),
+      calendarDisplayName({ providerCalendarId: "fallback@example.com" }),
     ).toBe("fallback@example.com");
   });
 });

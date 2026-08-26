@@ -146,12 +146,10 @@ async function setupCalendar(
   return await t.run((ctx) =>
     ctx.db.insert("calendars", {
       userId,
-      googleCalendarId: providerCalendarId,
       selected: true,
       connectionId,
       providerCalendarId,
       syncCursor,
-      syncToken: syncCursor,
     }),
   );
 }
@@ -209,8 +207,8 @@ describe("connection-scoped fake-provider sync", () => {
       await t.run((ctx) =>
         ctx.db
           .query("events")
-          .withIndex("by_user_and_calendar_and_end", (q) =>
-            q.eq("userId", userId).eq("calendarId", "calendar"),
+          .withIndex("by_connection_and_localCalendarId_and_endMs", (q) =>
+            q.eq("connectionId", connectionId).eq("localCalendarId", calendarId),
           )
           .collect(),
       ),
@@ -226,13 +224,10 @@ describe("connection-scoped fake-provider sync", () => {
       await ctx.db.patch(calendarId, { syncGeneration: 1 });
       await ctx.db.insert("events", {
         userId,
-        googleEventId: "old",
-        calendarId: "calendar",
         startMs: 1_000,
         endMs: 2_000,
         allDay: false,
         status: "confirmed",
-        googleUpdatedMs: 1_000,
         syncGeneration: 1,
         connectionId,
         localCalendarId: calendarId,
@@ -267,8 +262,8 @@ describe("connection-scoped fake-provider sync", () => {
       (
         await ctx.db
           .query("events")
-          .withIndex("by_user_and_calendar_and_end", (q) =>
-            q.eq("userId", userId).eq("calendarId", "calendar"),
+          .withIndex("by_connection_and_localCalendarId_and_endMs", (q) =>
+            q.eq("connectionId", connectionId).eq("localCalendarId", calendarId),
           )
           .collect()
       ).map((row) => row.providerEventId).sort(),
@@ -307,8 +302,8 @@ describe("connection-scoped fake-provider sync", () => {
         (
           await ctx.db
             .query("events")
-            .withIndex("by_user_and_calendar_and_end", (q) =>
-              q.eq("userId", userId).eq("calendarId", "calendar"),
+            .withIndex("by_connection_and_localCalendarId_and_endMs", (q) =>
+              q.eq("connectionId", connectionId).eq("localCalendarId", calendarId),
             )
             .collect()
         ).map((row) => row.providerEventId),
@@ -355,79 +350,90 @@ describe("connection-scoped fake-provider sync", () => {
 });
 
 describe("connection identity and lease fencing", () => {
-  test("calendar and event reconciliation repair legacy rows before inserting", async () => {
+  test("reconciliation seeds the local visibility choice once and never overwrites it", async () => {
     const t = convexTest(schema, modules);
-    const userId = "legacy-reconcile";
+    const userId = "reconcile-seed";
     const connectionId = await setupConnection(t, userId, "google");
-    const calendarId = await t.run(async (ctx) => {
-      const calendarId = await ctx.db.insert("calendars", {
-        userId,
-        googleCalendarId: "legacy-calendar",
-        summary: "Old",
-        summaryOverride: "Stale override",
-        selected: true,
-      });
-      await ctx.db.insert("events", {
-        userId,
-        googleEventId: "legacy-event",
-        calendarId: "legacy-calendar",
-        startMs: 1,
-        endMs: 2,
-        allDay: false,
-        status: "confirmed",
-        googleUpdatedMs: 1,
-      });
-      return calendarId;
-    });
     const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
       connectionId,
     });
-    const reconciled = await t.mutation(
-      internal.domains.sync.engine.reconcileCalendars,
-      {
+    const reconcile = (selected: boolean | undefined) =>
+      t.mutation(internal.domains.sync.engine.reconcileCalendars, {
         connectionId,
         attemptId: attemptId!,
         calendars: [
-          {
-            id: "legacy-calendar",
-            summary: "Provider name",
-            writable: true,
-          },
+          { id: "cal", summary: "Provider name", writable: true, selected },
+          { id: "unlisted", writable: false },
         ],
-      },
-    );
-    expect(reconciled[0]?.localCalendarId).toBe(calendarId);
+      });
+    const reconciled = await reconcile(true);
+    expect(reconciled).toHaveLength(2);
+    const calendars = await t.run((ctx) => ctx.db.query("calendars").collect());
+    expect(calendars).toHaveLength(2);
+    const cal = calendars.find((row) => row.providerCalendarId === "cal");
+    expect(cal).toMatchObject({
+      connectionId,
+      providerCalendarId: "cal",
+      summary: "Provider name",
+      providerSelected: true,
+      selected: true,
+      isShared: false,
+    });
+    // A calendar the provider omits `selected` on seeds local `selected` false.
+    expect(
+      calendars.find((row) => row.providerCalendarId === "unlisted")?.selected,
+    ).toBe(false);
+    // A later local toggle survives the provider still reporting selected.
+    await t.run((ctx) => ctx.db.patch(cal!._id, { selected: false }));
+    await reconcile(true);
+    const repatched = await t.run((ctx) => ctx.db.get(cal!._id));
+    expect(repatched?.providerSelected).toBe(true);
+    expect(repatched?.selected).toBe(false);
+  });
+
+  test("event upserts key on connection, local calendar, and provider event id", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "neutral-upsert";
+    const connectionId = await setupConnection(t, userId, "google");
+    const calendarId = await setupCalendar(t, userId, connectionId, "calendar");
+    const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
+      connectionId,
+    });
     await t.mutation(internal.domains.sync.engine.upsertEventsPage, {
       connectionId,
       attemptId: attemptId!,
       localCalendarId: calendarId,
       events: [
         {
-          ...event("legacy-event", "legacy-calendar"),
+          ...event("evt", "calendar"),
           color: "7",
           busy: false,
         },
       ],
     });
-    const state = await t.run(async (ctx) => ({
-      calendars: await ctx.db.query("calendars").collect(),
-      events: await ctx.db.query("events").collect(),
-    }));
-    expect(state.calendars).toHaveLength(1);
-    expect(state.calendars[0]).toMatchObject({
+    await t.mutation(internal.domains.sync.engine.upsertEventsPage, {
       connectionId,
-      providerCalendarId: "legacy-calendar",
-      summary: "Provider name",
+      attemptId: attemptId!,
+      localCalendarId: calendarId,
+      events: [
+        {
+          ...event("evt", "calendar"),
+          summary: "Updated",
+        },
+      ],
     });
-    expect(state.calendars[0]?.summaryOverride).toBeUndefined();
-    expect(state.events).toHaveLength(1);
-    expect(state.events[0]).toMatchObject({
+    const rows = await t.run((ctx) => ctx.db.query("events").collect());
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
       connectionId,
       localCalendarId: calendarId,
-      providerEventId: "legacy-event",
-      color: "7",
-      busy: false,
+      providerEventId: "evt",
+      summary: "Updated",
     });
+    // The second upsert replaced the row wholesale; per-event overrides from
+    // the superseded snapshot do not linger.
+    expect(rows[0]?.color).toBeUndefined();
+    expect(rows[0]?.busy).toBeUndefined();
   });
 
   test("allows colliding provider ids on independent connections", async () => {
@@ -547,20 +553,22 @@ describe("connection identity and lease fencing", () => {
     await t.run(async (ctx) => {
       await ctx.db.insert("events", {
         userId,
-        googleEventId: "event",
-        calendarId: "removed",
         startMs: 1,
         endMs: 2,
         allDay: false,
         status: "confirmed",
-        googleUpdatedMs: 1,
+        connectionId,
+        localCalendarId: calendarId,
+        providerEventId: "event",
+        providerUpdatedMs: 1,
       });
       await ctx.db.insert("recurringSeries", {
         userId,
-        calendarId: "removed",
-        googleEventId: "series",
+        connectionId,
+        localCalendarId: calendarId,
+        providerEventId: "series",
+        providerUpdatedMs: 1,
         recurrence: ["RRULE:FREQ=DAILY"],
-        sourceUpdatedMs: 1,
       });
       await ctx.db.delete(calendarId);
     });
@@ -756,63 +764,6 @@ describe("connection-aware contact ownership", () => {
     }
   });
 
-  test("repairs a legacy saved contact and cleans legacy-only Other Contacts", async () => {
-    const t = convexTest(schema, modules);
-    const userId = "legacy-contact-user";
-    const connectionId = await setupConnection(t, userId, "google");
-    await t.run(async (ctx) => {
-      await ctx.db.insert("contacts", {
-        userId,
-        resourceName: "people/legacy",
-        emails: ["saved@example.com"],
-        phones: [],
-      });
-      await ctx.db.insert("people", {
-        userId,
-        email: "orphan@example.com",
-        sources: ["other"],
-        updatedAt: 1,
-      });
-    });
-    const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
-      connectionId,
-    });
-    await t.mutation(internal.domains.sync.engine.upsertContactsPage, {
-      connectionId,
-      attemptId: attemptId!,
-      feed: "contacts",
-      contacts: [
-        {
-          id: "people/legacy",
-          deleted: false,
-          emails: ["saved@example.com"],
-          phones: [],
-        },
-      ],
-    });
-    await t.mutation(internal.domains.sync.engine.beginContactsFullResync, {
-      connectionId,
-      attemptId: attemptId!,
-      feed: "other",
-    });
-    await t.mutation(internal.domains.sync.engine.sweepLegacyOtherPeopleBatch, {
-      connectionId,
-      attemptId: attemptId!,
-      cursor: null,
-    });
-    const rows = await t.run(async (ctx) => ({
-      contacts: await ctx.db.query("contacts").collect(),
-      people: await ctx.db.query("people").collect(),
-    }));
-    expect(rows.contacts).toHaveLength(1);
-    expect(rows.contacts[0]).toMatchObject({
-      connectionId,
-      providerContactId: "people/legacy",
-    });
-    expect(rows.people.some((row) => row.email === "orphan@example.com")).toBe(
-      false,
-    );
-  });
 });
 
 describe("shared generation and engagement maintenance", () => {
@@ -975,50 +926,14 @@ describe("shared generation and engagement maintenance", () => {
     });
   });
 
-  test("shared reconciliation falls back to and repairs a legacy event", async () => {
-    const t = convexTest(schema, modules);
-    await t.run((ctx) =>
-      ctx.db.insert("sharedEvents", {
-        googleEventId: "legacy-shared",
-        calendarId: "holidays",
-        startMs: 1,
-        endMs: 2,
-        allDay: true,
-        status: "confirmed",
-        googleUpdatedMs: 1,
-      }),
-    );
-    const claim = await t.mutation(internal.domains.sync.engine.claimSharedCalendarSync, {
-      provider: "google",
-      providerCalendarId: "holidays",
-      refreshIntervalMs: 0,
-    });
-    await t.mutation(internal.domains.sync.engine.upsertSharedEventsPage, {
-      provider: "google",
-      providerCalendarId: "holidays",
-      attemptId: claim.attemptId!,
-      events: [event("legacy-shared", "holidays")],
-    });
-    const rows = await t.run((ctx) => ctx.db.query("sharedEvents").collect());
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      provider: "google",
-      providerCalendarId: "holidays",
-      providerEventId: "legacy-shared",
-    });
-  });
-
   test("a failed shared refresh leaves the old generation visible and releases only its own lease", async () => {
     const t = convexTest(schema, modules);
     await t.run((ctx) =>
       ctx.db.insert("sharedEvents", {
-        googleEventId: "old",
-        calendarId: "holiday",
         startMs: 1_000,
         endMs: 2_000,
         allDay: false,
         status: "confirmed",
-        googleUpdatedMs: 1_000,
         provider: "google",
         providerCalendarId: "holiday",
         providerEventId: "old",

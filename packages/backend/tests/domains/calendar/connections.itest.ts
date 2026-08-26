@@ -3,60 +3,12 @@ import { describe, expect, test } from "vitest";
 
 import { internal } from "../../../convex/_generated/api";
 import schema from "../../../convex/schema";
-import { calendarTables } from "../../../convex/domains/calendar/tables";
 
 import { modules } from "../../testModules";
 
-/**
- * The connection tables are deployed empty and queried by nothing yet, so there
- * are no functions to exercise. This smoke test just proves the intended row
- * shapes are insertable and linkable — a record of what the Stage 5 backfill
- * will write, and a guard against a schema drift that would break it.
- */
-describe("connection model expand", () => {
-  test("only the default Google connection inherits legacy sync cursors", async () => {
-    const t = convexTest(schema, modules);
-    const userId = "cursor-owner";
-    const { googleId, secondGoogleId, microsoftId } = await t.run(async (ctx) => {
-      await ctx.db.insert("syncState", {
-        userId,
-        contactsSyncToken: "legacy-contacts",
-        contactsSyncGeneration: 7,
-        status: "idle",
-      });
-      const insert = (provider: "google" | "microsoft", createdAt: number) =>
-        ctx.db.insert("calendarConnections", {
-          userId,
-          provider,
-          status: "active",
-          createdAt,
-          updatedAt: createdAt,
-        });
-      return {
-        googleId: await insert("google", 1),
-        secondGoogleId: await insert("google", 2),
-        microsoftId: await insert("microsoft", 3),
-      };
-    });
-
-    await t.mutation(internal.domains.sync.engine.ensureSyncState, { userId });
-    const states = await t.run((ctx) =>
-      ctx.db
-        .query("connectionSyncState")
-        .withIndex("by_user", (q) => q.eq("userId", userId))
-        .collect(),
-    );
-    const byConnection = new Map(states.map((state) => [state.connectionId, state]));
-    expect(byConnection.get(googleId)).toMatchObject({
-      contactsCursor: "legacy-contacts",
-      contactsGeneration: 7,
-    });
-    expect(byConnection.get(secondGoogleId)?.contactsCursor).toBeUndefined();
-    expect(byConnection.get(secondGoogleId)?.contactsGeneration).toBeUndefined();
-    expect(byConnection.get(microsoftId)?.contactsCursor).toBeUndefined();
-    expect(byConnection.get(microsoftId)?.contactsGeneration).toBeUndefined();
-  });
-
+/** Smoke tests for the connection model: row shapes are insertable and
+ * linkable, and adapter resolution respects connection status. */
+describe("connection model", () => {
   test("adapter resolution exposes only an active connection", async () => {
     const t = convexTest(schema, modules);
     const connectionId = await t.run((ctx) =>
@@ -165,14 +117,12 @@ describe("connection model expand", () => {
         });
         const firstCalendarId = await ctx.db.insert("calendars", {
           userId,
-          googleCalendarId: "first",
           selected: true,
           connectionId,
           providerCalendarId: "first",
         });
         const secondCalendarId = await ctx.db.insert("calendars", {
           userId,
-          googleCalendarId: "second",
           selected: true,
           connectionId,
           providerCalendarId: "second",
@@ -181,20 +131,17 @@ describe("connection model expand", () => {
       },
     );
 
-    for (const [calendarId, localCalendarId, startMs] of [
-      ["first", firstCalendarId, 1_000],
-      ["second", secondCalendarId, 3_000],
+    for (const [localCalendarId, startMs] of [
+      [firstCalendarId, 1_000],
+      [secondCalendarId, 3_000],
     ] as const) {
       await t.run((ctx) =>
         ctx.db.insert("events", {
           userId,
-          calendarId,
-          googleEventId: "same-provider-id",
           startMs,
           endMs: startMs + 1_000,
           allDay: false,
           status: "confirmed",
-          googleUpdatedMs: 1_000,
           connectionId,
           localCalendarId,
           providerEventId: "same-provider-id",
@@ -206,27 +153,15 @@ describe("connection model expand", () => {
     const found = await t.run((ctx) =>
       ctx.db
         .query("events")
-        // The production index is staged during expand, so convex-test cannot
-        // query it yet. Apply the same complete key and assert its declaration.
-        .filter((q) =>
-          q.and(
-            q.eq(q.field("connectionId"), connectionId),
-            q.eq(q.field("localCalendarId"), secondCalendarId),
-            q.eq(q.field("providerEventId"), "same-provider-id"),
-          ),
+        .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
+          q
+            .eq("connectionId", connectionId)
+            .eq("localCalendarId", secondCalendarId)
+            .eq("providerEventId", "same-provider-id"),
         )
         .unique(),
     );
-    expect(found?.calendarId).toBe("second");
     expect(found?.localCalendarId).toBe(secondCalendarId);
-    const indexes = (
-      calendarTables.events as unknown as {
-        stagedDbIndexes: { indexDescriptor: string; fields: string[] }[];
-      }
-    ).stagedDbIndexes;
-    expect(indexes).toContainEqual({
-      indexDescriptor: "by_connection_and_localCalendarId_and_providerEventId",
-      fields: ["connectionId", "localCalendarId", "providerEventId"],
-    });
+    expect(found?.startMs).toBe(3_000);
   });
 });

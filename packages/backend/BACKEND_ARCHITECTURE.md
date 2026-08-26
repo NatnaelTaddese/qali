@@ -18,10 +18,10 @@
   may translate Google wire shapes, but it does not own app tables or public API
   registration.
 - `convex/jobs/` owns recurring maintenance implementations;
-  `convex/migrations/` owns resumable one-shot data changes (including
-  `migrations/backfillConnections.ts` and the scheduler repoint tooling in
-  `migrations/scheduledJobs.ts`). Migration code must not become a steady-state
-  domain dependency.
+  `convex/migrations/` owns resumable one-shot data changes (the
+  provider-cutover wipe in `migrations/providerCutover.ts` and the scheduler
+  repoint tooling in `migrations/scheduledJobs.ts`). Migration code must not
+  become a steady-state domain dependency.
 - `auth.ts` configures Better Auth and exports server helpers. Better Auth HTTP
   routes are registered by `http.ts`; there is intentionally no public
   `api.auth.*` query.
@@ -88,17 +88,23 @@ one-shot scheduler repoint migration for the long-horizon booking-expiry
 entries, and accepted one-time failures, healed by crons and lease recovery,
 for everything else.
 
-The legacy data model is the one remaining compatibility surface. It is
-scheduled for removal in the data-contraction stage
-(`MIGRATION_RUNBOOK.md` section 8), not permanent. Until that stage lands:
+The legacy data model is the one remaining compatibility surface, and it is
+now schema-only. The data-contraction stage (`MIGRATION_RUNBOOK.md` section
+8) cut every read and write over to the provider-neutral model:
 
-- Google-named columns, optional neutral mirrors, legacy tables, and old
-  indexes remain in the schema, kept in agreement by dual writes. No schema
-  field, table, or index is removed as part of source cleanup.
-- Neutral indexes added to pre-existing calendar, event, contact, recurring,
-  and booking tables are staged. Runtime reads stay on the complete Google
-  legacy indexes until every staged index is ready and a dedicated activation
-  deploy has completed; the neutral read cutover belongs to the contraction
-  stage.
-- Microsoft connections remain unavailable until that cutover, while the
-  domain and adapter contracts remain provider-neutral.
+- No code reads or writes a Google-named column, the `syncState` table, or a
+  legacy index. Reads key on `connectionId`/`localCalendarId`/neutral
+  provider-id columns via the activated neutral indexes; there are no legacy
+  fallbacks (`??`) anywhere.
+- The transitional deploy-A schema keeps every legacy column declared as
+  optional, and every legacy index declared, purely so pre-wipe production
+  rows validate until the `migrations/providerCutover.ts` wipe-and-resync
+  runs. The final deploy-B schema deletes all of them and tightens the
+  neutral identity columns to required. Between the two deploys, a row
+  missing neutral identity reads as "not found" (point reads) or is silently
+  skipped (index reads) — acceptable only for the minutes between deploy A
+  and the wipe.
+- Booking and booking-page `target*` ids stay optional forever: the cutover
+  nulls both as a pair and the primary-target fallback self-heals.
+- Microsoft connections remain unavailable until an adapter ships, but the
+  data model no longer assumes Google identities anywhere.

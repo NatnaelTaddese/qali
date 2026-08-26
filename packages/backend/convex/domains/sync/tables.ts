@@ -3,8 +3,10 @@ import { v } from "convex/values";
 
 /** Table definitions owned by sync orchestration, composed into schema.ts. */
 export const syncTables = {
-  // One row per user tracking incremental-sync state for Google data.
-  // Per-calendar sync tokens live on the `calendars` table.
+  // Legacy per-user Google sync state. Dead after the contraction: no code
+  // reads or writes it. The definition survives only so the provider-cutover
+  // wipe's own `ctx.db.query("syncState")` validates; the table is deleted at
+  // the final schema.
   syncState: defineTable({
     userId: v.string(),
     contactsSyncToken: v.optional(v.string()),
@@ -63,9 +65,8 @@ export const connectionSyncTables = {
     otherContactsGeneration: v.optional(v.number()),
     contactsGenerationAttemptId: v.optional(v.string()),
     otherContactsGenerationAttemptId: v.optional(v.string()),
-    // Legacy Other Contacts stored no provider row identity. Backfill clears the
-    // cursor and sets this gate until a complete provider snapshot materializes
-    // `otherContactSources` and exact claims.
+    // Legacy backfill gate, unread and unwritten; cleared by the provider
+    // cutover and deleted at the final schema.
     otherContactsBackfillRequired: v.optional(v.boolean()),
     status: v.union(
       v.literal("idle"),

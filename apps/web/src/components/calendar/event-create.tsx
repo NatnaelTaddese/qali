@@ -66,9 +66,9 @@ export function EventCreate({
     meet: false,
     allDay: false,
     isPrivate: false,
-    // Busy is Google's default, so the toggle starts there.
+    // Busy is the provider default, so the toggle starts there.
     busy: true,
-    colorId: undefined,
+    color: undefined,
     calendarId: undefined,
     guests: [],
     recurrence: null,
@@ -111,10 +111,10 @@ export function EventCreate({
       location: value.meet ? undefined : value.location.trim() || undefined,
       addConference: value.meet || undefined,
       calendarId: activeCalendarId,
-      colorId: value.colorId,
+      color: value.color,
       visibility: value.isPrivate ? "private" : undefined,
-      // Busy is Google's default; only send the override when Free.
-      transparency: value.busy ? undefined : "transparent",
+      // Busy is the provider default; only send the override when Free.
+      busy: value.busy ? undefined : false,
       recurrence: value.recurrence ? toRRule(value.recurrence) : undefined,
       attendees: value.guests.length
         ? value.guests.map((g) => ({

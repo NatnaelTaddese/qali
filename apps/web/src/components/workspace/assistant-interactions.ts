@@ -89,7 +89,7 @@ function timedStartMs(input: unknown): number | undefined {
  * or a booking decision). `input` is the stored tool-argument JSON.
  *
  * - create_event: no id yet, so flash by `operationId` — Google's client-chosen
- *   id, which is what the event syncs back in as (`googleEventId`).
+ *   id, which is what the event syncs back in as (`providerEventId`).
  * - move_event / update_event: flash by `eventId` (the Convex `_id`); a change
  *   with no new time still pulses the card in place. */
 export function revealTargetForAction(action: {

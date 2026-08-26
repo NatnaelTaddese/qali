@@ -1,9 +1,7 @@
 /**
  * Booking acceptance — the one booking operation that talks to a calendar
  * provider, so it is an action, not a mutation. Canonical registration for
- * `acceptBooking` / `reconcileBookingAcceptance`; the root `booking.ts` facade
- * re-exports the same registered objects on the legacy `api.booking.*` /
- * `internal.booking.*` paths while they drain.
+ * `acceptBooking` / `reconcileBookingAcceptance`.
  *
  * The calendar write goes through the provider adapter (via the registry), so
  * this path is provider-neutral: `createEventReconciling` creates the event and,
@@ -127,6 +125,7 @@ async function executeAcceptanceClaim(
     await ctx.runMutation(
       internal.domains.calendar.mutations.mirrorProviderEvent,
       {
+        userId: hostUserId,
         connectionId,
         localCalendarId,
         event: {

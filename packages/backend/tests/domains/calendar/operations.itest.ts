@@ -41,28 +41,38 @@ async function preparePrimaryCalendar(t: TestConvex<typeof schema>) {
   });
 }
 
-describe("calendar dual-write", () => {
-  test("repairs missing neutral event references before returning a write target", async () => {
+describe("calendar operations", () => {
+  test("resolves a neutral event to its write target", async () => {
     const t = convexTest(schema, modules);
-    const { eventId } = await t.run(async (ctx) => {
-      await ctx.db.insert("calendars", {
+    const { eventId, connectionId, calendarId } = await t.run(async (ctx) => {
+      const connectionId = await ctx.db.insert("calendarConnections", {
         userId: USER,
-        googleCalendarId: "legacy-primary",
+        provider: "google",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const calendarId = await ctx.db.insert("calendars", {
+        userId: USER,
+        connectionId,
+        providerCalendarId: "primary",
         accessRole: "owner",
         primary: true,
         selected: true,
+        isShared: false,
       });
       const eventId = await ctx.db.insert("events", {
         userId: USER,
-        googleEventId: "legacy-event",
-        calendarId: "legacy-primary",
+        connectionId,
+        localCalendarId: calendarId,
+        providerEventId: "event-1",
+        providerUpdatedMs: 9,
         startMs: 1_000,
         endMs: 2_000,
         allDay: false,
         status: "confirmed",
-        googleUpdatedMs: 9,
       });
-      return { eventId };
+      return { eventId, connectionId, calendarId };
     });
 
     const target = await t.mutation(internal.domains.calendar.mutations.resolveEventWriteTarget, {
@@ -70,18 +80,10 @@ describe("calendar dual-write", () => {
       eventId,
     });
     expect(target).toMatchObject({
-      providerCalendarId: "legacy-primary",
-      providerEventId: "legacy-event",
-    });
-    expect(target?.connectionId).toBeDefined();
-    expect(target?.localCalendarId).toBeDefined();
-
-    const repaired = await t.run((ctx) => ctx.db.get(eventId));
-    expect(repaired).toMatchObject({
-      connectionId: target?.connectionId,
-      localCalendarId: target?.localCalendarId,
-      providerEventId: "legacy-event",
-      providerUpdatedMs: 9,
+      connectionId,
+      localCalendarId: calendarId,
+      providerCalendarId: "primary",
+      providerEventId: "event-1",
     });
   });
 
@@ -156,11 +158,11 @@ describe("calendar dual-write", () => {
     const otherCalendarId = await t.run((ctx) =>
       ctx.db.insert("calendars", {
         userId: USER,
-        googleCalendarId: "other",
         providerCalendarId: "other",
         connectionId: target.connectionId,
         accessRole: "owner",
         selected: true,
+        isShared: false,
       }),
     );
     await expect(
@@ -175,6 +177,49 @@ describe("calendar dual-write", () => {
         attemptId: "third",
       }),
     ).rejects.toThrow(/another write/i);
+  });
+
+  test("adopts the caller's local refs when the stored operation's were nulled by the cutover", async () => {
+    const t = convexTest(schema, modules);
+    await preparePrimaryCalendar(t);
+    const target = await t.mutation(internal.domains.calendar.mutations.resolveCreateTarget, {
+      userId: USER,
+    });
+    await t.mutation(internal.domains.calendar.mutations.claimCalendarOperation, {
+      userId: USER,
+      ...target,
+      idempotencyKey: "cutover-key",
+      kind: "create",
+      requestFingerprint: "v1:payload",
+      attemptId: "before-cutover",
+    });
+    // The provider cutover nulls local refs on every stored operation.
+    await t.run(async (ctx) => {
+      const operation = await ctx.db.query("calendarOperations").unique();
+      await ctx.db.patch(operation!._id, {
+        localCalendarId: undefined,
+        targetEventId: undefined,
+        leaseExpiresAt: 0,
+      });
+    });
+
+    const retry = await t.mutation(internal.domains.calendar.mutations.claimCalendarOperation, {
+      userId: USER,
+      ...target,
+      idempotencyKey: "cutover-key",
+      kind: "create",
+      requestFingerprint: "v1:payload",
+      attemptId: "after-cutover",
+    });
+    expect(retry).toMatchObject({ state: "claimed" });
+    const operation = await t.run((ctx) =>
+      ctx.db.query("calendarOperations").unique(),
+    );
+    expect(operation).toMatchObject({
+      localCalendarId: target.localCalendarId,
+      providerCalendarId: target.providerCalendarId,
+      attemptId: "after-cutover",
+    });
   });
 
   test("creates a safe primary alias before the first calendar sync", async () => {
@@ -216,20 +261,20 @@ describe("calendar dual-write", () => {
       });
       const firstCalendarId = await ctx.db.insert("calendars", {
         userId: USER,
-        googleCalendarId: "shared-provider-id",
         providerCalendarId: "shared-provider-id",
         connectionId: firstConnectionId,
         accessRole: "owner",
         primary: true,
         selected: true,
+        isShared: false,
       });
       const secondCalendarId = await ctx.db.insert("calendars", {
         userId: USER,
-        googleCalendarId: "shared-provider-id",
         providerCalendarId: "shared-provider-id",
         connectionId: secondConnectionId,
         accessRole: "owner",
         selected: true,
+        isShared: false,
       });
       return {
         firstCalendarId,
@@ -269,11 +314,11 @@ describe("calendar dual-write", () => {
       });
       return await ctx.db.insert("calendars", {
         userId: "foreign-user",
-        googleCalendarId: "primary",
         providerCalendarId: "primary",
         connectionId,
         accessRole: "owner",
         selected: true,
+        isShared: false,
       });
     });
 

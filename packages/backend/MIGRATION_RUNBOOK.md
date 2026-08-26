@@ -6,7 +6,7 @@ choreography for function paths: the pre-reorg root facades and provider-named
 sync modules are already deleted from source. Persisted references to old
 paths are handled by a one-shot scheduler repoint migration (section 4) or
 accepted as one-time failures that crons and lease recovery heal (section 5).
-The data-model contraction is a separate later stage (section 8).
+The data-model contraction is its own two-deploy procedure (section 8).
 
 Run workspace `bun run` commands from the repository root. Run `bunx convex`
 commands from `packages/backend`. These commands document production work; this
@@ -128,29 +128,106 @@ does not register; the 15-minute booking-expiry cron covers those bookings
 until the cutover is redeployed. Never restore by deleting neutral production
 data.
 
-## 8. Data-model contraction (separate stage)
+## 8. Data-model contraction
 
-The wipe-derived-data-and-resync plus schema contraction ships as its own
-stage with its own rehearsed procedure, which will replace or extend this
-document. The section 2 backup is the rollback for that stage. Until it lands,
-no schema field, table, or index is removed, and the following legacy storage
-is intentionally retained — all of it to be removed by the contraction:
+The contraction wipes all provider-derived data, resyncs it from providers
+into the neutral model, and removes the legacy columns/indexes. It ships as
+two commits and two deploys:
 
-- `syncState` and its Google contact cursors/generations/lease fields
-- Calendar/event aliases including `googleCalendarId`, `googleSelected`,
-  `syncToken`, `calendarId`, `googleEventId`, `googleUpdatedMs`, `colorId`,
-  `transparency`, `recurringEventId`, and `hangoutLink`
-- Shared-calendar/shared-event and recurring-series Google identity/cursor fields
-- Contact aliases `resourceName`, `googleEtag`, and legacy generations
-- Booking aliases `googleEventId`, `calendarId`, legacy acceptance lease/state,
-  and fallback behavior when neutral target ids are absent
-- Legacy identity/range indexes used by fallback reads, plus the under-keyed
-  `by_connection_and_providerEventId` indexes until every reader uses the
-  calendar-keyed replacements
-- Stored legacy assistant/calendar action DTO normalization, and raw and
-  wrapped Google cursor decoding
+- **Deploy A** ("contraction + transitional schema"): all code is neutral-only
+  — nothing reads or writes a legacy column. The schema is transitional: every
+  legacy column stays declared as optional (so pre-wipe rows validate), the
+  built staged indexes are activated, the two never-activated under-keyed
+  `by_connection_and_providerEventId` indexes are deleted, and
+  `calendars.providerSelected` + `recurringSeries.by_user` are added.
+- **Deploy B** ("final schema"): the schema-only diff that deletes the legacy
+  columns and indexes, the `syncState` and `connectionBackfillUsers` tables,
+  `people.otherSyncGeneration`,
+  `connectionSyncState.otherContactsBackfillRequired`, and tightens the
+  transitional optionals to required. It also deletes
+  `migrations/providerCutover.ts` and its itest (the migration has run by
+  then).
 
-At every contraction step, unexpected missing-function errors, parity
-mismatches, duplicate provider identities, elevated sync/booking failures, or
-unresolved neutral ids are rollback gates. Restore code/read compatibility
-first; never restore by deleting neutral production data.
+### 8.1 Pre-flight
+
+Run the section 1 preflight on commit C1. If
+`bunx convex codegen --dry-run --typecheck enable` rejects the flag
+combination on the installed CLI, fall back to plain `bunx convex codegen`
+plus `bun run check-types`.
+
+Cheap dashboard check before deploying: every `bookings` row with
+`status: "pending"` and an `acceptOperationId` must have its matching
+`calendarOperations` ledger row (`by_connection_and_key`). The runtime
+ledger-reconstruction fallbacks were deleted in C1, so the ledger must
+already be authoritative — repair any gap before proceeding.
+
+### 8.2 Procedure
+
+```sh
+# 0. backup (mandatory — IS the rollback from step 3 on)
+bunx convex export --prod --path qali-prod-<date>.zip
+# 1. deploy A (commit C1)
+bunx convex deploy --typecheck enable --codegen enable \
+  -m "contraction + transitional schema"
+# 2. scheduler repoint (section 4 tooling, if any legacy entries remain)
+bunx convex run migrations/scheduledJobs:migrateExpireBookingSchedules '{}' --prod
+# 3. wipe + resync — run IMMEDIATELY after deploy A: between A and the wipe,
+#    neutral-only reads hide legacy rows, so the app looks empty-ish until
+#    resync completes
+bunx convex run migrations/providerCutover:start '{}' --prod
+# 4. watch dashboard logs until fanOutResync reports done and per-user syncs
+#    complete (~minutes at current user counts)
+# 5. verify (8.3), then deploy B (commit C2)
+bunx convex deploy --typecheck enable --codegen enable -m "final schema"
+```
+
+The migration chain is resumable: any phase can be re-run from a null cursor.
+Once `fanOutResync` has run, resume the failed phase only — never restart
+from `start`, which would re-null freshly re-pointed booking targets and
+re-wipe synced data (safe, but a pointless second outage).
+
+### 8.3 Verify (between wipe and deploy B)
+
+- `api.healthCheck.get` healthy; Better Auth login works.
+- Per-user sync completes: dashboard function logs quiet after one cycle.
+- Calendar range read shows events; one event create/edit round-trips.
+- A booking request auto-resolves its page target (primary-target self-heal).
+- Guest picker (people directory) repopulates.
+- Row counts are the right order of magnitude against pre-wipe counts.
+- No retained row still carries a legacy field. Deploy B enforces this: its
+  schema validation fails cleanly on any leftover legacy value. A B-push
+  failure is the designed gate, not an error to force past — re-run the
+  relevant clear phase of `providerCutover`, then retry deploy B.
+
+### 8.4 Expected one-time noise
+
+- In-flight pre-A syncs fail once with `StaleSyncAttemptError` or validation
+  errors; the 15-minute cron and lease TTLs heal them.
+- Persisted scheduler entries addressing functions deleted at A (legacy
+  cleanup/backfill functions) or whose argument validators changed fail once
+  when they fire. Expected, harmless, non-repeating.
+- Pending assistant proposals are expired by the migration with a clear
+  "please re-ask" result.
+
+### 8.5 Documented accepted losses
+
+- Local calendar visibility (`calendars.selected`) re-seeds from the
+  provider's own selection (`providerSelected`) — local-only toggles made
+  before the wipe are lost.
+- Pending assistant proposals are expired (above).
+- Non-primary booking-page targets are cleared; the fallback re-points pages
+  at the primary calendar, and hosts re-choose any non-default target.
+
+### 8.6 Recovery notes
+
+- A booking page found with BOTH targets set but dangling (pointing at a
+  calendar that no longer exists — e.g. self-healed onto a calendar created
+  during the A→wipe window) makes `bookingPageTarget` throw with no
+  self-heal. Remedy: re-run `migrations/providerCutover:clearBookingPageTargets`
+  (nulls the pair; the fallback then re-resolves) — never a manual partial
+  edit and never a forced deploy.
+- Rollback before `providerCutover:start`: redeploy `main` (code paths only —
+  no data restore needed).
+- Rollback after `providerCutover:start`: redeploy `main` AND restore the
+  step-0 backup via import. Never a partial restore; never restore by
+  deleting neutral production data.

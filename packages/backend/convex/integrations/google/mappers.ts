@@ -127,22 +127,8 @@ export function encodeSyncCursor(token: string): SyncCursor {
   return token as SyncCursor;
 }
 
-/** Accept raw persisted Google tokens and the JSON envelope emitted by the
- * first adapter draft, so connection backfills can be replayed directly. */
+/** A persisted cursor is the raw Google sync token. */
 export function decodeSyncCursor(cursor: SyncCursor): string {
-  try {
-    const parsed = JSON.parse(cursor) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "s" in parsed &&
-      typeof parsed.s === "string"
-    ) {
-      return parsed.s;
-    }
-  } catch {
-    // A legacy Google sync token is intentionally not JSON.
-  }
   return cursor;
 }
 

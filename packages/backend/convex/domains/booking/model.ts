@@ -94,7 +94,7 @@ export async function collectBusy(
   fromMs: number,
   toMs: number,
   excludeBookingId?: Id<"bookings">,
-  excludeGoogleEventId?: string,
+  excludeProviderEventId?: string,
 ): Promise<Interval[]> {
   const calendars = await ctx.db
     .query("calendars")
@@ -112,31 +112,25 @@ export async function collectBusy(
   for (const calendar of visible) {
     const events = await ctx.db
       .query("events")
-      .withIndex("by_user_and_calendar_and_end", (q) =>
+      .withIndex("by_connection_and_localCalendarId_and_endMs", (q) =>
         q
-          .eq("userId", page.userId)
-          .eq("calendarId", calendar.googleCalendarId)
+          .eq("connectionId", calendar.connectionId)
+          .eq("localCalendarId", calendar._id)
           .gt("endMs", fromMs)
           .lte("endMs", spanEnd),
-      )
-      .filter((q) =>
-        q.or(
-          q.eq(q.field("localCalendarId"), undefined),
-          q.eq(q.field("localCalendarId"), calendar._id),
-        ),
       )
       .take(budget.remaining + 1);
     spendRowBudget(budget, events.length);
     for (const event of events) {
       if (event.startMs >= toMs) continue;
-      if ((event.providerEventId ?? event.googleEventId) === excludeGoogleEventId) continue;
+      if (
+        excludeProviderEventId !== undefined &&
+        event.providerEventId === excludeProviderEventId
+      ) continue;
       if (event.status === "cancelled") continue;
       // The host marked this one "free" in their own calendar, so it is not a
-      // reason to withhold the time.
-      if (
-        event.busy === false ||
-        (event.busy === undefined && event.transparency === "transparent")
-      ) continue;
+      // reason to withhold the time. Absent `busy` means busy.
+      if (event.busy === false) continue;
       busy.push(
         event.allDay
           ? allDayBusyInterval(event.startMs, event.endMs, page.timeZone)

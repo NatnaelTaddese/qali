@@ -7,8 +7,8 @@ import {
 } from "@qali/ui/components/tooltip";
 import { cn } from "@qali/ui/lib/utils";
 
-/** Free/Busy control: whether the event blocks the user's time on Google
- * Calendar (`transparency`: "opaque" = busy, "transparent" = free). A briefcase +
+/** Free/Busy control: whether the event blocks the user's time (`busy`:
+ * unset/true = busy, false = free). A briefcase +
  * "Busy"/"Free" label sized to sit alongside the colour and calendar controls;
  * it reads solid when Busy and muted when Free. Distinct from the privacy lock,
  * which controls a separate concern (who can see the event). */

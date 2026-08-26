@@ -3,7 +3,7 @@
  * Registration is canonical here, under `api.domains.calendar.mutations.*` /
  * `internal.domains.calendar.mutations.*`. */
 
-import { v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 
 import type { Doc, Id } from "../../_generated/dataModel";
 import {
@@ -20,29 +20,6 @@ import { providerEventValidator } from "./validators";
 
 const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
 const CALENDAR_OPERATION_LEASE_MS = 10 * 60 * 1000;
-
-async function connectionForLegacyCalendar(
-  ctx: MutationCtx,
-  userId: string,
-  calendar: Doc<"calendars">,
-): Promise<Id<"calendarConnections">> {
-  const connectionId =
-    calendar.connectionId ?? (await ensureGoogleConnection(ctx, userId));
-  const connection = await ctx.db.get(connectionId);
-  if (!connection || connection.userId !== userId) {
-    throw new Error("Calendar connection is unavailable");
-  }
-  if (
-    calendar.connectionId === undefined ||
-    calendar.providerCalendarId === undefined
-  ) {
-    await ctx.db.patch(calendar._id, {
-      connectionId,
-      providerCalendarId: calendar.providerCalendarId ?? calendar.googleCalendarId,
-    });
-  }
-  return connectionId;
-}
 
 /** Resolve an owned local calendar row to a writable provider target. */
 export async function resolveCreateTargetHandler(
@@ -80,15 +57,19 @@ export async function resolveCreateTargetHandler(
   if (!WRITABLE_ACCESS_ROLES.has(calendar.accessRole ?? "")) {
     throw new Error("This calendar is read-only");
   }
-  const connectionId = await connectionForLegacyCalendar(
-    ctx,
-    args.userId,
-    calendar,
-  );
+  const connectionId = calendar.connectionId;
+  const providerCalendarId = calendar.providerCalendarId;
+  if (connectionId === undefined || providerCalendarId === undefined) {
+    throw new ConvexError("Calendar not synced yet");
+  }
+  const connection = await ctx.db.get(connectionId);
+  if (!connection || connection.userId !== args.userId) {
+    throw new Error("Calendar connection is unavailable");
+  }
   return {
     connectionId,
     localCalendarId: calendar._id,
-    providerCalendarId: calendar.providerCalendarId ?? calendar.googleCalendarId,
+    providerCalendarId,
   };
 }
 
@@ -100,86 +81,42 @@ export const resolveCreateTarget = internalMutation({
   handler: (ctx, args) => resolveCreateTargetHandler(ctx, args),
 });
 
-/** Resolve and repair neutral event identity before any provider operation. */
+/** Resolve neutral event identity before any provider operation. */
 export async function resolveEventWriteTargetHandler(
   ctx: MutationCtx,
   args: { userId: string; eventId: Id<"events"> },
 ) {
   const event = await ctx.db.get(args.eventId);
   if (!event || event.userId !== args.userId) return null;
-
-  let calendar = event.localCalendarId
-    ? await ctx.db.get(event.localCalendarId)
-    : null;
-  if (!calendar || calendar.userId !== args.userId) {
-    calendar = await ctx.db
-      .query("calendars")
-      .withIndex("by_user_and_googleCalendarId", (q) =>
-        q.eq("userId", args.userId).eq("googleCalendarId", event.calendarId),
-      )
-      .unique();
+  const connectionId = event.connectionId;
+  const localCalendarId = event.localCalendarId;
+  const providerEventId = event.providerEventId;
+  if (
+    connectionId === undefined ||
+    localCalendarId === undefined ||
+    providerEventId === undefined
+  ) {
+    return null;
   }
-  if (!calendar) return null;
-
-  const connectionId =
-    event.connectionId ??
-    calendar.connectionId ??
-    (await ensureGoogleConnection(ctx, args.userId));
+  const calendar = await ctx.db.get(localCalendarId);
+  if (!calendar || calendar.userId !== args.userId) return null;
+  if (calendar.connectionId !== connectionId) {
+    throw new Error("Calendar connection does not match this event");
+  }
+  const providerCalendarId = calendar.providerCalendarId;
+  if (providerCalendarId === undefined) return null;
   const connection = await ctx.db.get(connectionId);
   if (!connection || connection.userId !== args.userId) {
     throw new Error("Calendar connection is unavailable");
   }
-  if (calendar.connectionId && calendar.connectionId !== connectionId) {
-    throw new Error("Calendar connection does not match this event");
-  }
-  const providerCalendarId =
-    calendar.providerCalendarId ?? calendar.googleCalendarId ?? event.calendarId;
-  const providerEventId = event.providerEventId ?? event.googleEventId;
-  const providerSeriesId = event.providerSeriesId ?? event.recurringEventId;
-
-  if (
-    calendar.connectionId === undefined ||
-    calendar.providerCalendarId === undefined
-  ) {
-    await ctx.db.patch(calendar._id, {
-      connectionId,
-      providerCalendarId,
-    });
-  }
-  if (
-    event.connectionId === undefined ||
-    event.localCalendarId === undefined ||
-    event.providerEventId === undefined ||
-    (event.recurringEventId !== undefined && event.providerSeriesId === undefined) ||
-    event.providerUpdatedMs === undefined
-  ) {
-    await ctx.db.patch(event._id, {
-      connectionId,
-      localCalendarId: calendar._id,
-      providerEventId,
-      providerSeriesId,
-      providerUpdatedMs: event.providerUpdatedMs ?? event.googleUpdatedMs,
-    });
-  }
   return {
-    event: {
-      ...event,
-      connectionId,
-      localCalendarId: calendar._id,
-      providerEventId,
-      providerSeriesId,
-      providerUpdatedMs: event.providerUpdatedMs ?? event.googleUpdatedMs,
-    },
-    calendar: {
-      ...calendar,
-      connectionId,
-      providerCalendarId,
-    },
+    event,
+    calendar,
     connectionId,
-    localCalendarId: calendar._id,
+    localCalendarId,
     providerCalendarId,
     providerEventId,
-    providerSeriesId,
+    providerSeriesId: event.providerSeriesId,
   };
 }
 
@@ -212,8 +149,7 @@ export async function claimCalendarOperationHandler(
     !calendar ||
     calendar.userId !== args.userId ||
     calendar.connectionId !== args.connectionId ||
-    (calendar.providerCalendarId ?? calendar.googleCalendarId) !==
-      args.providerCalendarId
+    calendar.providerCalendarId !== args.providerCalendarId
   ) {
     throw new Error("Calendar operation target is invalid");
   }
@@ -226,6 +162,9 @@ export async function claimCalendarOperationHandler(
     )
     .unique();
   if (existing) {
+    // An operation whose local refs were nulled by the provider cutover must
+    // adopt the retry's ids rather than reject them — only a *different*
+    // stored value proves key reuse.
     if (
       existing.userId !== args.userId ||
       existing.kind !== args.kind ||
@@ -404,11 +343,11 @@ export const setCalendarSelected = mutation({
   handler: (ctx, args) => setCalendarSelectedHandler(ctx, args),
 });
 
-/** Store an adapter event while legacy calendar readers still use Google-named
- * columns. This compatibility mapping belongs to storage, not to an integration. */
+/** Store an adapter event as the neutral events row for its local calendar. */
 export async function mirrorProviderEventHandler(
   ctx: MutationCtx,
   args: {
+    userId: string;
     connectionId: Id<"calendarConnections">;
     localCalendarId: Id<"calendars">;
     event: Infer<typeof providerEventValidator>;
@@ -418,21 +357,23 @@ export async function mirrorProviderEventHandler(
   const calendar = await ctx.db.get(args.localCalendarId);
   if (
     !connection ||
+    connection.userId !== args.userId ||
     !calendar ||
-    calendar.userId !== connection.userId ||
-    (calendar.connectionId !== undefined &&
-      calendar.connectionId !== connection._id) ||
-    (calendar.providerCalendarId ?? calendar.googleCalendarId) !==
-      args.event.calendarId
+    calendar.userId !== args.userId ||
+    calendar.connectionId !== args.connectionId ||
+    calendar.providerCalendarId !== args.event.calendarId
   ) {
     throw new Error("Calendar event mirror target is invalid");
   }
 
   const event = args.event;
-  const legacyEvent: Omit<Doc<"events">, "_id" | "_creationTime"> = {
-    userId: connection.userId,
-    googleEventId: event.id,
-    calendarId: calendar.googleCalendarId,
+  const doc: Omit<Doc<"events">, "_id" | "_creationTime"> = {
+    userId: args.userId,
+    connectionId: args.connectionId,
+    localCalendarId: args.localCalendarId,
+    providerEventId: event.id,
+    providerUpdatedMs: event.updatedMs,
+    providerSeriesId: event.seriesId,
     summary: event.summary,
     description: event.description,
     location: event.location,
@@ -441,14 +382,9 @@ export async function mirrorProviderEventHandler(
     allDay: event.allDay,
     status: event.status,
     htmlLink: event.htmlLink,
-    colorId: event.color,
+    color: event.color,
     visibility: event.visibility,
-    transparency:
-      event.busy === undefined
-        ? undefined
-        : event.busy
-          ? "opaque"
-          : "transparent",
+    busy: event.busy,
     attendees: event.attendees
       ?.filter((attendee) => attendee.email !== undefined)
       .map((attendee) => ({
@@ -460,7 +396,6 @@ export async function mirrorProviderEventHandler(
         optional: attendee.optional,
       })),
     attendeesOmitted: event.attendeesOmitted,
-    googleUpdatedMs: event.updatedMs,
     organizer: event.organizer,
     creator: event.creator,
     guestsCanModify: event.guestsCanModify,
@@ -468,44 +403,27 @@ export async function mirrorProviderEventHandler(
     guestsCanSeeOtherGuests: event.guestsCanSeeOtherGuests,
     locked: event.locked,
     eventType: event.eventType,
-    recurringEventId: event.seriesId,
-    hangoutLink:
-      event.conference?.type === "hangoutsMeet"
-        ? event.conference.url
-        : undefined,
     conferenceUrl: event.conference?.url,
     conferenceName: event.conference?.name,
     conferenceType: event.conference?.type,
-    connectionId: connection._id,
-    localCalendarId: calendar._id,
-    providerEventId: event.id,
-    providerUpdatedMs: event.updatedMs,
-    providerSeriesId: event.seriesId,
-    color: event.color,
-    busy: event.busy,
   };
-  const legacyCandidates = await ctx.db
-      .query("events")
-      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-        q
-          .eq("userId", connection.userId)
-          .eq("calendarId", calendar.googleCalendarId)
-          .eq("googleEventId", event.id),
-      )
-      .collect();
-  const existing = legacyCandidates.find(
-      (row) =>
-        (row.connectionId === undefined ||
-          row.connectionId === connection._id) &&
-        (row.localCalendarId === undefined || row.localCalendarId === calendar._id),
-    );
-  if (existing) await ctx.db.replace(existing._id, legacyEvent);
-  else await ctx.db.insert("events", legacyEvent);
+  const existing = await ctx.db
+    .query("events")
+    .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
+      q
+        .eq("connectionId", args.connectionId)
+        .eq("localCalendarId", args.localCalendarId)
+        .eq("providerEventId", event.id),
+    )
+    .unique();
+  if (existing) await ctx.db.replace(existing._id, doc);
+  else await ctx.db.insert("events", doc);
   return null;
 }
 
 export const mirrorProviderEvent = internalMutation({
   args: {
+    userId: v.string(),
     connectionId: v.id("calendarConnections"),
     localCalendarId: v.id("calendars"),
     event: providerEventValidator,
@@ -537,11 +455,11 @@ export async function deleteProviderEventMirrorHandler(
     if (calendar?.userId === args.userId) {
       const series = await ctx.db
         .query("recurringSeries")
-        .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+        .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
           q
-            .eq("userId", args.userId)
-            .eq("calendarId", calendar.googleCalendarId)
-            .eq("googleEventId", args.providerSeriesId!),
+            .eq("connectionId", args.connectionId)
+            .eq("localCalendarId", args.localCalendarId)
+            .eq("providerEventId", args.providerSeriesId!),
         )
         .unique();
       if (series) await ctx.db.delete(series._id);
@@ -561,7 +479,7 @@ export const deleteProviderEventMirror = internalMutation({
   handler: (ctx, args) => deleteProviderEventMirrorHandler(ctx, args),
 });
 
-/** Cache a recurring master by neutral identity while dual-writing legacy keys. */
+/** Cache a recurring master by its neutral identity. */
 export async function upsertProviderRecurringSeriesHandler(
   ctx: MutationCtx,
   args: {
@@ -570,7 +488,7 @@ export async function upsertProviderRecurringSeriesHandler(
     localCalendarId: Id<"calendars">;
     providerEventId: string;
     recurrence: string[];
-    sourceUpdatedMs: number;
+    providerUpdatedMs: number;
     replacedEventId?: Id<"events">;
   },
 ): Promise<null> {
@@ -585,37 +503,27 @@ export async function upsertProviderRecurringSeriesHandler(
   ) {
     throw new Error("Recurring series target is invalid");
   }
-  const legacyCandidates = await ctx.db
-      .query("recurringSeries")
-      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
-        q
-          .eq("userId", args.userId)
-          .eq("calendarId", calendar.googleCalendarId)
-          .eq("googleEventId", args.providerEventId),
-      )
-      .collect();
-  const existing = legacyCandidates.find(
-      (row) =>
-        (row.connectionId === undefined ||
-          row.connectionId === args.connectionId) &&
-        (row.localCalendarId === undefined ||
-          row.localCalendarId === args.localCalendarId),
-    );
+  const existing = await ctx.db
+    .query("recurringSeries")
+    .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
+      q
+        .eq("connectionId", args.connectionId)
+        .eq("localCalendarId", args.localCalendarId)
+        .eq("providerEventId", args.providerEventId),
+    )
+    .unique();
   const value = {
     recurrence: args.recurrence,
-    sourceUpdatedMs: args.sourceUpdatedMs,
-    connectionId: args.connectionId,
-    localCalendarId: args.localCalendarId,
-    providerEventId: args.providerEventId,
     providerSeriesId: args.providerEventId,
-    providerUpdatedMs: args.sourceUpdatedMs,
+    providerUpdatedMs: args.providerUpdatedMs,
   };
   if (existing) await ctx.db.patch(existing._id, value);
   else {
     await ctx.db.insert("recurringSeries", {
       userId: args.userId,
-      calendarId: calendar.googleCalendarId,
-      googleEventId: args.providerEventId,
+      connectionId: args.connectionId,
+      localCalendarId: args.localCalendarId,
+      providerEventId: args.providerEventId,
       ...value,
     });
   }
@@ -625,7 +533,7 @@ export async function upsertProviderRecurringSeriesHandler(
       replaced?.userId === args.userId &&
       replaced.connectionId === args.connectionId &&
       replaced.localCalendarId === args.localCalendarId &&
-      (replaced.providerEventId ?? replaced.googleEventId) === args.providerEventId
+      replaced.providerEventId === args.providerEventId
     ) {
       await ctx.db.delete(replaced._id);
     }
@@ -640,7 +548,7 @@ export const upsertProviderRecurringSeries = internalMutation({
     localCalendarId: v.id("calendars"),
     providerEventId: v.string(),
     recurrence: v.array(v.string()),
-    sourceUpdatedMs: v.number(),
+    providerUpdatedMs: v.number(),
     replacedEventId: v.optional(v.id("events")),
   },
   handler: (ctx, args) => upsertProviderRecurringSeriesHandler(ctx, args),

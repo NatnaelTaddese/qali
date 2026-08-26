@@ -1,29 +1,20 @@
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 
-export function connectionSyncFields(
-  legacy: Doc<"syncState"> | null,
-): Omit<
+export function connectionSyncFields(): Omit<
   Doc<"connectionSyncState">,
   "_id" | "_creationTime" | "connectionId" | "userId"
 > {
   return {
-    contactsCursor: legacy?.contactsSyncToken,
-    otherContactsCursor: legacy?.otherContactsSyncToken,
-    contactsLastSyncedAt: legacy?.lastContactsSyncAt,
-    otherContactsLastSyncedAt: legacy?.lastOtherContactsSyncAt,
-    contactsGeneration: legacy?.contactsSyncGeneration,
-    otherContactsGeneration: legacy?.otherContactsSyncGeneration,
-    status: legacy?.status ?? "idle",
-    lastError: legacy?.lastError,
-    nextSyncDueAt: legacy?.nextSyncDueAt ?? 0,
-    syncIntervalMs: legacy?.syncIntervalMs ?? 15 * 60 * 1000,
-    syncLeaseExpiresAt: legacy?.syncLeaseExpiresAt,
-    syncAttemptId: legacy?.syncAttemptId,
+    status: "idle",
+    nextSyncDueAt: 0,
+    syncIntervalMs: 15 * 60 * 1000,
   };
 }
 
-/** Ensure the connection's operational state exists in the same transaction. */
+/** Ensure the connection's operational state exists in the same transaction.
+ * A new connection begins with clean cursors and generations so it never skips
+ * its first provider snapshot. */
 export async function ensureConnectionSyncState(
   ctx: MutationCtx,
   userId: string,
@@ -34,30 +25,10 @@ export async function ensureConnectionSyncState(
     .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
     .unique();
   if (existing) return existing._id;
-  const connection = await ctx.db.get(connectionId);
-  const defaultGoogle = await ctx.db
-    .query("calendarConnections")
-    .withIndex("by_user_and_provider", (q) =>
-      q.eq("userId", userId).eq("provider", "google"),
-    )
-    .first();
-  // Legacy sync state belongs only to the migrated/default Google grant. A new
-  // Microsoft or secondary Google connection must begin with clean cursors and
-  // generations rather than skipping its first provider snapshot.
-  const maySeedLegacy =
-    connection?.userId === userId &&
-    connection.provider === "google" &&
-    defaultGoogle?._id === connectionId;
-  const legacy = maySeedLegacy
-    ? await ctx.db
-        .query("syncState")
-        .withIndex("by_user", (q) => q.eq("userId", userId))
-        .unique()
-    : null;
   return await ctx.db.insert("connectionSyncState", {
     connectionId,
     userId,
-    ...connectionSyncFields(legacy),
+    ...connectionSyncFields(),
   });
 }
 
@@ -112,21 +83,16 @@ export async function ensureDefaultPrimaryCalendar(
   }
   const existing =
     calendars.find(
-      (row) =>
-        row.primary &&
-        (row.connectionId === connectionId ||
-          (row.connectionId === undefined &&
-            (row.providerCalendarId ?? row.googleCalendarId) === "primary")),
+      (row) => row.primary && row.connectionId === connectionId,
     ) ??
     calendars.find(
       (row) =>
-        (row.providerCalendarId ?? row.googleCalendarId) === "primary" &&
-        (row.connectionId === undefined || row.connectionId === connectionId),
+        row.providerCalendarId === "primary" &&
+        row.connectionId === connectionId,
     );
   if (existing) return existing;
   const id = await ctx.db.insert("calendars", {
     userId,
-    googleCalendarId: "primary",
     selected: true,
     primary: true,
     accessRole: "owner",

@@ -1,5 +1,5 @@
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { internal } from "../../convex/_generated/api";
 import schema from "../../convex/schema";
@@ -51,29 +51,36 @@ describe("purgeUserData", () => {
         createdAt: 1,
         updatedAt: 1,
       });
-      await ctx.db.insert("connectionBackfillUsers", {
+      const localCalendarId = await ctx.db.insert("calendars", {
         userId,
-        runId: "run",
-        updatedAt: 1,
+        connectionId,
+        providerCalendarId: "c",
+        selected: true,
+        isShared: false,
       });
       await ctx.db.insert("events", {
         userId,
-        calendarId: "c",
-        googleEventId: "e",
+        connectionId,
+        localCalendarId,
+        providerEventId: "e",
+        providerUpdatedMs: 1,
         startMs: 1,
         endMs: 2,
         allDay: false,
         status: "confirmed",
-        googleUpdatedMs: 1,
       });
-      await ctx.db.insert("calendars", {
+      await ctx.db.insert("recurringSeries", {
         userId,
-        googleCalendarId: "c",
-        selected: true,
+        connectionId,
+        localCalendarId,
+        providerEventId: "e",
+        providerUpdatedMs: 1,
+        recurrence: ["RRULE:FREQ=DAILY"],
       });
       await ctx.db.insert("contacts", {
         userId,
-        resourceName: "r",
+        connectionId,
+        providerContactId: "r",
         emails: [email],
         phones: [],
       });
@@ -98,8 +105,9 @@ describe("purgeUserData", () => {
       // Another user's rows must survive the purge.
       await ctx.db.insert("calendars", {
         userId: "bystander",
-        googleCalendarId: "c2",
+        providerCalendarId: "c2",
         selected: true,
+        isShared: false,
       });
       await ctx.db.insert("waitlist", {
         email: "keep@example.com",
@@ -115,6 +123,7 @@ describe("purgeUserData", () => {
 
     await t.run(async (ctx) => {
       expect(await ctx.db.query("events").collect()).toHaveLength(0);
+      expect(await ctx.db.query("recurringSeries").collect()).toHaveLength(0);
       expect(await ctx.db.query("contacts").collect()).toHaveLength(0);
       expect(await ctx.db.query("people").collect()).toHaveLength(0);
       expect(await ctx.db.query("bookings").collect()).toHaveLength(0);
@@ -124,14 +133,106 @@ describe("purgeUserData", () => {
       expect(await ctx.db.query("personSourceClaims").collect()).toHaveLength(0);
       expect(await ctx.db.query("otherContactSources").collect()).toHaveLength(0);
       expect(await ctx.db.query("calendarOperations").collect()).toHaveLength(0);
-      expect(await ctx.db.query("connectionBackfillUsers").collect()).toHaveLength(
-        0,
-      );
       const calendars = await ctx.db.query("calendars").collect();
       expect(calendars.map((c) => c.userId)).toEqual(["bystander"]);
       const waitlist = await ctx.db.query("waitlist").collect();
       expect(waitlist.map((w) => w.email)).toEqual(["keep@example.com"]);
     });
+  });
+});
+
+describe("shared event prune", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  test("prunes aged and far-future rows through the neutral index only for the addressed calendar", async () => {
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+    const sharedEvent = (
+      provider: "google" | "microsoft",
+      providerCalendarId: string,
+      providerEventId: string,
+      startMs: number,
+    ) => ({
+      provider,
+      providerCalendarId,
+      providerEventId,
+      providerUpdatedMs: 1,
+      startMs,
+      endMs: startMs + 1,
+      allDay: false,
+      status: "confirmed",
+    });
+    const ids = await t.run(async (ctx) => ({
+      aged: await ctx.db.insert(
+        "sharedEvents",
+        sharedEvent("google", "holidays", "aged", now - 400 * DAY_MS),
+      ),
+      farFuture: await ctx.db.insert(
+        "sharedEvents",
+        sharedEvent("google", "holidays", "far", now + 400 * DAY_MS),
+      ),
+      kept: await ctx.db.insert(
+        "sharedEvents",
+        sharedEvent("google", "holidays", "kept", now),
+      ),
+      otherCalendar: await ctx.db.insert(
+        "sharedEvents",
+        sharedEvent("google", "birthdays", "other-aged", now - 400 * DAY_MS),
+      ),
+      microsoftAged: await ctx.db.insert(
+        "sharedEvents",
+        sharedEvent("microsoft", "holidays", "ms-aged", now - 400 * DAY_MS),
+      ),
+    }));
+
+    await t.mutation(internal.jobs.maintenance.pruneSharedCalendarEvents, {
+      provider: "google",
+      providerCalendarId: "holidays",
+    });
+    expect(await t.run((ctx) => ctx.db.get(ids.aged))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(ids.farFuture))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(ids.kept))).not.toBeNull();
+    expect(await t.run((ctx) => ctx.db.get(ids.otherCalendar))).not.toBeNull();
+    // Same provider-calendar string under another provider is a different key.
+    expect(await t.run((ctx) => ctx.db.get(ids.microsoftAged))).not.toBeNull();
+
+    // The microsoft early-return is gone: the prune runs for every provider.
+    await t.mutation(internal.jobs.maintenance.pruneSharedCalendarEvents, {
+      provider: "microsoft",
+      providerCalendarId: "holidays",
+    });
+    expect(await t.run((ctx) => ctx.db.get(ids.microsoftAged))).toBeNull();
+  });
+
+  test("enqueue fans out per neutral row and skips legacy-only rows", async () => {
+    // Fake timers keep the runAfter(0) fan-out pending for inspection.
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("sharedCalendars", {
+        provider: "google",
+        providerCalendarId: "holidays",
+      });
+      // Pre-cutover leftover with no neutral identity: never enqueued.
+      await ctx.db.insert("sharedCalendars", {
+        googleCalendarId: "legacy-only",
+      });
+    });
+    await t.mutation(internal.jobs.maintenance.enqueueSharedEventPrune, {});
+    const jobs = await t.run(
+      async (ctx) => await ctx.db.system.query("_scheduled_functions").collect(),
+    );
+    const prunes = jobs.filter((job) =>
+      job.name.endsWith(":pruneSharedCalendarEvents"),
+    );
+    expect(prunes).toHaveLength(1);
+    expect(prunes[0]?.args).toEqual([
+      { provider: "google", providerCalendarId: "holidays" },
+    ]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 });
 

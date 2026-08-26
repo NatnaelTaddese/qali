@@ -27,13 +27,18 @@ export function useEventCapabilities(): (
   event: CalendarEvent,
 ) => EventCapabilities {
   const calendars = useQuery(api.domains.calendar.queries.listCalendars);
-  const byGoogleId = useMemo(
-    () => new Map(calendars?.map((c) => [c.googleCalendarId, c])),
+  // Keyed by the local `_id`, joined on `event.localCalendarId` — provider
+  // calendar strings collide across connections.
+  const byId = useMemo(
+    () => new Map(calendars?.map((c) => [c._id, c])),
     [calendars],
   );
   return useCallback(
     (event: CalendarEvent) =>
-      eventCapabilities(event, byGoogleId.get(event.calendarId)),
-    [byGoogleId],
+      eventCapabilities(
+        event,
+        event.localCalendarId ? byId.get(event.localCalendarId) : undefined,
+      ),
+    [byId],
   );
 }

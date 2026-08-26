@@ -20,6 +20,7 @@ import { calendarColorVar } from "./colors";
 import {
   addPages,
   calendarDisplayName,
+  type CalendarListItem,
   type CalendarView,
   dayKey,
   eventQueryRange,
@@ -402,7 +403,7 @@ export function CalendarWeekView() {
   );
 }
 
-function CalendarPicker({ calendars }: { calendars: Doc<"calendars">[] }) {
+function CalendarPicker({ calendars }: { calendars: CalendarListItem[] }) {
   const setSelected = useMutation(api.domains.calendar.mutations.setCalendarSelected);
   const selectedCount = calendars.filter((c) => c.selected).length;
   // Primary first, then alphabetical by display name.

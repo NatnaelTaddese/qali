@@ -6,29 +6,40 @@ import { readPersonalEventsInRange } from "../../../convex/domains/calendar/quer
 
 import { modules } from "../../testModules";
 
-test("range read does not scan more than 5000 provider-id-ordered out-of-range events", async () => {
+test("range read does not scan more than 5000 out-of-range events", async () => {
   const t = convexTest(schema, modules);
   const userId = "range-user";
-  const calendarId = await t.run((ctx) =>
-    ctx.db.insert("calendars", {
+  const { connectionId, calendarId } = await t.run(async (ctx) => {
+    const connectionId = await ctx.db.insert("calendarConnections", {
       userId,
-      googleCalendarId: "primary",
+      provider: "google",
+      status: "active",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const calendarId = await ctx.db.insert("calendars", {
+      userId,
+      connectionId,
+      providerCalendarId: "primary",
       selected: true,
-    }),
-  );
+      isShared: false,
+    });
+    return { connectionId, calendarId };
+  });
   for (let batch = 0; batch < 11; batch++) {
     await t.run(async (ctx) => {
       for (let offset = 0; offset < 500; offset++) {
         const n = batch * 500 + offset;
         await ctx.db.insert("events", {
           userId,
-          calendarId: "primary",
-          googleEventId: `out-${String(n).padStart(5, "0")}`,
+          connectionId,
+          localCalendarId: calendarId,
+          providerEventId: `out-${String(n).padStart(5, "0")}`,
+          providerUpdatedMs: 1,
           startMs: n,
           endMs: n + 1,
           allDay: false,
           status: "confirmed",
-          googleUpdatedMs: 1,
         });
       }
     });
@@ -36,13 +47,14 @@ test("range read does not scan more than 5000 provider-id-ordered out-of-range e
   await t.run((ctx) =>
     ctx.db.insert("events", {
       userId,
-      calendarId: "primary",
-      googleEventId: "in-range",
+      connectionId,
+      localCalendarId: calendarId,
+      providerEventId: "in-range",
+      providerUpdatedMs: 1,
       startMs: 1_000_000,
       endMs: 1_000_100,
       allDay: false,
       status: "confirmed",
-      googleUpdatedMs: 1,
     }),
   );
 
@@ -56,5 +68,5 @@ test("range read does not scan more than 5000 provider-id-ordered out-of-range e
       1_000_200,
     );
   });
-  expect(rows.map((row) => row.googleEventId)).toEqual(["in-range"]);
+  expect(rows.map((row) => row.providerEventId)).toEqual(["in-range"]);
 });

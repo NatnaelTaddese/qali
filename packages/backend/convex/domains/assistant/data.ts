@@ -411,24 +411,21 @@ export const listEventsForAssistant = internalQuery({
 
     const rows: Doc<"events">[] = [];
     for (const calendar of calendars) {
-      if (!calendar.selected) continue;
+      const connectionId = calendar.connectionId;
+      if (!calendar.selected || connectionId === undefined) continue;
       const remaining = ASSISTANT_EVENT_LIMIT - rows.length;
       const calendarRows = await ctx.db
         .query("events")
-        .withIndex("by_user_and_calendar_and_end", (q) =>
+        .withIndex("by_connection_and_localCalendarId_and_endMs", (q) =>
           q
-            .eq("userId", args.userId)
-            .eq("calendarId", calendar.googleCalendarId)
+            .eq("connectionId", connectionId)
+            .eq("localCalendarId", calendar._id)
             .gt("endMs", args.startMs),
         )
         .filter((q) =>
           q.and(
             q.lt(q.field("startMs"), args.endMs),
             q.neq(q.field("status"), "cancelled"),
-            q.or(
-              q.eq(q.field("localCalendarId"), undefined),
-              q.eq(q.field("localCalendarId"), calendar._id),
-            ),
           ),
         )
         .take(remaining + 1);
@@ -481,23 +478,28 @@ export const getRecurringSeriesVersion = internalQuery({
   },
   handler: async (ctx, args): Promise<number | null> => {
     const event = await ctx.db.get(args.eventId);
+    if (!event || event.userId !== args.userId) {
+      return null;
+    }
+    const { connectionId, localCalendarId, providerSeriesId } = event;
     if (
-      !event ||
-      event.userId !== args.userId ||
-      event.recurringEventId === undefined
+      connectionId === undefined ||
+      localCalendarId === undefined ||
+      providerSeriesId === undefined
     ) {
       return null;
     }
+    // The series master's provider event id is the instance's series id.
     const series = await ctx.db
       .query("recurringSeries")
-      .withIndex("by_user_and_calendar_and_googleEventId", (q) =>
+      .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
         q
-          .eq("userId", args.userId)
-          .eq("calendarId", event.calendarId)
-          .eq("googleEventId", event.recurringEventId!),
+          .eq("connectionId", connectionId)
+          .eq("localCalendarId", localCalendarId)
+          .eq("providerEventId", providerSeriesId),
       )
       .unique();
-    return series?.sourceUpdatedMs ?? null;
+    return series?.providerUpdatedMs ?? null;
   },
 });
 

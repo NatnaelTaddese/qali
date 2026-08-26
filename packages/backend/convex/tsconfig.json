@@ -21,9 +21,8 @@
     "isolatedModules": true,
     "noEmit": true
   },
+  // Tests live in ../tests (typechecked by its own tsconfig), so this project
+  // covers exactly the deployed function surface.
   "include": ["./**/*"],
-  // *.itest.ts are convex-test integration tests run by vitest (which transpiles
-  // them and supplies vite's `import.meta.glob` types). They are not part of the
-  // deployed function surface, so keep them out of this app typecheck.
-  "exclude": ["./_generated", "./**/*.itest.ts"]
+  "exclude": ["./_generated"]
 }

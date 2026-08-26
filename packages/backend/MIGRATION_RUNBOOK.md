@@ -266,9 +266,9 @@ Deletion happens in two waves:
    if then unused.
 
 For each wave, delete the facade file(s) and their blocks in
-`convex/rootFacades.test.ts` in the same commit, run the full read-only
+`tests/rootFacades.test.ts` in the same commit, run the full read-only
 preflight, re-run the sweep, deploy, and watch logs for 24 hours. Restore the
-exact missing target if a late call appears. `convex/noLegacyPaths.test.ts`
+exact missing target if a late call appears. `tests/noLegacyPaths.test.ts`
 enforces that no new source emits facade paths.
 
 ## 8. Contract storage and wire DTOs

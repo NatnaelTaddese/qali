@@ -53,3 +53,6 @@ coverage
 .cache
 tmp
 temp
+
+# Convex snapshot exports — production data, never committed
+*.zip

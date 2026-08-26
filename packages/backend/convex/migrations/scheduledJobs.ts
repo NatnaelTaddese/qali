@@ -8,16 +8,21 @@ import { internal } from "../_generated/api";
 import { internalMutation, internalQuery } from "../_generated/server";
 
 /**
- * Scheduler-queue tooling for the hard cutover that deletes the root facades
- * (MIGRATION_RUNBOOK.md section 4). Legacy `booking:expireBooking` entries are
- * queued as far out as the 365-day booking horizon, so they cannot passively
- * drain: immediately after the cutover deploy — rehearsed first on a preview
- * deployment — `migrateExpireBookingSchedules` moves every pending legacy
- * entry to its canonical path. Re-running from a null cursor is a no-op for
+ * Scheduler-queue tooling. A scheduled entry stores its target as a path
+ * string, so renaming or deleting a scheduled function strands whatever is
+ * already queued against the old spelling — and `booking:expireBooking` entries
+ * sit in the queue as far out as the 365-day booking horizon, far too long to
+ * drain passively. `migrateExpireBookingSchedules` cancels each pending entry
+ * matched by name and reschedules it against the canonical path, preserving
+ * `scheduledTime` and args. Re-running from a null cursor is a no-op for
  * entries migrated earlier: the canceled originals fail the pending-state
- * filter and their replacements carry the new-path name. The 15-minute
- * `expirePastBookings` cron is the safety net for the window between the
- * deploy and the migration run, and for any entry the migration misses.
+ * filter and their replacements carry the new-path name.
+ *
+ * Ran against production on 2026-08-27 for the provider cutover (765 entries
+ * scanned, none pending). Kept for the next rename that moves a long-horizon
+ * scheduled target: extend `SCHEDULE_MIGRATIONS` with the old-to-new pair.
+ * `listPendingFunctionNames` is the standalone sweep for auditing what the
+ * queue currently targets.
  */
 
 const BATCH_SIZE = 200;

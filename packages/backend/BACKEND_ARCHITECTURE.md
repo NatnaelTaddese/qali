@@ -2,13 +2,18 @@
 
 ## Module boundaries
 
-- Root `convex/*.ts` files are registration facades. They validate a callable
-  boundary and delegate; they do not own domain logic.
+- Function registration is canonical in the module that owns the logic:
+  `convex/domains/<domain>/*`, `convex/jobs/*`, and `convex/migrations/*`. The
+  remaining root `convex/*.ts` files are drain-only compatibility facades:
+  named re-exports of canonical registrations, frozen against new exports, each
+  with a removal gate in `MIGRATION_RUNBOOK.md` section 7. Re-exporting the
+  same registered function object keeps both paths live with identical
+  validators at zero per-call cost.
 - `convex/domains/<domain>/` owns business rules, database handlers, validators,
   and table declarations for that domain. `schema.ts` only composes those tables.
 - `convex/domains/sync/engine.ts` owns provider-neutral sync orchestration. New
-  calls and schedules register through `calendarSync.ts` and use
-  `internal.calendarSync.*`.
+  calls and schedules use `internal.domains.sync.engine.*`; the job entry
+  points shared with the legacy queue are `internal.domains.sync.jobs.*`.
 - `convex/integrations/calendar/` defines provider ports, capabilities, errors,
   and adapter lookup. Domains depend on these neutral contracts, never on a
   concrete provider client.
@@ -31,10 +36,14 @@
   routes are registered by `http.ts`; there is intentionally no public
   `api.auth.*` query.
 
-Dependencies point inward: registration facade -> domain -> neutral integration
-port. Concrete provider adapters depend on the port and provider client. Domain
-modules must not import root registration facades; cross-function calls use
-generated `api` or `internal` references. Public functions authenticate in their
+Dependencies point inward: domain -> neutral integration port. Concrete
+provider adapters depend on the port and provider client. Domain modules must
+not import root registration facades; nothing except the facades themselves,
+`googleSync.ts`/`googleCompat.ts`, and the pinned drain tests may reference a
+facade path. Cross-function calls use generated `api` or `internal` references.
+Canonical registered paths are persisted API: scheduler entries store path
+strings, so renaming a `domains/` file or a registered export carries the same
+drain obligations as facade removal. Public functions authenticate in their
 handler and internal-only work is registered with `internalQuery`,
 `internalMutation`, or `internalAction`.
 
@@ -42,26 +51,35 @@ handler and internal-only work is registered with `internalQuery`,
 
 The application-supported public Convex API is:
 
-- `api.assistant`: `confirmAction`, `sendMessage`
-- `api.assistantData`: `isAvailable`, `listMessages`, `listPendingActions`,
-  `listThreads`, `monthlyQuota`
-- `api.assistantMaintenance`: `deleteThread`
-- `api.booking`: `acceptBooking`, `bookingPageDefaults`, `checkSlugAvailable`,
+- `api.domains.assistant.loop`: `confirmAction`, `sendMessage`
+- `api.domains.assistant.data`: `isAvailable`, `listMessages`,
+  `listPendingActions`, `listThreads`, `monthlyQuota`
+- `api.domains.assistant.maintenance`: `deleteThread`
+- `api.domains.booking.queries`: `bookingPageDefaults`, `checkSlugAvailable`,
   `getBookingByToken`, `getMyBookingPage`, `getPublicPage`, `listMyBookings`,
-  `listMyOverrides`, `listPendingBookings`, `listSlots`, `rejectBooking`,
-  `requestBooking`, `setOverride`, `upsertBookingPage`
-- `api.calendar`: `createEvent`, `deleteEvent`, `getEventById`,
-  `getEventRecurrence`, `listCalendars`, `listEventsInRange`,
-  `refreshEventRecurrence`, `respondToEvent`, `setCalendarSelected`,
-  `updateEvent`, `updateEventTime`
-- `api.calendarSync`: `syncNow`
+  `listMyOverrides`, `listPendingBookings`, `listSlots`
+- `api.domains.booking.mutations`: `rejectBooking`, `requestBooking`,
+  `setOverride`, `upsertBookingPage`
+- `api.domains.booking.service`: `acceptBooking`
+- `api.domains.calendar.queries`: `getEventById`, `getEventRecurrence`,
+  `listCalendars`, `listEventsInRange`
+- `api.domains.calendar.mutations`: `setCalendarSelected`
+- `api.domains.calendar.service`: `createEvent`, `deleteEvent`,
+  `refreshEventRecurrence`, `respondToEvent`, `updateEvent`, `updateEventTime`
+- `api.domains.sync.engine`: `syncNow`
+- `api.domains.notifications.queries`: `list`, `unreadCount`
+- `api.domains.notifications.mutations`: `clearAll`, `dismiss`, `markAllRead`,
+  `markRead`
+- `api.domains.people.queries`: `listPeople`
+- `api.domains.marketing.mutations`: `join`
 - `api.healthCheck`: `get`
-- `api.notifications`: `clearAll`, `dismiss`, `list`, `markAllRead`, `markRead`,
-  `unreadCount`
-- `api.people`: `listPeople`
-- `api.waitlist`: `join`
 
-`api.calendar.createEvent.calendarId`, when supplied, is the owned local
+The pre-reorg `api.<module>.*` spellings stay registered by the root facades
+until their `MIGRATION_RUNBOOK.md` section 7 gates pass; new client code must
+call only the canonical paths above.
+
+`api.domains.calendar.service.createEvent.calendarId`, when supplied, is the
+owned local
 `Id<"calendars">`. Provider-native calendar ids are resolved only after the
 ownership check; omitting it deterministically targets the user's primary.
 
@@ -76,6 +94,14 @@ Compatibility code needs a concrete production reason: persisted rows, stored
 assistant payloads, or an already-scheduled/running function target. Every shim
 must name that reason and a removal gate. Low usage alone is not a reason to keep
 an unconsumed public API.
+
+The root facades exist because pre-reorg path strings persist outside source:
+production scheduler entries target them (including `booking.expireBooking`
+runs queued up to 365 days out), in-flight pre-cutover actions cross-call
+them, stale SPA bundles keep calling the old public paths, and
+`googleCompat.ts` still schedules
+`internal.calendarSync.finishLegacySharedFullResync`. Per-facade gates and the
+deletion waves are in `MIGRATION_RUNBOOK.md` section 7.
 
 The connection migration is still expanded, not contracted. Google-named
 columns, optional neutral mirrors, legacy tables, and old indexes remain until

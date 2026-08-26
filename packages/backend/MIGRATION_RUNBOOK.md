@@ -32,7 +32,10 @@ production deployment for read-only source verification.
 
 This is an actual production deploy, not verification. Confirm the target in a
 separate operator step, then deploy the additive schema, dual writes, neutral
-connection sync, staged indexes, backfill functions, and all queue-drain shims:
+connection sync, staged indexes, backfill functions, and all queue-drain shims.
+The same deploy carries the canonical `domains/`/`jobs/`/`migrations/`
+registrations alongside the root facade re-exports (dual registration) and the
+repointed crons:
 
 ```sh
 export CONVEX_DEPLOYMENT="prod:<production-deployment>"
@@ -42,8 +45,10 @@ bunx convex deploy --typecheck enable --codegen enable \
 
 Verify the deployment health check, Better Auth login, calendar range reads,
 one manual sync, one event write, booking request/acceptance, cron registration,
-and function error logs. Roll back application code if behavior regresses, but
-do not remove additive fields, indexes, or compatibility targets.
+and function error logs. Confirm the dashboard cron registration shows the
+canonical `internal.jobs.maintenance.*` / `internal.domains.*` targets, not the
+root facade paths. Roll back application code if behavior regresses, but do not
+remove additive fields, indexes, or compatibility targets.
 
 ## 3. Backfill
 
@@ -156,10 +161,13 @@ previous read path; keep the additive index and data.
 
 ## 7. Drain compatibility targets
 
-New source must emit only `internal.calendarSync.*`. Keep `googleSync.ts` until
-the Convex scheduler/running-functions views show no `internal.googleSync.*`
-target for at least 24 hours, covering a full engagement-maintenance interval,
-and logs show no missing-function retries.
+New source must emit only `internal.domains.sync.engine.*`, with
+`internal.domains.sync.jobs.*` for the shared job entry points.
+`calendarSync.ts` is itself a drain-only facade; its removal is coupled to
+`googleSync.ts` through `finishLegacySharedFullResync`. Keep `googleSync.ts`
+until the Convex scheduler/running-functions views show no
+`internal.googleSync.*` target for at least 24 hours, covering a full
+engagement-maintenance interval, and logs show no missing-function retries.
 
 The retained scheduled `googleSync.ts` targets are:
 
@@ -195,10 +203,19 @@ old backfill schedules drain. The `verifyParity.sampleLimit` argument remains
 until old operator commands are no longer used. `internal.calendarSync.syncUser`
 remains while one-shot migrations still schedule user-scoped refreshes.
 
-`internal.booking.expireBooking` is not part of this drain. `requestBooking`
-schedules it as far as 365 days out and acceptance may schedule it for lease
-expiry. It must remain registered until code has stopped scheduling it and the
-full maximum queue horizon has elapsed; currently it remains permanent.
+`internal.booking.expireBooking` has an active scheduled-jobs migration rather
+than a passive drain: `requestBooking` schedules it as far as 365 days out, so
+waiting out the queue horizon is not viable. Rehearse on a preview deployment
+first: deploy, run `migrations/scheduledJobs:seedLegacyExpireBookingJobs`,
+sweep with `migrations/scheduledJobs:listPendingFunctionNames`, run
+`migrateExpireBookingSchedules` as a dry run and then for real, verify the
+counts moved to `domains/booking/mutations.js:expireBooking` with
+`scheduledTime` and args preserved, and re-run to confirm a no-op. In
+production, run the migration no earlier than 24 hours after the expand
+deploy, sweep before and after, and re-sweep immediately before the
+facade-deletion deploy. The 15-minute `expirePastBookings` cron remains the
+safety net for any missed entry. After verification, `booking.ts` joins
+deletion wave 1 below.
 
 The legacy `internal.calendar.getPrimaryCalendarId`, `deleteEventRow`,
 `upsertEvent`, and `upsertRecurringSeries` handlers are in-flight action shims.
@@ -209,6 +226,45 @@ shape have either executed or aged out. Restore the exact target if a late call
 appears. The old-shape `internal.calendarSync.applyEngagementScores` handler has
 the same running-action drain gate; the coordinated engine uses
 `applyEngagementScoreChunk` instead.
+
+### Root facade drain
+
+Every root facade file must pass the same observable gate before deletion: a
+`migrations/scheduledJobs:listPendingFunctionNames` sweep shows zero pending
+old-path names for the file, dashboard function metrics show zero invocations
+of the facade's public paths for 7 days after the frontend rollout, and the
+running-functions view and logs are clean. What persists references to each:
+
+| Facade | Persisted references |
+| --- | --- |
+| `booking.ts` | Pre-deploy `expireBooking` scheduler entries up to 365 days out; in-flight acceptance cross-calls (minutes); stale tabs |
+| `maintenance.ts` | Self-reschedule chains (hours); operator one-shots |
+| `assistant.ts` | Stale tabs (days) |
+| `assistantData.ts` | `releaseStaleAction` lease schedules (minutes); stale tabs |
+| `assistantMaintenance.ts` | Stale tabs (days) |
+| `notifications.ts` | Stale tabs (days) |
+| `people.ts` | Stale tabs (days) |
+| `waitlist.ts` | Stale tabs (days) |
+| `calendar.ts` | The four legacy `internal.calendar.*` shims, gated on running pre-cutover actions and on stored assistant proposals aging out (~30 days); stale tabs |
+| `calendarSync.ts` | Coupled to the `internal.googleSync.*` drain gate above |
+
+Deletion happens in two waves:
+
+1. Wave 1, no earlier than ~7 days after the expand deploy and after the
+   verified `expireBooking` schedule migration: `booking.ts`,
+   `maintenance.ts`, `assistant.ts`, `assistantData.ts`,
+   `assistantMaintenance.ts`, `notifications.ts`, `people.ts`, `waitlist.ts`.
+2. Wave 2, at least 30 days out, only after the `internal.googleSync.*` gate
+   and the assistant-proposal age-out: `calendar.ts`, `calendarSync.ts`,
+   `googleSync.ts`, and `domains/sync/googleCompat.ts` together, plus the
+   compatibility-only engine definitions and `shared/functionDefinitions.ts`
+   if then unused.
+
+For each wave, delete the facade file(s) and their blocks in
+`convex/rootFacades.test.ts` in the same commit, run the full read-only
+preflight, re-run the sweep, deploy, and watch logs for 24 hours. Restore the
+exact missing target if a late call appears. `convex/noLegacyPaths.test.ts`
+enforces that no new source emits facade paths.
 
 ## 8. Contract storage and wire DTOs
 

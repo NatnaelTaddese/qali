@@ -2,13 +2,15 @@ import { v } from "convex/values";
 
 import { internal } from "../_generated/api";
 import type { Id, TableNames } from "../_generated/dataModel";
-import { defineMutation } from "../shared/functionDefinitions";
+import { internalMutation } from "../_generated/server";
 
 /**
  * Recurring storage maintenance + the account-deletion purge. All internal,
  * self-rescheduling in bounded batches so a run stays under Convex's
- * per-mutation write limits. Registered at `internal.maintenance.*` through the
- * root facade, which is the path crons and self-reschedules reference.
+ * per-mutation write limits. Registered here at `internal.jobs.maintenance.*`,
+ * the path the crons and self-reschedules reference; the root maintenance.ts
+ * facade keeps the pre-cutover `internal.maintenance.*` paths live while
+ * persisted scheduler entries drain.
  */
 
 const BATCH_SIZE = 500;
@@ -23,7 +25,7 @@ const EVENT_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
 // `now`, which only advances, so it never trims events a fresh sync just fetched.
 const EVENT_FUTURE_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
 
-export const enqueueEventPrune = defineMutation({
+export const enqueueEventPrune = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -31,12 +33,12 @@ export const enqueueEventPrune = defineMutation({
       .query("userSyncState")
       .paginate({ cursor: args.cursor ?? null, numItems: USER_FANOUT_BATCH });
     for (const row of page.page) {
-      await ctx.scheduler.runAfter(0, internal.maintenance.pruneUserEvents, {
+      await ctx.scheduler.runAfter(0, internal.jobs.maintenance.pruneUserEvents, {
         userId: row.userId,
       });
     }
     if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.maintenance.enqueueEventPrune, {
+      await ctx.scheduler.runAfter(0, internal.jobs.maintenance.enqueueEventPrune, {
         cursor: page.continueCursor,
       });
     }
@@ -44,7 +46,7 @@ export const enqueueEventPrune = defineMutation({
   },
 });
 
-export const pruneUserEvents = defineMutation({
+export const pruneUserEvents = internalMutation({
   args: { userId: v.string() },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -59,7 +61,7 @@ export const pruneUserEvents = defineMutation({
       await ctx.db.delete(row._id);
     }
     if (past.length === BATCH_SIZE) {
-      await ctx.scheduler.runAfter(0, internal.maintenance.pruneUserEvents, {
+      await ctx.scheduler.runAfter(0, internal.jobs.maintenance.pruneUserEvents, {
         userId: args.userId,
       });
       return null;
@@ -75,7 +77,7 @@ export const pruneUserEvents = defineMutation({
       await ctx.db.delete(row._id);
     }
     if (future.length === BATCH_SIZE) {
-      await ctx.scheduler.runAfter(0, internal.maintenance.pruneUserEvents, {
+      await ctx.scheduler.runAfter(0, internal.jobs.maintenance.pruneUserEvents, {
         userId: args.userId,
       });
     }
@@ -84,7 +86,7 @@ export const pruneUserEvents = defineMutation({
 });
 
 // --- Recurring: prune the shared public-calendar table the same way ---------
-export const enqueueSharedEventPrune = defineMutation({
+export const enqueueSharedEventPrune = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -94,7 +96,7 @@ export const enqueueSharedEventPrune = defineMutation({
     for (const row of page.page) {
       await ctx.scheduler.runAfter(
         0,
-        internal.maintenance.pruneSharedCalendarEvents,
+        internal.jobs.maintenance.pruneSharedCalendarEvents,
         {
           provider: row.provider ?? "google",
           providerCalendarId: row.providerCalendarId ?? row.googleCalendarId,
@@ -104,7 +106,7 @@ export const enqueueSharedEventPrune = defineMutation({
     if (!page.isDone) {
       await ctx.scheduler.runAfter(
         0,
-        internal.maintenance.enqueueSharedEventPrune,
+        internal.jobs.maintenance.enqueueSharedEventPrune,
         { cursor: page.continueCursor },
       );
     }
@@ -112,7 +114,7 @@ export const enqueueSharedEventPrune = defineMutation({
   },
 });
 
-export const pruneSharedCalendarEvents = defineMutation({
+export const pruneSharedCalendarEvents = internalMutation({
   args: {
     provider: v.union(v.literal("google"), v.literal("microsoft")),
     providerCalendarId: v.string(),
@@ -135,7 +137,7 @@ export const pruneSharedCalendarEvents = defineMutation({
     if (past.length === BATCH_SIZE) {
       await ctx.scheduler.runAfter(
         0,
-        internal.maintenance.pruneSharedCalendarEvents,
+        internal.jobs.maintenance.pruneSharedCalendarEvents,
         args,
       );
       return null;
@@ -154,7 +156,7 @@ export const pruneSharedCalendarEvents = defineMutation({
     if (future.length === BATCH_SIZE) {
       await ctx.scheduler.runAfter(
         0,
-        internal.maintenance.pruneSharedCalendarEvents,
+        internal.jobs.maintenance.pruneSharedCalendarEvents,
         args,
       );
     }
@@ -168,7 +170,7 @@ export const pruneSharedCalendarEvents = defineMutation({
 const RATE_LIMIT_RETENTION_MS = 24 * 60 * 60 * 1000;
 const CALENDAR_OPERATION_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
-export const pruneRateLimits = defineMutation({
+export const pruneRateLimits = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -182,7 +184,7 @@ export const pruneRateLimits = defineMutation({
       }
     }
     if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.maintenance.pruneRateLimits, {
+      await ctx.scheduler.runAfter(0, internal.jobs.maintenance.pruneRateLimits, {
         cursor: page.continueCursor,
       });
     }
@@ -193,7 +195,7 @@ export const pruneRateLimits = defineMutation({
 // Terminal write records only provide retry deduplication for a bounded window.
 // Pending/ambiguous rows and any operation backing a still-pending booking are
 // authority records rather than history and are never pruned.
-export const pruneCalendarOperations = defineMutation({
+export const pruneCalendarOperations = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -215,7 +217,7 @@ export const pruneCalendarOperations = defineMutation({
     if (!page.isDone) {
       await ctx.scheduler.runAfter(
         0,
-        internal.maintenance.pruneCalendarOperations,
+        internal.jobs.maintenance.pruneCalendarOperations,
         { cursor: page.continueCursor },
       );
     }
@@ -229,7 +231,7 @@ export const pruneCalendarOperations = defineMutation({
 // empty; safe to re-run. Passing the account `email` also clears its waitlist row.
 const PURGE_BATCH = 100;
 
-export const purgeUserData = defineMutation({
+export const purgeUserData = internalMutation({
   args: { userId: v.string(), email: v.optional(v.string()) },
   returns: v.object({ done: v.boolean() }),
   handler: async (ctx, args): Promise<{ done: boolean }> => {
@@ -347,7 +349,7 @@ export const purgeUserData = defineMutation({
 
     if (more) {
       // Waitlist is one row and already handled, so don't pass email again.
-      await ctx.scheduler.runAfter(0, internal.maintenance.purgeUserData, {
+      await ctx.scheduler.runAfter(0, internal.jobs.maintenance.purgeUserData, {
         userId,
       });
       return { done: false };

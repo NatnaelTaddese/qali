@@ -179,7 +179,7 @@ function writeTool<S extends z.ZodType>(spec: {
       }
 
       const actionId = await tc.ctx.runMutation(
-        internal.assistantData.recordProposal,
+        internal.domains.assistant.data.recordProposal,
         {
           threadId: tc.threadId,
           userId: tc.userId,
@@ -295,12 +295,12 @@ const listEvents = readTool({
     // which live in a separate deduplicated table. Merged so the assistant sees
     // holidays alongside the user's own events.
     const [personal, shared] = await Promise.all([
-      tc.ctx.runQuery(internal.assistantData.listEventsForAssistant, {
+      tc.ctx.runQuery(internal.domains.assistant.data.listEventsForAssistant, {
         userId: tc.userId,
         startMs: args.fromMs,
         endMs: args.toMs,
       }),
-      tc.ctx.runQuery(internal.calendar.listSharedEventsForAssistant, {
+      tc.ctx.runQuery(internal.domains.calendar.queries.listSharedEventsForAssistant, {
         userId: tc.userId,
         startMs: args.fromMs,
         endMs: args.toMs,
@@ -371,17 +371,17 @@ const findFreeTime = readTool({
     const durationMs = args.durationMinutes * MS_PER_MINUTE;
 
     const [personal, shared, bookings] = await Promise.all([
-      tc.ctx.runQuery(internal.assistantData.listEventsForAssistant, {
+      tc.ctx.runQuery(internal.domains.assistant.data.listEventsForAssistant, {
         userId: tc.userId,
         startMs: args.fromMs,
         endMs: args.toMs,
       }),
-      tc.ctx.runQuery(internal.calendar.listSharedEventsForAssistant, {
+      tc.ctx.runQuery(internal.domains.calendar.queries.listSharedEventsForAssistant, {
         userId: tc.userId,
         startMs: args.fromMs,
         endMs: args.toMs,
       }),
-      tc.ctx.runQuery(internal.assistantData.listBookingBlocksForAssistant, {
+      tc.ctx.runQuery(internal.domains.assistant.data.listBookingBlocksForAssistant, {
         userId: tc.userId,
         startMs: args.fromMs,
         endMs: args.toMs,
@@ -759,7 +759,7 @@ const updateEvent = writeTool({
       args.scope !== "thisEvent";
     const expectedSeriesUpdatedMs = editsSeries
       ? await tc.ctx.runQuery(
-          internal.assistantData.getRecurringSeriesVersion,
+          internal.domains.assistant.data.getRecurringSeriesVersion,
           { userId: tc.userId, eventId: row._id },
         )
       : null;
@@ -866,7 +866,7 @@ const deleteEvent = writeTool({
     if (args.scope !== "thisAndFollowing") return {};
     const row = await requireEditable(tc, args.eventId);
     const expectedSeriesUpdatedMs = await tc.ctx.runQuery(
-      internal.assistantData.getRecurringSeriesVersion,
+      internal.domains.assistant.data.getRecurringSeriesVersion,
       { userId: tc.userId, eventId: row._id },
     );
     if (expectedSeriesUpdatedMs === null) {
@@ -893,7 +893,7 @@ const decideBookingRequest = writeTool({
     "requester. Neither happens until the user confirms.",
   schema: decideBookingSchema,
   async preview(tc, args) {
-    const context = await tc.ctx.runQuery(internal.booking.getBookingContext, {
+    const context = await tc.ctx.runQuery(internal.domains.booking.queries.getBookingContext, {
       bookingId: args.bookingId as Id<"bookings">,
       hostUserId: tc.userId,
     });
@@ -1119,7 +1119,7 @@ async function normalizeStoredProposal(
     "eventId" in raw &&
     typeof raw.eventId === "string"
   ) {
-    const context = await ctx.runQuery(internal.calendar.getEventContext, {
+    const context = await ctx.runQuery(internal.domains.calendar.queries.getEventContext, {
       eventId: raw.eventId as Id<"events">,
       userId,
     });

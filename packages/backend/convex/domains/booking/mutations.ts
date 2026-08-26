@@ -1,6 +1,8 @@
-/** Write handlers for the booking domain. Plain functions; the root `booking.ts`
- * wraps each in a Convex `mutation` / `internalMutation`. The acceptance-claim
- * lease and the expiry continuations reschedule through those stable paths. */
+/** Booking domain writes. Canonical registration for the booking mutations; the
+ * root `booking.ts` facade re-exports the same registered objects on the
+ * legacy `api.booking.*` / `internal.booking.*` paths while they drain. The
+ * acceptance-claim lease and the expiry continuations reschedule through the
+ * canonical `internal.domains.booking.*` paths. */
 
 import {
   isValidDayInterval,
@@ -8,11 +10,15 @@ import {
   MS_PER_DAY,
 } from "@qali/domain/availability";
 import { normalizeSlug, slugError } from "@qali/domain/slug";
-import { ConvexError } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import type { MutationCtx } from "../../_generated/server";
+import {
+  internalMutation,
+  mutation,
+  type MutationCtx,
+} from "../../_generated/server";
 import { authComponent } from "../../auth";
 import { consumeRateLimit } from "../../infrastructure/rateLimit";
 import {
@@ -34,6 +40,7 @@ import {
   pageByUser,
   RATE_WINDOW_MS,
   slotGrid,
+  slotSettingsValidator,
 } from "./model";
 
 async function localCalendarForProviderId(
@@ -370,6 +377,26 @@ export async function upsertBookingPageHandler(
   return { slug };
 }
 
+export const upsertBookingPage = mutation({
+  args: {
+    slug: v.string(),
+    /** IANA zone the weekly rules are expressed in; the client sends its own. */
+    timeZone: v.string(),
+    title: v.optional(v.string()),
+    description: v.optional(v.string()),
+    rules: v.array(
+      v.object({
+        weekday: v.number(),
+        startMin: v.number(),
+        endMin: v.number(),
+      }),
+    ),
+    ...slotSettingsValidator,
+    enabled: v.boolean(),
+  },
+  handler: (ctx, args) => upsertBookingPageHandler(ctx, args),
+});
+
 export async function setOverrideHandler(
   ctx: MutationCtx,
   args: { dateKey: string; intervals?: { startMin: number; endMin: number }[] },
@@ -411,6 +438,16 @@ export async function setOverrideHandler(
   }
   return null;
 }
+
+export const setOverride = mutation({
+  args: {
+    dateKey: v.string(),
+    intervals: v.optional(
+      v.array(v.object({ startMin: v.number(), endMin: v.number() })),
+    ),
+  },
+  handler: (ctx, args) => setOverrideHandler(ctx, args),
+});
 
 export async function requestBookingHandler(
   ctx: MutationCtx,
@@ -505,11 +542,27 @@ export async function requestBookingHandler(
     read: false,
     createdAt: Date.now(),
   });
-  await ctx.scheduler.runAt(endMs, internal.booking.expireBooking, {
-    bookingId,
-  });
+  await ctx.scheduler.runAt(
+    endMs,
+    internal.domains.booking.mutations.expireBooking,
+    { bookingId },
+  );
   return { token };
 }
+
+export const requestBooking = mutation({
+  args: {
+    slug: v.string(),
+    startMs: v.number(),
+    name: v.string(),
+    email: v.string(),
+    note: v.optional(v.string()),
+    /** The visitor's IANA zone, recorded so the host can see what time they
+     * thought they were booking. Display only. */
+    timeZone: v.string(),
+  },
+  handler: (ctx, args) => requestBookingHandler(ctx, args),
+});
 
 /** Expire one request at its scheduled end. A decision that won the race first
  * is left untouched. */
@@ -542,15 +595,22 @@ export async function expireBookingHandler(
       ? booking.acceptLeaseExpiresAt
       : undefined;
   if (leaseExpiresAt && leaseExpiresAt > now) {
-    await ctx.scheduler.runAt(leaseExpiresAt, internal.booking.expireBooking, {
-      bookingId: booking._id,
-    });
+    await ctx.scheduler.runAt(
+      leaseExpiresAt,
+      internal.domains.booking.mutations.expireBooking,
+      { bookingId: booking._id },
+    );
     return null;
   }
   await ctx.db.patch(args.bookingId, { status: "expired" });
   await clearBookingNotifications(ctx, args.bookingId);
   return null;
 }
+
+export const expireBooking = internalMutation({
+  args: { bookingId: v.id("bookings") },
+  handler: (ctx, args) => expireBookingHandler(ctx, args),
+});
 
 /** Backfill requests created before per-booking expiration was introduced and
  * recover in bounded batches if scheduled work was ever missed. */
@@ -591,10 +651,19 @@ export async function expirePastBookingsHandler(
     await clearBookingNotifications(ctx, booking._id);
   }
   if (rows.length === EXPIRATION_BATCH_SIZE) {
-    await ctx.scheduler.runAfter(0, internal.booking.expirePastBookings, {});
+    await ctx.scheduler.runAfter(
+      0,
+      internal.domains.booking.mutations.expirePastBookings,
+      {},
+    );
   }
   return null;
 }
+
+export const expirePastBookings = internalMutation({
+  args: {},
+  handler: (ctx) => expirePastBookingsHandler(ctx),
+});
 
 /** Settle the operation ledger, then dual-write the legacy booking fields. */
 export async function markAcceptedHandler(
@@ -684,6 +753,17 @@ export async function markAcceptedHandler(
   await clearBookingNotifications(ctx, args.bookingId);
   return true;
 }
+
+export const markAccepted = internalMutation({
+  args: {
+    bookingId: v.id("bookings"),
+    hostUserId: v.string(),
+    providerEventId: v.string(),
+    providerCalendarId: v.string(),
+    attemptId: v.string(),
+  },
+  handler: (ctx, args) => markAcceptedHandler(ctx, args),
+});
 
 /** Claim the operation ledger and recheck the slot in the same transaction. */
 export async function claimBookingAcceptanceHandler(
@@ -811,7 +891,7 @@ export async function claimBookingAcceptanceHandler(
   });
   await ctx.scheduler.runAt(
     leaseExpiresAt,
-    internal.booking.reconcileBookingAcceptance,
+    internal.domains.booking.service.reconcileBookingAcceptance,
     { bookingId: booking._id, expectedGeneration: reconcileGeneration },
   );
   return {
@@ -826,6 +906,17 @@ export async function claimBookingAcceptanceHandler(
     reconcileAttemptCount,
   };
 }
+
+export const claimBookingAcceptance = internalMutation({
+  args: {
+    bookingId: v.id("bookings"),
+    hostUserId: v.string(),
+    attemptId: v.string(),
+    reconciliation: v.optional(v.boolean()),
+    expectedGeneration: v.optional(v.number()),
+  },
+  handler: (ctx, args) => claimBookingAcceptanceHandler(ctx, args),
+});
 
 /** Scheduled claims derive authority from the booking rather than a user
  * session. The expected generation makes duplicate/lost-action watchdogs no-op. */
@@ -857,6 +948,15 @@ export async function claimScheduledBookingAcceptanceHandler(
   }
   return claimed ? { ...claimed, hostUserId: booking.hostUserId } : null;
 }
+
+export const claimScheduledBookingAcceptance = internalMutation({
+  args: {
+    bookingId: v.id("bookings"),
+    attemptId: v.string(),
+    expectedGeneration: v.number(),
+  },
+  handler: (ctx, args) => claimScheduledBookingAcceptanceHandler(ctx, args),
+});
 
 export async function releaseBookingAcceptanceHandler(
   ctx: MutationCtx,
@@ -936,19 +1036,32 @@ export async function releaseBookingAcceptanceHandler(
     const delay = ACCEPT_RECONCILE_BASE_DELAY_MS * 2 ** Math.min(attempt, 4);
     await ctx.scheduler.runAfter(
       delay,
-      internal.booking.reconcileBookingAcceptance,
+      internal.domains.booking.service.reconcileBookingAcceptance,
       {
         bookingId: booking._id,
         expectedGeneration: operation.reconcileGeneration ?? 0,
       },
     );
   } else if (!args.mayHaveSucceeded && booking.endMs <= now) {
-    await ctx.scheduler.runAfter(0, internal.booking.expireBooking, {
-      bookingId: booking._id,
-    });
+    await ctx.scheduler.runAfter(
+      0,
+      internal.domains.booking.mutations.expireBooking,
+      { bookingId: booking._id },
+    );
   }
   return null;
 }
+
+export const releaseBookingAcceptance = internalMutation({
+  args: {
+    bookingId: v.id("bookings"),
+    hostUserId: v.string(),
+    attemptId: v.string(),
+    mayHaveSucceeded: v.boolean(),
+    error: v.optional(v.string()),
+  },
+  handler: (ctx, args) => releaseBookingAcceptanceHandler(ctx, args),
+});
 
 /** Decline a request. A mutation, not an action: nothing reaches Google, and the
  * requester learns of it from their own confirmation link. */
@@ -965,6 +1078,11 @@ export async function rejectBookingHandler(
     hostUserId: user._id,
   });
 }
+
+export const rejectBooking = mutation({
+  args: { bookingId: v.id("bookings") },
+  handler: (ctx, args) => rejectBookingHandler(ctx, args),
+});
 
 /** Internal core kept separately so the authorization wrapper stays public-only. */
 export async function rejectBookingForHostHandler(
@@ -1016,3 +1134,8 @@ export async function rejectBookingForHostHandler(
   await clearBookingNotifications(ctx, args.bookingId);
   return null;
 }
+
+export const rejectBookingForHost = internalMutation({
+  args: { bookingId: v.id("bookings"), hostUserId: v.string() },
+  handler: (ctx, args) => rejectBookingForHostHandler(ctx, args),
+});

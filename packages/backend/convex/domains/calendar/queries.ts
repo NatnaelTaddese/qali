@@ -1,8 +1,11 @@
-/** Read handlers for the calendar domain. Plain functions; the root `calendar.ts`
- * wraps each in a Convex `query` / `internalQuery`. */
+/** Read side of the calendar domain. Registration is canonical here; the root
+ * `calendar.ts` facade re-exports the same registered objects so the legacy
+ * `api.calendar.*` / `internal.calendar.*` paths stay live while they drain. */
+
+import { v } from "convex/values";
 
 import type { Doc, Id } from "../../_generated/dataModel";
-import type { QueryCtx } from "../../_generated/server";
+import { internalQuery, query, type QueryCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import {
   MAX_EVENT_SPAN_MS,
@@ -18,6 +21,7 @@ import {
   selectedCalendars,
   sharedAsEvent,
 } from "./model";
+import { eventIdArg } from "./validators";
 
 /** The assistant's view of shared public-calendar (holiday/birthday) events in a
  * range, for the selected calendars. Normalized to the events shape. */
@@ -60,6 +64,11 @@ export async function listSharedEventsForAssistantHandler(
   return out.sort((a, b) => a.startMs - b.startMs);
 }
 
+export const listSharedEventsForAssistant = internalQuery({
+  args: { userId: v.string(), startMs: v.number(), endMs: v.number() },
+  handler: (ctx, args) => listSharedEventsForAssistantHandler(ctx, args),
+});
+
 /** The user's connected calendars, for the visibility list in the header. */
 export async function listCalendarsHandler(ctx: QueryCtx) {
   const user = await authComponent.safeGetAuthUser(ctx);
@@ -72,6 +81,11 @@ export async function listCalendarsHandler(ctx: QueryCtx) {
     .collect();
 }
 
+export const listCalendars = query({
+  args: {},
+  handler: (ctx) => listCalendarsHandler(ctx),
+});
+
 /** Registry lookup that deliberately hides foreign and inactive connections. */
 export async function getCalendarConnectionForAdapterHandler(
   ctx: QueryCtx,
@@ -83,6 +97,13 @@ export async function getCalendarConnectionForAdapterHandler(
   }
   return connection;
 }
+
+export const getCalendarConnectionForAdapter = internalQuery({
+  args: {
+    connectionId: v.id("calendarConnections"),
+  },
+  handler: (ctx, args) => getCalendarConnectionForAdapterHandler(ctx, args),
+});
 
 /** Events overlapping [startMs, endMs) for the current user, e.g. a week window. */
 export async function listEventsInRangeHandler(
@@ -128,6 +149,11 @@ export async function listEventsInRangeHandler(
   );
   return [...personal, ...shared].sort((a, b) => a.startMs - b.startMs);
 }
+
+export const listEventsInRange = query({
+  args: { startMs: v.number(), endMs: v.number() },
+  handler: (ctx, args) => listEventsInRangeHandler(ctx, args),
+});
 
 /** Migration-safe active read. The staged neutral end index replaces this only
  * after activation; until then this complete legacy end range includes both
@@ -212,6 +238,11 @@ export async function getEventByIdHandler(
   return sharedAsEvent(row, user._id);
 }
 
+export const getEventById = query({
+  args: { eventId: eventIdArg },
+  handler: (ctx, args) => getEventByIdHandler(ctx, args),
+});
+
 /** The cached rule for an expanded recurring instance. `null` is a cache miss. */
 export async function getEventRecurrenceHandler(
   ctx: QueryCtx,
@@ -245,6 +276,11 @@ export async function getEventRecurrenceHandler(
     : null;
 }
 
+export const getEventRecurrence = query({
+  args: { eventId: eventIdArg },
+  handler: (ctx, args) => getEventRecurrenceHandler(ctx, args),
+});
+
 /** An event plus the calendar it lives on — everything `eventCapabilities` needs. */
 export async function getEventContextHandler(
   ctx: QueryCtx,
@@ -267,6 +303,11 @@ export async function getEventContextHandler(
       .first());
   return { event, calendar };
 }
+
+export const getEventContext = internalQuery({
+  args: { eventId: eventIdArg, userId: v.string() },
+  handler: (ctx, args) => getEventContextHandler(ctx, args),
+});
 
 /** Resolve the user's primary calendar id (the email), if it has synced. */
 export async function getPrimaryCalendarIdHandler(

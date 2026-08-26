@@ -51,6 +51,7 @@ import type * as domains_people_queries from "../domains/people/queries.js";
 import type * as domains_people_tables from "../domains/people/tables.js";
 import type * as domains_sync_engine from "../domains/sync/engine.js";
 import type * as domains_sync_googleCompat from "../domains/sync/googleCompat.js";
+import type * as domains_sync_jobs from "../domains/sync/jobs.js";
 import type * as domains_sync_tables from "../domains/sync/tables.js";
 import type * as googleSync from "../googleSync.js";
 import type * as healthCheck from "../healthCheck.js";
@@ -128,6 +129,7 @@ declare const fullApi: ApiFromModules<{
   "domains/people/tables": typeof domains_people_tables;
   "domains/sync/engine": typeof domains_sync_engine;
   "domains/sync/googleCompat": typeof domains_sync_googleCompat;
+  "domains/sync/jobs": typeof domains_sync_jobs;
   "domains/sync/tables": typeof domains_sync_tables;
   googleSync: typeof googleSync;
   healthCheck: typeof healthCheck;

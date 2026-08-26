@@ -14,9 +14,14 @@ import { env } from "@qali/env/server";
 
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { type MutationCtx, type QueryCtx } from "../../_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "../../_generated/server";
 import { authComponent } from "../../auth";
-import { defineMutation, defineQuery } from "../../shared/functionDefinitions";
 import { assistantBlockValidator } from "./validators";
 
 /** How much of the opening message becomes the thread's title. */
@@ -76,7 +81,7 @@ async function ownedThread(
  * asks this before rendering anything. It returns a boolean and never the key
  * itself — the client has no reason to know more than on/off.
  */
-export const isAvailable = defineQuery({
+export const isAvailable = query({
   args: {},
   handler: async (): Promise<boolean> => {
     return env.DEEPSEEK_API_KEY !== undefined;
@@ -88,7 +93,7 @@ export const isAvailable = defineQuery({
  * subscribes to this to show remaining messages and block sending when spent.
  * Mirrors the window logic in `startTurn` so the two never disagree.
  */
-export const monthlyQuota = defineQuery({
+export const monthlyQuota = query({
   args: { nowMs: v.optional(v.number()) },
   handler: async (
     ctx,
@@ -116,7 +121,7 @@ export const monthlyQuota = defineQuery({
 });
 
 /** The user's conversations, most recently active first. */
-export const listThreads = defineQuery({
+export const listThreads = query({
   args: {},
   handler: async (ctx) => {
     const user = await authComponent.safeGetAuthUser(ctx);
@@ -134,7 +139,7 @@ export const listThreads = defineQuery({
 /** The latest turns in one thread, oldest first. This is the panel's main
  * subscription: the action patches the in-flight assistant row as the model
  * streams, and each patch re-runs this query on the client. */
-export const listMessages = defineQuery({
+export const listMessages = query({
   args: { threadId: v.id("assistantThreads") },
   handler: async (ctx, args) => {
     const user = await authComponent.safeGetAuthUser(ctx);
@@ -156,7 +161,7 @@ export const listMessages = defineQuery({
 /** All proposed writes in this thread, in any state (pending, applying,
  * applied, rejected, failed). The panel uses these to resolve `proposal`
  * blocks across the whole thread, not just the ones awaiting the user. */
-export const listPendingActions = defineQuery({
+export const listPendingActions = query({
   args: { threadId: v.id("assistantThreads") },
   handler: async (ctx, args) => {
     const user = await authComponent.safeGetAuthUser(ctx);
@@ -182,7 +187,7 @@ export const listPendingActions = defineQuery({
  * Both rows are written in one transaction so the panel never renders a user
  * message with no reply pending underneath it.
  */
-export const startTurn = defineMutation({
+export const startTurn = internalMutation({
   args: {
     userId: v.string(),
     threadId: v.optional(v.id("assistantThreads")),
@@ -327,7 +332,7 @@ export const startTurn = defineMutation({
  * turn that stopped mid-tool-call would otherwise be replayed as an assistant
  * message whose tool calls have no results, which the API rejects.
  */
-export const getHistory = defineQuery({
+export const getHistory = internalQuery({
   args: {
     threadId: v.id("assistantThreads"),
     userId: v.string(),
@@ -381,7 +386,7 @@ export const getHistory = defineQuery({
 
 /** Bounded calendar read for assistant tools. Public calendar range queries are
  * optimized for the visible grid and may collect a dense range in full. */
-export const listEventsForAssistant = defineQuery({
+export const listEventsForAssistant = internalQuery({
   args: {
     userId: v.string(),
     startMs: v.number(),
@@ -439,7 +444,7 @@ export const listEventsForAssistant = defineQuery({
 /** Pending and accepted bookings both reserve time. Accepted rows remain here
  * even if their optimistic event mirror failed and calendar sync has not caught
  * up yet; interval merging removes the duplicate once the event appears. */
-export const listBookingBlocksForAssistant = defineQuery({
+export const listBookingBlocksForAssistant = internalQuery({
   args: {
     userId: v.string(),
     startMs: v.number(),
@@ -469,7 +474,7 @@ export const listBookingBlocksForAssistant = defineQuery({
   },
 });
 
-export const getRecurringSeriesVersion = defineQuery({
+export const getRecurringSeriesVersion = internalQuery({
   args: {
     userId: v.string(),
     eventId: v.id("events"),
@@ -504,7 +509,7 @@ export const getRecurringSeriesVersion = defineQuery({
  * appending one. That makes it idempotent: a flush that lands twice, or one
  * that raced a slower earlier flush, still leaves exactly one text block.
  */
-export const flushText = defineMutation({
+export const flushText = internalMutation({
   args: { messageId: v.id("assistantMessages"), text: v.string() },
   handler: async (ctx, args): Promise<null> => {
     const message = await ctx.db.get(args.messageId);
@@ -529,7 +534,7 @@ export const flushText = defineMutation({
 });
 
 /** Append one non-text block (a tool call, its result, or a proposal marker). */
-export const appendBlock = defineMutation({
+export const appendBlock = internalMutation({
   args: {
     messageId: v.id("assistantMessages"),
     block: assistantBlockValidator,
@@ -563,7 +568,7 @@ export const appendBlock = defineMutation({
 /** Attach best-effort follow-up suggestions to a settled turn. Independent of
  * the turn's success path: a failure to generate them must never touch status,
  * so this only writes the field and tolerates the message being gone. */
-export const setSuggestions = defineMutation({
+export const setSuggestions = internalMutation({
   args: {
     messageId: v.id("assistantMessages"),
     suggestions: v.array(v.string()),
@@ -579,7 +584,7 @@ export const setSuggestions = defineMutation({
 });
 
 /** Close a turn out. Only now does it become replayable history. */
-export const finishTurn = defineMutation({
+export const finishTurn = internalMutation({
   args: {
     messageId: v.id("assistantMessages"),
     threadId: v.id("assistantThreads"),
@@ -601,7 +606,7 @@ export const finishTurn = defineMutation({
 
 /** Mark a turn as failed, keeping whatever it managed to say. The blocks stay
  * for the user to read but `getHistory` will skip them. */
-export const failTurn = defineMutation({
+export const failTurn = internalMutation({
   args: {
     messageId: v.id("assistantMessages"),
     threadId: v.id("assistantThreads"),
@@ -627,7 +632,7 @@ export const failTurn = defineMutation({
 
 /** Park a write the assistant wants to make. Returns the id the transcript's
  * `proposal` block points at, which is what the confirm card renders from. */
-export const recordProposal = defineMutation({
+export const recordProposal = internalMutation({
   args: {
     threadId: v.id("assistantThreads"),
     userId: v.string(),
@@ -663,7 +668,7 @@ export const recordProposal = defineMutation({
  * keep reading its own "awaiting confirmation" reply from three turns ago and
  * ask the user to confirm something they already confirmed.
  */
-export const getThreadActions = defineQuery({
+export const getThreadActions = internalQuery({
   args: { threadId: v.id("assistantThreads"), userId: v.string() },
   handler: async (ctx, args): Promise<Doc<"assistantActions">[]> => {
     if (!(await ownedThread(ctx, args.threadId, args.userId))) {
@@ -686,7 +691,7 @@ export const getThreadActions = defineQuery({
  * the one that flips `pending` → `applying` gets to send the invitation. The
  * loser returns false and does nothing.
  */
-export const claimAction = defineMutation({
+export const claimAction = internalMutation({
   args: {
     actionId: v.id("assistantActions"),
     userId: v.string(),
@@ -720,7 +725,7 @@ export const claimAction = defineMutation({
     });
     await ctx.scheduler.runAt(
       applyLeaseExpiresAt,
-      internal.assistantData.releaseStaleAction,
+      internal.domains.assistant.data.releaseStaleAction,
       { actionId: args.actionId, attemptId, applyLeaseExpiresAt },
     );
     return {
@@ -735,7 +740,7 @@ export const claimAction = defineMutation({
 });
 
 /** Record the outcome of an apply that had already claimed the row. */
-export const settleClaimedAction = defineMutation({
+export const settleClaimedAction = internalMutation({
   args: {
     actionId: v.id("assistantActions"),
     attemptId: v.optional(v.string()),
@@ -764,7 +769,7 @@ export const settleClaimedAction = defineMutation({
 /** Put a claimed action back behind its confirm button. Stable operation IDs
  * make the retry reconcile a possible lost Google response instead of creating
  * a second event. */
-export const retryClaimedAction = defineMutation({
+export const retryClaimedAction = internalMutation({
   args: {
     actionId: v.id("assistantActions"),
     attemptId: v.optional(v.string()),
@@ -791,7 +796,7 @@ export const retryClaimedAction = defineMutation({
 
 /** Recover a confirmation whose action process disappeared after claiming it.
  * The operation ID remains stable, so the next click reconciles with Google. */
-export const releaseStaleAction = defineMutation({
+export const releaseStaleAction = internalMutation({
   args: {
     actionId: v.id("assistantActions"),
     attemptId: v.optional(v.string()),
@@ -821,7 +826,7 @@ export const releaseStaleAction = defineMutation({
 
 /** Discard a proposal without applying it. Same pending-only guard as the
  * claim, so Discard can't undo a confirm that is already in flight. */
-export const rejectAction = defineMutation({
+export const rejectAction = internalMutation({
   args: {
     actionId: v.id("assistantActions"),
     userId: v.string(),

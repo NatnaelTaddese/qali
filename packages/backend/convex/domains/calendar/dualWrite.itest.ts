@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 import { internal } from "../../_generated/api";
 import schema from "../../schema";
 
-const modules = import.meta.glob("../../**/*.ts");
+import { modules } from "../../../testModules";
 
 const USER = "user_dw";
 

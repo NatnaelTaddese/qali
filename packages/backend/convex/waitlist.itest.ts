@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 
-const modules = import.meta.glob("./**/*.ts");
+import { modules } from "../testModules";
 
 describe("waitlist.join", () => {
   test("dedupes a repeat signup to a single row", async () => {

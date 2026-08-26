@@ -1,10 +1,9 @@
 /**
- * Stable facade for assistant maintenance (deleteThread, pruneAgedThreads).
- * Logic in domains/assistant/maintenance.ts; keeps those paths fixed.
+ * Drain-only compatibility facade - keeps the pre-cutover api.assistantMaintenance.* /
+ * internal.assistantMaintenance.* paths registered while persisted scheduler
+ * entries and stale clients drain.
+ * Canonical registration: domains/assistant/maintenance.ts. Removal gate:
+ * MIGRATION_RUNBOOK.md section 7.
  */
 
-import { internalMutation, mutation } from "./_generated/server";
-import * as definitions from "./domains/assistant/maintenance";
-
-export const deleteThread = mutation(definitions.deleteThread);
-export const pruneAgedThreads = internalMutation(definitions.pruneAgedThreads);
+export { deleteThread, pruneAgedThreads } from "./domains/assistant/maintenance";

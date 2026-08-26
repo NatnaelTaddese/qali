@@ -14,7 +14,7 @@ import type {
 import { reconcileBookingAcceptanceWithAdapter } from "./domains/booking/service";
 import schema from "./schema";
 
-const modules = import.meta.glob("./**/*.ts");
+import { modules } from "../testModules";
 
 const HOST = "host_user";
 const CAL = "primary";

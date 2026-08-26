@@ -1,7 +1,8 @@
-/** Read handlers for the people domain. Plain functions taking a QueryCtx; the
- * root `people.ts` facade wraps them in a Convex `query`. */
+/** Read side of the people domain: plain handlers plus the canonical `query`
+ * registrations. The root `people.ts` facade re-exports the registered objects
+ * so the legacy `api.people.*` paths stay live. */
 
-import type { QueryCtx } from "../../_generated/server";
+import { query, type QueryCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 
 // How many people the picker/assistant load. Ordered by engagement, so this is
@@ -34,3 +35,8 @@ export async function listPeopleHandler(ctx: QueryCtx) {
     nextMeetingMs: p.nextMeetingMs,
   }));
 }
+
+export const listPeople = query({
+  args: {},
+  handler: (ctx) => listPeopleHandler(ctx),
+});

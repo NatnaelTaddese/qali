@@ -6,7 +6,7 @@ import { internal } from "./_generated/api";
 import schema from "./schema";
 import { calendarTables } from "./domains/calendar/tables";
 
-const modules = import.meta.glob("./**/*.ts");
+import { modules } from "../testModules";
 
 /**
  * The connection tables are deployed empty and queried by nothing yet, so there

@@ -22,13 +22,12 @@ import { env } from "@qali/env/server";
 
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import type { ActionCtx } from "../../_generated/server";
+import { action, type ActionCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import {
   ExternalWriteCommittedError,
   isDefinitiveProviderFailure,
 } from "../calendar/service";
-import { defineAction } from "../../shared/functionDefinitions";
 import {
   ASSISTANT_TOOLS,
   TOOLS_BY_NAME,
@@ -182,7 +181,7 @@ type DeepSeekUsage = {
  * Instead the assistant's row is patched as text arrives, and the panel's
  * subscription re-renders on every patch, which reads the same way.
  */
-export const sendMessage = defineAction({
+export const sendMessage = action({
   args: {
     threadId: v.optional(v.id("assistantThreads")),
     text: v.string(),
@@ -211,7 +210,7 @@ export const sendMessage = defineAction({
 
     const { threadId, userMessageId, assistantMessageId, startedAt } =
       await ctx.runMutation(
-        internal.assistantData.startTurn,
+        internal.domains.assistant.data.startTurn,
         {
           userId: user._id,
           threadId: args.threadId,
@@ -230,7 +229,7 @@ export const sendMessage = defineAction({
         timeZone: args.timeZone,
         nowMs: startedAt,
       });
-      await ctx.runMutation(internal.assistantData.finishTurn, {
+      await ctx.runMutation(internal.domains.assistant.data.finishTurn, {
         messageId: assistantMessageId,
         threadId,
       });
@@ -240,7 +239,7 @@ export const sendMessage = defineAction({
         try {
           const suggestions = await generateFollowUps(apiKey, followUp);
           if (suggestions.length > 0) {
-            await ctx.runMutation(internal.assistantData.setSuggestions, {
+            await ctx.runMutation(internal.domains.assistant.data.setSuggestions, {
               messageId: assistantMessageId,
               suggestions,
             });
@@ -250,7 +249,7 @@ export const sendMessage = defineAction({
         }
       }
     } catch (error) {
-      await ctx.runMutation(internal.assistantData.failTurn, {
+      await ctx.runMutation(internal.domains.assistant.data.failTurn, {
         messageId: assistantMessageId,
         threadId,
         error: error instanceof Error ? error.message : String(error),
@@ -286,12 +285,12 @@ async function runAgentLoop(
   });
 
   const [history, actions] = await Promise.all([
-    ctx.runQuery(internal.assistantData.getHistory, {
+    ctx.runQuery(internal.domains.assistant.data.getHistory, {
       threadId: run.threadId,
       userId: run.userId,
       userMessageId: run.userMessageId,
     }),
-    ctx.runQuery(internal.assistantData.getThreadActions, {
+    ctx.runQuery(internal.domains.assistant.data.getThreadActions, {
       threadId: run.threadId,
       userId: run.userId,
     }),
@@ -357,7 +356,7 @@ async function runAgentLoop(
       if (!force && Date.now() - lastFlushAt < FLUSH_INTERVAL_MS) return;
       flushedText = text;
       lastFlushAt = Date.now();
-      await ctx.runMutation(internal.assistantData.flushText, {
+      await ctx.runMutation(internal.domains.assistant.data.flushText, {
         messageId: run.assistantMessageId,
         text,
       });
@@ -415,7 +414,7 @@ async function runAgentLoop(
       })),
     });
     for (const call of pending) {
-      await ctx.runMutation(internal.assistantData.appendBlock, {
+      await ctx.runMutation(internal.domains.assistant.data.appendBlock, {
         messageId: run.assistantMessageId,
         block: {
           type: "tool_call",
@@ -435,7 +434,7 @@ async function runAgentLoop(
     for (let i = 0; i < pending.length; i += 1) {
       const call = pending[i];
       const outcome = outcomes[i];
-      await ctx.runMutation(internal.assistantData.appendBlock, {
+      await ctx.runMutation(internal.domains.assistant.data.appendBlock, {
         messageId: run.assistantMessageId,
         block: {
           type: "tool_result",
@@ -446,7 +445,7 @@ async function runAgentLoop(
       });
       if (outcome.kind === "proposal") {
         proposedThisTurn = true;
-        await ctx.runMutation(internal.assistantData.appendBlock, {
+        await ctx.runMutation(internal.domains.assistant.data.appendBlock, {
           messageId: run.assistantMessageId,
           block: {
             type: "proposal",
@@ -465,7 +464,7 @@ async function runAgentLoop(
 
   // Out of steps with tools still pending. Say so rather than leaving the panel
   // showing a reply that just stops.
-  await ctx.runMutation(internal.assistantData.appendBlock, {
+  await ctx.runMutation(internal.domains.assistant.data.appendBlock, {
     messageId: run.assistantMessageId,
     block: {
       type: "text",
@@ -574,7 +573,7 @@ async function runOneTool(
  * made while the assistant was configured can still be confirmed after the key
  * is removed. It is also the only path from the assistant to Google.
  */
-export const confirmAction = defineAction({
+export const confirmAction = action({
   args: {
     actionId: v.id("assistantActions"),
     decision: v.union(v.literal("confirm"), v.literal("discard")),
@@ -586,7 +585,7 @@ export const confirmAction = defineAction({
     }
 
     if (args.decision === "discard") {
-      await ctx.runMutation(internal.assistantData.rejectAction, {
+      await ctx.runMutation(internal.domains.assistant.data.rejectAction, {
         actionId: args.actionId,
         userId: user._id,
       });
@@ -596,7 +595,7 @@ export const confirmAction = defineAction({
     // Claiming flips `pending` → `applying` inside one transaction. A second
     // click finds it already claimed and returns null, so the guest list is
     // never emailed twice.
-    const action = await ctx.runMutation(internal.assistantData.claimAction, {
+    const action = await ctx.runMutation(internal.domains.assistant.data.claimAction, {
       actionId: args.actionId,
       userId: user._id,
     });
@@ -606,7 +605,7 @@ export const confirmAction = defineAction({
 
     try {
       const summary = await applyProposal(ctx, user._id, action);
-      await ctx.runMutation(internal.assistantData.settleClaimedAction, {
+      await ctx.runMutation(internal.domains.assistant.data.settleClaimedAction, {
         actionId: args.actionId,
         attemptId: action.attemptId,
         status: "applied",
@@ -614,7 +613,7 @@ export const confirmAction = defineAction({
       });
     } catch (error) {
       if (error instanceof ExternalWriteCommittedError) {
-        await ctx.runMutation(internal.assistantData.settleClaimedAction, {
+        await ctx.runMutation(internal.domains.assistant.data.settleClaimedAction, {
           actionId: args.actionId,
           attemptId: action.attemptId,
           status: "applied",
@@ -624,7 +623,7 @@ export const confirmAction = defineAction({
       }
       const message = error instanceof Error ? error.message : String(error);
       if (isDefinitiveProviderFailure(error)) {
-        await ctx.runMutation(internal.assistantData.settleClaimedAction, {
+        await ctx.runMutation(internal.domains.assistant.data.settleClaimedAction, {
           actionId: args.actionId,
           attemptId: action.attemptId,
           status: "failed",
@@ -632,7 +631,7 @@ export const confirmAction = defineAction({
         });
         throw error;
       }
-      await ctx.runMutation(internal.assistantData.retryClaimedAction, {
+      await ctx.runMutation(internal.domains.assistant.data.retryClaimedAction, {
         actionId: args.actionId,
         attemptId: action.attemptId,
         resultSummary: message,

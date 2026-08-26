@@ -8,14 +8,14 @@ const crons = cronJobs();
 crons.interval(
   "sync provider connections",
   { minutes: 15 },
-  internal.calendarSync.enqueueSyncs,
+  internal.domains.sync.engine.enqueueSyncs,
   {},
 );
 
 crons.interval(
   "expire past booking requests",
   { minutes: 15 },
-  internal.booking.expirePastBookings,
+  internal.domains.booking.mutations.expirePastBookings,
   {},
 );
 
@@ -25,7 +25,7 @@ crons.interval(
 crons.interval(
   "refresh people ranking",
   { hours: 24 },
-  internal.calendarSync.enqueueEngagementRefresh,
+  internal.domains.sync.engine.enqueueEngagementRefresh,
   {},
 );
 
@@ -34,7 +34,7 @@ crons.interval(
 crons.interval(
   "prune aged-out events",
   { hours: 24 },
-  internal.maintenance.enqueueEventPrune,
+  internal.jobs.maintenance.enqueueEventPrune,
   {},
 );
 
@@ -42,7 +42,7 @@ crons.interval(
 crons.interval(
   "prune aged-out shared events",
   { hours: 24 },
-  internal.maintenance.enqueueSharedEventPrune,
+  internal.jobs.maintenance.enqueueSharedEventPrune,
   {},
 );
 
@@ -51,14 +51,14 @@ crons.interval(
 crons.interval(
   "prune stale rate limits",
   { hours: 24 },
-  internal.maintenance.pruneRateLimits,
+  internal.jobs.maintenance.pruneRateLimits,
   {},
 );
 
 crons.interval(
   "prune settled calendar operations",
   { hours: 24 },
-  internal.maintenance.pruneCalendarOperations,
+  internal.jobs.maintenance.pruneCalendarOperations,
   {},
 );
 
@@ -68,7 +68,7 @@ crons.interval(
 crons.interval(
   "prune old assistant threads",
   { hours: 24 },
-  internal.assistantMaintenance.pruneAgedThreads,
+  internal.domains.assistant.maintenance.pruneAgedThreads,
   {},
 );
 

@@ -15,9 +15,12 @@ import { v } from "convex/values";
 
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
-import type { MutationCtx } from "../../_generated/server";
+import {
+  internalMutation,
+  mutation,
+  type MutationCtx,
+} from "../../_generated/server";
 import { authComponent } from "../../auth";
-import { defineMutation } from "../../shared/functionDefinitions";
 
 const THREAD_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const THREAD_PAGE = 100;
@@ -72,7 +75,7 @@ async function deleteThreadCascade(
  * message row is gone — so it needs no busy guard. Silently does nothing when
  * the thread is missing or owned by someone else; there is nothing to reveal.
  */
-export const deleteThread = defineMutation({
+export const deleteThread = mutation({
   args: { threadId: v.id("assistantThreads") },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -94,7 +97,7 @@ export const deleteThread = defineMutation({
  * horizon. Paginates the (small) table and skips any thread with a turn still
  * streaming, so an active conversation is never pulled out from under a run.
  */
-export const pruneAgedThreads = defineMutation({
+export const pruneAgedThreads = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -110,7 +113,7 @@ export const pruneAgedThreads = defineMutation({
     if (!page.isDone) {
       await ctx.scheduler.runAfter(
         0,
-        internal.assistantMaintenance.pruneAgedThreads,
+        internal.domains.assistant.maintenance.pruneAgedThreads,
         { cursor: page.continueCursor },
       );
     }

@@ -23,7 +23,7 @@ import {
   syncSharedCalendar,
 } from "./engine";
 
-const modules = import.meta.glob("../../**/*.ts");
+import { modules } from "../../../testModules";
 
 function event(id: string, calendarId = "calendar"): ProviderEvent {
   return {

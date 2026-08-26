@@ -1,9 +1,10 @@
-/** Write handler for the marketing domain. Plain function; the root
- * `waitlist.ts` facade wraps it in a Convex `mutation`. */
+/** Write side of the marketing domain: the plain handler plus the canonical
+ * `mutation` registration. The root `waitlist.ts` facade re-exports the
+ * registered object so the legacy `api.waitlist.join` path stays live. */
 
-import { ConvexError } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
-import type { MutationCtx } from "../../_generated/server";
+import { mutation, type MutationCtx } from "../../_generated/server";
 import { consumeRateLimit } from "../../infrastructure/rateLimit";
 
 const RATE_WINDOW_MS = 60 * 60 * 1000;
@@ -70,3 +71,13 @@ export async function joinHandler(
   });
   return null;
 }
+
+export const join = mutation({
+  args: {
+    email: v.string(),
+    /** Where the signup came from, e.g. "www". */
+    source: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: (ctx, args) => joinHandler(ctx, args),
+});

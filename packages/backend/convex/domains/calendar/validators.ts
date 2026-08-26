@@ -8,6 +8,11 @@ import { v } from "convex/values";
  * by googleSync (upsert page) and the calendar upsert mutation.
  */
 
+/** An event id in either store: a personal `events` row or a read-only
+ * public-calendar `sharedEvents` row. Read paths accept both; write paths
+ * narrow to `v.id("events")` because shared events are never editable. */
+export const eventIdArg = v.union(v.id("events"), v.id("sharedEvents"));
+
 /** A guest on an event. Mirrors the subset of Google's attendee object we keep;
  * `responseStatus` is "needsAction" | "declined" | "tentative" | "accepted".
  * Shared by the `events` table and the mutation validators that write to it. */

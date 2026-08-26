@@ -6,7 +6,7 @@ import { internal } from "./_generated/api";
 import { monthlyUsageAt } from "./domains/assistant/data";
 import schema from "./schema";
 
-const modules = import.meta.glob("./**/*.ts");
+import { modules } from "../testModules";
 
 test("monthly quota rollover uses caller-materialized time", () => {
   const start = 1_000;

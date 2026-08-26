@@ -1,11 +1,17 @@
-/** Write handlers for the calendar domain that stay on our side (no Google):
- * the visibility toggle and the optimistic-mirror internal mutations. Plain
- * functions; the root `calendar.ts` wraps each in a Convex mutation. */
+/** Write side of the calendar domain that stays local (no provider calls):
+ * the visibility toggle and the optimistic-mirror internal mutations.
+ * Registration is canonical here; the root `calendar.ts` facade re-exports the
+ * same registered objects so the legacy `api.calendar.*` /
+ * `internal.calendar.*` paths stay live while they drain. */
 
-import type { Infer } from "convex/values";
+import { v, type Infer } from "convex/values";
 
 import type { Doc, Id } from "../../_generated/dataModel";
-import type { MutationCtx } from "../../_generated/server";
+import {
+  internalMutation,
+  mutation,
+  type MutationCtx,
+} from "../../_generated/server";
 import { authComponent } from "../../auth";
 import {
   ensureDefaultPrimaryCalendar,
@@ -86,6 +92,14 @@ export async function resolveCreateTargetHandler(
     providerCalendarId: calendar.providerCalendarId ?? calendar.googleCalendarId,
   };
 }
+
+export const resolveCreateTarget = internalMutation({
+  args: {
+    userId: v.string(),
+    requestedCalendarId: v.optional(v.id("calendars")),
+  },
+  handler: (ctx, args) => resolveCreateTargetHandler(ctx, args),
+});
 
 /** Resolve and repair neutral event identity before any provider operation. */
 export async function resolveEventWriteTargetHandler(
@@ -169,6 +183,11 @@ export async function resolveEventWriteTargetHandler(
     providerSeriesId,
   };
 }
+
+export const resolveEventWriteTarget = internalMutation({
+  args: { userId: v.string(), eventId: v.id("events") },
+  handler: (ctx, args) => resolveEventWriteTargetHandler(ctx, args),
+});
 
 export async function claimCalendarOperationHandler(
   ctx: MutationCtx,
@@ -285,6 +304,28 @@ export async function claimCalendarOperationHandler(
   return { state: "claimed" as const, reconcileOnly: false };
 }
 
+export const claimCalendarOperation = internalMutation({
+  args: {
+    userId: v.string(),
+    connectionId: v.id("calendarConnections"),
+    localCalendarId: v.id("calendars"),
+    providerCalendarId: v.string(),
+    providerEventId: v.optional(v.string()),
+    targetEventId: v.optional(v.id("events")),
+    targetProviderEventId: v.optional(v.string()),
+    requestFingerprint: v.string(),
+    idempotencyKey: v.string(),
+    kind: v.union(
+      v.literal("create"),
+      v.literal("update"),
+      v.literal("delete"),
+      v.literal("respond"),
+    ),
+    attemptId: v.string(),
+  },
+  handler: (ctx, args) => claimCalendarOperationHandler(ctx, args),
+});
+
 export async function settleCalendarOperationHandler(
   ctx: MutationCtx,
   args: {
@@ -325,6 +366,23 @@ export async function settleCalendarOperationHandler(
   return true;
 }
 
+export const settleCalendarOperation = internalMutation({
+  args: {
+    userId: v.string(),
+    connectionId: v.id("calendarConnections"),
+    idempotencyKey: v.string(),
+    attemptId: v.string(),
+    status: v.union(
+      v.literal("succeeded"),
+      v.literal("ambiguous"),
+      v.literal("failed"),
+    ),
+    providerEventId: v.optional(v.string()),
+    error: v.optional(v.string()),
+  },
+  handler: (ctx, args) => settleCalendarOperationHandler(ctx, args),
+});
+
 /** Toggle whether a calendar's events appear on the grid. */
 export async function setCalendarSelectedHandler(
   ctx: MutationCtx,
@@ -341,6 +399,11 @@ export async function setCalendarSelectedHandler(
   await ctx.db.patch(args.calendarId, { selected: args.selected });
   return null;
 }
+
+export const setCalendarSelected = mutation({
+  args: { calendarId: v.id("calendars"), selected: v.boolean() },
+  handler: (ctx, args) => setCalendarSelectedHandler(ctx, args),
+});
 
 /** Drop the local row as soon as Google accepts the delete, so the card leaves
  * the grid now rather than whenever the next sync happens to run. */
@@ -523,6 +586,15 @@ export async function mirrorProviderEventHandler(
   return null;
 }
 
+export const mirrorProviderEvent = internalMutation({
+  args: {
+    connectionId: v.id("calendarConnections"),
+    localCalendarId: v.id("calendars"),
+    event: providerEventValidator,
+  },
+  handler: (ctx, args) => mirrorProviderEventHandler(ctx, args),
+});
+
 /** Remove an optimistic event row and, for a whole-series write, its rule cache. */
 export async function deleteProviderEventMirrorHandler(
   ctx: MutationCtx,
@@ -559,6 +631,17 @@ export async function deleteProviderEventMirrorHandler(
   }
   return null;
 }
+
+export const deleteProviderEventMirror = internalMutation({
+  args: {
+    eventId: v.id("events"),
+    userId: v.string(),
+    connectionId: v.id("calendarConnections"),
+    localCalendarId: v.id("calendars"),
+    providerSeriesId: v.optional(v.string()),
+  },
+  handler: (ctx, args) => deleteProviderEventMirrorHandler(ctx, args),
+});
 
 /** Cache a recurring master by neutral identity while dual-writing legacy keys. */
 export async function upsertProviderRecurringSeriesHandler(
@@ -631,6 +714,19 @@ export async function upsertProviderRecurringSeriesHandler(
   }
   return null;
 }
+
+export const upsertProviderRecurringSeries = internalMutation({
+  args: {
+    userId: v.string(),
+    connectionId: v.id("calendarConnections"),
+    localCalendarId: v.id("calendars"),
+    providerEventId: v.string(),
+    recurrence: v.array(v.string()),
+    sourceUpdatedMs: v.number(),
+    replacedEventId: v.optional(v.id("events")),
+  },
+  handler: (ctx, args) => upsertProviderRecurringSeriesHandler(ctx, args),
+});
 
 /** Cache one recurring master's rule for all of its expanded instances. */
 export async function upsertRecurringSeriesHandler(

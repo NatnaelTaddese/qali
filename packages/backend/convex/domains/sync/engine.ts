@@ -2,6 +2,12 @@ import { v } from "convex/values";
 
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
+import {
+  action,
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "../../_generated/server";
 import type { ActionCtx, MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import {
@@ -23,11 +29,7 @@ import type {
   ProviderId,
   SyncCursor,
 } from "../../integrations/calendar/types";
-import {
-  defineAction,
-  defineMutation,
-  defineQuery,
-} from "../../shared/functionDefinitions";
+import { defineAction, defineMutation } from "../../shared/functionDefinitions";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const CALENDAR_HISTORY_MS = 180 * DAY_MS;
@@ -323,7 +325,7 @@ async function heartbeat(
   attemptId: string,
 ): Promise<void> {
   const extended: boolean = await ctx.runMutation(
-    internal.calendarSync.heartbeatSyncLease,
+    internal.domains.sync.engine.heartbeatSyncLease,
     { connectionId, attemptId },
   );
   if (!extended) throw new StaleSyncAttemptError();
@@ -347,7 +349,7 @@ export async function syncOneConnectionCalendar(
   for (let retry = 0; retry < 2; retry++) {
     try {
       const generation: number | null = full
-        ? await ctx.runMutation(internal.calendarSync.beginCalendarFullResync, {
+        ? await ctx.runMutation(internal.domains.sync.engine.beginCalendarFullResync, {
             connectionId: args.connectionId,
             attemptId: args.attemptId,
             localCalendarId: args.localCalendarId,
@@ -367,7 +369,7 @@ export async function syncOneConnectionCalendar(
         });
         if (page.items.length > 0) {
           const wrote: boolean = await ctx.runMutation(
-            internal.calendarSync.upsertEventsPage,
+            internal.domains.sync.engine.upsertEventsPage,
             {
               connectionId: args.connectionId,
               attemptId: args.attemptId,
@@ -390,7 +392,7 @@ export async function syncOneConnectionCalendar(
           await heartbeat(ctx, args.connectionId, args.attemptId);
           const result: { cursor: string | null; done: boolean; deleted: number } =
             await ctx.runMutation(
-              internal.calendarSync.sweepStaleCalendarEventsBatch,
+              internal.domains.sync.engine.sweepStaleCalendarEventsBatch,
               {
                 connectionId: args.connectionId,
                 attemptId: args.attemptId,
@@ -404,7 +406,7 @@ export async function syncOneConnectionCalendar(
           changed = changed || result.deleted > 0;
         }
         const committed: boolean = await ctx.runMutation(
-          internal.calendarSync.commitCalendarFullResync,
+          internal.domains.sync.engine.commitCalendarFullResync,
           {
             connectionId: args.connectionId,
             attemptId: args.attemptId,
@@ -416,7 +418,7 @@ export async function syncOneConnectionCalendar(
         if (!committed) throw new StaleSyncAttemptError();
       } else if (commitCursor) {
         const committed: boolean = await ctx.runMutation(
-          internal.calendarSync.setCalendarSyncCursor,
+          internal.domains.sync.engine.setCalendarSyncCursor,
           {
             connectionId: args.connectionId,
             attemptId: args.attemptId,
@@ -452,7 +454,7 @@ export async function syncSharedCalendar(
   const claim: {
     attemptId: string | null;
     syncCursor?: string;
-  } = await ctx.runMutation(internal.calendarSync.claimSharedCalendarSync, {
+  } = await ctx.runMutation(internal.domains.sync.engine.claimSharedCalendarSync, {
     provider,
     providerCalendarId,
     refreshIntervalMs: SHARED_REFRESH_MS,
@@ -464,7 +466,7 @@ export async function syncSharedCalendar(
     for (let retry = 0; retry < 2; retry++) {
       try {
         const generation: number | null = full
-          ? await ctx.runMutation(internal.calendarSync.beginSharedFullResync, {
+          ? await ctx.runMutation(internal.domains.sync.engine.beginSharedFullResync, {
               provider,
               providerCalendarId,
               attemptId: claim.attemptId,
@@ -475,7 +477,7 @@ export async function syncSharedCalendar(
         let commitCursor: SyncCursor | null = null;
         do {
           const extended: boolean = await ctx.runMutation(
-            internal.calendarSync.heartbeatSharedCalendarLease,
+            internal.domains.sync.engine.heartbeatSharedCalendarLease,
             { provider, providerCalendarId, attemptId: claim.attemptId },
           );
           if (!extended) throw new StaleSyncAttemptError();
@@ -488,7 +490,7 @@ export async function syncSharedCalendar(
           });
           if (page.items.length) {
             const wrote: boolean = await ctx.runMutation(
-              internal.calendarSync.upsertSharedEventsPage,
+              internal.domains.sync.engine.upsertSharedEventsPage,
               {
                 provider,
                 providerCalendarId,
@@ -507,13 +509,13 @@ export async function syncSharedCalendar(
           let done = false;
           while (!done) {
             const extended: boolean = await ctx.runMutation(
-              internal.calendarSync.heartbeatSharedCalendarLease,
+              internal.domains.sync.engine.heartbeatSharedCalendarLease,
               { provider, providerCalendarId, attemptId: claim.attemptId },
             );
             if (!extended) throw new StaleSyncAttemptError();
             const result: { cursor: string | null; done: boolean } =
               await ctx.runMutation(
-                internal.calendarSync.sweepStaleSharedEventsBatch,
+                internal.domains.sync.engine.sweepStaleSharedEventsBatch,
                 {
                   provider,
                   providerCalendarId,
@@ -527,7 +529,7 @@ export async function syncSharedCalendar(
           }
         }
         const committed: boolean = await ctx.runMutation(
-          internal.calendarSync.commitSharedCalendarSync,
+          internal.domains.sync.engine.commitSharedCalendarSync,
           {
             provider,
             providerCalendarId,
@@ -556,7 +558,7 @@ export async function syncSharedCalendar(
       `Shared ${provider} calendar sync failed for ${providerCalendarId}:`,
       error instanceof Error ? error.message : error,
     );
-    await ctx.runMutation(internal.calendarSync.releaseSharedCalendarLease, {
+    await ctx.runMutation(internal.domains.sync.engine.releaseSharedCalendarLease, {
       provider,
       providerCalendarId,
       attemptId: claim.attemptId,
@@ -579,7 +581,7 @@ async function syncCalendars(
     providerCalendarId: string;
     syncCursor?: string;
     shared: boolean;
-  }[] = await ctx.runMutation(internal.calendarSync.reconcileCalendars, {
+  }[] = await ctx.runMutation(internal.domains.sync.engine.reconcileCalendars, {
     connectionId,
     attemptId,
     calendars: listed.map((row) => ({ ...row })),
@@ -613,7 +615,7 @@ async function syncContactFeed(
   feed: "contacts" | "other",
 ): Promise<boolean> {
   const state: Doc<"connectionSyncState"> | null = await ctx.runQuery(
-    internal.calendarSync.getConnectionSyncState,
+    internal.domains.sync.engine.getConnectionSyncState,
     { connectionId },
   );
   if (!state) throw new StaleSyncAttemptError();
@@ -624,7 +626,7 @@ async function syncContactFeed(
   for (let retry = 0; retry < 2; retry++) {
     try {
       const generation: number | null = full
-        ? await ctx.runMutation(internal.calendarSync.beginContactsFullResync, {
+        ? await ctx.runMutation(internal.domains.sync.engine.beginContactsFullResync, {
             connectionId,
             attemptId,
             feed,
@@ -643,7 +645,7 @@ async function syncContactFeed(
         });
         if (page.items.length) {
           const wrote: boolean = await ctx.runMutation(
-            internal.calendarSync.upsertContactsPage,
+            internal.domains.sync.engine.upsertContactsPage,
             {
               connectionId,
               attemptId,
@@ -668,7 +670,7 @@ async function syncContactFeed(
         while (!done) {
           await heartbeat(ctx, connectionId, attemptId);
           const result: { cursor: string | null; done: boolean; deleted: number } =
-            await ctx.runMutation(internal.calendarSync.sweepStaleContactsBatch, {
+            await ctx.runMutation(internal.domains.sync.engine.sweepStaleContactsBatch, {
               connectionId,
               attemptId,
               feed,
@@ -689,7 +691,7 @@ async function syncContactFeed(
               done: boolean;
               deleted: number;
             } = await ctx.runMutation(
-              internal.calendarSync.sweepLegacyOtherPeopleBatch,
+              internal.domains.sync.engine.sweepLegacyOtherPeopleBatch,
               {
                 connectionId,
                 attemptId,
@@ -703,7 +705,7 @@ async function syncContactFeed(
         }
       }
       const committed: boolean = await ctx.runMutation(
-        internal.calendarSync.commitContactsSync,
+        internal.domains.sync.engine.commitContactsSync,
         {
           connectionId,
           attemptId,
@@ -737,12 +739,12 @@ async function runConnection(
   forceFull = false,
 ): Promise<{ changed: boolean; skipped: boolean }> {
   const attemptId: string | null = await ctx.runMutation(
-    internal.calendarSync.claimSyncLease,
+    internal.domains.sync.engine.claimSyncLease,
     { connectionId },
   );
   if (!attemptId) return { changed: false, skipped: true };
   const state: Doc<"connectionSyncState"> | null = await ctx.runQuery(
-    internal.calendarSync.getConnectionSyncState,
+    internal.domains.sync.engine.getConnectionSyncState,
     { connectionId },
   );
   if (!state) return { changed: false, skipped: true };
@@ -771,11 +773,11 @@ async function runConnection(
     const contactsChanged = savedContactsChanged || otherContactsChanged;
     const changed = eventsChanged || contactsChanged;
     if (eventsChanged) {
-      await ctx.runMutation(internal.calendarSync.markEngagementDirty, {
+      await ctx.runMutation(internal.domains.sync.engine.markEngagementDirty, {
         userId: state.userId,
       });
     }
-    await ctx.runMutation(internal.calendarSync.recordSyncOutcome, {
+    await ctx.runMutation(internal.domains.sync.engine.recordSyncOutcome, {
       connectionId,
       attemptId,
       status: "idle",
@@ -783,7 +785,7 @@ async function runConnection(
     });
     return { changed, skipped: false };
   } catch (error) {
-    await ctx.runMutation(internal.calendarSync.recordSyncOutcome, {
+    await ctx.runMutation(internal.domains.sync.engine.recordSyncOutcome, {
       connectionId,
       attemptId,
       status: "error",
@@ -843,9 +845,9 @@ async function runUser(
   initiatedByUser: boolean,
   forceFull = false,
 ): Promise<UserSyncStatus> {
-  await ctx.runMutation(internal.calendarSync.ensureSyncState, { userId });
+  await ctx.runMutation(internal.domains.sync.engine.ensureSyncState, { userId });
   const connections: Doc<"calendarConnections">[] = await ctx.runQuery(
-    internal.calendarSync.listActiveConnections,
+    internal.domains.sync.engine.listActiveConnections,
     { userId },
   );
   const results = await Promise.allSettled(
@@ -878,12 +880,16 @@ export async function syncNowForCurrentUser(
   return await runUser(ctx, user._id, true);
 }
 
-export const syncNow = defineAction({
+export const syncNow = action({
   args: {},
   handler: (ctx): Promise<UserSyncStatus> => syncNowForCurrentUser(ctx),
 });
 
-/** Compatibility action for old user-scoped queued calls. */
+/**
+ * Compatibility action for old user-scoped queued calls. Definition only:
+ * domains/sync/jobs.ts and the googleSync drain queue both register it, so it
+ * must stay unwrapped here.
+ */
 export const syncUser = defineAction({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
@@ -892,7 +898,7 @@ export const syncUser = defineAction({
   },
 });
 
-export const syncConnection = defineAction({
+export const syncConnection = internalAction({
   args: { connectionId: v.id("calendarConnections") },
   handler: async (ctx, args): Promise<null> => {
     try {
@@ -907,13 +913,13 @@ export const syncConnection = defineAction({
   },
 });
 
-export const forceFullResync = defineAction({
+export const forceFullResync = internalAction({
   args: { userId: v.string() },
   handler: (ctx, args): Promise<UserSyncStatus> =>
     runUser(ctx, args.userId, true, true),
 });
 
-export const listActiveConnections = defineQuery({
+export const listActiveConnections = internalQuery({
   args: { userId: v.string() },
   handler: async (ctx, args) =>
     (await ctx.db
@@ -922,7 +928,7 @@ export const listActiveConnections = defineQuery({
       .collect()).filter((row) => row.status === "active"),
 });
 
-export const getConnectionSyncState = defineQuery({
+export const getConnectionSyncState = internalQuery({
   args: { connectionId: v.id("calendarConnections") },
   handler: async (ctx, args) =>
     await ctx.db
@@ -931,16 +937,7 @@ export const getConnectionSyncState = defineQuery({
       .unique(),
 });
 
-export const getSyncState = defineQuery({
-  args: { userId: v.string() },
-  handler: async (ctx, args) =>
-    await ctx.db
-      .query("syncState")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .unique(),
-});
-
-export const ensureSyncState = defineMutation({
+export const ensureSyncState = internalMutation({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
     const legacy = await ctx.db
@@ -982,7 +979,7 @@ export const ensureSyncState = defineMutation({
   },
 });
 
-export const claimSyncLease = defineMutation({
+export const claimSyncLease = internalMutation({
   args: { connectionId: v.id("calendarConnections") },
   handler: async (ctx, args): Promise<string | null> => {
     const connection = await ctx.db.get(args.connectionId);
@@ -1006,7 +1003,7 @@ export const claimSyncLease = defineMutation({
   },
 });
 
-export const heartbeatSyncLease = defineMutation({
+export const heartbeatSyncLease = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -1021,7 +1018,7 @@ export const heartbeatSyncLease = defineMutation({
   },
 });
 
-export const recordSyncOutcome = defineMutation({
+export const recordSyncOutcome = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -1049,7 +1046,7 @@ export const recordSyncOutcome = defineMutation({
   },
 });
 
-export const enqueueSyncs = defineMutation({
+export const enqueueSyncs = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   handler: async (ctx, args): Promise<null> => {
     const now = Date.now();
@@ -1060,12 +1057,12 @@ export const enqueueSyncs = defineMutation({
     for (const state of page.page) {
       const connection = await ctx.db.get(state.connectionId);
       if (!connection || connection.status !== "active") continue;
-      await ctx.scheduler.runAfter(0, internal.calendarSync.syncConnection, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.engine.syncConnection, {
         connectionId: state.connectionId,
       });
     }
     if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.calendarSync.enqueueSyncs, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.engine.enqueueSyncs, {
         cursor: page.continueCursor,
       });
     }
@@ -1073,7 +1070,7 @@ export const enqueueSyncs = defineMutation({
   },
 });
 
-export const listCalendarsForUser = defineQuery({
+export const listCalendarsForUser = internalQuery({
   args: { userId: v.string() },
   handler: async (ctx, args) =>
     await ctx.db
@@ -1082,7 +1079,7 @@ export const listCalendarsForUser = defineQuery({
       .collect(),
 });
 
-export const reconcileCalendars = defineMutation({
+export const reconcileCalendars = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -1156,7 +1153,7 @@ export const reconcileCalendars = defineMutation({
       await ctx.db.delete(calendar._id);
       await ctx.scheduler.runAfter(
         0,
-        internal.calendarSync.cleanupRemovedCalendarEvents,
+        internal.domains.sync.engine.cleanupRemovedCalendarEvents,
         {
           connectionId: args.connectionId,
           localCalendarId: calendar._id,
@@ -1201,7 +1198,7 @@ export const reconcileCalendars = defineMutation({
   },
 });
 
-export const cleanupRemovedCalendarEvents = defineMutation({
+export const cleanupRemovedCalendarEvents = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     localCalendarId: v.id("calendars"),
@@ -1251,7 +1248,7 @@ export const cleanupRemovedCalendarEvents = defineMutation({
     ) {
       await ctx.scheduler.runAfter(
         0,
-        internal.calendarSync.cleanupRemovedCalendarEvents,
+        internal.domains.sync.engine.cleanupRemovedCalendarEvents,
         args,
       );
     }
@@ -1259,7 +1256,11 @@ export const cleanupRemovedCalendarEvents = defineMutation({
   },
 });
 
-/** Drain an orphan cleanup queued before connection-scoped arguments shipped. */
+/**
+ * Drain an orphan cleanup queued before connection-scoped arguments shipped.
+ * Definition only: registered by domains/sync/jobs.ts and the googleSync drain
+ * queue, so it must stay unwrapped here.
+ */
 export const cleanupLegacyRemovedCalendarEvents = defineMutation({
   args: { userId: v.string(), googleCalendarId: v.string() },
   handler: async (ctx, args): Promise<null> => {
@@ -1289,7 +1290,7 @@ export const cleanupLegacyRemovedCalendarEvents = defineMutation({
     if (rows.length === BATCH_SIZE || series.length === BATCH_SIZE) {
       await ctx.scheduler.runAfter(
         0,
-        internal.calendarSync.cleanupLegacyRemovedCalendarEvents,
+        internal.domains.sync.jobs.cleanupLegacyRemovedCalendarEvents,
         args,
       );
     }
@@ -1297,7 +1298,7 @@ export const cleanupLegacyRemovedCalendarEvents = defineMutation({
   },
 });
 
-export const beginCalendarFullResync = defineMutation({
+export const beginCalendarFullResync = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -1316,7 +1317,7 @@ export const beginCalendarFullResync = defineMutation({
   },
 });
 
-export const upsertEventsPage = defineMutation({
+export const upsertEventsPage = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -1377,7 +1378,7 @@ export const upsertEventsPage = defineMutation({
   },
 });
 
-export const sweepStaleCalendarEventsBatch = defineMutation({
+export const sweepStaleCalendarEventsBatch = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -1420,7 +1421,7 @@ export const sweepStaleCalendarEventsBatch = defineMutation({
   },
 });
 
-export const commitCalendarFullResync = defineMutation({
+export const commitCalendarFullResync = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -1446,7 +1447,7 @@ export const commitCalendarFullResync = defineMutation({
   },
 });
 
-export const setCalendarSyncCursor = defineMutation({
+export const setCalendarSyncCursor = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -1466,7 +1467,7 @@ export const setCalendarSyncCursor = defineMutation({
   },
 });
 
-export const claimSharedCalendarSync = defineMutation({
+export const claimSharedCalendarSync = internalMutation({
   args: {
     provider: providerValidator,
     providerCalendarId: v.string(),
@@ -1515,7 +1516,7 @@ export const claimSharedCalendarSync = defineMutation({
   },
 });
 
-export const beginSharedFullResync = defineMutation({
+export const beginSharedFullResync = internalMutation({
   args: {
     provider: providerValidator,
     providerCalendarId: v.string(),
@@ -1559,7 +1560,7 @@ async function sharedLease(
     : null;
 }
 
-export const heartbeatSharedCalendarLease = defineMutation({
+export const heartbeatSharedCalendarLease = internalMutation({
   args: {
     provider: providerValidator,
     providerCalendarId: v.string(),
@@ -1580,7 +1581,7 @@ export const heartbeatSharedCalendarLease = defineMutation({
   },
 });
 
-export const releaseSharedCalendarLease = defineMutation({
+export const releaseSharedCalendarLease = internalMutation({
   args: {
     provider: providerValidator,
     providerCalendarId: v.string(),
@@ -1603,7 +1604,7 @@ export const releaseSharedCalendarLease = defineMutation({
   },
 });
 
-export const upsertSharedEventsPage = defineMutation({
+export const upsertSharedEventsPage = internalMutation({
   args: {
     provider: providerValidator,
     providerCalendarId: v.string(),
@@ -1698,7 +1699,7 @@ export const upsertSharedEventsPage = defineMutation({
   },
 });
 
-export const sweepStaleSharedEventsBatch = defineMutation({
+export const sweepStaleSharedEventsBatch = internalMutation({
   args: {
     provider: providerValidator,
     providerCalendarId: v.string(),
@@ -1739,7 +1740,7 @@ export const sweepStaleSharedEventsBatch = defineMutation({
   },
 });
 
-export const commitSharedCalendarSync = defineMutation({
+export const commitSharedCalendarSync = internalMutation({
   args: {
     provider: providerValidator,
     providerCalendarId: v.string(),
@@ -1776,7 +1777,7 @@ export const commitSharedCalendarSync = defineMutation({
   },
 });
 
-export const beginContactsFullResync = defineMutation({
+export const beginContactsFullResync = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -1813,7 +1814,7 @@ export const beginContactsFullResync = defineMutation({
   },
 });
 
-export const upsertContactsPage = defineMutation({
+export const upsertContactsPage = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -1941,7 +1942,7 @@ export const upsertContactsPage = defineMutation({
   },
 });
 
-export const sweepStaleContactsBatch = defineMutation({
+export const sweepStaleContactsBatch = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -1998,7 +1999,7 @@ export const sweepStaleContactsBatch = defineMutation({
 
 /** First full Other Contacts sync removes legacy `people.sources: ["other"]`
  * rows that predate contact-scoped claims and were not reclaimed by this pass. */
-export const sweepLegacyOtherPeopleBatch = defineMutation({
+export const sweepLegacyOtherPeopleBatch = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -2042,7 +2043,7 @@ export const sweepLegacyOtherPeopleBatch = defineMutation({
   },
 });
 
-export const commitContactsSync = defineMutation({
+export const commitContactsSync = internalMutation({
   args: {
     connectionId: v.id("calendarConnections"),
     attemptId: v.string(),
@@ -2120,7 +2121,7 @@ type EngagementPage = {
   continueCursor: string;
 };
 
-export const listEventsPageForEngagement = defineQuery({
+export const listEventsPageForEngagement = internalQuery({
   args: {
     userId: v.string(),
     sinceMs: v.number(),
@@ -2146,6 +2147,9 @@ export const listEventsPageForEngagement = defineQuery({
   },
 });
 
+// Old-shape whole-user score writer superseded by applyEngagementScoreChunk.
+// Definition only: its drain-only registration lives in the calendarSync
+// facade and it gets no canonical path.
 export const applyEngagementScores = defineMutation({
   args: {
     userId: v.string(),
@@ -2214,7 +2218,7 @@ async function liveEngagementAttempt(
     : null;
 }
 
-export const markEngagementDirty = defineMutation({
+export const markEngagementDirty = internalMutation({
   args: { userId: v.string() },
   handler: async (ctx, args): Promise<null> => {
     const now = Date.now();
@@ -2229,7 +2233,7 @@ export const markEngagementDirty = defineMutation({
         engagementGeneration: 1,
         updatedAt: now,
       });
-      await ctx.scheduler.runAfter(0, internal.calendarSync.recomputeEngagement, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.recomputeEngagement, {
         userId: args.userId,
         coordinated: true,
       });
@@ -2246,7 +2250,7 @@ export const markEngagementDirty = defineMutation({
       !state.engagementAttemptId ||
       (state.engagementLeaseExpiresAt ?? 0) <= now
     ) {
-      await ctx.scheduler.runAfter(0, internal.calendarSync.recomputeEngagement, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.recomputeEngagement, {
         userId: args.userId,
         coordinated: true,
       });
@@ -2255,7 +2259,7 @@ export const markEngagementDirty = defineMutation({
   },
 });
 
-export const claimEngagement = defineMutation({
+export const claimEngagement = internalMutation({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
     const state = await ctx.db
@@ -2283,14 +2287,14 @@ export const claimEngagement = defineMutation({
     // reclaims it. A completed attempt leaves neither a lease nor dirty work.
     await ctx.scheduler.runAt(
       leaseExpiresAt,
-      internal.calendarSync.recomputeEngagement,
+      internal.domains.sync.jobs.recomputeEngagement,
       { userId: args.userId, coordinated: true },
     );
     return { attemptId, generation };
   },
 });
 
-export const heartbeatEngagement = defineMutation({
+export const heartbeatEngagement = internalMutation({
   args: {
     userId: v.string(),
     attemptId: v.string(),
@@ -2310,7 +2314,7 @@ export const heartbeatEngagement = defineMutation({
     });
     await ctx.scheduler.runAt(
       leaseExpiresAt,
-      internal.calendarSync.recomputeEngagement,
+      internal.domains.sync.jobs.recomputeEngagement,
       { userId: args.userId, coordinated: true },
     );
     return true;
@@ -2325,7 +2329,7 @@ const engagementScoreValidator = v.object({
   nextMeetingMs: v.optional(v.number()),
 });
 
-export const applyEngagementScoreChunk = defineMutation({
+export const applyEngagementScoreChunk = internalMutation({
   args: {
     userId: v.string(),
     attemptId: v.string(),
@@ -2364,7 +2368,7 @@ export const applyEngagementScoreChunk = defineMutation({
   },
 });
 
-export const resetStaleEngagementScores = defineMutation({
+export const resetStaleEngagementScores = internalMutation({
   args: {
     userId: v.string(),
     attemptId: v.string(),
@@ -2398,7 +2402,7 @@ export const resetStaleEngagementScores = defineMutation({
   },
 });
 
-export const finishEngagement = defineMutation({
+export const finishEngagement = internalMutation({
   args: {
     userId: v.string(),
     attemptId: v.string(),
@@ -2418,7 +2422,7 @@ export const finishEngagement = defineMutation({
       updatedAt: Date.now(),
     });
     if (rerun) {
-      await ctx.scheduler.runAfter(0, internal.calendarSync.recomputeEngagement, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.recomputeEngagement, {
         userId: args.userId,
         coordinated: true,
       });
@@ -2432,7 +2436,7 @@ async function recomputeEngagementForUser(
   userId: string,
 ): Promise<void> {
   const claim: { attemptId: string; generation: number } | null =
-    await ctx.runMutation(internal.calendarSync.claimEngagement, { userId });
+    await ctx.runMutation(internal.domains.sync.engine.claimEngagement, { userId });
   if (!claim) return;
   const now = Date.now();
   const scores = new Map<
@@ -2442,12 +2446,12 @@ async function recomputeEngagementForUser(
   let cursor: string | null = null;
   for (;;) {
     const live: boolean = await ctx.runMutation(
-      internal.calendarSync.heartbeatEngagement,
+      internal.domains.sync.engine.heartbeatEngagement,
       { userId, ...claim },
     );
     if (!live) break;
     const page: EngagementPage = await ctx.runQuery(
-      internal.calendarSync.listEventsPageForEngagement,
+      internal.domains.sync.engine.listEventsPageForEngagement,
       { userId, sinceMs: now - CALENDAR_HISTORY_MS, cursor, numItems: 200 },
     );
     for (const event of page.page) {
@@ -2482,12 +2486,12 @@ async function recomputeEngagementForUser(
   try {
     for (const chunk of chunkEngagementScores(values)) {
       const live: boolean = await ctx.runMutation(
-        internal.calendarSync.heartbeatEngagement,
+        internal.domains.sync.engine.heartbeatEngagement,
         { userId, ...claim },
       );
       if (!live) return;
       const wrote: boolean = await ctx.runMutation(
-        internal.calendarSync.applyEngagementScoreChunk,
+        internal.domains.sync.engine.applyEngagementScoreChunk,
         { userId, ...claim, scores: chunk },
       );
       if (!wrote) return;
@@ -2496,12 +2500,12 @@ async function recomputeEngagementForUser(
     let done = false;
     while (!done) {
       const live: boolean = await ctx.runMutation(
-        internal.calendarSync.heartbeatEngagement,
+        internal.domains.sync.engine.heartbeatEngagement,
         { userId, ...claim },
       );
       if (!live) return;
       const result: { cursor: string | null; done: boolean } | null =
-        await ctx.runMutation(internal.calendarSync.resetStaleEngagementScores, {
+        await ctx.runMutation(internal.domains.sync.engine.resetStaleEngagementScores, {
           userId,
           ...claim,
           cursor: peopleCursor,
@@ -2511,13 +2515,15 @@ async function recomputeEngagementForUser(
       done = result.done;
     }
   } finally {
-    await ctx.runMutation(internal.calendarSync.finishEngagement, {
+    await ctx.runMutation(internal.domains.sync.engine.finishEngagement, {
       userId,
       ...claim,
     });
   }
 }
 
+// Definition only: registered by domains/sync/jobs.ts and the googleSync
+// drain queue, so it must stay unwrapped here.
 export const recomputeEngagement = defineAction({
   args: { userId: v.string(), coordinated: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<null> => {
@@ -2526,7 +2532,7 @@ export const recomputeEngagement = defineAction({
       // Materialize their work once; markEngagementDirty's coordinated schedule
       // becomes a harmless no-op after this invocation completes.
       if (!args.coordinated) {
-        await ctx.runMutation(internal.calendarSync.markEngagementDirty, {
+        await ctx.runMutation(internal.domains.sync.engine.markEngagementDirty, {
           userId: args.userId,
         });
       }
@@ -2541,21 +2547,21 @@ export const recomputeEngagement = defineAction({
   },
 });
 
-export const enqueueEngagementRefresh = defineMutation({
+export const enqueueEngagementRefresh = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   handler: async (ctx, args): Promise<null> => {
     const page = await ctx.db
       .query("userSyncState")
       .paginate({ cursor: args.cursor ?? null, numItems: FANOUT_BATCH });
     for (const state of page.page) {
-      await ctx.runMutation(internal.calendarSync.markEngagementDirty, {
+      await ctx.runMutation(internal.domains.sync.engine.markEngagementDirty, {
         userId: state.userId,
       });
     }
     if (!page.isDone) {
       await ctx.scheduler.runAfter(
         0,
-        internal.calendarSync.enqueueEngagementRefresh,
+        internal.domains.sync.engine.enqueueEngagementRefresh,
         { cursor: page.continueCursor },
       );
     }
@@ -2563,6 +2569,8 @@ export const enqueueEngagementRefresh = defineMutation({
   },
 });
 
+// Definition only: registered by domains/sync/jobs.ts and the googleSync
+// drain queue, so it must stay unwrapped here.
 export const backfillPeople = defineMutation({
   args: {
     phase: v.optional(v.union(v.literal("contacts"), v.literal("events"))),
@@ -2599,12 +2607,12 @@ export const backfillPeople = defineMutation({
       }
     }
     if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.calendarSync.backfillPeople, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.backfillPeople, {
         phase,
         cursor: page.continueCursor,
       });
     } else if (phase === "contacts") {
-      await ctx.scheduler.runAfter(0, internal.calendarSync.backfillPeople, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.backfillPeople, {
         phase: "events",
       });
     }
@@ -2620,14 +2628,14 @@ export async function refreshConnectionCalendar(
   localCalendarId: Id<"calendars">,
 ): Promise<void> {
   const attemptId: string | null = await ctx.runMutation(
-    internal.calendarSync.claimSyncLease,
+    internal.domains.sync.engine.claimSyncLease,
     { connectionId },
   );
   if (!attemptId) return;
   try {
     const adapter = await getCalendarAdapter(ctx, connectionId);
     const calendars: Doc<"calendars">[] = await ctx.runQuery(
-      internal.calendarSync.listCalendarsForUser,
+      internal.domains.sync.engine.listCalendarsForUser,
       { userId },
     );
     const calendar = calendars.find(
@@ -2643,16 +2651,16 @@ export async function refreshConnectionCalendar(
       syncCursor: calendar.syncCursor ?? calendar.syncToken,
     });
     if (changed) {
-      await ctx.runMutation(internal.calendarSync.markEngagementDirty, { userId });
+      await ctx.runMutation(internal.domains.sync.engine.markEngagementDirty, { userId });
     }
-    await ctx.runMutation(internal.calendarSync.recordSyncOutcome, {
+    await ctx.runMutation(internal.domains.sync.engine.recordSyncOutcome, {
       connectionId,
       attemptId,
       status: "idle",
       active: changed,
     });
   } catch (error) {
-    await ctx.runMutation(internal.calendarSync.recordSyncOutcome, {
+    await ctx.runMutation(internal.domains.sync.engine.recordSyncOutcome, {
       connectionId,
       attemptId,
       status: "error",
@@ -2662,13 +2670,3 @@ export async function refreshConnectionCalendar(
     throw error;
   }
 }
-
-// Old mutation names remain registered as harmless compatibility definitions.
-export const clearCalendarEventsBatch = defineMutation({
-  args: { userId: v.string(), googleCalendarId: v.string() },
-  handler: async (): Promise<boolean> => false,
-});
-export const clearSharedCalendarEventsBatch = defineMutation({
-  args: { googleCalendarId: v.string() },
-  handler: async (): Promise<boolean> => false,
-});

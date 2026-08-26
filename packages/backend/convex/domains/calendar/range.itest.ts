@@ -5,7 +5,7 @@ import { expect, test } from "vitest";
 import schema from "../../schema";
 import { readPersonalEventsInRange } from "./queries";
 
-const modules = import.meta.glob("../../**/*.ts");
+import { modules } from "../../../testModules";
 
 test("range read does not scan more than 5000 provider-id-ordered out-of-range events", async () => {
   const t = convexTest(schema, modules);

@@ -1,35 +1,21 @@
 /**
- * Stable facade for storage maintenance. The recurring prunes + the
- * account-deletion purge live in `jobs/maintenance.ts`; the one-shot data
- * migrations live in `migrations/backfills.ts`. This facade keeps every
- * `internal.maintenance.*` path fixed — the crons and the functions' own
- * self-reschedules all reference it.
+ * Drain-only compatibility facade - keeps the pre-cutover `internal.maintenance.*`
+ * paths (formerly also the crons' target) registered while persisted scheduler
+ * entries and stale clients drain. Canonical registration: jobs/maintenance.ts
+ * and migrations/backfills.ts. Removal gate: MIGRATION_RUNBOOK.md section 7.
  */
 
-import { internalMutation } from "./_generated/server";
-import * as jobs from "./jobs/maintenance";
-import * as migrations from "./migrations/backfills";
-
-export const enqueueEventPrune = internalMutation(jobs.enqueueEventPrune);
-export const pruneUserEvents = internalMutation(jobs.pruneUserEvents);
-export const enqueueSharedEventPrune = internalMutation(
-  jobs.enqueueSharedEventPrune,
-);
-export const pruneSharedCalendarEvents = internalMutation(
-  jobs.pruneSharedCalendarEvents,
-);
-export const pruneRateLimits = internalMutation(jobs.pruneRateLimits);
-export const pruneCalendarOperations = internalMutation(
-  jobs.pruneCalendarOperations,
-);
-export const purgeUserData = internalMutation(jobs.purgeUserData);
-
-export const clearEventAttendees = internalMutation(
-  migrations.clearEventAttendees,
-);
-export const migratePublicCalendarsToShared = internalMutation(
-  migrations.migratePublicCalendarsToShared,
-);
-export const purgeNonSharedSharedEvents = internalMutation(
-  migrations.purgeNonSharedSharedEvents,
-);
+export {
+  enqueueEventPrune,
+  enqueueSharedEventPrune,
+  pruneCalendarOperations,
+  pruneRateLimits,
+  pruneSharedCalendarEvents,
+  pruneUserEvents,
+  purgeUserData,
+} from "./jobs/maintenance";
+export {
+  clearEventAttendees,
+  migratePublicCalendarsToShared,
+  purgeNonSharedSharedEvents,
+} from "./migrations/backfills";

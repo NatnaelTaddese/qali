@@ -1,19 +1,8 @@
 /**
- * The public marketing-site waitlist. Stable facade — keeps `api.waitlist.join`
- * fixed while the logic lives in `domains/marketing/`.
+ * Drain-only compatibility facade - keeps the pre-cutover `api.waitlist.*` paths
+ * registered while persisted scheduler entries and stale clients drain.
+ * Canonical registration: domains/marketing/mutations.ts.
+ * Removal gate: MIGRATION_RUNBOOK.md section 7.
  */
 
-import { v } from "convex/values";
-
-import { mutation } from "./_generated/server";
-import { joinHandler } from "./domains/marketing/mutations";
-
-export const join = mutation({
-  args: {
-    email: v.string(),
-    /** Where the signup came from, e.g. "www". */
-    source: v.optional(v.string()),
-  },
-  returns: v.null(),
-  handler: (ctx, args) => joinHandler(ctx, args),
-});
+export { join } from "./domains/marketing/mutations";

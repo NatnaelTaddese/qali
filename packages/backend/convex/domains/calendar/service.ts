@@ -1,13 +1,16 @@
-/** Connection-aware calendar writes against the provider-neutral adapter port. */
+/** Connection-aware calendar writes against the provider-neutral adapter port.
+ * Registration of the public actions is canonical here; the root `calendar.ts`
+ * facade re-exports the same registered objects on the legacy paths. */
 
 import {
   eventCapabilities,
   type EventCapabilities,
 } from "@qali/domain/permissions";
+import { v } from "convex/values";
 
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import type { ActionCtx } from "../../_generated/server";
+import { action, type ActionCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import {
   ExternalWriteCommittedError,
@@ -25,6 +28,7 @@ import type {
 } from "../../integrations/calendar/types";
 import { shiftRecurringMasterRange } from "./recurrence";
 import { calendarRequestFingerprint } from "./operationIdentity";
+import { eventIdArg } from "./validators";
 
 export type EventCapabilityName =
   | "canEdit"
@@ -132,7 +136,7 @@ async function mirrorEvent(
   successSummary: string,
 ): Promise<void> {
   try {
-    await ctx.runMutation(internal.calendar.mirrorProviderEvent, {
+    await ctx.runMutation(internal.domains.calendar.mutations.mirrorProviderEvent, {
       connectionId: target.connectionId,
       localCalendarId: target.localCalendarId,
       event: providerEventValue(event),
@@ -150,7 +154,7 @@ async function cacheSeries(
   recurrence: readonly string[],
   replacedEventId?: Id<"events">,
 ): Promise<void> {
-  await ctx.runMutation(internal.calendar.upsertProviderRecurringSeries, {
+  await ctx.runMutation(internal.domains.calendar.mutations.upsertProviderRecurringSeries, {
     userId,
     connectionId: target.connectionId,
     localCalendarId: target.localCalendarId,
@@ -172,7 +176,7 @@ export async function resolveEventForWrite(
   target: WriteTarget;
 }> {
   const target = (await ctx.runMutation(
-    internal.calendar.resolveEventWriteTarget,
+    internal.domains.calendar.mutations.resolveEventWriteTarget,
     { eventId, userId },
   )) as WriteTarget | null;
   if (!target) throw new Error("Event not found");
@@ -202,7 +206,7 @@ async function claimWrite(
 ) {
   const idempotencyKey = operationId ?? crypto.randomUUID();
   const attemptId = crypto.randomUUID();
-  const claim = await ctx.runMutation(internal.calendar.claimCalendarOperation, {
+  const claim = await ctx.runMutation(internal.domains.calendar.mutations.claimCalendarOperation, {
     userId,
     connectionId: target.connectionId,
     localCalendarId: target.localCalendarId,
@@ -228,7 +232,7 @@ async function settleWrite(
   error?: unknown,
 ): Promise<void> {
   try {
-    const settled = await ctx.runMutation(internal.calendar.settleCalendarOperation, {
+    const settled = await ctx.runMutation(internal.domains.calendar.mutations.settleCalendarOperation, {
       userId,
       connectionId: target.connectionId,
       idempotencyKey: operation.idempotencyKey,
@@ -356,7 +360,7 @@ export async function createEventOp(
   dependencies?: CalendarServiceDependencies,
 ): Promise<ProviderEvent> {
   validateTimePair(args.startMs, args.endMs, true);
-  const target = (await ctx.runMutation(internal.calendar.resolveCreateTarget, {
+  const target = (await ctx.runMutation(internal.domains.calendar.mutations.resolveCreateTarget, {
     userId,
     requestedCalendarId: args.calendarId,
   })) as CreateTarget;
@@ -956,7 +960,7 @@ async function cleanDeletedMirror(
   target: WriteTarget,
   providerSeriesId?: string,
 ): Promise<void> {
-  await ctx.runMutation(internal.calendar.deleteProviderEventMirror, {
+  await ctx.runMutation(internal.domains.calendar.mutations.deleteProviderEventMirror, {
     eventId: target.event._id,
     userId,
     connectionId: target.connectionId,
@@ -1246,7 +1250,7 @@ export async function refreshEventRecurrenceHandler(
   { eventId }: { eventId: Id<"events"> | Id<"sharedEvents"> },
 ): Promise<null> {
   const userId = await authedUser(ctx);
-  const context = await ctx.runQuery(internal.calendar.getEventContext, {
+  const context = await ctx.runQuery(internal.domains.calendar.queries.getEventContext, {
     eventId,
     userId,
   });
@@ -1255,7 +1259,7 @@ export async function refreshEventRecurrenceHandler(
     return null;
   }
   const target = (await ctx.runMutation(
-    internal.calendar.resolveEventWriteTarget,
+    internal.domains.calendar.mutations.resolveEventWriteTarget,
     { eventId: context.event._id, userId },
   )) as WriteTarget | null;
   if (!target) throw new Error("Event not found");
@@ -1308,3 +1312,134 @@ export async function deleteEventHandler(
 ): Promise<null> {
   return await deleteEventOp(ctx, await authedUser(ctx), args);
 }
+
+export const createEvent = action({
+  args: {
+    summary: v.string(),
+    startMs: v.number(),
+    endMs: v.number(),
+    description: v.optional(v.string()),
+    location: v.optional(v.string()),
+    allDay: v.optional(v.boolean()),
+    /** Owned local calendar to create in; defaults to the user's primary. */
+    calendarId: v.optional(v.id("calendars")),
+    /** Google event colour override ("1".."11"); absent inherits the calendar. */
+    colorId: v.optional(v.string()),
+    visibility: v.optional(v.string()),
+    /** Google's `transparency`: "transparent" (free); absent = busy (the default). */
+    transparency: v.optional(v.string()),
+    /** RFC5545 recurrence lines (RRULE), e.g. ["RRULE:FREQ=WEEKLY;BYDAY=MO"]. */
+    recurrence: v.optional(v.array(v.string())),
+    /** Guests to invite. Google emails each one an invitation on create. */
+    attendees: v.optional(
+      v.array(
+        v.object({
+          email: v.string(),
+          displayName: v.optional(v.string()),
+        }),
+      ),
+    ),
+    /** Client IANA time zone; Google requires it for recurring timed events. */
+    timeZone: v.optional(v.string()),
+    /** Ask Google to mint a Google Meet link; the URL comes back as `hangoutLink`. */
+    addConference: v.optional(v.boolean()),
+    /** Idempotency key, stable across retries of the same user intent. */
+    operationId: v.optional(v.string()),
+  },
+  handler: (ctx, args) => createEventHandler(ctx, args),
+});
+
+export const refreshEventRecurrence = action({
+  args: { eventId: eventIdArg },
+  handler: (ctx, args) => refreshEventRecurrenceHandler(ctx, args),
+});
+
+export const updateEventTime = action({
+  args: {
+    eventId: v.id("events"),
+    startMs: v.number(),
+    endMs: v.number(),
+    /** Client IANA time zone; Google needs it to anchor a timed instant. */
+    timeZone: v.optional(v.string()),
+  },
+  handler: (ctx, args) => updateEventTimeHandler(ctx, args),
+});
+
+export const updateEvent = action({
+  args: {
+    eventId: v.id("events"),
+    summary: v.optional(v.string()),
+    /** HTML description (bold/italic/underline/links/lists). `null` clears it. */
+    description: v.optional(v.union(v.string(), v.null())),
+    location: v.optional(v.union(v.string(), v.null())),
+    /** Google event colour ("1".."11"); `null` reverts to the calendar's. */
+    colorId: v.optional(v.union(v.string(), v.null())),
+    visibility: v.optional(v.union(v.string(), v.null())),
+    /** Google's `transparency`: "opaque" (busy) | "transparent" (free). */
+    transparency: v.optional(v.string()),
+    /** Send both ends together, or neither. All-day values are UTC-midnight
+     * instants with an exclusive end, as `createEvent` expects them. */
+    startMs: v.optional(v.number()),
+    endMs: v.optional(v.number()),
+    allDay: v.optional(v.boolean()),
+    /** Replaces the guest list wholesale — anyone omitted is uninvited. Carry
+     * each existing guest's `responseStatus` through or their RSVP is reset. */
+    attendees: v.optional(
+      v.array(
+        v.object({
+          email: v.string(),
+          displayName: v.optional(v.string()),
+          responseStatus: v.optional(v.string()),
+          optional: v.optional(v.boolean()),
+        }),
+      ),
+    ),
+    /** Convert a single event into a recurring master. Existing series rules
+     * are intentionally edited through neither this action nor the UI. */
+    recurrence: v.optional(v.array(v.string())),
+    /** Client IANA time zone; Google needs it to anchor a timed instant. */
+    timeZone: v.optional(v.string()),
+    /** `"meet"` mints a Google Meet link, `null` clears the existing one, and
+     * absent leaves conferencing untouched. */
+    conference: v.optional(v.union(v.literal("meet"), v.null())),
+    /** How far the edit reaches on a recurring event. Absent = `"thisEvent"`.
+     * Ignored (forced to `"thisEvent"`) for a non-recurring event. */
+    scope: v.optional(
+      v.union(
+        v.literal("thisEvent"),
+        v.literal("thisAndFollowing"),
+        v.literal("allEvents"),
+      ),
+    ),
+    /** Idempotency key, stable across retries of the same user intent. */
+    operationId: v.optional(v.string()),
+  },
+  handler: (ctx, args) => updateEventHandler(ctx, args),
+});
+
+export const respondToEvent = action({
+  args: {
+    eventId: v.id("events"),
+    responseStatus: v.union(
+      v.literal("accepted"),
+      v.literal("tentative"),
+      v.literal("declined"),
+    ),
+  },
+  handler: (ctx, args) => respondToEventHandler(ctx, args),
+});
+
+export const deleteEvent = action({
+  args: {
+    eventId: v.id("events"),
+    scope: v.optional(
+      v.union(
+        v.literal("thisEvent"),
+        v.literal("thisAndFollowing"),
+        v.literal("allEvents"),
+      ),
+    ),
+    operationId: v.optional(v.string()),
+  },
+  handler: (ctx, args) => deleteEventHandler(ctx, args),
+});

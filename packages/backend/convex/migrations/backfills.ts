@@ -1,15 +1,17 @@
 import { v } from "convex/values";
 
 import { internal } from "../_generated/api";
+import { internalMutation } from "../_generated/server";
 import { isSharedPublicCalendar } from "../domains/calendar/sharedPublicCalendars";
-import { defineMutation } from "../shared/functionDefinitions";
 
 /**
  * One-shot data migrations — run by hand once, then idle. Kept apart from the
  * recurring jobs so "things that run forever" and "things you run once" don't
- * mix. Registered at `internal.maintenance.*` through the root facade (the path
- * their self-reschedules already reference); the connection-model backfill lives
- * separately in backfillConnections.ts.
+ * mix. Registered here at `internal.migrations.backfills.*`, the path their
+ * self-reschedules reference; the root maintenance.ts facade keeps the
+ * pre-cutover `internal.maintenance.*` paths live while persisted scheduler
+ * entries drain. The connection-model backfill lives separately in
+ * backfillConnections.ts.
  */
 
 const BATCH_SIZE = 500;
@@ -18,7 +20,7 @@ const BATCH_SIZE = 500;
 // Left behind by the move to the unified `people` directory. Absent from
 // schema.ts and read by nothing; clearing every row makes Convex drop the table.
 // `as any` is deliberate: the table is not in the data model — that is the point.
-export const clearEventAttendees = defineMutation({
+export const clearEventAttendees = internalMutation({
   args: {},
   returns: v.object({ deleted: v.number(), done: v.boolean() }),
   handler: async (ctx): Promise<{ deleted: number; done: boolean }> => {
@@ -31,7 +33,7 @@ export const clearEventAttendees = defineMutation({
     if (!done) {
       await ctx.scheduler.runAfter(
         0,
-        internal.maintenance.clearEventAttendees,
+        internal.migrations.backfills.clearEventAttendees,
         {},
       );
     }
@@ -43,7 +45,7 @@ export const clearEventAttendees = defineMutation({
 // Deletes every per-user copy of a Google public calendar's events (they now
 // live once in `sharedEvents`), then kicks each user's sync so the shared copy
 // is populated promptly rather than only on the next 15-min cron tick.
-export const migratePublicCalendarsToShared = defineMutation({
+export const migratePublicCalendarsToShared = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.object({ deleted: v.number(), done: v.boolean() }),
   handler: async (ctx, args): Promise<{ deleted: number; done: boolean }> => {
@@ -60,14 +62,14 @@ export const migratePublicCalendarsToShared = defineMutation({
     if (!page.isDone) {
       await ctx.scheduler.runAfter(
         0,
-        internal.maintenance.migratePublicCalendarsToShared,
+        internal.migrations.backfills.migratePublicCalendarsToShared,
         { cursor: page.continueCursor },
       );
       return { deleted, done: false };
     }
     // Final page: fan out a sync for every user so `sharedEvents` fills in now.
     for await (const state of ctx.db.query("userSyncState")) {
-      await ctx.scheduler.runAfter(0, internal.calendarSync.syncUser, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.syncUser, {
         userId: state.userId,
       });
     }
@@ -80,7 +82,7 @@ export const migratePublicCalendarsToShared = defineMutation({
 // Delete every sharedEvents row whose calendar no longer classifies as shared,
 // then fan out a sync so those events are re-fetched into each owner's per-user
 // `events` table (guarded by ownership).
-export const purgeNonSharedSharedEvents = defineMutation({
+export const purgeNonSharedSharedEvents = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.object({ deleted: v.number(), done: v.boolean() }),
   handler: async (ctx, args): Promise<{ deleted: number; done: boolean }> => {
@@ -97,7 +99,7 @@ export const purgeNonSharedSharedEvents = defineMutation({
     if (!page.isDone) {
       await ctx.scheduler.runAfter(
         0,
-        internal.maintenance.purgeNonSharedSharedEvents,
+        internal.migrations.backfills.purgeNonSharedSharedEvents,
         { cursor: page.continueCursor },
       );
       return { deleted, done: false };
@@ -105,7 +107,7 @@ export const purgeNonSharedSharedEvents = defineMutation({
     // Final page: fan out a sync so purged birthday/secondary events are
     // re-synced into their owners' per-user `events` promptly.
     for await (const state of ctx.db.query("userSyncState")) {
-      await ctx.scheduler.runAfter(0, internal.calendarSync.syncUser, {
+      await ctx.scheduler.runAfter(0, internal.domains.sync.jobs.syncUser, {
         userId: state.userId,
       });
     }

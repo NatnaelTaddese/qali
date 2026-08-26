@@ -1,7 +1,9 @@
 /**
  * Booking acceptance — the one booking operation that talks to a calendar
- * provider, so it is an action, not a mutation. The root `booking.ts` wraps this
- * handler in a Convex `action` at `api.booking.acceptBooking`.
+ * provider, so it is an action, not a mutation. Canonical registration for
+ * `acceptBooking` / `reconcileBookingAcceptance`; the root `booking.ts` facade
+ * re-exports the same registered objects on the legacy `api.booking.*` /
+ * `internal.booking.*` paths while they drain.
  *
  * The calendar write goes through the provider adapter (via the registry), so
  * this path is provider-neutral: `createEventReconciling` creates the event and,
@@ -11,9 +13,15 @@
  * which is the requester's confirmation — the app sends none.
  */
 
+import { v } from "convex/values";
+
 import { internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
-import type { ActionCtx } from "../../_generated/server";
+import {
+  action,
+  type ActionCtx,
+  internalAction,
+} from "../../_generated/server";
 import { authComponent } from "../../auth";
 import {
   isDefinitiveProviderFailure,
@@ -89,39 +97,48 @@ async function executeAcceptanceClaim(
       notify: "all",
     });
 
-    const marked = await ctx.runMutation(internal.booking.markAccepted, {
-      bookingId: booking._id,
-      hostUserId,
-      providerEventId: event.id,
-      providerCalendarId: event.calendarId,
-      attemptId,
-    });
+    const marked = await ctx.runMutation(
+      internal.domains.booking.mutations.markAccepted,
+      {
+        bookingId: booking._id,
+        hostUserId,
+        providerEventId: event.id,
+        providerCalendarId: event.calendarId,
+        attemptId,
+      },
+    );
     if (!marked) throw new Error("Booking acceptance claim was lost");
   } catch (error) {
-    await ctx.runMutation(internal.booking.releaseBookingAcceptance, {
-      bookingId: booking._id,
-      hostUserId,
-      attemptId,
-      mayHaveSucceeded:
-        event !== undefined || !isDefinitiveProviderFailure(error),
-      error: error instanceof Error ? error.message : String(error),
-    });
+    await ctx.runMutation(
+      internal.domains.booking.mutations.releaseBookingAcceptance,
+      {
+        bookingId: booking._id,
+        hostUserId,
+        attemptId,
+        mayHaveSucceeded:
+          event !== undefined || !isDefinitiveProviderFailure(error),
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
     throw error;
   }
 
   try {
-    await ctx.runMutation(internal.calendar.mirrorProviderEvent, {
-      connectionId,
-      localCalendarId,
-      event: {
-        ...event,
-        attendees: event.attendees?.map((attendee) => ({ ...attendee })),
-        recurrence: event.recurrence ? [...event.recurrence] : undefined,
-        organizer: event.organizer ? { ...event.organizer } : undefined,
-        creator: event.creator ? { ...event.creator } : undefined,
-        conference: event.conference ? { ...event.conference } : undefined,
+    await ctx.runMutation(
+      internal.domains.calendar.mutations.mirrorProviderEvent,
+      {
+        connectionId,
+        localCalendarId,
+        event: {
+          ...event,
+          attendees: event.attendees?.map((attendee) => ({ ...attendee })),
+          recurrence: event.recurrence ? [...event.recurrence] : undefined,
+          organizer: event.organizer ? { ...event.organizer } : undefined,
+          creator: event.creator ? { ...event.creator } : undefined,
+          conference: event.conference ? { ...event.conference } : undefined,
+        },
       },
-    });
+    );
   } catch (error) {
     console.error("[booking] provider accepted event; mirror pending", error);
   }
@@ -138,7 +155,7 @@ export async function acceptBookingHandler(
 
   const attemptId = crypto.randomUUID();
   const claimed = await ctx.runMutation(
-    internal.booking.claimBookingAcceptance,
+    internal.domains.booking.mutations.claimBookingAcceptance,
     {
       bookingId: args.bookingId,
       hostUserId: user._id,
@@ -146,10 +163,13 @@ export async function acceptBookingHandler(
     },
   );
   if (!claimed) {
-    const context = await ctx.runQuery(internal.booking.getBookingContext, {
-      bookingId: args.bookingId,
-      hostUserId: user._id,
-    });
+    const context = await ctx.runQuery(
+      internal.domains.booking.queries.getBookingContext,
+      {
+        bookingId: args.bookingId,
+        hostUserId: user._id,
+      },
+    );
     if (
       context?.booking.status === "accepted" ||
       context?.acceptanceOperation?.status === "succeeded"
@@ -162,13 +182,16 @@ export async function acceptBookingHandler(
   try {
     adapter = await getCalendarAdapter(ctx, claimed.connectionId);
   } catch (error) {
-    await ctx.runMutation(internal.booking.releaseBookingAcceptance, {
-      bookingId: args.bookingId,
-      hostUserId: user._id,
-      attemptId,
-      mayHaveSucceeded: claimed.reconcileOnly,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    await ctx.runMutation(
+      internal.domains.booking.mutations.releaseBookingAcceptance,
+      {
+        bookingId: args.bookingId,
+        hostUserId: user._id,
+        attemptId,
+        mayHaveSucceeded: claimed.reconcileOnly,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
     throw error;
   }
 
@@ -177,6 +200,11 @@ export async function acceptBookingHandler(
   return null;
 }
 
+export const acceptBooking = action({
+  args: { bookingId: v.id("bookings") },
+  handler: (ctx, args) => acceptBookingHandler(ctx, args),
+});
+
 export async function reconcileBookingAcceptanceWithAdapter(
   ctx: ActionCtx,
   args: { bookingId: Id<"bookings">; expectedGeneration: number },
@@ -184,7 +212,7 @@ export async function reconcileBookingAcceptanceWithAdapter(
 ): Promise<void> {
   const attemptId = crypto.randomUUID();
   const claimed = await ctx.runMutation(
-    internal.booking.claimScheduledBookingAcceptance,
+    internal.domains.booking.mutations.claimScheduledBookingAcceptance,
     { ...args, attemptId },
   );
   if (!claimed) return;
@@ -211,7 +239,7 @@ export async function reconcileBookingAcceptanceHandler(
 ): Promise<null> {
   const attemptId = crypto.randomUUID();
   const claimed = await ctx.runMutation(
-    internal.booking.claimScheduledBookingAcceptance,
+    internal.domains.booking.mutations.claimScheduledBookingAcceptance,
     { ...args, attemptId },
   );
   if (!claimed) return null;
@@ -219,13 +247,16 @@ export async function reconcileBookingAcceptanceHandler(
   try {
     adapter = await getCalendarAdapter(ctx, claimed.connectionId);
   } catch (error) {
-    await ctx.runMutation(internal.booking.releaseBookingAcceptance, {
-      bookingId: args.bookingId,
-      hostUserId: claimed.hostUserId,
-      attemptId,
-      mayHaveSucceeded: claimed.reconcileOnly,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    await ctx.runMutation(
+      internal.domains.booking.mutations.releaseBookingAcceptance,
+      {
+        bookingId: args.bookingId,
+        hostUserId: claimed.hostUserId,
+        attemptId,
+        mayHaveSucceeded: claimed.reconcileOnly,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
     return null;
   }
   try {
@@ -245,3 +276,11 @@ export async function reconcileBookingAcceptanceHandler(
   }
   return null;
 }
+
+export const reconcileBookingAcceptance = internalAction({
+  args: {
+    bookingId: v.id("bookings"),
+    expectedGeneration: v.number(),
+  },
+  handler: (ctx, args) => reconcileBookingAcceptanceHandler(ctx, args),
+});

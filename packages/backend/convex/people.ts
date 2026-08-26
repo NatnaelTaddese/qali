@@ -1,10 +1,8 @@
-/** Stable public facade for the people directory. Logic lives in
- * `domains/people/`; this keeps `api.people.listPeople` fixed. */
+/**
+ * Drain-only compatibility facade - keeps the pre-cutover `api.people.*` paths
+ * registered while persisted scheduler entries and stale clients drain.
+ * Canonical registration: domains/people/queries.ts.
+ * Removal gate: MIGRATION_RUNBOOK.md section 7.
+ */
 
-import { query } from "./_generated/server";
-import { listPeopleHandler } from "./domains/people/queries";
-
-export const listPeople = query({
-  args: {},
-  handler: (ctx) => listPeopleHandler(ctx),
-});
+export { listPeople } from "./domains/people/queries";

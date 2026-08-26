@@ -73,6 +73,7 @@ import type * as integrations_google_mappers from "../integrations/google/mapper
 import type * as jobs_maintenance from "../jobs/maintenance.js";
 import type * as maintenance from "../maintenance.js";
 import type * as migrations_backfills from "../migrations/backfills.js";
+import type * as migrations_scheduledJobs from "../migrations/scheduledJobs.js";
 import type * as notifications from "../notifications.js";
 import type * as people from "../people.js";
 import type * as shared_eventReads from "../shared/eventReads.js";
@@ -151,6 +152,7 @@ declare const fullApi: ApiFromModules<{
   "jobs/maintenance": typeof jobs_maintenance;
   maintenance: typeof maintenance;
   "migrations/backfills": typeof migrations_backfills;
+  "migrations/scheduledJobs": typeof migrations_scheduledJobs;
   notifications: typeof notifications;
   people: typeof people;
   "shared/eventReads": typeof shared_eventReads;

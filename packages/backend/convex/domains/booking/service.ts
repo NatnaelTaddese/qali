@@ -144,21 +144,19 @@ async function executeAcceptanceClaim(
   }
 }
 
-export async function acceptBookingHandler(
+/** The acceptance flow once the host is known. `hostUserId` must be an already
+ * verified identity — the session user, or the assistant thread's owner — since
+ * the claim mutation treats it as the authorization. */
+export async function acceptBookingForHost(
   ctx: ActionCtx,
-  args: { bookingId: Id<"bookings"> },
+  args: { bookingId: Id<"bookings">; hostUserId: string },
 ): Promise<null> {
-  const user = await authComponent.safeGetAuthUser(ctx);
-  if (!user) {
-    throw new Error("Not authenticated");
-  }
-
   const attemptId = crypto.randomUUID();
   const claimed = await ctx.runMutation(
     internal.domains.booking.mutations.claimBookingAcceptance,
     {
       bookingId: args.bookingId,
-      hostUserId: user._id,
+      hostUserId: args.hostUserId,
       attemptId,
     },
   );
@@ -167,7 +165,7 @@ export async function acceptBookingHandler(
       internal.domains.booking.queries.getBookingContext,
       {
         bookingId: args.bookingId,
-        hostUserId: user._id,
+        hostUserId: args.hostUserId,
       },
     );
     if (
@@ -186,7 +184,7 @@ export async function acceptBookingHandler(
       internal.domains.booking.mutations.releaseBookingAcceptance,
       {
         bookingId: args.bookingId,
-        hostUserId: user._id,
+        hostUserId: args.hostUserId,
         attemptId,
         mayHaveSucceeded: claimed.reconcileOnly,
         error: error instanceof Error ? error.message : String(error),
@@ -195,9 +193,30 @@ export async function acceptBookingHandler(
     throw error;
   }
 
-  await executeAcceptanceClaim(ctx, claimed, user._id, attemptId, adapter, false);
+  await executeAcceptanceClaim(
+    ctx,
+    claimed,
+    args.hostUserId,
+    attemptId,
+    adapter,
+    false,
+  );
 
   return null;
+}
+
+export async function acceptBookingHandler(
+  ctx: ActionCtx,
+  args: { bookingId: Id<"bookings"> },
+): Promise<null> {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+  return await acceptBookingForHost(ctx, {
+    bookingId: args.bookingId,
+    hostUserId: user._id,
+  });
 }
 
 export const acceptBooking = action({

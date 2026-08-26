@@ -10,18 +10,28 @@ import { GoogleContactsAdapter } from "../google/contactsAdapter";
 import type { ContactsProviderAdapter } from "./contacts";
 import type { CalendarProviderAdapter } from "./types";
 
-export async function getCalendarAdapter(
+async function connectionForAdapter(
   ctx: GenericCtx<DataModel>,
   connectionId: Id<"calendarConnections">,
-): Promise<CalendarProviderAdapter> {
+): Promise<Doc<"calendarConnections">> {
   const connection: Doc<"calendarConnections"> | null = await ctx.runQuery(
-    internal.calendar.getCalendarConnectionForAdapter,
+    internal.domains.calendar.queries.getCalendarConnectionForAdapter,
     { connectionId },
   );
   if (!connection) {
     throw new Error("Calendar connection is unavailable");
   }
+  return connection;
+}
 
+/** Adapter for a connection document already in hand, so a caller holding the
+ * doc pays no extra lookup. The doc must come from
+ * `getCalendarConnectionForAdapter`, which is what enforces ownership and
+ * active status. */
+export async function calendarAdapterFor(
+  ctx: GenericCtx<DataModel>,
+  connection: Doc<"calendarConnections">,
+): Promise<CalendarProviderAdapter> {
   switch (connection.provider) {
     case "google": {
       const accessToken = await getGoogleAccessToken(
@@ -36,15 +46,22 @@ export async function getCalendarAdapter(
   }
 }
 
-export async function getContactsAdapter(
+export async function getCalendarAdapter(
   ctx: GenericCtx<DataModel>,
   connectionId: Id<"calendarConnections">,
-): Promise<ContactsProviderAdapter | null> {
-  const connection: Doc<"calendarConnections"> | null = await ctx.runQuery(
-    internal.calendar.getCalendarConnectionForAdapter,
-    { connectionId },
+): Promise<CalendarProviderAdapter> {
+  return await calendarAdapterFor(
+    ctx,
+    await connectionForAdapter(ctx, connectionId),
   );
-  if (!connection) throw new Error("Calendar connection is unavailable");
+}
+
+/** Contacts variant of `calendarAdapterFor`; null when the connection has no
+ * contacts capability. Only fetches a token when it will build an adapter. */
+export async function contactsAdapterFor(
+  ctx: GenericCtx<DataModel>,
+  connection: Doc<"calendarConnections">,
+): Promise<ContactsProviderAdapter | null> {
   if (!connection.capabilities?.contacts) return null;
 
   switch (connection.provider) {
@@ -59,4 +76,14 @@ export async function getContactsAdapter(
     case "microsoft":
       return null;
   }
+}
+
+export async function getContactsAdapter(
+  ctx: GenericCtx<DataModel>,
+  connectionId: Id<"calendarConnections">,
+): Promise<ContactsProviderAdapter | null> {
+  return await contactsAdapterFor(
+    ctx,
+    await connectionForAdapter(ctx, connectionId),
+  );
 }

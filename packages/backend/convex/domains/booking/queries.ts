@@ -40,6 +40,13 @@ export const getMyBookingPage = query({
   handler: (ctx) => getMyBookingPageHandler(ctx),
 });
 
+/** The same page for an already verified host id, so the assistant loop reads
+ * it without resolving the session a second time. */
+export const getBookingPageForHost = internalQuery({
+  args: { hostUserId: v.string() },
+  handler: (ctx, args) => pageByUser(ctx, args.hostUserId),
+});
+
 /** Whether `slug` is free for the caller to take. Requires a session: the
  * public page already reveals which slugs exist, but there is no reason to hand
  * anonymous callers a bulk name oracle. */
@@ -136,6 +143,19 @@ export const listMyBookings = query({
 
 /** Pending requests ordered by start time. Expiration mutations keep this
  * deterministic query current without reading the wall clock here. */
+export async function listPendingBookingsForHostHandler(
+  ctx: QueryCtx,
+  hostUserId: string,
+): Promise<Doc<"bookings">[]> {
+  return await ctx.db
+    .query("bookings")
+    .withIndex("by_host_and_status_and_start", (q) =>
+      q.eq("hostUserId", hostUserId).eq("status", "pending"),
+    )
+    .order("asc")
+    .take(MAX_PENDING_BOOKINGS);
+}
+
 export async function listPendingBookingsHandler(
   ctx: QueryCtx,
 ): Promise<Doc<"bookings">[]> {
@@ -143,18 +163,18 @@ export async function listPendingBookingsHandler(
   if (!user) {
     return [];
   }
-  return await ctx.db
-    .query("bookings")
-    .withIndex("by_host_and_status_and_start", (q) =>
-      q.eq("hostUserId", user._id).eq("status", "pending"),
-    )
-    .order("asc")
-    .take(MAX_PENDING_BOOKINGS);
+  return await listPendingBookingsForHostHandler(ctx, user._id);
 }
 
 export const listPendingBookings = query({
   args: {},
   handler: (ctx) => listPendingBookingsHandler(ctx),
+});
+
+/** The same listing for an already verified host id (the assistant loop). */
+export const listPendingBookingsForHost = internalQuery({
+  args: { hostUserId: v.string() },
+  handler: (ctx, args) => listPendingBookingsForHostHandler(ctx, args.hostUserId),
 });
 
 /**

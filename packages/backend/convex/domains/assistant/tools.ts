@@ -17,9 +17,10 @@
 
 import { z } from "zod";
 
-import { api, internal } from "../../_generated/api";
+import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { ActionCtx } from "../../_generated/server";
+import { acceptBookingForHost } from "../booking/service";
 import {
   type CalendarServiceDependencies,
   createEventOp,
@@ -461,7 +462,10 @@ const searchContacts = readTool({
   }),
   async run(tc, args) {
     const needle = args.query.trim().toLowerCase();
-    const rows = await tc.ctx.runQuery(api.people.listPeople, {});
+    const rows = await tc.ctx.runQuery(
+      internal.domains.people.queries.listPeopleForUser,
+      { userId: tc.userId },
+    );
     return rows
       .filter(
         (p) =>
@@ -481,7 +485,10 @@ const getAvailabilitySettings = readTool({
     "the user asks about their booking link or the hours they publish.",
   schema: z.object({}),
   async run(tc) {
-    return await tc.ctx.runQuery(api.booking.getMyBookingPage, {});
+    return await tc.ctx.runQuery(
+      internal.domains.booking.queries.getBookingPageForHost,
+      { hostUserId: tc.userId },
+    );
   },
 });
 
@@ -493,7 +500,10 @@ const listPendingBookings = readTool({
     "when the user asks who wants to meet or what needs their reply.",
   schema: z.object({}),
   async run(tc) {
-    const rows = await tc.ctx.runQuery(api.booking.listPendingBookings, {});
+    const rows = await tc.ctx.runQuery(
+      internal.domains.booking.queries.listPendingBookingsForHost,
+      { hostUserId: tc.userId },
+    );
     return rows.map((b) => ({
       bookingId: b._id,
       requesterName: b.requesterName,
@@ -1067,10 +1077,15 @@ export async function applyProposal(
       const args = decideBookingSchema.parse(raw);
       const bookingId = args.bookingId as Id<"bookings">;
       if (args.decision === "accept") {
-        await ctx.runAction(api.booking.acceptBooking, { bookingId });
+        // A direct call, not runAction: this action already is the billing
+        // and isolation boundary, and `userId` here is the verified confirmer.
+        await acceptBookingForHost(ctx, { bookingId, hostUserId: userId });
         return "Booking request accepted.";
       }
-      await ctx.runMutation(api.booking.rejectBooking, { bookingId });
+      await ctx.runMutation(
+        internal.domains.booking.mutations.rejectBookingForHost,
+        { bookingId, hostUserId: userId },
+      );
       return "Booking request rejected.";
     }
     default:

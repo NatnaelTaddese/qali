@@ -15,11 +15,15 @@ import {
   ensureGoogleConnection,
 } from "../calendar/connections";
 import { providerEventValidator } from "../calendar/validators";
-import type { ProviderContact } from "../../integrations/calendar/contacts";
+import type {
+  ContactsProviderAdapter,
+  ProviderContact,
+} from "../../integrations/calendar/contacts";
 import { ProviderError } from "../../integrations/calendar/errors";
 import {
+  calendarAdapterFor,
+  contactsAdapterFor,
   getCalendarAdapter,
-  getContactsAdapter,
 } from "../../integrations/calendar/registry";
 import type {
   CalendarProviderAdapter,
@@ -613,13 +617,13 @@ async function syncContactFeed(
   connectionId: Id<"calendarConnections">,
   attemptId: string,
   feed: "contacts" | "other",
+  adapter: ContactsProviderAdapter | null,
 ): Promise<boolean> {
   const state: Doc<"connectionSyncState"> | null = await ctx.runQuery(
     internal.domains.sync.engine.getConnectionSyncState,
     { connectionId },
   );
   if (!state) throw new StaleSyncAttemptError();
-  const adapter = await getContactsAdapter(ctx, connectionId);
   if (!adapter) return false;
   let cursor = feed === "contacts" ? state.contactsCursor : state.otherContactsCursor;
   let full = !cursor;
@@ -749,7 +753,17 @@ async function runConnection(
   );
   if (!state) return { changed: false, skipped: true };
   try {
-    const adapter = await getCalendarAdapter(ctx, connectionId);
+    // One connection read serves the calendar adapter and both contact feeds;
+    // a connection without the contacts capability yields a null contacts
+    // adapter and the feeds no-op.
+    const connection: Doc<"calendarConnections"> | null = await ctx.runQuery(
+      internal.domains.calendar.queries.getCalendarConnectionForAdapter,
+      { connectionId },
+    );
+    if (!connection) {
+      throw new Error("Calendar connection is unavailable");
+    }
+    const adapter = await calendarAdapterFor(ctx, connection);
     const eventsChanged = await syncCalendars(
       ctx,
       state.userId,
@@ -758,17 +772,20 @@ async function runConnection(
       adapter,
       forceFull,
     );
+    const contactsAdapter = await contactsAdapterFor(ctx, connection);
     const savedContactsChanged = await syncContactFeed(
       ctx,
       connectionId,
       attemptId,
       "contacts",
+      contactsAdapter,
     );
     const otherContactsChanged = await syncContactFeed(
       ctx,
       connectionId,
       attemptId,
       "other",
+      contactsAdapter,
     );
     const contactsChanged = savedContactsChanged || otherContactsChanged;
     const changed = eventsChanged || contactsChanged;

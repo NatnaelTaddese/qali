@@ -61,7 +61,6 @@ import type * as integrations_google_eventHelpers from "../integrations/google/e
 import type * as integrations_google_holidays from "../integrations/google/holidays.js";
 import type * as integrations_google_mappers from "../integrations/google/mappers.js";
 import type * as jobs_maintenance from "../jobs/maintenance.js";
-import type * as migrations_providerCutover from "../migrations/providerCutover.js";
 import type * as migrations_scheduledJobs from "../migrations/scheduledJobs.js";
 import type * as shared_eventReads from "../shared/eventReads.js";
 
@@ -125,7 +124,6 @@ declare const fullApi: ApiFromModules<{
   "integrations/google/holidays": typeof integrations_google_holidays;
   "integrations/google/mappers": typeof integrations_google_mappers;
   "jobs/maintenance": typeof jobs_maintenance;
-  "migrations/providerCutover": typeof migrations_providerCutover;
   "migrations/scheduledJobs": typeof migrations_scheduledJobs;
   "shared/eventReads": typeof shared_eventReads;
 }>;

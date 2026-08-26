@@ -81,11 +81,4 @@ export const calendarOperationTables = {
     .index("by_bookingId", ["bookingId"])
     .index("by_user_and_status", ["userId", "status"]),
 
-  // Durable deduplication/progress for the resumable connection backfill.
-  connectionBackfillUsers: defineTable({
-    userId: v.string(),
-    runId: v.string(),
-    updatedAt: v.number(),
-    completedAt: v.optional(v.number()),
-  }).index("by_user", ["userId"]),
 };

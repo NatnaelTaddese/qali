@@ -97,12 +97,6 @@ export const bookingTables = {
     // the request correctly and a lost response can be reconciled on retry.
     acceptOperationId: v.optional(v.string()),
     createdAt: v.number(),
-    // Legacy columns, unread and unwritten; deleted at the final schema.
-    googleEventId: v.optional(v.string()),
-    calendarId: v.optional(v.string()),
-    acceptAttemptId: v.optional(v.string()),
-    acceptLeaseExpiresAt: v.optional(v.number()),
-    acceptMayHaveSucceeded: v.optional(v.boolean()),
   })
     .index("by_host_and_start", ["hostUserId", "startMs"])
     .index("by_host_and_end", ["hostUserId", "endMs"])

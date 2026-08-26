@@ -120,12 +120,14 @@ describe("connection model", () => {
           selected: true,
           connectionId,
           providerCalendarId: "first",
+          isShared: false,
         });
         const secondCalendarId = await ctx.db.insert("calendars", {
           userId,
           selected: true,
           connectionId,
           providerCalendarId: "second",
+          isShared: false,
         });
         return { connectionId, firstCalendarId, secondCalendarId };
       },

@@ -149,6 +149,7 @@ async function setupCalendar(
       selected: true,
       connectionId,
       providerCalendarId,
+      isShared: false,
       syncCursor,
     }),
   );

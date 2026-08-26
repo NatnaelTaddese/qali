@@ -12,15 +12,19 @@ import { v } from "convex/values";
  * narrow to `v.id("events")` because shared events are never editable. */
 export const eventIdArg = v.union(v.id("events"), v.id("sharedEvents"));
 
-/** A guest on an event. `responseStatus` is
- * "needsAction" | "declined" | "tentative" | "accepted"; it stays a loose
- * string until the final schema because pre-cutover rows predate the literal
- * union. Shared by the `events` table and the mutation validators that write
- * to it. */
+/** A guest on an event. Shared by the `events` table and the mutation
+ * validators that write to it. */
 export const attendeeValidator = v.object({
   email: v.string(),
   displayName: v.optional(v.string()),
-  responseStatus: v.optional(v.string()),
+  responseStatus: v.optional(
+    v.union(
+      v.literal("needsAction"),
+      v.literal("accepted"),
+      v.literal("tentative"),
+      v.literal("declined"),
+    ),
+  ),
   organizer: v.optional(v.boolean()),
   self: v.optional(v.boolean()),
   optional: v.optional(v.boolean()),
@@ -96,10 +100,8 @@ export const providerEventValidator = v.object({
  * and the public-calendar `sharedEvents` table. Row identity (connection or
  * provider scoping) is added by the two doc validators below. */
 export const storedEventBaseValidator = v.object({
-  // TRANSITIONAL: required once the provider-cutover wipe has replaced every
-  // pre-cutover row (final schema).
-  providerEventId: v.optional(v.string()),
-  providerUpdatedMs: v.optional(v.number()),
+  providerEventId: v.string(),
+  providerUpdatedMs: v.number(),
   // Set on an expanded instance of a recurring series (we sync with single
   // instances, so we only ever hold instances, never the master).
   providerSeriesId: v.optional(v.string()),
@@ -148,27 +150,12 @@ export const storedEventBaseValidator = v.object({
   conferenceType: v.optional(v.string()),
 });
 
-// TRANSITIONAL (deploy A only): legacy columns retained as optional so
-// pre-wipe rows still validate. No code reads or writes them; the final schema
-// deletes all seven.
-const legacyStoredEventFields = {
-  googleEventId: v.optional(v.string()),
-  calendarId: v.optional(v.string()),
-  googleUpdatedMs: v.optional(v.number()),
-  colorId: v.optional(v.string()),
-  transparency: v.optional(v.string()),
-  recurringEventId: v.optional(v.string()),
-  hangoutLink: v.optional(v.string()),
-};
-
 /** The stored personal-event row: the neutral base plus the local identity it
  * belongs to. `userId` is ours alone — it never round-trips to a provider. */
 export const eventDocValidator = storedEventBaseValidator.extend({
   userId: v.string(),
-  // TRANSITIONAL: both ids required at the final schema; optional only so
-  // pre-wipe rows validate.
-  connectionId: v.optional(v.id("calendarConnections")),
-  localCalendarId: v.optional(v.id("calendars")),
+  connectionId: v.id("calendarConnections"),
+  localCalendarId: v.id("calendars"),
   // Monotonic per-calendar full-resync marker. A full resync stamps every
   // re-fetched row with a fresh generation, then deletes the rows still carrying
   // an older one — so the previous snapshot stays live for booking conflict
@@ -176,17 +163,13 @@ export const eventDocValidator = storedEventBaseValidator.extend({
   // Left absent on incrementally-written rows; the next full resync re-stamps any
   // that still exist at the provider, so absence never causes a wrongful sweep.
   syncGeneration: v.optional(v.number()),
-  ...legacyStoredEventFields,
 });
 
 /** The stored shared-public-calendar event row. No `userId`: the row belongs
  * to the calendar, not a person. Scoped by provider + provider calendar id
  * because shared calendars exist independently of any connection. */
 export const sharedEventDocValidator = storedEventBaseValidator.extend({
-  // TRANSITIONAL: both required at the final schema; optional only so pre-wipe
-  // rows validate.
-  provider: v.optional(v.union(v.literal("google"), v.literal("microsoft"))),
-  providerCalendarId: v.optional(v.string()),
+  provider: v.union(v.literal("google"), v.literal("microsoft")),
+  providerCalendarId: v.string(),
   syncGeneration: v.optional(v.number()),
-  ...legacyStoredEventFields,
 });

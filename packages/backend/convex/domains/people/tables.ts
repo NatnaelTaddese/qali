@@ -7,9 +7,8 @@ export const peopleTables = {
   // One row per synced provider contact (saved-contacts feed).
   contacts: defineTable({
     userId: v.string(),
-    // TRANSITIONAL: both required at the final schema.
-    connectionId: v.optional(v.id("calendarConnections")),
-    providerContactId: v.optional(v.string()),
+    connectionId: v.id("calendarConnections"),
+    providerContactId: v.string(),
     displayName: v.optional(v.string()),
     emails: v.array(v.string()),
     phones: v.array(v.string()),
@@ -18,13 +17,8 @@ export const peopleTables = {
     providerVersion: v.optional(v.string()),
     // Full-resync reconcile marker (see connectionSyncState.contactsGeneration).
     syncGeneration: v.optional(v.number()),
-    // Legacy columns, unread and unwritten; deleted at the final schema.
-    resourceName: v.optional(v.string()),
-    googleEtag: v.optional(v.string()),
   })
     .index("by_user", ["userId"])
-    // Legacy index, no readers; deleted at the final schema.
-    .index("by_user_and_resourceName", ["userId", "resourceName"])
     .index("by_connection_and_providerContactId", [
       "connectionId",
       "providerContactId",
@@ -40,7 +34,7 @@ export const peopleTables = {
     source: v.union(v.literal("connection"), v.literal("other")),
     // A provider contact may share an email with another contact. Claims are
     // therefore contact-scoped; absent only on rows written before this field.
-    providerContactId: v.optional(v.string()),
+    providerContactId: v.string(),
     syncGeneration: v.optional(v.number()),
     updatedAt: v.number(),
   })
@@ -103,9 +97,6 @@ export const peopleTables = {
     // retain stale scores.
     engagementGeneration: v.optional(v.number()),
     updatedAt: v.number(),
-    // Legacy column, unread and unwritten (its sweeper died with the
-    // contraction); deleted at the final schema.
-    otherSyncGeneration: v.optional(v.number()),
   })
     .index("by_user", ["userId"])
     .index("by_user_and_email", ["userId", "email"])

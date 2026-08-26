@@ -32,6 +32,7 @@ describe("purgeUserData", () => {
       await ctx.db.insert("personSourceClaims", {
         userId,
         connectionId,
+        providerContactId: "r",
         email,
         source: "other",
         updatedAt: 1,
@@ -103,8 +104,16 @@ describe("purgeUserData", () => {
       });
       await ctx.db.insert("waitlist", { email, createdAt: 1 });
       // Another user's rows must survive the purge.
+      const bystanderConnectionId = await ctx.db.insert("calendarConnections", {
+        userId: "bystander",
+        provider: "google",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
       await ctx.db.insert("calendars", {
         userId: "bystander",
+        connectionId: bystanderConnectionId,
         providerCalendarId: "c2",
         selected: true,
         isShared: false,
@@ -127,7 +136,8 @@ describe("purgeUserData", () => {
       expect(await ctx.db.query("contacts").collect()).toHaveLength(0);
       expect(await ctx.db.query("people").collect()).toHaveLength(0);
       expect(await ctx.db.query("bookings").collect()).toHaveLength(0);
-      expect(await ctx.db.query("calendarConnections").collect()).toHaveLength(0);
+      const connections = await ctx.db.query("calendarConnections").collect();
+      expect(connections.map((c) => c.userId)).toEqual(["bystander"]);
       expect(await ctx.db.query("connectionSyncState").collect()).toHaveLength(0);
       expect(await ctx.db.query("userSyncState").collect()).toHaveLength(0);
       expect(await ctx.db.query("personSourceClaims").collect()).toHaveLength(0);
@@ -204,7 +214,7 @@ describe("shared event prune", () => {
     expect(await t.run((ctx) => ctx.db.get(ids.microsoftAged))).toBeNull();
   });
 
-  test("enqueue fans out per neutral row and skips legacy-only rows", async () => {
+  test("enqueue fans out one prune per shared calendar", async () => {
     // Fake timers keep the runAfter(0) fan-out pending for inspection.
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
@@ -212,10 +222,6 @@ describe("shared event prune", () => {
       await ctx.db.insert("sharedCalendars", {
         provider: "google",
         providerCalendarId: "holidays",
-      });
-      // Pre-cutover leftover with no neutral identity: never enqueued.
-      await ctx.db.insert("sharedCalendars", {
-        googleCalendarId: "legacy-only",
       });
     });
     await t.mutation(internal.jobs.maintenance.enqueueSharedEventPrune, {});

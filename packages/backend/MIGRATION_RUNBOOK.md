@@ -166,9 +166,12 @@ already be authoritative — repair any gap before proceeding.
 ```sh
 # 0. backup (mandatory — IS the rollback from step 3 on)
 bunx convex export --prod --path qali-prod-<date>.zip
-# 1. deploy A (commit C1)
+# 1. deploy A — from commit 37f3549 ("Contract to the provider-neutral data
+#    model"), NOT the branch head: check it out, deploy, return to head
+git checkout 37f3549
 bunx convex deploy --typecheck enable --codegen enable \
   -m "contraction + transitional schema"
+git checkout backend/reorg
 # 2. scheduler repoint (section 4 tooling, if any legacy entries remain)
 bunx convex run migrations/scheduledJobs:migrateExpireBookingSchedules '{}' --prod
 # 3. wipe + resync — run IMMEDIATELY after deploy A: between A and the wipe,
@@ -177,7 +180,7 @@ bunx convex run migrations/scheduledJobs:migrateExpireBookingSchedules '{}' --pr
 bunx convex run migrations/providerCutover:start '{}' --prod
 # 4. watch dashboard logs until fanOutResync reports done and per-user syncs
 #    complete (~minutes at current user counts)
-# 5. verify (8.3), then deploy B (commit C2)
+# 5. verify (8.3), then deploy B from the branch head (the final-schema commit)
 bunx convex deploy --typecheck enable --codegen enable -m "final schema"
 ```
 

@@ -2,19 +2,19 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 
-import { api, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
-import type { ActionCtx } from "./_generated/server";
-import { ProviderError } from "./integrations/calendar/errors";
+import { api, internal } from "../../_generated/api";
+import type { Id } from "../../_generated/dataModel";
+import type { ActionCtx } from "../../_generated/server";
+import { ProviderError } from "../../integrations/calendar/errors";
 import type {
   CalendarProviderAdapter,
   CreateEventRequest,
   ProviderEvent,
-} from "./integrations/calendar/types";
-import { reconcileBookingAcceptanceWithAdapter } from "./domains/booking/service";
-import schema from "./schema";
+} from "../../integrations/calendar/types";
+import { reconcileBookingAcceptanceWithAdapter } from "../../domains/booking/service";
+import schema from "../../schema";
 
-import { modules } from "../testModules";
+import { modules } from "../../../testModules";
 
 const HOST = "host_user";
 const CAL = "primary";

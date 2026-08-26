@@ -21,8 +21,10 @@
   may translate Google wire shapes, but it does not own app tables or public API
   registration.
 - `convex/jobs/` owns recurring maintenance implementations;
-  `convex/migrations/` and `backfillConnections.ts` own resumable one-shot data
-  changes. Migration code must not become a steady-state domain dependency.
+  `convex/migrations/` owns resumable one-shot data changes (including
+  `migrations/backfillConnections.ts`; the root `backfillConnections.ts` is a
+  drain-only facade over it). Migration code must not become a steady-state
+  domain dependency.
 - `convex/domains/sync/googleCompat.ts` temporarily preserves the exact
   pre-cutover `internal.googleSync.*` cross-call contracts for actions already
   running during deployment. Its removal gate is the queue/running-function

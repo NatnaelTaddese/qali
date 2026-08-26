@@ -58,6 +58,21 @@ describe("assistantMaintenance.ts facade", () => {
   });
 });
 
+describe("backfillConnections.ts facade", () => {
+  test("retains every pre-cutover backfillConnections target", () => {
+    const targets = [
+      internal.backfillConnections.enqueueConnectionBackfill,
+      internal.backfillConnections.backfillUser,
+      internal.backfillConnections.backfillUserRows,
+      internal.backfillConnections.backfillUserEvents,
+      internal.backfillConnections.backfillUserTail,
+      internal.backfillConnections.backfillSharedRecords,
+      internal.backfillConnections.verifyParity,
+    ];
+    expect(targets.every(Boolean)).toBe(true);
+  });
+});
+
 describe("booking.ts facade", () => {
   test("retains every pre-cutover booking target", () => {
     const targets = [

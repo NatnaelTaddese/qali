@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 
-import { internal } from "./_generated/api";
+import { internal } from "../../_generated/api";
 
 test("retains every pre-cutover googleSync cross-call target", () => {
   const targets = [

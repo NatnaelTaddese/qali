@@ -56,7 +56,7 @@ Start exactly one resumable discovery run. Re-running is safe and creates a new
 run id, but do not start overlapping runs intentionally.
 
 ```sh
-bunx convex run backfillConnections:enqueueConnectionBackfill '{}' --prod
+bunx convex run migrations/backfillConnections:enqueueConnectionBackfill '{}' --prod
 ```
 
 Wait until scheduled functions are drained and every
@@ -76,7 +76,7 @@ repeat with the returned `continueCursor`. A phase passes only when every page
 has `mismatches: 0`.
 
 ```sh
-bunx convex run backfillConnections:verifyParity \
+bunx convex run migrations/backfillConnections:verifyParity \
   '{"phase":"events","cursor":null,"numItems":100}' --prod
 ```
 
@@ -198,8 +198,11 @@ that lets an old shared-calendar action finish its generation sweep without
 clearing the live snapshot first. Keep it through the same drain gate and until
 its own scheduled calls are empty.
 
-`backfillConnections.backfillUserEvents` and `backfillUserTail` remain until all
-old backfill schedules drain. The `verifyParity.sampleLimit` argument remains
+`backfillUserEvents` and `backfillUserTail` remain until all
+old backfill schedules drain. The root `backfillConnections.ts` is itself a
+drain-only facade over `migrations/backfillConnections.ts`, kept while old
+backfill schedules and pre-cutover operator commands still use the
+`internal.backfillConnections.*` spelling. The `verifyParity.sampleLimit` argument remains
 until old operator commands are no longer used. `internal.calendarSync.syncUser`
 remains while one-shot migrations still schedule user-scoped refreshes.
 
@@ -239,6 +242,7 @@ running-functions view and logs are clean. What persists references to each:
 | --- | --- |
 | `booking.ts` | Pre-deploy `expireBooking` scheduler entries up to 365 days out; in-flight acceptance cross-calls (minutes); stale tabs |
 | `maintenance.ts` | Self-reschedule chains (hours); operator one-shots |
+| `backfillConnections.ts` | Old backfill self-reschedules (drain in minutes once idle); operator commands using the un-prefixed spelling |
 | `assistant.ts` | Stale tabs (days) |
 | `assistantData.ts` | `releaseStaleAction` lease schedules (minutes); stale tabs |
 | `assistantMaintenance.ts` | Stale tabs (days) |
@@ -252,8 +256,9 @@ Deletion happens in two waves:
 
 1. Wave 1, no earlier than ~7 days after the expand deploy and after the
    verified `expireBooking` schedule migration: `booking.ts`,
-   `maintenance.ts`, `assistant.ts`, `assistantData.ts`,
-   `assistantMaintenance.ts`, `notifications.ts`, `people.ts`, `waitlist.ts`.
+   `maintenance.ts`, `backfillConnections.ts`, `assistant.ts`,
+   `assistantData.ts`, `assistantMaintenance.ts`, `notifications.ts`,
+   `people.ts`, `waitlist.ts`.
 2. Wave 2, at least 30 days out, only after the `internal.googleSync.*` gate
    and the assistant-proposal age-out: `calendar.ts`, `calendarSync.ts`,
    `googleSync.ts`, and `domains/sync/googleCompat.ts` together, plus the

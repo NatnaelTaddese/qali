@@ -72,6 +72,7 @@ import type * as integrations_google_holidays from "../integrations/google/holid
 import type * as integrations_google_mappers from "../integrations/google/mappers.js";
 import type * as jobs_maintenance from "../jobs/maintenance.js";
 import type * as maintenance from "../maintenance.js";
+import type * as migrations_backfillConnections from "../migrations/backfillConnections.js";
 import type * as migrations_backfills from "../migrations/backfills.js";
 import type * as migrations_scheduledJobs from "../migrations/scheduledJobs.js";
 import type * as notifications from "../notifications.js";
@@ -151,6 +152,7 @@ declare const fullApi: ApiFromModules<{
   "integrations/google/mappers": typeof integrations_google_mappers;
   "jobs/maintenance": typeof jobs_maintenance;
   maintenance: typeof maintenance;
+  "migrations/backfillConnections": typeof migrations_backfillConnections;
   "migrations/backfills": typeof migrations_backfills;
   "migrations/scheduledJobs": typeof migrations_scheduledJobs;
   notifications: typeof notifications;

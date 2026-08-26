@@ -2,11 +2,11 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 
-import { internal } from "./_generated/api";
-import schema from "./schema";
-import { calendarTables } from "./domains/calendar/tables";
+import { internal } from "../../_generated/api";
+import schema from "../../schema";
+import { calendarTables } from "../../domains/calendar/tables";
 
-import { modules } from "../testModules";
+import { modules } from "../../../testModules";
 
 /**
  * The connection tables are deployed empty and queried by nothing yet, so there

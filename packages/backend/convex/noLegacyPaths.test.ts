@@ -25,7 +25,7 @@ const ROOTS = [
 
 // Longest-first so the reported module name is the one actually referenced.
 const LEGACY_PATH =
-  /\b(?:api|internal)\.(?:assistantMaintenance|assistantData|assistant|calendarSync|calendar|booking|maintenance|notifications|people|waitlist)\./g;
+  /\b(?:api|internal)\.(?:assistantMaintenance|assistantData|assistant|backfillConnections|calendarSync|calendar|booking|maintenance|notifications|people|waitlist)\./g;
 
 // Relative to BACKEND_DIR. Each entry keeps a deliberate legacy reference.
 const ALLOWLIST = new Map<string, string>([

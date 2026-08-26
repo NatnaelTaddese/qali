@@ -2,11 +2,11 @@
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 
-import { internal } from "./_generated/api";
-import { monthlyUsageAt } from "./domains/assistant/data";
-import schema from "./schema";
+import { internal } from "../../_generated/api";
+import { monthlyUsageAt } from "../../domains/assistant/data";
+import schema from "../../schema";
 
-import { modules } from "../testModules";
+import { modules } from "../../../testModules";
 
 test("monthly quota rollover uses caller-materialized time", () => {
   const start = 1_000;

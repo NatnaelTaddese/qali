@@ -2,11 +2,11 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 
-import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
-import schema from "./schema";
+import { internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
+import schema from "../schema";
 
-import { modules } from "../testModules";
+import { modules } from "../../testModules";
 
 const USER = "user_bf";
 
@@ -45,7 +45,7 @@ describe("connection backfill", () => {
       });
     });
 
-    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
+    await t.mutation(internal.migrations.backfillConnections.backfillUser, { userId: USER });
 
     const connectionId = await connectionFor(t, USER);
     expect(connectionId).not.toBeNull();
@@ -75,8 +75,8 @@ describe("connection backfill", () => {
       ctx.db.insert("syncState", { userId: USER, status: "idle" }),
     );
 
-    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
-    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
+    await t.mutation(internal.migrations.backfillConnections.backfillUser, { userId: USER });
+    await t.mutation(internal.migrations.backfillConnections.backfillUser, { userId: USER });
 
     const counts = await t.run(async (ctx) => ({
       connections: (
@@ -124,7 +124,7 @@ describe("connection backfill", () => {
       return localCalendarId;
     });
 
-    await t.mutation(internal.backfillConnections.backfillUserEvents, {
+    await t.mutation(internal.migrations.backfillConnections.backfillUserEvents, {
       userId: USER,
       connectionId,
       cursor: null,
@@ -142,7 +142,7 @@ describe("connection backfill", () => {
     expect(event?.localCalendarId).toBe(localCalendarId);
 
     // Restarting the same page is safe and keeps the exact same references.
-    await t.mutation(internal.backfillConnections.backfillUserEvents, {
+    await t.mutation(internal.migrations.backfillConnections.backfillUserEvents, {
       userId: USER,
       connectionId,
       cursor: null,
@@ -218,14 +218,14 @@ describe("connection backfill", () => {
       );
     });
 
-    await t.mutation(internal.backfillConnections.backfillUserRows, {
+    await t.mutation(internal.migrations.backfillConnections.backfillUserRows, {
       userId: USER,
       connectionId,
       phase: "recurringSeries",
       cursor: null,
     });
 
-    await t.mutation(internal.backfillConnections.backfillUserTail, {
+    await t.mutation(internal.migrations.backfillConnections.backfillUserTail, {
       userId: USER,
       connectionId,
     });
@@ -274,16 +274,16 @@ describe("connection backfill", () => {
 
     // backfillUser sets up the connection + calendars and schedules the event
     // pass; drive that pass directly rather than depend on the scheduler.
-    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
+    await t.mutation(internal.migrations.backfillConnections.backfillUser, { userId: USER });
     const connectionId = (await connectionFor(t, USER))!;
-    await t.mutation(internal.backfillConnections.backfillUserEvents, {
+    await t.mutation(internal.migrations.backfillConnections.backfillUserEvents, {
       userId: USER,
       connectionId,
       cursor: null,
     });
 
     const eventReport = await t.query(
-      internal.backfillConnections.verifyParity,
+      internal.migrations.backfillConnections.verifyParity,
       { phase: "events", numItems: 1 },
     );
     expect(eventReport.scanned).toBe(1);
@@ -291,7 +291,7 @@ describe("connection backfill", () => {
     expect(eventReport.isDone).toBe(true);
 
     const calendarReport = await t.query(
-      internal.backfillConnections.verifyParity,
+      internal.migrations.backfillConnections.verifyParity,
       { phase: "calendars" },
     );
     expect(calendarReport.mismatches).toBe(0);
@@ -330,7 +330,7 @@ describe("connection backfill", () => {
       });
     });
 
-    const report = await t.query(internal.backfillConnections.verifyParity, {
+    const report = await t.query(internal.migrations.backfillConnections.verifyParity, {
       phase: "events",
       numItems: 1,
     });
@@ -360,11 +360,11 @@ describe("connection backfill", () => {
       runId: "restartable-run",
     };
     await t.mutation(
-      internal.backfillConnections.enqueueConnectionBackfill,
+      internal.migrations.backfillConnections.enqueueConnectionBackfill,
       args,
     );
     await t.mutation(
-      internal.backfillConnections.enqueueConnectionBackfill,
+      internal.migrations.backfillConnections.enqueueConnectionBackfill,
       args,
     );
     const progress = await t.run((ctx) =>
@@ -399,15 +399,15 @@ describe("connection backfill", () => {
         updatedAt: 1,
       });
     });
-    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
+    await t.mutation(internal.migrations.backfillConnections.backfillUser, { userId: USER });
     const connectionId = (await connectionFor(t, USER))!;
-    await t.mutation(internal.backfillConnections.backfillUserRows, {
+    await t.mutation(internal.migrations.backfillConnections.backfillUserRows, {
       userId: USER,
       connectionId,
       phase: "contacts",
       cursor: null,
     });
-    await t.mutation(internal.backfillConnections.backfillUserRows, {
+    await t.mutation(internal.migrations.backfillConnections.backfillUserRows, {
       userId: USER,
       connectionId,
       phase: "people",
@@ -422,11 +422,11 @@ describe("connection backfill", () => {
       "people/two",
     ]);
     expect(
-      await t.query(internal.backfillConnections.verifyParity, {
+      await t.query(internal.migrations.backfillConnections.verifyParity, {
         phase: "contacts",
       }),
     ).toMatchObject({ mismatches: 0 });
-    const blocked = await t.query(internal.backfillConnections.verifyParity, {
+    const blocked = await t.query(internal.migrations.backfillConnections.verifyParity, {
       phase: "people",
     });
     expect(blocked.mismatches).toBe(1);
@@ -476,7 +476,7 @@ describe("connection backfill", () => {
       syncCursor: "safe-cursor",
     });
     expect(
-      await t.query(internal.backfillConnections.verifyParity, {
+      await t.query(internal.migrations.backfillConnections.verifyParity, {
         phase: "people",
       }),
     ).toMatchObject({ mismatches: 0 });
@@ -499,7 +499,7 @@ describe("connection backfill", () => {
         phones: [],
       });
     });
-    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
+    await t.mutation(internal.migrations.backfillConnections.backfillUser, { userId: USER });
     const connectionId = (await connectionFor(t, USER))!;
     await t.run(async (ctx) => {
       for (const email of [
@@ -530,13 +530,13 @@ describe("connection backfill", () => {
       }
     });
 
-    await t.mutation(internal.backfillConnections.backfillUserRows, {
+    await t.mutation(internal.migrations.backfillConnections.backfillUserRows, {
       userId: USER,
       connectionId,
       phase: "contacts",
       cursor: null,
     });
-    await t.mutation(internal.backfillConnections.backfillUserRows, {
+    await t.mutation(internal.migrations.backfillConnections.backfillUserRows, {
       userId: USER,
       connectionId,
       phase: "people",
@@ -563,7 +563,7 @@ describe("connection backfill", () => {
       result.people.find((row) => row.email === "shared@example.com")?.sources,
     ).toContain("connection");
     expect(
-      await t.query(internal.backfillConnections.verifyParity, {
+      await t.query(internal.migrations.backfillConnections.verifyParity, {
         phase: "people",
       }),
     ).toMatchObject({ mismatches: 0 });
@@ -580,7 +580,7 @@ describe("connection backfill", () => {
         syncLeaseExpiresAt: Date.now() + 60_000,
       }),
     );
-    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
+    await t.mutation(internal.migrations.backfillConnections.backfillUser, { userId: USER });
     const connectionId = (await connectionFor(t, USER))!;
     await t.run(async (ctx) => {
       const state = await ctx.db
@@ -607,7 +607,7 @@ describe("connection backfill", () => {
         .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
         .unique(),
     );
-    await t.mutation(internal.backfillConnections.backfillUser, { userId: USER });
+    await t.mutation(internal.migrations.backfillConnections.backfillUser, { userId: USER });
     const after = await t.run((ctx) =>
       ctx.db
         .query("connectionSyncState")

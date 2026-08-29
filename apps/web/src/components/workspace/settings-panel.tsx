@@ -738,7 +738,9 @@ function CalendarTableRow({ calendar }: { calendar: CalendarListItem }) {
             }).catch(reportSaveError("Couldn't update the calendar"))
           }
           aria-label={`Show ${name}`}
-          className="size-5 rounded-md border-(--cal-color) transition-colors data-checked:border-(--cal-color) data-checked:bg-(--cal-color) data-checked:text-white"
+          // The base checkbox restates its checked fill under `dark:`, so the
+          // calendar tint must too — an unprefixed override loses in dark mode.
+          className="size-5 rounded-md border-(--cal-color) transition-colors data-checked:border-(--cal-color) data-checked:bg-(--cal-color) data-checked:text-white dark:data-checked:bg-(--cal-color)"
         />
         {editing ? (
           <Input

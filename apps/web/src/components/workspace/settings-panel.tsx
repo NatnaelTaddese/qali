@@ -738,7 +738,7 @@ function CalendarTableRow({ calendar }: { calendar: CalendarListItem }) {
             autoFocus
             defaultValue={name}
             aria-label={`Rename ${name}`}
-            className="h-7 flex-1 rounded-xl bg-background px-2 text-sm"
+            className="h-7 flex-1 rounded-md bg-background px-2 text-sm"
             onFocus={(event) => event.target.select()}
             onBlur={(event) => commit(event.target.value)}
             onKeyDown={(event) => {
@@ -751,7 +751,9 @@ function CalendarTableRow({ calendar }: { calendar: CalendarListItem }) {
             }}
           />
         ) : (
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+          // Same height as the rename input, so entering/leaving edit mode
+          // never changes the row height.
+          <span className="h-7 min-w-0 flex-1 truncate text-sm leading-7 font-medium">
             {name}
             {calendar.summaryOverride && calendar.summary && (
               <span className="ml-1.5 text-xs font-normal text-muted-foreground">

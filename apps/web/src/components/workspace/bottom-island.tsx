@@ -52,8 +52,8 @@ function widthClass(view: DockView | null): string {
   // The availability panel carries a seven-row weekly grid, so it needs more
   // room than the event panels.
   if (view.kind === "availability") return "w-[min(30rem,100%)]";
-  // Settings blooms widest: section nav and content sit side by side.
-  if (view.kind === "settings") return "w-[min(44rem,100%)]";
+  // Settings blooms widest: a sidebar beside a page-like content pane.
+  if (view.kind === "settings") return "w-[min(52rem,100%)]";
   return "w-[min(27rem,100%)]";
 }
 

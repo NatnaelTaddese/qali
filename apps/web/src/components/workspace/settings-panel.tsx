@@ -34,6 +34,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import { toast } from "sonner";
 
@@ -102,9 +103,10 @@ function reportSaveError(message: string) {
 }
 
 /**
- * The full-bloom settings sheet: the island opens wide into section nav plus
- * content on desktop, and a nav-list-then-slide stack on small screens. Every
- * control writes immediately — nothing here is a draft with a Save.
+ * The full-bloom settings sheet: a sidebar of sections beside a page-like
+ * content pane (serif heading over a card of rows) on desktop, and a
+ * nav-list-then-slide stack on small screens. Every control writes
+ * immediately — nothing here is a draft with a Save.
  */
 export function SettingsPanel({
   initialSection,
@@ -171,31 +173,16 @@ export function SettingsPanel({
       transition={reduce ? { duration: 0 } : SPRING_DOCK}
       className="overflow-hidden"
     >
-      <div ref={innerRef} className="flex flex-col gap-3">
-        <div className="flex items-center gap-2.5">
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium">Settings</p>
-            <p className="truncate text-xs text-muted-foreground">
-              Accounts, calendars, and preferences
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <HugeiconsIcon
-              icon={Cancel01Icon}
-              strokeWidth={2}
-              className="size-4"
-            />
-          </button>
-        </div>
-
+      <div ref={innerRef}>
         {isDesktop ? (
-          <div className="grid grid-cols-[10.5rem_minmax(0,1fr)] gap-4">
-            <nav aria-label="Settings sections" className="flex flex-col gap-1">
+          <div className="grid min-h-[24rem] grid-cols-[11.5rem_minmax(0,1fr)] gap-5">
+            <nav
+              aria-label="Settings sections"
+              className="flex flex-col gap-1 py-1"
+            >
+              <p className="px-3 pb-2 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
+                Settings
+              </p>
               {SECTIONS.map((entry) => (
                 <button
                   key={entry.id}
@@ -230,7 +217,19 @@ export function SettingsPanel({
                 </button>
               ))}
             </nav>
-            <div className="min-h-40 border-l border-border pl-4">
+            <div className="relative border-l border-border py-1 pl-6">
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Close"
+                className="absolute top-1 right-0 z-10 flex size-7 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <HugeiconsIcon
+                  icon={Cancel01Icon}
+                  strokeWidth={2}
+                  className="size-4"
+                />
+              </button>
               <AnimatePresence mode="popLayout" initial={false} custom={direction}>
                 <motion.div
                   key={section}
@@ -240,7 +239,10 @@ export function SettingsPanel({
                   animate="animate"
                   exit="exit"
                 >
-                  {sectionContent}
+                  <h2 className="font-display pr-9 text-2xl font-bold">
+                    {active.label}
+                  </h2>
+                  <div className="mt-4">{sectionContent}</div>
                 </motion.div>
               </AnimatePresence>
             </div>
@@ -255,33 +257,52 @@ export function SettingsPanel({
                 initial="initial"
                 animate="animate"
                 exit="exit"
-                className="flex flex-col gap-1.5"
+                className="flex flex-col gap-3"
               >
-                {SECTIONS.map((entry) => (
+                <div className="flex items-center gap-2.5">
+                  <h2 className="font-display min-w-0 flex-1 text-2xl font-bold">
+                    Settings
+                  </h2>
                   <button
-                    key={entry.id}
                     type="button"
-                    onClick={() => goTo(entry.id)}
-                    className="group flex items-center gap-3 rounded-2xl bg-muted/60 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={onClose}
+                    aria-label="Close"
+                    className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <HugeiconsIcon
-                      icon={entry.icon}
+                      icon={Cancel01Icon}
                       strokeWidth={2}
-                      className="size-5 shrink-0 text-muted-foreground"
-                    />
-                    <span className="flex min-w-0 flex-1 flex-col">
-                      <span className="text-sm font-medium">{entry.label}</span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {entry.description}
-                      </span>
-                    </span>
-                    <HugeiconsIcon
-                      icon={ArrowRight01Icon}
-                      strokeWidth={2}
-                      className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+                      className="size-4"
                     />
                   </button>
-                ))}
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {SECTIONS.map((entry) => (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      onClick={() => goTo(entry.id)}
+                      className="group flex items-center gap-3 rounded-2xl bg-muted/60 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <HugeiconsIcon
+                        icon={entry.icon}
+                        strokeWidth={2}
+                        className="size-5 shrink-0 text-muted-foreground"
+                      />
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="text-sm font-medium">{entry.label}</span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {entry.description}
+                        </span>
+                      </span>
+                      <HugeiconsIcon
+                        icon={ArrowRight01Icon}
+                        strokeWidth={2}
+                        className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+                      />
+                    </button>
+                  ))}
+                </div>
               </motion.div>
             ) : (
               <motion.div
@@ -303,8 +324,11 @@ export function SettingsPanel({
                     strokeWidth={2}
                     className="size-4 text-muted-foreground"
                   />
-                  {active.label}
+                  Settings
                 </button>
+                <h2 className="font-display text-2xl font-bold">
+                  {active.label}
+                </h2>
                 {sectionContent}
               </motion.div>
             )}
@@ -315,12 +339,68 @@ export function SettingsPanel({
   );
 }
 
+/** The screenshot-style card: rows separated by hairlines on a soft surface. */
+function SettingCard({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("rounded-3xl bg-muted/50 px-4", className)}>
+      {children}
+    </div>
+  );
+}
+
+/** One card row: title and description on the left, a control on the right. */
+function SettingRow({
+  title,
+  description,
+  destructiveDescription,
+  leading,
+  control,
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  /** Style the description as an error (e.g. a connection's lastError). */
+  destructiveDescription?: boolean;
+  leading?: ReactNode;
+  control?: ReactNode;
+}) {
+  return (
+    <div className="flex items-center gap-4 border-b border-border py-3.5 last:border-b-0">
+      {leading}
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">{title}</p>
+        {description && (
+          <p
+            className={cn(
+              "mt-0.5 text-xs",
+              destructiveDescription
+                ? "text-destructive"
+                : "text-muted-foreground",
+            )}
+          >
+            {description}
+          </p>
+        )}
+      </div>
+      {control && <div className="flex shrink-0 items-center">{control}</div>}
+    </div>
+  );
+}
+
 function SectionSkeleton() {
   return (
-    <div className="space-y-2">
-      <Skeleton className="h-16 rounded-2xl" />
-      <Skeleton className="h-16 rounded-2xl" />
-    </div>
+    <SettingCard>
+      <div className="space-y-3 py-4">
+        <Skeleton className="h-10 rounded-2xl" />
+        <Skeleton className="h-10 rounded-2xl" />
+        <Skeleton className="h-10 rounded-2xl" />
+      </div>
+    </SettingCard>
   );
 }
 
@@ -334,13 +414,15 @@ function AccountsSection() {
   if (connections === undefined) return <SectionSkeleton />;
   if (connections.length === 0) {
     return (
-      <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-        No connected accounts yet — they appear after your first sync.
-      </p>
+      <SettingCard>
+        <p className="py-8 text-center text-xs text-muted-foreground">
+          No connected accounts yet — they appear after your first sync.
+        </p>
+      </SettingCard>
     );
   }
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {connections.map((connection) => (
         <ConnectionCard key={connection._id} connection={connection} />
       ))}
@@ -373,94 +455,97 @@ function ConnectionCard({ connection }: { connection: Connection }) {
       status: nextActive ? "active" : "paused",
     }).catch(reportSaveError("Couldn't update the connection"));
 
-  return (
-    <div className="space-y-2.5 rounded-2xl bg-muted/60 p-3">
-      <div className="flex items-center gap-2.5">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-background">
-          <HugeiconsIcon icon={GoogleIcon} strokeWidth={2} className="size-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium">
-            {connection.provider === "google" ? "Google Calendar" : "Outlook"}
-          </p>
-          <p className="truncate text-xs text-muted-foreground">
-            {accountLabel}
-          </p>
-        </div>
-        <Switch
-          checked={!paused}
-          onCheckedChange={toggle}
-          aria-label={paused ? "Sync is paused" : "Sync is on"}
-        />
-      </div>
-
-      <div className="flex items-center gap-1.5 text-sm">
-        <span className="relative flex size-2 items-center justify-center">
-          <span
-            className={cn(
-              "size-2 rounded-full",
-              errored
-                ? "bg-destructive"
-                : paused
-                  ? "bg-muted-foreground/40"
-                  : "bg-chart-2",
-            )}
-          />
-          {!paused && !errored && !reduce && (
-            <span className="absolute size-2 animate-ping rounded-full bg-chart-2 opacity-60" />
-          )}
-        </span>
-        <span className="font-medium">
-          {errored ? "Needs attention" : paused ? "Paused" : "Active"}
-        </span>
-        {errored && connection.lastError && (
-          <span className="min-w-0 truncate text-xs text-destructive">
-            {connection.lastError}
-          </span>
-        )}
-        {errored && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="xs"
-            className="ml-auto"
-            onClick={() => toggle(true)}
-          >
-            Resume
-          </Button>
-        )}
-      </div>
-
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          disabled={paused || isSyncing}
-          aria-busy={isSyncing}
-          onClick={() => void sync()}
-        >
-          {isSyncing ? (
-            <Spinner />
-          ) : (
-            <HugeiconsIcon
-              icon={RefreshIcon}
-              strokeWidth={2}
-              className="size-4"
-            />
-          )}
-          {isSyncing ? "Syncing…" : "Sync now"}
-        </Button>
-        <span className="ml-auto truncate text-xs text-muted-foreground">
-          {connection.lastSyncAt
+  const syncDescription = errored
+    ? (connection.lastError ?? "Needs attention")
+    : paused
+      ? "Paused — not syncing"
+      : `${
+          connection.lastSyncAt
             ? `Synced ${formatDistanceToNow(connection.lastSyncAt, {
                 addSuffix: true,
               })}`
-            : "Not synced yet"}
-          {!paused && ` · checks every ${intervalMin} min`}
-        </span>
-      </div>
-    </div>
+            : "Not synced yet"
+        } · checks every ${intervalMin} min`;
+
+  return (
+    <SettingCard>
+      <SettingRow
+        leading={
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-background">
+            <HugeiconsIcon
+              icon={GoogleIcon}
+              strokeWidth={2}
+              className="size-4"
+            />
+          </span>
+        }
+        title={
+          <span className="flex items-center gap-1.5">
+            {connection.provider === "google" ? "Google Calendar" : "Outlook"}
+            <span className="relative flex size-2 items-center justify-center">
+              <span
+                className={cn(
+                  "size-2 rounded-full",
+                  errored
+                    ? "bg-destructive"
+                    : paused
+                      ? "bg-muted-foreground/40"
+                      : "bg-chart-2",
+                )}
+              />
+              {!paused && !errored && !reduce && (
+                <span className="absolute size-2 animate-ping rounded-full bg-chart-2 opacity-60" />
+              )}
+            </span>
+          </span>
+        }
+        description={accountLabel}
+        control={
+          <Switch
+            checked={!paused}
+            onCheckedChange={toggle}
+            aria-label={paused ? "Sync is paused" : "Sync is on"}
+          />
+        }
+      />
+      <SettingRow
+        title="Sync"
+        description={syncDescription}
+        destructiveDescription={errored}
+        control={
+          errored ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => toggle(true)}
+            >
+              Resume
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={paused || isSyncing}
+              aria-busy={isSyncing}
+              onClick={() => void sync()}
+            >
+              {isSyncing ? (
+                <Spinner />
+              ) : (
+                <HugeiconsIcon
+                  icon={RefreshIcon}
+                  strokeWidth={2}
+                  className="size-4"
+                />
+              )}
+              {isSyncing ? "Syncing…" : "Sync now"}
+            </Button>
+          )
+        }
+      />
+    </SettingCard>
   );
 }
 
@@ -498,63 +583,74 @@ function CalendarsSection() {
 
   return (
     <div className="space-y-3">
-      <div className="space-y-0.5">
+      <SettingCard>
         {sorted.map((calendar) => (
           <CalendarRow key={calendar._id} calendar={calendar} />
         ))}
         {sorted.length === 0 && (
-          <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+          <p className="py-8 text-center text-xs text-muted-foreground">
             No calendars yet — they appear after your first sync.
           </p>
         )}
-      </div>
+      </SettingCard>
 
       {writable.length > 0 && (
-        <div className="space-y-1.5">
-          <p className="px-2 text-xs font-medium text-muted-foreground">
-            Default calendar for new events
-          </p>
-          <PickerRow
-            label={
-              defaultCalendar
-                ? calendarDisplayName(defaultCalendar)
-                : "Automatic · primary calendar"
+        <SettingCard>
+          <SettingRow
+            title="Default calendar"
+            description="Where new events land unless you pick one"
+            control={
+              <PickerRow
+                label={
+                  defaultCalendar
+                    ? calendarDisplayName(defaultCalendar)
+                    : "Automatic"
+                }
+                swatchVar={
+                  defaultCalendar ? calendarColorVar(defaultCalendar) : undefined
+                }
+                ariaLabel="Default calendar for new events"
+              >
+                {(close) => (
+                  <div className="flex flex-col gap-0.5">
+                    <PickerOption
+                      label="Automatic · primary calendar"
+                      selected={!defaultCalendar}
+                      onSelect={() => {
+                        close();
+                        void updatePrefs({
+                          reset: ["defaultCalendarId"],
+                        }).catch(
+                          reportSaveError(
+                            "Couldn't change the default calendar",
+                          ),
+                        );
+                      }}
+                    />
+                    {writable.map((calendar) => (
+                      <PickerOption
+                        key={calendar._id}
+                        label={calendarDisplayName(calendar)}
+                        swatchVar={calendarColorVar(calendar)}
+                        selected={calendar._id === defaultCalendar?._id}
+                        onSelect={() => {
+                          close();
+                          void updatePrefs({
+                            defaultCalendarId: calendar._id,
+                          }).catch(
+                            reportSaveError(
+                              "Couldn't change the default calendar",
+                            ),
+                          );
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </PickerRow>
             }
-            swatchVar={defaultCalendar ? calendarColorVar(defaultCalendar) : undefined}
-            ariaLabel="Default calendar for new events"
-          >
-            {(close) => (
-              <div className="flex flex-col gap-0.5">
-                <PickerOption
-                  label="Automatic · primary calendar"
-                  selected={!defaultCalendar}
-                  onSelect={() => {
-                    close();
-                    void updatePrefs({ reset: ["defaultCalendarId"] }).catch(
-                      reportSaveError("Couldn't change the default calendar"),
-                    );
-                  }}
-                />
-                {writable.map((calendar) => (
-                  <PickerOption
-                    key={calendar._id}
-                    label={calendarDisplayName(calendar)}
-                    swatchVar={calendarColorVar(calendar)}
-                    selected={calendar._id === defaultCalendar?._id}
-                    onSelect={() => {
-                      close();
-                      void updatePrefs({
-                        defaultCalendarId: calendar._id,
-                      }).catch(
-                        reportSaveError("Couldn't change the default calendar"),
-                      );
-                    }}
-                  />
-                ))}
-              </div>
-            )}
-          </PickerRow>
-        </div>
+          />
+        </SettingCard>
       )}
     </div>
   );
@@ -568,7 +664,6 @@ function CalendarRow({ calendar }: { calendar: CalendarListItem }) {
     api.domains.calendar.mutations.setCalendarSummaryOverride,
   );
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
   const name = calendarDisplayName(calendar);
 
   const commit = (value: string) => {
@@ -584,7 +679,7 @@ function CalendarRow({ calendar }: { calendar: CalendarListItem }) {
   };
 
   return (
-    <div className="group flex h-9 items-center gap-2.5 rounded-2xl px-2 transition-colors hover:bg-muted/60">
+    <div className="group flex items-center gap-3 border-b border-border py-3 last:border-b-0">
       <span
         className="size-3 shrink-0 rounded-full"
         style={{ backgroundColor: `var(${calendarColorVar(calendar)})` }}
@@ -605,13 +700,12 @@ function CalendarRow({ calendar }: { calendar: CalendarListItem }) {
             }
             if (event.key === "Enter") commit(event.currentTarget.value);
           }}
-          onChange={(event) => setDraft(event.target.value)}
         />
       ) : (
-        <span className="min-w-0 flex-1 truncate text-sm">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">
           {name}
           {calendar.summaryOverride && calendar.summary && (
-            <span className="ml-1.5 text-xs text-muted-foreground">
+            <span className="ml-1.5 text-xs font-normal text-muted-foreground">
               · was {calendar.summary}
             </span>
           )}
@@ -623,10 +717,7 @@ function CalendarRow({ calendar }: { calendar: CalendarListItem }) {
           variant="ghost"
           size="icon-xs"
           aria-label={`Rename ${name}`}
-          onClick={() => {
-            setDraft(name);
-            setEditing(true);
-          }}
+          onClick={() => setEditing(true)}
           className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
         >
           <HugeiconsIcon
@@ -644,7 +735,7 @@ function CalendarRow({ calendar }: { calendar: CalendarListItem }) {
             selected: checked === true,
           }).catch(reportSaveError("Couldn't update the calendar"))
         }
-        aria-label={`Show ${draft && editing ? draft : name}`}
+        aria-label={`Show ${name}`}
       />
     </div>
   );
@@ -686,51 +777,68 @@ function PreferencesSection() {
     );
 
   return (
-    <div className="space-y-3">
-      <SegmentedGroup
-        label="Week starts on"
-        options={WEEK_START_OPTIONS}
-        value={prefs.weekStartsOn ?? 1}
-        onChange={(value) => save({ weekStartsOn: value })}
-      />
-      <SegmentedGroup
-        label="Time format"
-        options={TIME_FORMAT_OPTIONS}
-        value={prefs.timeFormat ?? null}
-        onChange={(value) =>
-          value === null
-            ? save({ reset: ["timeFormat"] })
-            : save({ timeFormat: value })
+    <SettingCard>
+      <SettingRow
+        title="Week starts on"
+        description="First day of the calendar week"
+        control={
+          <Segmented
+            label="Week starts on"
+            options={WEEK_START_OPTIONS}
+            value={prefs.weekStartsOn ?? 1}
+            onChange={(value) => save({ weekStartsOn: value })}
+          />
         }
       />
-      <SegmentedGroup
-        label="Default view"
-        options={DEFAULT_VIEW_OPTIONS}
-        value={prefs.defaultView ?? "week"}
-        onChange={(value) => save({ defaultView: value })}
+      <SettingRow
+        title="Time format"
+        description="Auto follows the 12-hour clock"
+        control={
+          <Segmented
+            label="Time format"
+            options={TIME_FORMAT_OPTIONS}
+            value={prefs.timeFormat ?? null}
+            onChange={(value) =>
+              value === null
+                ? save({ reset: ["timeFormat"] })
+                : save({ timeFormat: value })
+            }
+          />
+        }
       />
-      <div className="space-y-1.5">
-        <p className="px-2 text-xs font-medium text-muted-foreground">
-          Time zone
-        </p>
-        <TimeZonePicker
-          value={prefs.timeZone}
-          browserZone={browserZone}
-          onSelect={(zone) =>
-            zone === null
-              ? save({ reset: ["timeZone"] })
-              : save({ timeZone: zone })
-          }
-        />
-        <p className="px-2 text-xs text-muted-foreground">
-          Used for new events and your booking page.
-        </p>
-      </div>
-    </div>
+      <SettingRow
+        title="Default view"
+        description="What the calendar opens to"
+        control={
+          <Segmented
+            label="Default view"
+            options={DEFAULT_VIEW_OPTIONS}
+            value={prefs.defaultView ?? "week"}
+            onChange={(value) => save({ defaultView: value })}
+          />
+        }
+      />
+      <SettingRow
+        title="Time zone"
+        description="Used for new events and your booking page"
+        control={
+          <TimeZonePicker
+            value={prefs.timeZone}
+            browserZone={browserZone}
+            onSelect={(zone) =>
+              zone === null
+                ? save({ reset: ["timeZone"] })
+                : save({ timeZone: zone })
+            }
+          />
+        }
+      />
+    </SettingCard>
   );
 }
 
-function SegmentedGroup<T>({
+/** A compact in-row segmented control, in the account panel's theme style. */
+function Segmented<T>({
   label,
   options,
   value,
@@ -742,33 +850,30 @@ function SegmentedGroup<T>({
   onChange: (value: T) => void;
 }) {
   return (
-    <div className="space-y-1.5">
-      <p className="px-2 text-xs font-medium text-muted-foreground">{label}</p>
-      <div
-        role="group"
-        aria-label={label}
-        className="grid gap-1 rounded-2xl bg-muted p-1"
-        style={{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}
-      >
-        {options.map((option) => (
-          <Button
-            key={option.label}
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-pressed={value === option.value}
-            className="rounded-xl px-2 text-muted-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm hover:bg-background/60 dark:hover:bg-background/40 aria-pressed:dark:border-white/5"
-            onClick={() => onChange(option.value)}
-          >
-            {option.label}
-          </Button>
-        ))}
-      </div>
+    <div
+      role="group"
+      aria-label={label}
+      className="grid gap-1 rounded-2xl bg-background p-1"
+      style={{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}
+    >
+      {options.map((option) => (
+        <Button
+          key={option.label}
+          type="button"
+          variant="ghost"
+          size="xs"
+          aria-pressed={value === option.value}
+          className="rounded-xl px-2.5 text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground aria-pressed:shadow-sm hover:bg-muted/60"
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </Button>
+      ))}
     </div>
   );
 }
 
-/** A settings row that opens a popover of options — shared by the default
+/** A row control that opens a popover of options — shared by the default
  * calendar and time zone pickers. Children receive a close callback. */
 function PickerRow({
   label,
@@ -779,14 +884,14 @@ function PickerRow({
   label: string;
   swatchVar?: string;
   ariaLabel: string;
-  children: (close: () => void) => React.ReactNode;
+  children: (close: () => void) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         aria-label={ariaLabel}
-        className="group flex h-9 w-full items-center gap-2.5 rounded-3xl bg-input/50 px-3 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+        className="flex h-8 max-w-52 items-center gap-2 rounded-2xl bg-background px-3 text-left outline-none transition-colors hover:bg-background/70 focus-visible:ring-3 focus-visible:ring-ring/30"
       >
         {swatchVar && (
           <span
@@ -801,7 +906,7 @@ function PickerRow({
           className="size-4 shrink-0 rotate-90 text-muted-foreground"
         />
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 p-1.5">
+      <PopoverContent align="end" className="w-72 p-1.5">
         {children(() => setOpen(false))}
       </PopoverContent>
     </Popover>

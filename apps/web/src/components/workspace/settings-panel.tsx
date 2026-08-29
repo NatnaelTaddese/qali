@@ -176,8 +176,10 @@ export function SettingsPanel({
       <div ref={innerRef}>
         {isDesktop ? (
           // The island drops its own inset for settings, so the sidebar's tint
-          // runs corner to corner — the two-tone split.
-          <div className="grid min-h-[26rem] grid-cols-[12.5rem_minmax(0,1fr)]">
+          // runs corner to corner — the two-tone split. The height is fixed
+          // (viewport-capped) so switching sections never resizes the sheet;
+          // a section taller than the pane scrolls inside it instead.
+          <div className="grid h-[min(28rem,70dvh)] grid-cols-[12.5rem_minmax(0,1fr)]">
             <nav
               aria-label="Settings sections"
               className="flex flex-col gap-1 border-r border-border bg-muted/40 p-3"
@@ -221,7 +223,7 @@ export function SettingsPanel({
                 </button>
               ))}
             </nav>
-            <div className="relative p-5 pl-6">
+            <div className="relative flex h-full min-h-0 flex-col p-5 pl-6">
               <button
                 type="button"
                 onClick={onClose}
@@ -242,11 +244,14 @@ export function SettingsPanel({
                   initial="initial"
                   animate="animate"
                   exit="exit"
+                  className="flex min-h-0 flex-1 flex-col"
                 >
-                  <h2 className="font-display pr-9 text-2xl font-bold">
+                  <h2 className="font-display shrink-0 pr-9 text-2xl font-bold">
                     {active.label}
                   </h2>
-                  <div className="mt-4">{sectionContent}</div>
+                  <div className="-mr-2 mt-4 min-h-0 flex-1 overflow-y-auto pr-2 pb-1 [scrollbar-width:thin]">
+                    {sectionContent}
+                  </div>
                 </motion.div>
               </AnimatePresence>
             </div>

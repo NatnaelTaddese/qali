@@ -8,8 +8,10 @@ import {
   Sun01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { api } from "@qali/backend/convex/_generated/api";
 import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
+import { useQuery } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -30,6 +32,10 @@ export function AccountPanel({
   onClose: () => void;
   onOpenSettings: () => void;
 }) {
+  // Warm the settings panel's one cold query while the user is a click away
+  // from it. The panel swap overlaps both panels (popLayout), so its own
+  // subscription attaches before this one drops — Accounts opens populated.
+  useQuery(api.domains.calendar.queries.listConnections);
   const { data: session } = authClient.useSession();
   const { theme, setTheme } = useTheme();
   const [isSigningOut, setIsSigningOut] = useState(false);

@@ -51,6 +51,7 @@ import {
   dockVariantsReduced,
   SPRING_DOCK,
 } from "@/components/calendar/motion";
+import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { authClient } from "@/lib/auth-client";
 import { UserAvatar } from "./user-avatar";
 import { useSyncNow } from "./use-sync-now";
@@ -423,7 +424,10 @@ type Connection = FunctionReturnType<
 >[number];
 
 function AccountsSection() {
-  const connections = useQuery(api.domains.calendar.queries.listConnections);
+  // Stable so a reopen paints the retained list instead of a skeleton.
+  const connections = useStableQuery(
+    api.domains.calendar.queries.listConnections,
+  );
 
   if (connections === undefined) return <SectionSkeleton />;
   if (connections.length === 0) {
@@ -631,7 +635,9 @@ const CALENDAR_GRID =
   "grid grid-cols-[minmax(0,1fr)_3.5rem_5.5rem] items-center gap-3";
 
 function CalendarsSection() {
-  const connections = useQuery(api.domains.calendar.queries.listConnections);
+  const connections = useStableQuery(
+    api.domains.calendar.queries.listConnections,
+  );
   const calendars = useQuery(api.domains.calendar.queries.listCalendars);
   const { data: session } = authClient.useSession();
 

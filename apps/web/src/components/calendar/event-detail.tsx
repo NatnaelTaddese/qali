@@ -42,7 +42,13 @@ import {
   rsvpSummary,
   type Guest,
 } from "./guest-picker";
-import { calendarDisplayName, editableEventId, type CalendarEvent } from "./lib";
+import { usePreferences } from "@/components/workspace/preferences-context";
+import {
+  calendarDisplayName,
+  editableEventId,
+  timePattern,
+  type CalendarEvent,
+} from "./lib";
 import { dockVariants, dockVariantsReduced, press, SPRING_DOCK } from "./motion";
 import { useEventCapabilities } from "./permissions";
 import { RichTextView } from "./rich-text/rich-text-view";
@@ -61,7 +67,7 @@ const RSVP_CHOICES = [
   { status: "declined", label: "No" },
 ] as const;
 
-function timeText(event: CalendarEvent): string {
+function timeText(event: CalendarEvent, use24h: boolean): string {
   if (event.allDay) {
     // Google all-day endMs is exclusive midnight.
     const lastDay = event.endMs - 1;
@@ -69,11 +75,12 @@ function timeText(event: CalendarEvent): string {
       ? format(event.startMs, "EEE d MMM")
       : `${format(event.startMs, "EEE d MMM")} – ${format(lastDay, "EEE d MMM")}`;
   }
+  const time = timePattern(use24h);
   const end = format(
     event.endMs,
-    isSameDay(event.startMs, event.endMs) ? "h:mm a" : "EEE d MMM, h:mm a",
+    isSameDay(event.startMs, event.endMs) ? time : `EEE d MMM, ${time}`,
   );
-  return `${format(event.startMs, "EEE d MMM, h:mm a")} – ${end}`;
+  return `${format(event.startMs, `EEE d MMM, ${time}`)} – ${end}`;
 }
 
 function DetailRow({
@@ -473,6 +480,7 @@ export function EventDetail({
   onDuplicate: (prefill: EventPrefill, startMs: number, endMs: number) => void;
 }) {
   const reduce = useReducedMotion();
+  const { use24h } = usePreferences();
   const deleteEvent = useAction(api.domains.calendar.service.deleteEvent);
   const refreshEventRecurrence = useAction(api.domains.calendar.service.refreshEventRecurrence);
   const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
@@ -690,7 +698,7 @@ export function EventDetail({
 
           <DetailRow icon={Clock01Icon}>
             <p className="text-sm font-medium text-foreground">
-              {timeText(event)}
+              {timeText(event, use24h)}
             </p>
             <p className="text-xs text-muted-foreground">
               {formatDistanceToNowStrict(event.startMs, { addSuffix: true })}

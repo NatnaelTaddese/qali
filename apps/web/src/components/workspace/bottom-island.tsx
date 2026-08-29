@@ -3,6 +3,7 @@ import {
   Cursor02Icon,
   PlusSignIcon,
   Search01Icon,
+  Settings01Icon,
   TimeScheduleIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
@@ -15,10 +16,9 @@ import {
   TooltipTrigger,
 } from "@qali/ui/components/tooltip";
 import { cn } from "@qali/ui/lib/utils";
-import { useAction, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 
 import { EventCreate } from "@/components/calendar/event-create";
 import { EventDetail } from "@/components/calendar/event-detail";
@@ -26,6 +26,7 @@ import { EventEdit } from "@/components/calendar/event-edit";
 import {
   dockVariants,
   dockVariantsReduced,
+  EASE_OUT_EXPO,
   SPRING_DOCK,
 } from "@/components/calendar/motion";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
@@ -34,7 +35,9 @@ import { useAvailabilityEdit } from "./availability-edit-context";
 import { AvailabilityPanel } from "./availability-panel";
 import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
+import { SettingsPanel } from "./settings-panel";
 import { UserAvatar } from "./user-avatar";
+import { useSyncNow } from "./use-sync-now";
 
 const MAX_TIMEOUT_MS = 2_147_000_000;
 const AVAILABILITY_PREFETCH_GRACE_MS = 10_000;
@@ -50,6 +53,8 @@ function widthClass(view: DockView | null): string {
   // The availability panel carries a seven-row weekly grid, so it needs more
   // room than the event panels.
   if (view.kind === "availability") return "w-[min(30rem,100%)]";
+  // Settings blooms widest: section nav and content sit side by side.
+  if (view.kind === "settings") return "w-[min(44rem,100%)]";
   return "w-[min(27rem,100%)]";
 }
 
@@ -215,7 +220,30 @@ export function BottomIsland() {
   const variants = reduce ? dockVariantsReduced : dockVariants;
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
+    <>
+      {/* Settings is the one view that dims the calendar behind it — a
+          deliberate exception to the dock's no-scrim rule: the wide sheet
+          covers enough of the grid that stray taps should dismiss, not act.
+          A pointer on the scrim lands outside the dock node and closes it via
+          the existing outside-pointer handler; no extra wiring. */}
+      <AnimatePresence>
+        {view?.kind === "settings" && (
+          <motion.div
+            key="settings-scrim"
+            aria-hidden
+            className="fixed inset-0 z-40 bg-background/40"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={
+              reduce
+                ? { duration: 0 }
+                : { duration: 0.24, ease: EASE_OUT_EXPO }
+            }
+          />
+        )}
+      </AnimatePresence>
+      <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
       <motion.nav
         ref={ref}
         layout
@@ -282,7 +310,15 @@ export function BottomIsland() {
                   onCreated={closeCurrent}
                 />
               ) : view?.kind === "account" ? (
-                <AccountPanel onClose={closeCurrent} />
+                <AccountPanel
+                  onClose={closeCurrent}
+                  onOpenSettings={() => open({ kind: "settings" })}
+                />
+              ) : view?.kind === "settings" ? (
+                <SettingsPanel
+                  initialSection={view.section}
+                  onClose={closeCurrent}
+                />
               ) : view?.kind === "availability" ? (
                 <AvailabilityPanel
                   key={availabilityInstance.current}
@@ -300,6 +336,7 @@ export function BottomIsland() {
                 <NavRow
                   pendingCount={activePendingBookings?.length ?? 0}
                   onOpenAccount={() => open({ kind: "account" })}
+                  onOpenSettings={() => open({ kind: "settings" })}
                   onCreate={openCreate}
                   availabilityLoading={availabilityRequested}
                   onPrepareAvailability={prepareAvailability}
@@ -310,7 +347,8 @@ export function BottomIsland() {
           </AnimatePresence>
         </motion.div>
       </motion.nav>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -361,6 +399,7 @@ function NavRow({
   pendingCount,
   availabilityLoading,
   onOpenAccount,
+  onOpenSettings,
   onCreate,
   onPrepareAvailability,
   onOpenAvailability,
@@ -368,26 +407,12 @@ function NavRow({
   pendingCount: number;
   availabilityLoading: boolean;
   onOpenAccount: () => void;
+  onOpenSettings: () => void;
   onCreate: () => void;
   onPrepareAvailability: () => void;
   onOpenAvailability: () => void;
 }) {
-  const syncNow = useAction(api.domains.sync.engine.syncNow);
-  const [isSyncing, setIsSyncing] = useState(false);
-
-  const sync = async () => {
-    if (isSyncing) return;
-    setIsSyncing(true);
-    try {
-      await syncNow();
-    } catch (error: unknown) {
-      toast.error("Couldn't sync calendar", {
-        description: error instanceof Error ? error.message : undefined,
-      });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+  const { sync, isSyncing } = useSyncNow();
 
   return (
     <div className="flex items-center gap-1">
@@ -411,6 +436,11 @@ function NavRow({
         busy={availabilityLoading}
         onIntent={onPrepareAvailability}
         onClick={onOpenAvailability}
+      />
+      <NavButton
+        icon={Settings01Icon}
+        label="Settings"
+        onClick={onOpenSettings}
       />
 
       <div className="mx-1 h-6 w-px bg-border" />

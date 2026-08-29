@@ -343,6 +343,84 @@ export const setCalendarSelected = mutation({
   handler: (ctx, args) => setCalendarSelectedHandler(ctx, args),
 });
 
+/** Pause or resume a connection's sync. Only these two states are settable —
+ * "error" is the sync engine's to report. Pausing needs no engine change:
+ * listActiveConnections, the cron enqueue, and the lease claim all filter on
+ * `status === "active"`. Exported core so itests can drive it via t.run. */
+export async function setConnectionStatusCore(
+  ctx: MutationCtx,
+  userId: string,
+  args: {
+    connectionId: Id<"calendarConnections">;
+    status: "active" | "paused";
+  },
+): Promise<null> {
+  const connection = await ctx.db.get(args.connectionId);
+  if (!connection || connection.userId !== userId) {
+    throw new Error("Connection not found");
+  }
+  await ctx.db.patch(args.connectionId, {
+    status: args.status,
+    // Resuming is a fresh start; a stale provider error would read as current.
+    ...(args.status === "active" ? { lastError: undefined } : {}),
+    updatedAt: Date.now(),
+  });
+  return null;
+}
+
+export const setConnectionStatus = mutation({
+  args: {
+    connectionId: v.id("calendarConnections"),
+    status: v.union(v.literal("active"), v.literal("paused")),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    if (!user) {
+      throw new Error("Not authenticated");
+    }
+    return setConnectionStatusCore(ctx, user._id, args);
+  },
+});
+
+const SUMMARY_OVERRIDE_MAX_LENGTH = 200;
+
+/** Rename a calendar locally. An empty or absent name clears the override so
+ * calendarDisplayName falls back to the provider's `summary`. */
+export async function setCalendarSummaryOverrideCore(
+  ctx: MutationCtx,
+  userId: string,
+  args: { calendarId: Id<"calendars">; summaryOverride?: string },
+): Promise<null> {
+  const calendar = await ctx.db.get(args.calendarId);
+  if (!calendar || calendar.userId !== userId) {
+    throw new Error("Calendar not found");
+  }
+  const trimmed = args.summaryOverride?.trim();
+  if (trimmed && trimmed.length > SUMMARY_OVERRIDE_MAX_LENGTH) {
+    throw new Error("Calendar name is too long");
+  }
+  await ctx.db.patch(args.calendarId, {
+    summaryOverride: trimmed ? trimmed : undefined,
+  });
+  return null;
+}
+
+export const setCalendarSummaryOverride = mutation({
+  args: {
+    calendarId: v.id("calendars"),
+    summaryOverride: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    if (!user) {
+      throw new Error("Not authenticated");
+    }
+    return setCalendarSummaryOverrideCore(ctx, user._id, args);
+  },
+});
+
 /** Store an adapter event as the neutral events row for its local calendar. */
 export async function mirrorProviderEventHandler(
   ctx: MutationCtx,

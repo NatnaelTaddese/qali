@@ -1,0 +1,916 @@
+import {
+  ArrowLeft01Icon,
+  ArrowRight01Icon,
+  Calendar03Icon,
+  Cancel01Icon,
+  GoogleIcon,
+  Link01Icon,
+  PencilEdit01Icon,
+  RefreshIcon,
+  SlidersHorizontalIcon,
+  Tick02Icon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { api } from "@qali/backend/convex/_generated/api";
+import type { Id } from "@qali/backend/convex/_generated/dataModel";
+import { Button } from "@qali/ui/components/button";
+import { Input } from "@qali/ui/components/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@qali/ui/components/popover";
+import { Skeleton } from "@qali/ui/components/skeleton";
+import { Spinner } from "@qali/ui/components/spinner";
+import { Switch } from "@qali/ui/components/switch";
+import { cn } from "@qali/ui/lib/utils";
+import type { FunctionReturnType } from "convex/server";
+import { useMutation, useQuery } from "convex/react";
+import { formatDistanceToNow } from "date-fns";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { toast } from "sonner";
+
+import {
+  calendarDisplayName,
+  type CalendarListItem,
+} from "@/components/calendar/lib";
+import { calendarColorVar } from "@/components/calendar/colors";
+import {
+  dockVariants,
+  dockVariantsReduced,
+  SPRING_DOCK,
+} from "@/components/calendar/motion";
+import { authClient } from "@/lib/auth-client";
+import { useSyncNow } from "./use-sync-now";
+
+export type SettingsSection = "accounts" | "calendars" | "preferences";
+
+const SECTIONS: {
+  id: SettingsSection;
+  label: string;
+  description: string;
+  icon: IconSvgElement;
+}[] = [
+  {
+    id: "accounts",
+    label: "Accounts",
+    description: "Connections and sync",
+    icon: Link01Icon,
+  },
+  {
+    id: "calendars",
+    label: "Calendars",
+    description: "Names and defaults",
+    icon: Calendar03Icon,
+  },
+  {
+    id: "preferences",
+    label: "Preferences",
+    description: "Time and display",
+    icon: SlidersHorizontalIcon,
+  },
+];
+
+/** The panel goes two-column at the same point Tailwind's `sm:` would. */
+const DESKTOP_QUERY = "(min-width: 640px)";
+
+function useIsDesktop(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const media = window.matchMedia(DESKTOP_QUERY);
+      media.addEventListener("change", onChange);
+      return () => media.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia(DESKTOP_QUERY).matches,
+    () => true,
+  );
+}
+
+/** Surface a failed settings write; the reactive query snaps the control back. */
+function reportSaveError(message: string) {
+  return (error: unknown) =>
+    toast.error(message, {
+      description: error instanceof Error ? error.message : undefined,
+    });
+}
+
+/**
+ * The full-bloom settings sheet: the island opens wide into section nav plus
+ * content on desktop, and a nav-list-then-slide stack on small screens. Every
+ * control writes immediately — nothing here is a draft with a Save.
+ */
+export function SettingsPanel({
+  initialSection,
+  onClose,
+}: {
+  initialSection?: SettingsSection;
+  onClose: () => void;
+}) {
+  const reduce = useReducedMotion();
+  const isDesktop = useIsDesktop();
+  const [section, setSection] = useState<SettingsSection>(
+    initialSection ?? "accounts",
+  );
+  // Small screens show the section list first unless a section was requested.
+  const [mobileScreen, setMobileScreen] = useState<"nav" | "section">(
+    initialSection ? "section" : "nav",
+  );
+  const [direction, setDirection] = useState<-1 | 0 | 1>(0);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number>();
+
+  // The dock shell animates to whatever the active content measures, exactly
+  // like the availability panel's screen swap.
+  useEffect(() => {
+    const element = innerRef.current;
+    if (!element) return;
+    const measure = () => setHeight(element.offsetHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const variants = reduce ? dockVariantsReduced : dockVariants;
+
+  const goTo = (next: SettingsSection) => {
+    const from = SECTIONS.findIndex((s) => s.id === section);
+    const to = SECTIONS.findIndex((s) => s.id === next);
+    setDirection(to === from ? 0 : to > from ? 1 : -1);
+    setSection(next);
+    setMobileScreen("section");
+  };
+
+  const backToNav = () => {
+    setDirection(-1);
+    setMobileScreen("nav");
+  };
+
+  const active = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0];
+
+  const sectionContent =
+    section === "accounts" ? (
+      <AccountsSection />
+    ) : section === "calendars" ? (
+      <CalendarsSection />
+    ) : (
+      <PreferencesSection />
+    );
+
+  return (
+    <motion.div
+      initial={false}
+      animate={{ height: height ?? "auto" }}
+      transition={reduce ? { duration: 0 } : SPRING_DOCK}
+      className="overflow-hidden"
+    >
+      <div ref={innerRef} className="flex flex-col gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">Settings</p>
+            <p className="truncate text-xs text-muted-foreground">
+              Accounts, calendars, and preferences
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <HugeiconsIcon
+              icon={Cancel01Icon}
+              strokeWidth={2}
+              className="size-4"
+            />
+          </button>
+        </div>
+
+        {isDesktop ? (
+          <div className="grid grid-cols-[10.5rem_minmax(0,1fr)] gap-4">
+            <nav aria-label="Settings sections" className="flex flex-col gap-1">
+              {SECTIONS.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  aria-current={entry.id === section || undefined}
+                  onClick={() => goTo(entry.id)}
+                  className={cn(
+                    "group flex items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring",
+                    entry.id === section && "bg-muted/60",
+                  )}
+                >
+                  <HugeiconsIcon
+                    icon={entry.icon}
+                    strokeWidth={2}
+                    className={cn(
+                      "size-4 shrink-0",
+                      entry.id === section
+                        ? "text-foreground"
+                        : "text-muted-foreground",
+                    )}
+                  />
+                  <span
+                    className={cn(
+                      "text-sm",
+                      entry.id === section
+                        ? "font-medium"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {entry.label}
+                  </span>
+                </button>
+              ))}
+            </nav>
+            <div className="min-h-40 border-l border-border pl-4">
+              <AnimatePresence mode="popLayout" initial={false} custom={direction}>
+                <motion.div
+                  key={section}
+                  custom={direction}
+                  variants={variants}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                >
+                  {sectionContent}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+          </div>
+        ) : (
+          <AnimatePresence mode="popLayout" initial={false} custom={direction}>
+            {mobileScreen === "nav" ? (
+              <motion.div
+                key="nav"
+                custom={direction}
+                variants={variants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                className="flex flex-col gap-1.5"
+              >
+                {SECTIONS.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    onClick={() => goTo(entry.id)}
+                    className="group flex items-center gap-3 rounded-2xl bg-muted/60 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <HugeiconsIcon
+                      icon={entry.icon}
+                      strokeWidth={2}
+                      className="size-5 shrink-0 text-muted-foreground"
+                    />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="text-sm font-medium">{entry.label}</span>
+                      <span className="truncate text-xs text-muted-foreground">
+                        {entry.description}
+                      </span>
+                    </span>
+                    <HugeiconsIcon
+                      icon={ArrowRight01Icon}
+                      strokeWidth={2}
+                      className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+                    />
+                  </button>
+                ))}
+              </motion.div>
+            ) : (
+              <motion.div
+                key={section}
+                custom={direction}
+                variants={variants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                className="flex flex-col gap-3"
+              >
+                <button
+                  type="button"
+                  onClick={backToNav}
+                  className="-ml-1 flex items-center gap-1 self-start rounded-lg px-1 py-0.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <HugeiconsIcon
+                    icon={ArrowLeft01Icon}
+                    strokeWidth={2}
+                    className="size-4 text-muted-foreground"
+                  />
+                  {active.label}
+                </button>
+                {sectionContent}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+function SectionSkeleton() {
+  return (
+    <div className="space-y-2">
+      <Skeleton className="h-16 rounded-2xl" />
+      <Skeleton className="h-16 rounded-2xl" />
+    </div>
+  );
+}
+
+type Connection = FunctionReturnType<
+  typeof api.domains.calendar.queries.listConnections
+>[number];
+
+function AccountsSection() {
+  const connections = useQuery(api.domains.calendar.queries.listConnections);
+
+  if (connections === undefined) return <SectionSkeleton />;
+  if (connections.length === 0) {
+    return (
+      <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+        No connected accounts yet — they appear after your first sync.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {connections.map((connection) => (
+        <ConnectionCard key={connection._id} connection={connection} />
+      ))}
+    </div>
+  );
+}
+
+function ConnectionCard({ connection }: { connection: Connection }) {
+  const { data: session } = authClient.useSession();
+  const setStatus = useMutation(
+    api.domains.calendar.mutations.setConnectionStatus,
+  );
+  const { sync, isSyncing } = useSyncNow();
+  const reduce = useReducedMotion();
+
+  const paused = connection.status === "paused";
+  const errored = connection.status === "error";
+  // A backfilled login-grant connection learns its account id lazily; until
+  // then the session email is the same account by construction.
+  const accountLabel =
+    connection.providerAccountId ?? session?.user?.email ?? "";
+  const intervalMin = Math.max(
+    1,
+    Math.round((connection.syncIntervalMs ?? 15 * 60 * 1000) / 60_000),
+  );
+
+  const toggle = (nextActive: boolean) =>
+    void setStatus({
+      connectionId: connection._id,
+      status: nextActive ? "active" : "paused",
+    }).catch(reportSaveError("Couldn't update the connection"));
+
+  return (
+    <div className="space-y-2.5 rounded-2xl bg-muted/60 p-3">
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-background">
+          <HugeiconsIcon icon={GoogleIcon} strokeWidth={2} className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">
+            {connection.provider === "google" ? "Google Calendar" : "Outlook"}
+          </p>
+          <p className="truncate text-xs text-muted-foreground">
+            {accountLabel}
+          </p>
+        </div>
+        <Switch
+          checked={!paused}
+          onCheckedChange={toggle}
+          aria-label={paused ? "Sync is paused" : "Sync is on"}
+        />
+      </div>
+
+      <div className="flex items-center gap-1.5 text-sm">
+        <span className="relative flex size-2 items-center justify-center">
+          <span
+            className={cn(
+              "size-2 rounded-full",
+              errored
+                ? "bg-destructive"
+                : paused
+                  ? "bg-muted-foreground/40"
+                  : "bg-chart-2",
+            )}
+          />
+          {!paused && !errored && !reduce && (
+            <span className="absolute size-2 animate-ping rounded-full bg-chart-2 opacity-60" />
+          )}
+        </span>
+        <span className="font-medium">
+          {errored ? "Needs attention" : paused ? "Paused" : "Active"}
+        </span>
+        {errored && connection.lastError && (
+          <span className="min-w-0 truncate text-xs text-destructive">
+            {connection.lastError}
+          </span>
+        )}
+        {errored && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="xs"
+            className="ml-auto"
+            onClick={() => toggle(true)}
+          >
+            Resume
+          </Button>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={paused || isSyncing}
+          aria-busy={isSyncing}
+          onClick={() => void sync()}
+        >
+          {isSyncing ? (
+            <Spinner />
+          ) : (
+            <HugeiconsIcon
+              icon={RefreshIcon}
+              strokeWidth={2}
+              className="size-4"
+            />
+          )}
+          {isSyncing ? "Syncing…" : "Sync now"}
+        </Button>
+        <span className="ml-auto truncate text-xs text-muted-foreground">
+          {connection.lastSyncAt
+            ? `Synced ${formatDistanceToNow(connection.lastSyncAt, {
+                addSuffix: true,
+              })}`
+            : "Not synced yet"}
+          {!paused && ` · checks every ${intervalMin} min`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
+
+function isWritable(calendar: CalendarListItem): boolean {
+  return (
+    !calendar.isShared &&
+    WRITABLE_ACCESS_ROLES.has(calendar.accessRole ?? "")
+  );
+}
+
+function sortCalendars(calendars: CalendarListItem[]): CalendarListItem[] {
+  // Primary first, then alphabetical — same order as the header picker.
+  return [...calendars].sort((a, b) => {
+    if (a.primary !== b.primary) return a.primary ? -1 : 1;
+    return calendarDisplayName(a).localeCompare(calendarDisplayName(b));
+  });
+}
+
+function CalendarsSection() {
+  const calendars = useQuery(api.domains.calendar.queries.listCalendars);
+  const prefs = useQuery(api.domains.preferences.queries.getMyPreferences);
+  const updatePrefs = useMutation(
+    api.domains.preferences.mutations.updatePreferences,
+  );
+
+  if (calendars === undefined || prefs === undefined) {
+    return <SectionSkeleton />;
+  }
+  const sorted = sortCalendars(calendars);
+  const writable = sorted.filter(isWritable);
+  const defaultCalendar =
+    writable.find((c) => c._id === prefs?.defaultCalendarId) ?? null;
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-0.5">
+        {sorted.map((calendar) => (
+          <CalendarRow key={calendar._id} calendar={calendar} />
+        ))}
+        {sorted.length === 0 && (
+          <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+            No calendars yet — they appear after your first sync.
+          </p>
+        )}
+      </div>
+
+      {writable.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="px-2 text-xs font-medium text-muted-foreground">
+            Default calendar for new events
+          </p>
+          <PickerRow
+            label={
+              defaultCalendar
+                ? calendarDisplayName(defaultCalendar)
+                : "Automatic · primary calendar"
+            }
+            swatchVar={defaultCalendar ? calendarColorVar(defaultCalendar) : undefined}
+            ariaLabel="Default calendar for new events"
+          >
+            {(close) => (
+              <div className="flex flex-col gap-0.5">
+                <PickerOption
+                  label="Automatic · primary calendar"
+                  selected={!defaultCalendar}
+                  onSelect={() => {
+                    close();
+                    void updatePrefs({ reset: ["defaultCalendarId"] }).catch(
+                      reportSaveError("Couldn't change the default calendar"),
+                    );
+                  }}
+                />
+                {writable.map((calendar) => (
+                  <PickerOption
+                    key={calendar._id}
+                    label={calendarDisplayName(calendar)}
+                    swatchVar={calendarColorVar(calendar)}
+                    selected={calendar._id === defaultCalendar?._id}
+                    onSelect={() => {
+                      close();
+                      void updatePrefs({
+                        defaultCalendarId: calendar._id,
+                      }).catch(
+                        reportSaveError("Couldn't change the default calendar"),
+                      );
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </PickerRow>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CalendarRow({ calendar }: { calendar: CalendarListItem }) {
+  const setSelected = useMutation(
+    api.domains.calendar.mutations.setCalendarSelected,
+  );
+  const rename = useMutation(
+    api.domains.calendar.mutations.setCalendarSummaryOverride,
+  );
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const name = calendarDisplayName(calendar);
+
+  const commit = (value: string) => {
+    setEditing(false);
+    const trimmed = value.trim();
+    // Committing the provider's own name (or nothing) clears the override.
+    if (trimmed === name) return;
+    void rename({
+      calendarId: calendar._id as Id<"calendars">,
+      summaryOverride:
+        trimmed === "" || trimmed === calendar.summary ? undefined : trimmed,
+    }).catch(reportSaveError("Couldn't rename the calendar"));
+  };
+
+  return (
+    <div className="group flex h-9 items-center gap-2.5 rounded-2xl px-2 transition-colors hover:bg-muted/60">
+      <span
+        className="size-3 shrink-0 rounded-full"
+        style={{ backgroundColor: `var(${calendarColorVar(calendar)})` }}
+      />
+      {editing ? (
+        <Input
+          autoFocus
+          defaultValue={name}
+          aria-label={`Rename ${name}`}
+          className="h-7 flex-1 rounded-xl bg-background px-2 text-sm"
+          onFocus={(event) => event.target.select()}
+          onBlur={(event) => commit(event.target.value)}
+          onKeyDown={(event) => {
+            // The dock closes on Escape; while renaming it should only cancel.
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setEditing(false);
+            }
+            if (event.key === "Enter") commit(event.currentTarget.value);
+          }}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+      ) : (
+        <span className="min-w-0 flex-1 truncate text-sm">
+          {name}
+          {calendar.summaryOverride && calendar.summary && (
+            <span className="ml-1.5 text-xs text-muted-foreground">
+              · was {calendar.summary}
+            </span>
+          )}
+        </span>
+      )}
+      {!editing && !calendar.isShared && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Rename ${name}`}
+          onClick={() => {
+            setDraft(name);
+            setEditing(true);
+          }}
+          className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+        >
+          <HugeiconsIcon
+            icon={PencilEdit01Icon}
+            strokeWidth={2}
+            className="size-3.5"
+          />
+        </Button>
+      )}
+      <Switch
+        checked={calendar.selected}
+        onCheckedChange={(checked) =>
+          void setSelected({
+            calendarId: calendar._id as Id<"calendars">,
+            selected: checked === true,
+          }).catch(reportSaveError("Couldn't update the calendar"))
+        }
+        aria-label={`Show ${draft && editing ? draft : name}`}
+      />
+    </div>
+  );
+}
+
+const WEEK_START_OPTIONS = [
+  { label: "Mon", value: 1 },
+  { label: "Sun", value: 0 },
+  { label: "Sat", value: 6 },
+] as const;
+
+const TIME_FORMAT_OPTIONS = [
+  { label: "Auto", value: null },
+  { label: "12h", value: "12h" },
+  { label: "24h", value: "24h" },
+] as const;
+
+const DEFAULT_VIEW_OPTIONS = [
+  { label: "Day", value: "day" },
+  { label: "Week", value: "week" },
+  { label: "Month", value: "month" },
+] as const;
+
+function PreferencesSection() {
+  const prefs = useQuery(api.domains.preferences.queries.getMyPreferences);
+  const updatePrefs = useMutation(
+    api.domains.preferences.mutations.updatePreferences,
+  );
+  const browserZone = useMemo(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+    [],
+  );
+
+  if (prefs === undefined || prefs === null) return <SectionSkeleton />;
+
+  const save = (patch: Parameters<typeof updatePrefs>[0]) =>
+    void updatePrefs(patch).catch(
+      reportSaveError("Couldn't save the preference"),
+    );
+
+  return (
+    <div className="space-y-3">
+      <SegmentedGroup
+        label="Week starts on"
+        options={WEEK_START_OPTIONS}
+        value={prefs.weekStartsOn ?? 1}
+        onChange={(value) => save({ weekStartsOn: value })}
+      />
+      <SegmentedGroup
+        label="Time format"
+        options={TIME_FORMAT_OPTIONS}
+        value={prefs.timeFormat ?? null}
+        onChange={(value) =>
+          value === null
+            ? save({ reset: ["timeFormat"] })
+            : save({ timeFormat: value })
+        }
+      />
+      <SegmentedGroup
+        label="Default view"
+        options={DEFAULT_VIEW_OPTIONS}
+        value={prefs.defaultView ?? "week"}
+        onChange={(value) => save({ defaultView: value })}
+      />
+      <div className="space-y-1.5">
+        <p className="px-2 text-xs font-medium text-muted-foreground">
+          Time zone
+        </p>
+        <TimeZonePicker
+          value={prefs.timeZone}
+          browserZone={browserZone}
+          onSelect={(zone) =>
+            zone === null
+              ? save({ reset: ["timeZone"] })
+              : save({ timeZone: zone })
+          }
+        />
+        <p className="px-2 text-xs text-muted-foreground">
+          Used for new events and your booking page.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function SegmentedGroup<T>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: readonly { label: string; value: T }[];
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <p className="px-2 text-xs font-medium text-muted-foreground">{label}</p>
+      <div
+        role="group"
+        aria-label={label}
+        className="grid gap-1 rounded-2xl bg-muted p-1"
+        style={{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}
+      >
+        {options.map((option) => (
+          <Button
+            key={option.label}
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-pressed={value === option.value}
+            className="rounded-xl px-2 text-muted-foreground aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm hover:bg-background/60 dark:hover:bg-background/40 aria-pressed:dark:border-white/5"
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A settings row that opens a popover of options — shared by the default
+ * calendar and time zone pickers. Children receive a close callback. */
+function PickerRow({
+  label,
+  swatchVar,
+  ariaLabel,
+  children,
+}: {
+  label: string;
+  swatchVar?: string;
+  ariaLabel: string;
+  children: (close: () => void) => React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        aria-label={ariaLabel}
+        className="group flex h-9 w-full items-center gap-2.5 rounded-3xl bg-input/50 px-3 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+      >
+        {swatchVar && (
+          <span
+            className="size-3 shrink-0 rounded-full"
+            style={{ backgroundColor: `var(${swatchVar})` }}
+          />
+        )}
+        <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+        <HugeiconsIcon
+          icon={ArrowRight01Icon}
+          strokeWidth={2}
+          className="size-4 shrink-0 rotate-90 text-muted-foreground"
+        />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-72 p-1.5">
+        {children(() => setOpen(false))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function PickerOption({
+  label,
+  swatchVar,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  swatchVar?: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        "flex h-8 w-full items-center gap-2.5 rounded-2xl px-2.5 text-left text-sm outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring",
+        selected && "bg-muted/60",
+      )}
+    >
+      {swatchVar && (
+        <span
+          className="size-3 shrink-0 rounded-full"
+          style={{ backgroundColor: `var(${swatchVar})` }}
+        />
+      )}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {selected && (
+        <HugeiconsIcon
+          icon={Tick02Icon}
+          strokeWidth={2}
+          className="size-4 shrink-0"
+        />
+      )}
+    </button>
+  );
+}
+
+const ZONE_LIST_LIMIT = 8;
+
+function TimeZonePicker({
+  value,
+  browserZone,
+  onSelect,
+}: {
+  value: string | undefined;
+  browserZone: string;
+  onSelect: (zone: string | null) => void;
+}) {
+  const [filter, setFilter] = useState("");
+  const zones = useMemo(() => Intl.supportedValuesOf("timeZone"), []);
+  const needle = filter.trim().toLowerCase().replace(/\s+/g, "_");
+  const matches = needle
+    ? zones.filter((zone) => zone.toLowerCase().includes(needle))
+    : zones;
+
+  return (
+    <PickerRow
+      label={value ?? `Automatic · ${browserZone.replace(/_/g, " ")}`}
+      ariaLabel="Time zone"
+    >
+      {(close) => (
+        <div className="flex flex-col gap-1">
+          <Input
+            autoFocus
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder="Search time zones"
+            aria-label="Search time zones"
+            className="h-8 rounded-2xl"
+          />
+          <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto [scrollbar-width:thin]">
+            {!needle && (
+              <PickerOption
+                label={`Automatic · ${browserZone.replace(/_/g, " ")}`}
+                selected={value === undefined}
+                onSelect={() => {
+                  close();
+                  setFilter("");
+                  onSelect(null);
+                }}
+              />
+            )}
+            {matches.slice(0, needle ? 50 : ZONE_LIST_LIMIT).map((zone) => (
+              <PickerOption
+                key={zone}
+                label={zone.replace(/_/g, " ")}
+                selected={zone === value}
+                onSelect={() => {
+                  close();
+                  setFilter("");
+                  onSelect(zone);
+                }}
+              />
+            ))}
+            {matches.length === 0 && (
+              <p className="px-2.5 py-3 text-center text-xs text-muted-foreground">
+                No matching time zones
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </PickerRow>
+  );
+}

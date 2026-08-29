@@ -2,6 +2,10 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 
 import { internal } from "../../../convex/_generated/api";
+import {
+  setCalendarSummaryOverrideCore,
+  setConnectionStatusCore,
+} from "../../../convex/domains/calendar/mutations";
 import schema from "../../../convex/schema";
 
 import { modules } from "../../testModules";
@@ -165,5 +169,100 @@ describe("connection model", () => {
     );
     expect(found?.localCalendarId).toBe(secondCalendarId);
     expect(found?.startMs).toBe(3_000);
+  });
+
+  test("pausing a connection removes it from the active sync set", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_pause";
+    const connectionId = await t.run((ctx) =>
+      ctx.db.insert("calendarConnections", {
+        userId,
+        provider: "google",
+        status: "active",
+        lastError: "quota exceeded",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+
+    await t.run((ctx) =>
+      setConnectionStatusCore(ctx, userId, { connectionId, status: "paused" }),
+    );
+    expect(
+      await t.query(internal.domains.sync.engine.listActiveConnections, {
+        userId,
+      }),
+    ).toHaveLength(0);
+
+    await t.run((ctx) =>
+      setConnectionStatusCore(ctx, userId, { connectionId, status: "active" }),
+    );
+    const active = await t.query(
+      internal.domains.sync.engine.listActiveConnections,
+      { userId },
+    );
+    expect(active).toHaveLength(1);
+    // Resuming is a fresh start — the stale provider error is cleared.
+    expect(active[0].lastError).toBeUndefined();
+
+    await expect(
+      t.run((ctx) =>
+        setConnectionStatusCore(ctx, "someone_else", {
+          connectionId,
+          status: "paused",
+        }),
+      ),
+    ).rejects.toThrow("Connection not found");
+  });
+
+  test("a summary override renames locally and clears back to the provider name", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_rename";
+    const calendarId = await t.run(async (ctx) => {
+      const connectionId = await ctx.db.insert("calendarConnections", {
+        userId,
+        provider: "google",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return ctx.db.insert("calendars", {
+        userId,
+        connectionId,
+        providerCalendarId: "primary",
+        summary: "Provider Name",
+        selected: true,
+        isShared: false,
+      });
+    });
+
+    await t.run((ctx) =>
+      setCalendarSummaryOverrideCore(ctx, userId, {
+        calendarId,
+        summaryOverride: "  My Calendar  ",
+      }),
+    );
+    expect(
+      (await t.run((ctx) => ctx.db.get(calendarId)))?.summaryOverride,
+    ).toBe("My Calendar");
+
+    await t.run((ctx) =>
+      setCalendarSummaryOverrideCore(ctx, userId, {
+        calendarId,
+        summaryOverride: "   ",
+      }),
+    );
+    expect(
+      (await t.run((ctx) => ctx.db.get(calendarId)))?.summaryOverride,
+    ).toBeUndefined();
+
+    await expect(
+      t.run((ctx) =>
+        setCalendarSummaryOverrideCore(ctx, "someone_else", {
+          calendarId,
+          summaryOverride: "Hijacked",
+        }),
+      ),
+    ).rejects.toThrow("Calendar not found");
   });
 });

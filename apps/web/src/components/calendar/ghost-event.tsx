@@ -1,7 +1,13 @@
 import { cn } from "@qali/ui/lib/utils";
 import { format } from "date-fns";
 
-import { formatWallClockMinutes, msToPct, MS_PER_MINUTE } from "./lib";
+import { usePreferences } from "@/components/workspace/preferences-context";
+import {
+  formatWallClockMinutes,
+  msToPct,
+  MS_PER_MINUTE,
+  timePattern,
+} from "./lib";
 
 interface GhostEventProps {
   startMs: number;
@@ -22,14 +28,16 @@ export function GhostEvent({
   wallClock = false,
   variant = "create",
 }: GhostEventProps) {
+  const { use24h } = usePreferences();
   const topPct = msToPct(startMs, dayStartMs);
   const heightPct = msToPct(endMs, dayStartMs) - topPct;
   const rangeLabel = wallClock
     ? `${formatWallClockMinutes(
         (startMs - dayStartMs) / MS_PER_MINUTE,
         false,
-      )} – ${formatWallClockMinutes((endMs - dayStartMs) / MS_PER_MINUTE)}`
-    : `${format(startMs, "h:mm")} – ${format(endMs, "h:mm a")}`;
+        use24h,
+      )} – ${formatWallClockMinutes((endMs - dayStartMs) / MS_PER_MINUTE, true, use24h)}`
+    : `${format(startMs, timePattern(use24h, false))} – ${format(endMs, timePattern(use24h))}`;
   return (
     <div
       className={cn(

@@ -97,6 +97,86 @@ export const listCalendars = query({
   handler: (ctx) => listCalendarsHandler(ctx),
 });
 
+/** The user's provider connections with their sync bookkeeping, for the
+ * settings panel. A deliberate DTO like listCalendars: credentialRef, cursors,
+ * leases, and generations stay private. */
+export async function listConnectionsHandler(ctx: QueryCtx) {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    return [];
+  }
+  const connections = await ctx.db
+    .query("calendarConnections")
+    .withIndex("by_user", (q) => q.eq("userId", user._id))
+    .collect();
+  return Promise.all(
+    connections.map(async (connection) => {
+      const syncState = await ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_connection", (q) =>
+          q.eq("connectionId", connection._id),
+        )
+        .unique();
+      // The freshest calendar sync stands in for "last synced" — the
+      // connection itself records no completion time.
+      const calendars = await ctx.db
+        .query("calendars")
+        .withIndex("by_connection_and_providerCalendarId", (q) =>
+          q.eq("connectionId", connection._id),
+        )
+        .collect();
+      let lastSyncAt: number | undefined;
+      for (const calendar of calendars) {
+        if (
+          calendar.lastSyncAt !== undefined &&
+          (lastSyncAt === undefined || calendar.lastSyncAt > lastSyncAt)
+        ) {
+          lastSyncAt = calendar.lastSyncAt;
+        }
+      }
+      return {
+        _id: connection._id,
+        provider: connection.provider,
+        providerAccountId: connection.providerAccountId,
+        status: connection.status,
+        lastError: connection.lastError,
+        createdAt: connection.createdAt,
+        syncStatus: syncState?.status,
+        syncLastError: syncState?.lastError,
+        syncIntervalMs: syncState?.syncIntervalMs,
+        nextSyncDueAt: syncState?.nextSyncDueAt,
+        lastSyncAt,
+      };
+    }),
+  );
+}
+
+export const listConnections = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      _id: v.id("calendarConnections"),
+      provider: v.union(v.literal("google"), v.literal("microsoft")),
+      providerAccountId: v.optional(v.string()),
+      status: v.union(
+        v.literal("active"),
+        v.literal("paused"),
+        v.literal("error"),
+      ),
+      lastError: v.optional(v.string()),
+      createdAt: v.number(),
+      syncStatus: v.optional(
+        v.union(v.literal("idle"), v.literal("syncing"), v.literal("error")),
+      ),
+      syncLastError: v.optional(v.string()),
+      syncIntervalMs: v.optional(v.number()),
+      nextSyncDueAt: v.optional(v.number()),
+      lastSyncAt: v.optional(v.number()),
+    }),
+  ),
+  handler: (ctx) => listConnectionsHandler(ctx),
+});
+
 /** Registry lookup that deliberately hides foreign and inactive connections. */
 export async function getCalendarConnectionForAdapterHandler(
   ctx: QueryCtx,

@@ -5,6 +5,7 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { startOfDay } from "date-fns";
 
+import { usePreferences } from "@/components/workspace/preferences-context";
 import {
   GUTTER_WIDTH,
   HEADER_DATE_HEIGHT,
@@ -15,14 +16,13 @@ import {
 } from "./lib";
 import { TimeGutter } from "./time-gutter";
 
-const nowFmt = new Intl.DateTimeFormat("en-US", {
-  hour: "numeric",
-  minute: "2-digit",
-  timeZone: TIMEZONES[0].id,
-});
-
-function formatNow(now: number): string {
-  return nowFmt
+function formatNow(now: number, use24h: boolean): string {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: TIMEZONES[0].id,
+    hour12: !use24h,
+  })
     .formatToParts(now)
     .filter(({ type }) => type !== "dayPeriod")
     .map(({ value }) => value)
@@ -45,6 +45,7 @@ export function GutterColumn({
   onToggleAllDay: () => void;
   now: number;
 }) {
+  const { use24h } = usePreferences();
   const dayStartMs = startOfDay(new Date()).getTime();
   const nowTopPct = msToPct(now, startOfDay(now).getTime());
   return (
@@ -101,7 +102,7 @@ export function GutterColumn({
           className="pointer-events-none absolute right-1.5 z-0 -translate-y-1/2 rounded-full bg-red-500 px-1.5 py-0.5 text-xs font-semibold leading-none tabular-nums text-white shadow-sm"
           style={{ top: `${nowTopPct}%` }}
         >
-          {formatNow(now)}
+          {formatNow(now, use24h)}
           <span
             aria-hidden
             className="absolute top-1/2 left-full h-0.5 w-1.5 -translate-y-1/2 bg-red-500"

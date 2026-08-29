@@ -26,11 +26,13 @@ import { EventControls } from "./event-controls";
 import { FreeBusyToggle } from "./free-busy-toggle";
 import { GuestPicker, type Guest } from "./guest-picker";
 import { GoogleMeetIcon } from "./google-meet-icon";
+import { usePreferences } from "@/components/workspace/preferences-context";
 import {
   type CalendarEvent,
   type CalendarListItem,
   MS_PER_DAY,
   SNAP_MS,
+  timePattern,
 } from "./lib";
 import {
   dockVariants,
@@ -603,6 +605,7 @@ function TimeTab({
   active: boolean;
   onSelect: () => void;
 }) {
+  const { use24h } = usePreferences();
   return (
     <motion.button
       type="button"
@@ -620,7 +623,7 @@ function TimeTab({
         {label} · {format(ms, "EEE d")}
       </span>
       <span className={cn("text-sm font-semibold", active && "text-foreground")}>
-        {allDay ? "All day" : format(ms, "h:mm a")}
+        {allDay ? "All day" : format(ms, timePattern(use24h))}
       </span>
     </motion.button>
   );

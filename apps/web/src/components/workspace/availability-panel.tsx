@@ -33,6 +33,7 @@ import {
   SPRING_DOCK,
 } from "@/components/calendar/motion";
 import { useAvailabilityEdit } from "./availability-edit-context";
+import { usePreferences } from "./preferences-context";
 import { PendingRequestsList, type Booking } from "./booking-request-panel";
 import { TimeField } from "./time-field";
 
@@ -206,6 +207,7 @@ function AvailabilityForm({
 }) {
   const upsert = useMutation(api.domains.booking.mutations.upsertBookingPage);
   const { setEditing } = useAvailabilityEdit();
+  const { timeZone } = usePreferences();
   const reduce = useReducedMotion();
   const initial = page ?? defaults;
   const lastInitial = useRef(initial);
@@ -369,7 +371,7 @@ function AvailabilityForm({
     try {
       await upsert({
         slug: normalized,
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timeZone,
         title: title.trim() || undefined,
         rules,
         slotMinutes,

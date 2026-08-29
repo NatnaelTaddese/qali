@@ -16,6 +16,7 @@ import {
 } from "@/components/calendar/lib";
 import { startOfDay } from "date-fns";
 import type { Booking } from "@/components/workspace/booking-request-panel";
+import type { SettingsSection } from "@/components/workspace/settings-panel";
 
 /** What the dock is currently showing. `null` means the plain nav bar.
  *
@@ -27,7 +28,10 @@ export type DockView =
   | { kind: "create"; startMs: number; endMs: number; prefill?: EventPrefill }
   | { kind: "account" }
   | { kind: "availability" }
-  | { kind: "booking"; booking: Booking };
+  | { kind: "booking"; booking: Booking }
+  // `section` only seeds where the panel opens; it stays out of dockViewId so
+  // switching sections animates inside the panel, not as a dock content swap.
+  | { kind: "settings"; section?: SettingsSection };
 
 /** Stable key for the content swap — changing it cross-fades the dock's contents.
  * A create view keys on its kind alone, so editing its times re-renders the form

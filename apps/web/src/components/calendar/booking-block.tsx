@@ -2,8 +2,9 @@ import { cn } from "@qali/ui/lib/utils";
 import { format } from "date-fns";
 
 import type { Booking } from "@/components/workspace/booking-request-panel";
+import { usePreferences } from "@/components/workspace/preferences-context";
 
-import { msToPct, MS_PER_MINUTE } from "./lib";
+import { msToPct, MS_PER_MINUTE, timePattern } from "./lib";
 import { RevealFlash, type Reveal } from "./today-pulse";
 
 /**
@@ -38,11 +39,12 @@ export function BookingBlock({
   reveal: Reveal;
   onOpen: () => void;
 }) {
+  const { use24h } = usePreferences();
   const topPct = msToPct(Math.max(booking.startMs, dayStartMs), dayStartMs);
   const bottomPct = msToPct(booking.endMs, dayStartMs);
   const compact =
     (booking.endMs - booking.startMs) / MS_PER_MINUTE < COMPACT_BELOW_MINUTES;
-  const startLabel = format(booking.startMs, "HH:mm");
+  const startLabel = format(booking.startMs, timePattern(use24h));
 
   return (
     <button
@@ -53,7 +55,7 @@ export function BookingBlock({
       onClick={onOpen}
       aria-label={`Request from ${booking.requesterName}, ${format(
         booking.startMs,
-        "EEE d MMM HH:mm",
+        `EEE d MMM ${timePattern(use24h)}`,
       )}`}
       className={cn(
         "absolute inset-x-1 z-20 min-h-[16px] overflow-hidden rounded-md border border-dashed border-primary/60 bg-primary/10 text-left outline-none backdrop-blur-[1px] transition-colors",

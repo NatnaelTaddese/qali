@@ -41,6 +41,7 @@ import { NO_REVEAL, type Reveal } from "./today-pulse";
 import { useStableQuery } from "./use-stable-query";
 import { useDock } from "@/components/workspace/dock-context";
 import { NotificationBell } from "@/components/workspace/notification-bell";
+import { usePreferences } from "@/components/workspace/preferences-context";
 
 const VIEWS: CalendarView[] = ["day", "week", "month"];
 /** Stable empty fallback: a fresh `[]` each render would defeat the
@@ -48,8 +49,11 @@ const VIEWS: CalendarView[] = ["day", "week", "month"];
 const NO_EVENTS: Doc<"events">[] = [];
 
 export function CalendarWeekView() {
-  const [view, setView] = useState<CalendarView>("week");
-  const [anchor, setAnchor] = useState(() => pageStart("week", new Date()));
+  const { weekStartsOn, defaultView } = usePreferences();
+  const [view, setView] = useState<CalendarView>(defaultView);
+  const [anchor, setAnchor] = useState(() =>
+    pageStart(defaultView, new Date(), weekStartsOn),
+  );
   const [reveal, setReveal] = useState<Reveal>(NO_REVEAL);
   const pagerRef = useRef<CalendarPagerHandle>(null);
   const stripRef = useRef<TimeStripHandle>(null);
@@ -88,8 +92,8 @@ export function CalendarWeekView() {
   // day — the grid never blanks. `bucketDayEvents`/`MonthPanel` filter the
   // extra events down to the rendered days.
   const queryRange = useMemo(
-    () => eventQueryRange(view, anchor),
-    [view, anchor],
+    () => eventQueryRange(view, anchor, weekStartsOn),
+    [view, anchor, weekStartsOn],
   );
   const events =
     useStableQuery(api.domains.calendar.queries.listEventsInRange, queryRange) ?? NO_EVENTS;
@@ -102,9 +106,11 @@ export function CalendarWeekView() {
   const { registerCreateSeed, registerReveal } = useDock();
   const focusDayMs = useMemo(() => {
     const today = startOfDay(new Date());
-    const onPage = pageDays(view, anchor).some((day) => isSameDay(day, today));
+    const onPage = pageDays(view, anchor, weekStartsOn).some((day) =>
+      isSameDay(day, today),
+    );
     return (onPage ? today : startOfDay(anchor)).getTime();
-  }, [view, anchor]);
+  }, [view, anchor, weekStartsOn]);
   useEffect(() => {
     registerCreateSeed({ dayStartMs: focusDayMs, events });
     return () => registerCreateSeed(null);
@@ -125,10 +131,19 @@ export function CalendarWeekView() {
   // Jump to the page/day containing `date`.
   const jumpTo = useCallback(
     (date: Date) => {
-      setAnchor(pageStart(view, date));
+      setAnchor(pageStart(view, date, weekStartsOn));
     },
-    [view],
+    [view, weekStartsOn],
   );
+
+  // A week-start change re-cuts the visible page: the anchor was computed
+  // under the old week shape, so re-normalize it (a no-op for day/month).
+  // Deliberately keyed on the preference alone — `view` is read for
+  // normalization only, and re-running on view changes would fight
+  // switchView's own anchor updates.
+  useEffect(() => {
+    setAnchor((current) => pageStart(view, current, weekStartsOn));
+  }, [weekStartsOn]);
 
   // Settle handlers must keep a stable identity across renders: the scrollers
   // derive their recentering effect's dependencies from them, so an inline
@@ -291,7 +306,7 @@ export function CalendarWeekView() {
 
   const switchView = (next: CalendarView) => {
     const apply = () => {
-      setAnchor(pageStart(next, anchor));
+      setAnchor(pageStart(next, anchor, weekStartsOn));
       setView(next);
     };
     const granularityDelta = VIEWS.indexOf(next) - VIEWS.indexOf(view);
@@ -321,7 +336,10 @@ export function CalendarWeekView() {
         className="flex items-center justify-between gap-4 border-t border-border/80 bg-calendar-header px-4 py-2.5"
       >
         <div className="flex items-center justify-center gap-2 text-sm">
-          <MonthPicker selectedWeekStart={pageStart("week", anchor)} onSelect={jumpTo}>
+          <MonthPicker
+            selectedWeekStart={pageStart("week", anchor, weekStartsOn)}
+            onSelect={jumpTo}
+          >
             <span className="font-medium">{viewTitle(view, anchor)}</span>
             {view === "week" && (
               <span className="flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
@@ -380,7 +398,7 @@ export function CalendarWeekView() {
             renderPage={(start) => (
               <MonthPanel
                 monthStart={start}
-                days={pageDays("month", start)}
+                days={pageDays("month", start, weekStartsOn)}
                 events={events}
                 onSelectDay={openDay}
                 reveal={reveal}

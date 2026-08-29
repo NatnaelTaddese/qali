@@ -53,7 +53,12 @@ export function calendarDisplayName(calendar: {
 }
 
 export const SNAP_MINUTES = 15;
-export const WEEK_STARTS_ON = 1; // Monday
+
+/** date-fns weekStartsOn values the app supports: Sunday, Monday, Saturday. */
+export type WeekStart = 0 | 1 | 6;
+/** The app default; the user's stored preference (usePreferences) overrides
+ * it at render time, which is why the helpers below take it as a parameter. */
+export const WEEK_STARTS_ON: WeekStart = 1; // Monday
 
 /** The three period granularities the calendar can page through. */
 export type CalendarView = "day" | "week" | "month";
@@ -151,6 +156,7 @@ export const QUERY_SIDE_MONTHS = 2 * VIEW_BUFFER.month + 1;
 export function eventQueryRange(
   view: CalendarView,
   anchor: Date,
+  weekStartsOn: WeekStart = WEEK_STARTS_ON,
 ): { startMs: number; endMs: number } {
   if (view === "month") {
     const base = startOfMonth(anchor);
@@ -159,7 +165,7 @@ export function eventQueryRange(
       endMs: addMonths(base, QUERY_SIDE_MONTHS + 1).getTime(),
     };
   }
-  const base = startOfWeek(anchor, { weekStartsOn: WEEK_STARTS_ON });
+  const base = startOfWeek(anchor, { weekStartsOn });
   return {
     startMs: addWeeks(base, -QUERY_SIDE_WEEKS).getTime(),
     endMs: addWeeks(base, QUERY_SIDE_WEEKS + 1).getTime(),
@@ -167,12 +173,16 @@ export function eventQueryRange(
 }
 
 /** Normalize a date to the start of its page for the given view. */
-export function pageStart(view: CalendarView, date: Date): Date {
+export function pageStart(
+  view: CalendarView,
+  date: Date,
+  weekStartsOn: WeekStart = WEEK_STARTS_ON,
+): Date {
   switch (view) {
     case "day":
       return startOfDay(date);
     case "week":
-      return startOfWeek(date, { weekStartsOn: WEEK_STARTS_ON });
+      return startOfWeek(date, { weekStartsOn });
     case "month":
       return startOfMonth(date);
   }
@@ -191,10 +201,14 @@ export function addPages(view: CalendarView, start: Date, n: number): Date {
 }
 
 /** The days rendered by a single page. Month pages span a fixed 6×7 grid. */
-export function pageDays(view: CalendarView, start: Date): Date[] {
+export function pageDays(
+  view: CalendarView,
+  start: Date,
+  weekStartsOn: WeekStart = WEEK_STARTS_ON,
+): Date[] {
   if (view === "day") return [start];
   if (view === "week") return Array.from({ length: 7 }, (_, i) => addDays(start, i));
-  const gridStart = startOfWeek(start, { weekStartsOn: WEEK_STARTS_ON });
+  const gridStart = startOfWeek(start, { weekStartsOn });
   return Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
 }
 
@@ -239,14 +253,24 @@ export const SNAP_MS = SNAP_MINUTES * MS_PER_MINUTE;
 export function formatWallClockMinutes(
   minutes: number,
   includeDayPeriod = true,
+  use24h = false,
 ): string {
   const normalized = ((Math.round(minutes) % (24 * 60)) + 24 * 60) % (24 * 60);
   const hour24 = Math.floor(normalized / 60);
   const minute = normalized % 60;
+  const paddedMinute = String(minute).padStart(2, "0");
+  if (use24h) return `${String(hour24).padStart(2, "0")}:${paddedMinute}`;
   const hour12 = hour24 % 12 || 12;
-  const time = `${hour12}:${String(minute).padStart(2, "0")}`;
+  const time = `${hour12}:${paddedMinute}`;
   if (!includeDayPeriod) return time;
   return `${time} ${hour24 < 12 ? "AM" : "PM"}`;
+}
+
+/** date-fns time pattern for the user's clock preference. `withDayPeriod`
+ * only matters for 12-hour clocks — 24-hour time has no AM/PM to show. */
+export function timePattern(use24h: boolean, withDayPeriod = true): string {
+  if (use24h) return "HH:mm";
+  return withDayPeriod ? "h:mm a" : "h:mm";
 }
 
 /** The default time a freshly created event starts on a day with no better cue —

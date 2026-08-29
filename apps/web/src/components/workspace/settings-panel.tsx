@@ -175,12 +175,14 @@ export function SettingsPanel({
     >
       <div ref={innerRef}>
         {isDesktop ? (
-          <div className="grid min-h-[24rem] grid-cols-[11.5rem_minmax(0,1fr)] gap-5">
+          // The island drops its own inset for settings, so the sidebar's tint
+          // runs corner to corner — the two-tone split.
+          <div className="grid min-h-[26rem] grid-cols-[12.5rem_minmax(0,1fr)]">
             <nav
               aria-label="Settings sections"
-              className="flex flex-col gap-1 py-1"
+              className="flex flex-col gap-1 border-r border-border bg-muted/40 p-3"
             >
-              <p className="px-3 pb-2 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
+              <p className="px-3 pt-1.5 pb-2.5 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
                 Settings
               </p>
               {SECTIONS.map((entry) => (
@@ -190,8 +192,10 @@ export function SettingsPanel({
                   aria-current={entry.id === section || undefined}
                   onClick={() => goTo(entry.id)}
                   className={cn(
-                    "group flex items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring",
-                    entry.id === section && "bg-muted/60",
+                    "group flex items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+                    entry.id === section
+                      ? "bg-background shadow-sm dark:border dark:border-white/5"
+                      : "hover:bg-background/60 dark:hover:bg-background/40",
                   )}
                 >
                   <HugeiconsIcon
@@ -217,12 +221,12 @@ export function SettingsPanel({
                 </button>
               ))}
             </nav>
-            <div className="relative border-l border-border py-1 pl-6">
+            <div className="relative p-5 pl-6">
               <button
                 type="button"
                 onClick={onClose}
                 aria-label="Close"
-                className="absolute top-1 right-0 z-10 flex size-7 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                className="absolute top-4 right-4 z-10 flex size-7 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <HugeiconsIcon
                   icon={Cancel01Icon}
@@ -248,6 +252,8 @@ export function SettingsPanel({
             </div>
           </div>
         ) : (
+          // Small screens are single-tone; restore the inset the island ceded.
+          <div className="p-4">
           <AnimatePresence mode="popLayout" initial={false} custom={direction}>
             {mobileScreen === "nav" ? (
               <motion.div
@@ -333,6 +339,7 @@ export function SettingsPanel({
               </motion.div>
             )}
           </AnimatePresence>
+          </div>
         )}
       </div>
     </motion.div>

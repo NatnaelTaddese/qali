@@ -259,7 +259,15 @@ export function BottomIsland() {
         className={cn(
           "pointer-events-auto overflow-hidden border border-border bg-popover/90 shadow-lg backdrop-blur",
           // The edit bar is a pill sized to its own content, like the nav row.
-          editing ? "py-1.5 pr-1.5 pl-4" : view ? "p-4" : "px-2 py-1.5",
+          // Settings carries its own inset so its two-tone sidebar can run
+          // edge to edge (the panel restores the padding on small screens).
+          editing
+            ? "py-1.5 pr-1.5 pl-4"
+            : view
+              ? view.kind === "settings"
+                ? "p-0"
+                : "p-4"
+              : "px-2 py-1.5",
           !editing && widthClass(view),
         )}
       >

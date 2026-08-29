@@ -15,6 +15,7 @@ import {
   toEventTimes,
   type EventFormValue,
 } from "./event-form";
+import { usePreferences } from "@/components/workspace/preferences-context";
 import { editableEventId, type CalendarEvent } from "./lib";
 import { useEventCapabilities } from "./permissions";
 import { toRRule } from "./rrule";
@@ -37,11 +38,14 @@ export type SaveScope = "thisEvent" | "thisAndFollowing" | "allEvents";
  * gives us both for free — untouched fields never appear, and a field the user
  * emptied appears as `null` rather than as `""`.
  */
+/** `timeZone` is the working zone the form's times were composed in — it
+ * shapes all-day boundaries, the recurrence UNTIL stamp, and the zone the
+ * patch is labeled with. */
 export function diffEvent(
   initial: EventFormValue,
   next: EventFormValue,
   event: CalendarEvent,
-  timeZone: string = Intl.DateTimeFormat().resolvedOptions().timeZone,
+  timeZone: string,
 ): EventPatch {
   const patch: EventPatch = {};
 
@@ -71,8 +75,8 @@ export function diffEvent(
 
   // Times travel together: the backend needs both ends to render either, and
   // all-day changes how both are written.
-  const times = toEventTimes(next);
-  const initialTimes = toEventTimes(initial);
+  const times = toEventTimes(next, timeZone);
+  const initialTimes = toEventTimes(initial, timeZone);
   if (
     times.startMs !== initialTimes.startMs ||
     times.endMs !== initialTimes.endMs ||
@@ -88,7 +92,7 @@ export function diffEvent(
     next.recurrence !== null &&
     JSON.stringify(next.recurrence) !== JSON.stringify(initial.recurrence)
   ) {
-    patch.recurrence = toRRule(next.recurrence);
+    patch.recurrence = toRRule(next.recurrence, timeZone);
   }
 
   const guestsChanged =
@@ -139,10 +143,11 @@ export function EventEdit({
 }) {
   const updateEvent = useAction(api.domains.calendar.service.updateEvent);
   const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
+  const { timeZone } = usePreferences();
   const capabilities = useEventCapabilities()(event);
   // Captured once: the baseline every save diffs against. Re-seeding it from
   // `event` would erase edits in progress each time a sync lands.
-  const [initial] = useState(() => formValueFromEvent(event));
+  const [initial] = useState(() => formValueFromEvent(event, timeZone));
   const [value, setValue] = useState<EventFormValue>(initial);
   const [saving, setSaving] = useState(false);
   // Idempotency key for this save intent, reused across retries so a
@@ -157,9 +162,9 @@ export function EventEdit({
 
   const save = (scope: SaveScope) => {
     if (!valid || saving) return;
-    // Browser zone, not the timezone preference: the form's times are
-    // composed browser-locally, and this zone anchors recurring series.
-    const patch = diffEvent(initial, value, event);
+    // The working zone: the form composed its times in it, so it is the
+    // honest label and recurrence anchor.
+    const patch = diffEvent(initial, value, event, timeZone);
     if (Object.keys(patch).length === 0) {
       onSaved();
       return;
@@ -169,11 +174,7 @@ export function EventEdit({
     // requires a time zone on a recurring event. `diffEvent` only sets one when
     // the times change, so guarantee a zone here; an explicitly-diffed one still
     // wins since `patch` is spread last.
-    const finalPatch = finalizeEventPatch(
-      patch,
-      scope,
-      Intl.DateTimeFormat().resolvedOptions().timeZone,
-    );
+    const finalPatch = finalizeEventPatch(patch, scope, timeZone);
     if (!operationIdRef.current) {
       operationIdRef.current = crypto.randomUUID();
     }

@@ -11,6 +11,7 @@ import {
   useState,
 } from "react";
 
+import { usePreferences } from "@/components/workspace/preferences-context";
 import { DayColumn } from "./day-column";
 import { GutterColumn } from "./gutter-column";
 import {
@@ -114,6 +115,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     const centerAtPctRef = useRef<number | "now" | null>(null);
     const nowLayoutRef = useRef<NowIndicatorLayout | null>(null);
     const userInteractedRef = useRef(false);
+    const { timeZone } = usePreferences();
     const [now, setNow] = useState(() => Date.now());
     const [visibleStartIdx, setVisibleStartIdx] = useState(anchorIndex);
     const people = useQuery(api.domains.people.queries.listPeople) ?? NO_CONTACTS;
@@ -478,7 +480,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       visibleAllDayLaneCount,
       allDayExpanded,
     );
-    const nowLayout = getNowIndicatorLayout(days, now);
+    const nowLayout = getNowIndicatorLayout(days, now, timeZone);
     // Expose the latest layout to the imperative scroll helpers (which run
     // outside render) without threading it through their dependency arrays.
     nowLayoutRef.current = nowLayout;

@@ -7,6 +7,7 @@ import {
   msToPct,
   MS_PER_MINUTE,
   timePattern,
+  zoned,
 } from "./lib";
 
 interface GhostEventProps {
@@ -28,7 +29,7 @@ export function GhostEvent({
   wallClock = false,
   variant = "create",
 }: GhostEventProps) {
-  const { use24h } = usePreferences();
+  const { use24h, timeZone } = usePreferences();
   const topPct = msToPct(startMs, dayStartMs);
   const heightPct = msToPct(endMs, dayStartMs) - topPct;
   const rangeLabel = wallClock
@@ -37,7 +38,7 @@ export function GhostEvent({
         false,
         use24h,
       )} – ${formatWallClockMinutes((endMs - dayStartMs) / MS_PER_MINUTE, true, use24h)}`
-    : `${format(startMs, timePattern(use24h, false))} – ${format(endMs, timePattern(use24h))}`;
+    : `${format(zoned(startMs, timeZone), timePattern(use24h, false))} – ${format(zoned(endMs, timeZone), timePattern(use24h))}`;
   return (
     <div
       className={cn(

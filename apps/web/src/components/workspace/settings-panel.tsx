@@ -950,7 +950,7 @@ function PreferencesSection() {
       )}
       <SettingRow
         title="Time zone"
-        description="The zone your booking page's hours are published in"
+        description="Your calendar and booking page run in this zone"
         control={
           <TimeZonePicker
             value={prefs.timeZone}

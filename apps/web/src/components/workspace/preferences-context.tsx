@@ -26,10 +26,10 @@ interface PreferencesValue {
   weekStartsOn: WeekStart;
   use24h: boolean;
   defaultView: CalendarView;
-  /** The zone the booking page's hours are published in. Event writes and
-   * grid rendering deliberately stay in the browser's zone — event times are
-   * composed in browser-local wall clock, and a different anchor would drift
-   * recurrences (see the note by TIMEZONES in calendar/lib.ts). */
+  /** The WORKING zone: the calendar renders, composes, and labels every
+   * time in it — day cuts, gutter hours, wheel pickers, event writes, the
+   * booking page's hours, and assistant date resolution. Defaults to the
+   * browser's zone when no preference is stored. */
   timeZone: string;
   defaultCalendarId: RawPreferences["defaultCalendarId"];
   /** The stored fields as-is, for UI that distinguishes "automatic" from set. */

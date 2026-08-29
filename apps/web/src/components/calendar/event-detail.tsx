@@ -47,6 +47,7 @@ import {
   calendarDisplayName,
   editableEventId,
   timePattern,
+  zoned,
   type CalendarEvent,
 } from "./lib";
 import { dockVariants, dockVariantsReduced, press, SPRING_DOCK } from "./motion";
@@ -67,20 +68,26 @@ const RSVP_CHOICES = [
   { status: "declined", label: "No" },
 ] as const;
 
-function timeText(event: CalendarEvent, use24h: boolean): string {
+function timeText(
+  event: CalendarEvent,
+  use24h: boolean,
+  timeZone: string,
+): string {
+  const start = zoned(event.startMs, timeZone);
+  const end = zoned(event.endMs, timeZone);
   if (event.allDay) {
     // Google all-day endMs is exclusive midnight.
-    const lastDay = event.endMs - 1;
-    return isSameDay(event.startMs, lastDay)
-      ? format(event.startMs, "EEE d MMM")
-      : `${format(event.startMs, "EEE d MMM")} – ${format(lastDay, "EEE d MMM")}`;
+    const lastDay = zoned(event.endMs - 1, timeZone);
+    return isSameDay(start, lastDay)
+      ? format(start, "EEE d MMM")
+      : `${format(start, "EEE d MMM")} – ${format(lastDay, "EEE d MMM")}`;
   }
   const time = timePattern(use24h);
-  const end = format(
-    event.endMs,
-    isSameDay(event.startMs, event.endMs) ? time : `EEE d MMM, ${time}`,
+  const endText = format(
+    end,
+    isSameDay(start, end) ? time : `EEE d MMM, ${time}`,
   );
-  return `${format(event.startMs, `EEE d MMM, ${time}`)} – ${end}`;
+  return `${format(start, `EEE d MMM, ${time}`)} – ${endText}`;
 }
 
 function DetailRow({
@@ -480,7 +487,7 @@ export function EventDetail({
   onDuplicate: (prefill: EventPrefill, startMs: number, endMs: number) => void;
 }) {
   const reduce = useReducedMotion();
-  const { use24h } = usePreferences();
+  const { use24h, timeZone } = usePreferences();
   const deleteEvent = useAction(api.domains.calendar.service.deleteEvent);
   const refreshEventRecurrence = useAction(api.domains.calendar.service.refreshEventRecurrence);
   const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
@@ -522,9 +529,11 @@ export function EventDetail({
     };
   }, [event._id, event.providerSeriesId, recurrenceLines, refreshEventRecurrence]);
 
-  const recurrence = recurrenceLines ? parseRRule(recurrenceLines) : null;
+  const recurrence = recurrenceLines
+    ? parseRRule(recurrenceLines, timeZone)
+    : null;
   const recurrenceSummary = recurrence
-    ? summarize(recurrence)
+    ? summarize(recurrence, timeZone)
     : recurrenceLines === undefined ||
         (recurrenceLines === null && recurrenceRefreshFailedFor !== event._id)
       ? undefined
@@ -698,7 +707,7 @@ export function EventDetail({
 
           <DetailRow icon={Clock01Icon}>
             <p className="text-sm font-medium text-foreground">
-              {timeText(event, use24h)}
+              {timeText(event, use24h, timeZone)}
             </p>
             <p className="text-xs text-muted-foreground">
               {formatDistanceToNowStrict(event.startMs, { addSuffix: true })}

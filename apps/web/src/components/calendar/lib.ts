@@ -1,3 +1,4 @@
+import { TZDate } from "@date-fns/tz";
 import type { api } from "@qali/backend/convex/_generated/api";
 import type { Id } from "@qali/backend/convex/_generated/dataModel";
 import type { EventView } from "@qali/backend/convex/domains/calendar/model";
@@ -13,6 +14,25 @@ import {
   startOfMonth,
   startOfWeek,
 } from "date-fns";
+
+// The working time zone
+//
+// The calendar operates in ONE zone — the user's timezone preference, falling
+// back to the browser's (see usePreferences) — for everything: day cuts,
+// labels, wheel composition, and the zone stamped on writes. date-fns v4
+// propagates a TZDate's zone through its functions, so the discipline is
+// simple: every Date that enters calendar math is created by `zoned`/
+// `zonedNow` below, and everything derived from it stays in the working zone.
+
+/** An instant viewed in the working zone. */
+export function zoned(ms: number, timeZone: string): TZDate {
+  return new TZDate(ms, timeZone);
+}
+
+/** The current instant viewed in the working zone. */
+export function zonedNow(timeZone: string): TZDate {
+  return new TZDate(Date.now(), timeZone);
+}
 
 /** An event as the grid renders it: a synced `events` row, or a public
  * `sharedEvents` row (holiday/birthday) in the same shape. Its `_id` is the
@@ -110,13 +130,16 @@ export const STRIP_SIDE_DAYS: Record<StripView, number> = {
  * object. Stepping the anchor rebuilds the strip but keeps all but one column's
  * `day` prop referentially equal, which is what lets the memoized day columns
  * skip re-rendering on the settle frame. */
-const dayCache = new Map<number, Date>();
+const dayCache = new Map<string, Date>();
 /** Comfortably more than the widest strip plus a few anchor steps; trimmed
  * wholesale rather than by LRU since a stale entry costs only a re-render. */
 const DAY_CACHE_LIMIT = 512;
 
 function internDay(date: Date): Date {
-  const key = date.getTime();
+  // The zone is part of the key: the same instant carries different calendar
+  // components per zone, and handing back a cached day from a previous
+  // working zone would resurrect the old zone's labels.
+  const key = `${date instanceof TZDate ? date.timeZone : "local"}:${date.getTime()}`;
   const cached = dayCache.get(key);
   if (cached) return cached;
   if (dayCache.size >= DAY_CACHE_LIMIT) dayCache.clear();
@@ -352,19 +375,26 @@ export function visibleMonthEventMetrics(
   return { visibleCount, hiddenCount: eventCount - visibleCount };
 }
 
-const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+/** A zone's short human label, e.g. "New York" from "America/New_York". */
+export function zoneShortLabel(zone: string): string {
+  return zone.split("/").pop()?.replace(/_/g, " ") ?? zone;
+}
 
 /** Timezones shown as time gutters, left to right. First is the primary day
- * scale. For now only the user's current timezone is shown; additional zones
- * will be appended here when multi-timezone support lands. */
-export const TIMEZONES: { id: string; label: string }[] = [
-  { id: LOCAL_TZ, label: LOCAL_TZ.split("/").pop()?.replace(/_/g, " ") ?? "Local" },
-];
+ * scale — the working zone. Additional zones will be appended here when
+ * multi-timezone support lands. */
+export function timezoneGutters(
+  workingZone: string,
+): { id: string; label: string }[] {
+  return [{ id: workingZone, label: zoneShortLabel(workingZone) }];
+}
 
+/** How many gutters render — a layout constant so widths can't drift. */
+export const GUTTER_COUNT = 1;
 /** Width of each timezone gutter column, in pixels. */
 export const GUTTER_WIDTH = 64;
 /** Total width of all gutter columns — where the day columns begin. */
-export const GUTTER_TOTAL = GUTTER_WIDTH * TIMEZONES.length;
+export const GUTTER_TOTAL = GUTTER_WIDTH * GUTTER_COUNT;
 
 /** Grid template for `n` equal day columns (the gutter is a pinned sibling). */
 export function dayColsTemplate(n: number): string {
@@ -525,8 +555,9 @@ export function msToPct(ms: number, dayStartMs: number): number {
 }
 
 /** Stable reveal key for a whole day (today's pill, a month cell). Events and
- * requests reveal by their own id instead; a day is keyed by its local midnight
- * so the same string is produced from a `Date` or an instant within the day. */
+ * requests reveal by their own id instead; a day is keyed by its midnight —
+ * in the working zone when handed a `zoned` date (which every caller should),
+ * browser-local for a bare `Date`/instant. */
 export function dayKey(date: Date | number): string {
   return `day:${startOfDay(date).getTime()}`;
 }

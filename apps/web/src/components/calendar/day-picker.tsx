@@ -22,7 +22,7 @@ import {
 import { type ReactElement, useMemo, useState } from "react";
 
 import { usePreferences } from "@/components/workspace/preferences-context";
-import type { WeekStart } from "./lib";
+import { zoned, type WeekStart } from "./lib";
 
 /** Single-letter weekday headers, in the user's week order. */
 function weekdayLetters(weekStartsOn: WeekStart): string[] {
@@ -50,17 +50,19 @@ export function DayPicker({
   side = "bottom",
   children,
 }: DayPickerProps) {
-  const { weekStartsOn } = usePreferences();
+  const { weekStartsOn, timeZone } = usePreferences();
   const [open, setOpen] = useState(false);
+  // Working-zone dates throughout, so grid days and "today" agree with the
+  // calendar behind the popover.
   const [viewMonth, setViewMonth] = useState(() =>
-    startOfMonth(new Date(selectedMs)),
+    startOfMonth(zoned(selectedMs, timeZone)),
   );
 
   const gridStart = startOfWeek(startOfMonth(viewMonth), { weekStartsOn });
   const gridEnd = endOfWeek(endOfMonth(viewMonth), { weekStartsOn });
   const weekdays = useMemo(() => weekdayLetters(weekStartsOn), [weekStartsOn]);
   const days = eachDayOfInterval({ start: gridStart, end: gridEnd });
-  const selectedDate = new Date(selectedMs);
+  const selectedDate = zoned(selectedMs, timeZone);
 
   const select = (day: Date) => {
     onSelect(day.getTime());
@@ -72,7 +74,7 @@ export function DayPicker({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        if (next) setViewMonth(startOfMonth(new Date(selectedMs)));
+        if (next) setViewMonth(startOfMonth(zoned(selectedMs, timeZone)));
       }}
     >
       <PopoverTrigger render={children} />

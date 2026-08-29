@@ -33,6 +33,8 @@ import {
   VIEW_COLUMNS,
   VIEW_NAV_DAYS,
   viewTitle,
+  zoned,
+  zonedNow,
 } from "./lib";
 import { MonthPanel } from "./month-panel";
 import { MonthPicker } from "./month-picker";
@@ -49,10 +51,13 @@ const VIEWS: CalendarView[] = ["day", "week", "month"];
 const NO_EVENTS: Doc<"events">[] = [];
 
 export function CalendarWeekView() {
-  const { weekStartsOn, defaultView } = usePreferences();
+  const { weekStartsOn, defaultView, timeZone } = usePreferences();
+  // The anchor is a working-zone TZDate; date-fns propagates its zone through
+  // every derivation (stripDays, pageDays, headers), so the whole grid cuts
+  // days in the working zone.
   const [view, setView] = useState<CalendarView>(defaultView);
   const [anchor, setAnchor] = useState(() =>
-    pageStart(defaultView, new Date(), weekStartsOn),
+    pageStart(defaultView, zonedNow(timeZone), weekStartsOn),
   );
   const [reveal, setReveal] = useState<Reveal>(NO_REVEAL);
   const pagerRef = useRef<CalendarPagerHandle>(null);
@@ -105,12 +110,12 @@ export function CalendarWeekView() {
   // reads this plus the events below to land on the next free slot.
   const { registerCreateSeed, registerReveal } = useDock();
   const focusDayMs = useMemo(() => {
-    const today = startOfDay(new Date());
+    const today = startOfDay(zonedNow(timeZone));
     const onPage = pageDays(view, anchor, weekStartsOn).some((day) =>
       isSameDay(day, today),
     );
     return (onPage ? today : startOfDay(anchor)).getTime();
-  }, [view, anchor, weekStartsOn]);
+  }, [view, anchor, weekStartsOn, timeZone]);
   useEffect(() => {
     registerCreateSeed({ dayStartMs: focusDayMs, events });
     return () => registerCreateSeed(null);
@@ -136,14 +141,16 @@ export function CalendarWeekView() {
     [view, weekStartsOn],
   );
 
-  // A week-start change re-cuts the visible page: the anchor was computed
-  // under the old week shape, so re-normalize it (a no-op for day/month).
-  // Deliberately keyed on the preference alone — `view` is read for
-  // normalization only, and re-running on view changes would fight
+  // A week-start or working-zone change re-cuts the visible page: the anchor
+  // was computed under the old week shape / zone, so re-derive it around the
+  // same instant. Deliberately keyed on the preferences alone — `view` is
+  // read for normalization only, and re-running on view changes would fight
   // switchView's own anchor updates.
   useEffect(() => {
-    setAnchor((current) => pageStart(view, current, weekStartsOn));
-  }, [weekStartsOn]);
+    setAnchor((current) =>
+      pageStart(view, zoned(current.getTime(), timeZone), weekStartsOn),
+    );
+  }, [weekStartsOn, timeZone]);
 
   // Settle handlers must keep a stable identity across renders: the scrollers
   // derive their recentering effect's dependencies from them, so an inline
@@ -268,9 +275,9 @@ export function CalendarWeekView() {
   // Today is just a reveal of today's date pill at the current-time line.
   const goToToday = () =>
     revealTarget({
-      date: new Date(),
+      date: zonedNow(timeZone),
       vertical: "now",
-      flashId: dayKey(new Date()),
+      flashId: dayKey(zonedNow(timeZone)),
     });
 
   // The panels reach for an item by its start time and reveal key. In month
@@ -282,7 +289,7 @@ export function CalendarWeekView() {
       bumpReveal(input.flashId);
       return;
     }
-    const date = new Date(input.startMs);
+    const date = zoned(input.startMs, timeZone);
     if (layout.mode === "month") {
       revealTarget({ date, vertical: null, flashId: dayKey(date) });
     } else {

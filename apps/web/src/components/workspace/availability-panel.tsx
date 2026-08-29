@@ -208,11 +208,6 @@ function AvailabilityForm({
   const upsert = useMutation(api.domains.booking.mutations.upsertBookingPage);
   const { setEditing } = useAvailabilityEdit();
   const { timeZone } = usePreferences();
-  // Day painting authors date keys in the browser's zone, so it's only
-  // available while the page's zone (the timezone preference) matches it —
-  // see the `ready` gate in availability-edit-context.
-  const zoneMismatch =
-    timeZone !== Intl.DateTimeFormat().resolvedOptions().timeZone;
   const reduce = useReducedMotion();
   const initial = page ?? defaults;
   const lastInitial = useRef(initial);
@@ -403,9 +398,10 @@ function AvailabilityForm({
   };
 
   const openDateEditor = async () => {
-    if (page === null || zoneMismatch) return;
-    // Persist the draft and its zone before the calendar starts authoring
-    // date keys and wall-clock minutes against it.
+    if (page === null) return;
+    // Persist the draft in the working zone before the calendar starts
+    // authoring date keys and wall-clock minutes against it — this is what
+    // guarantees the edit context's page-zone gate holds.
     if (await persist(false)) setEditing(true);
   };
 
@@ -665,7 +661,7 @@ function AvailabilityForm({
                 needs a saved page, so it's gated until one exists. */}
             <button
               type="button"
-              disabled={page === null || !canSave || zoneMismatch}
+              disabled={page === null || !canSave}
               onClick={() => void openDateEditor()}
               className="group flex items-center gap-3 rounded-2xl bg-muted/60 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-muted/60"
             >
@@ -677,11 +673,9 @@ function AvailabilityForm({
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="text-sm font-medium">Set specific dates</span>
                 <span className="truncate text-xs text-muted-foreground">
-                  {zoneMismatch
-                    ? `Painting needs your time zone preference to match this device (${timeZone})`
-                    : page === null
-                      ? "Save your link first to override single days"
-                      : "Save these settings, then paint individual days"}
+                  {page === null
+                    ? "Save your link first to override single days"
+                    : "Save these settings, then paint individual days"}
                 </span>
               </span>
               <HugeiconsIcon

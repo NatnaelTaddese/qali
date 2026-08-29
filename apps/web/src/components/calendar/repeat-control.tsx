@@ -4,10 +4,12 @@ import {
   PopoverTrigger,
 } from "@qali/ui/components/popover";
 import { cn } from "@qali/ui/lib/utils";
-import { addMonths } from "date-fns";
+import { addMonths, format } from "date-fns";
 import { useState } from "react";
 
+import { usePreferences } from "@/components/workspace/preferences-context";
 import { DayPicker } from "./day-picker";
+import { zoned } from "./lib";
 import {
   defaultRecurrence,
   type Freq,
@@ -35,7 +37,10 @@ const FREQ_TABS: { freq: Freq; label: string; noun: string }[] = [
   { freq: "YEARLY", label: "Year", noun: "year" },
 ];
 
-const PRESETS = (startMs: number): { label: string; value: Recurrence | null }[] => [
+const PRESETS = (
+  startMs: number,
+  timeZone: string,
+): { label: string; value: Recurrence | null }[] => [
   { label: "Does not repeat", value: null },
   { label: "Daily", value: { freq: "DAILY", interval: 1, end: { kind: "never" } } },
   {
@@ -43,7 +48,7 @@ const PRESETS = (startMs: number): { label: string; value: Recurrence | null }[]
     value: {
       freq: "WEEKLY",
       interval: 1,
-      byWeekday: [weekdayOf(startMs)],
+      byWeekday: [weekdayOf(startMs, timeZone)],
       end: { kind: "never" },
     },
   },
@@ -71,10 +76,11 @@ export function RepeatControl({
   value: Recurrence | null;
   onChange: (r: Recurrence | null) => void;
 }) {
+  const { timeZone } = usePreferences();
   const [open, setOpen] = useState(false);
   // The custom editor always works against a concrete rule; when nothing is set
   // yet it seeds from a sensible default so any edit turns repetition on.
-  const draft = value ?? defaultRecurrence(startMs);
+  const draft = value ?? defaultRecurrence(startMs, timeZone);
   const patch = (next: Partial<Recurrence>) => onChange({ ...draft, ...next });
 
   const endKind = value?.end.kind ?? "never";
@@ -82,11 +88,11 @@ export function RepeatControl({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger className="flex-1 truncate rounded-lg px-2 py-1 text-right text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
-        {value ? summarize(value) : "Does not repeat"}
+        {value ? summarize(value, timeZone) : "Does not repeat"}
       </PopoverTrigger>
       <PopoverContent side="top" align="end" className="w-[22rem] p-2">
         <div className="flex flex-col gap-1">
-          {PRESETS(startMs).map((preset) => {
+          {PRESETS(startMs, timeZone).map((preset) => {
             const active = presetMatches(preset.value, value);
             return (
               <button
@@ -132,7 +138,7 @@ export function RepeatControl({
                       freq: tab.freq,
                       byWeekday:
                         tab.freq === "WEEKLY"
-                          ? (draft.byWeekday ?? [weekdayOf(startMs)])
+                          ? (draft.byWeekday ?? [weekdayOf(startMs, timeZone)])
                           : undefined,
                     })
                   }
@@ -181,7 +187,7 @@ export function RepeatControl({
                   patch({
                     end: {
                       kind: "onDate",
-                      dateMs: addMonths(new Date(startMs), 1).getTime(),
+                      dateMs: addMonths(zoned(startMs, timeZone), 1).getTime(),
                     },
                   })
                 }
@@ -209,11 +215,7 @@ export function RepeatControl({
                     type="button"
                     className="rounded-lg px-2 py-1 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    {new Date(value.end.dateMs).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
+                    {format(zoned(value.end.dateMs, timeZone), "MMM d, yyyy")}
                   </button>
                 </DayPicker>
               </div>

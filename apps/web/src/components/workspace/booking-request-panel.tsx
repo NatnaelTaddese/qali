@@ -10,6 +10,9 @@ import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { format, formatDistanceToNowStrict } from "date-fns";
+
+import { zoned } from "@/components/calendar/lib";
+import { usePreferences } from "./preferences-context";
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -66,12 +69,13 @@ function useBookingDecision(onDone: (booking: Booking) => void) {
   return { decide, busy };
 }
 
-/** "Mon, Aug 3 · 10:00 – 10:30", in the host's own zone. */
-export function bookingTimeLabel(booking: Booking): string {
-  return `${format(booking.startMs, "EEE, MMM d")} · ${format(
-    booking.startMs,
+/** "Mon, Aug 3 · 10:00 – 10:30", in the host's working zone. */
+export function bookingTimeLabel(booking: Booking, timeZone: string): string {
+  const start = zoned(booking.startMs, timeZone);
+  return `${format(start, "EEE, MMM d")} · ${format(
+    start,
     "HH:mm",
-  )} – ${format(booking.endMs, "HH:mm")}`;
+  )} – ${format(zoned(booking.endMs, timeZone), "HH:mm")}`;
 }
 
 export function BookingRequestPanel({
@@ -88,6 +92,7 @@ export function BookingRequestPanel({
     endMs: snapshot.endMs + 1,
   });
   const booking = live?.find((b) => b._id === snapshot._id) ?? snapshot;
+  const { timeZone } = usePreferences();
   const { decide, busy } = useBookingDecision(onClose);
   const activeDecision = busy?.bookingId === booking._id ? busy.decision : null;
 
@@ -99,7 +104,7 @@ export function BookingRequestPanel({
             {booking.requesterName}
           </p>
           <p className="text-xs text-muted-foreground">
-            {bookingTimeLabel(booking)}
+            {bookingTimeLabel(booking, timeZone)}
           </p>
         </div>
         <button
@@ -253,6 +258,7 @@ function RequestCard({
   onDecide: (decision: BookingDecision) => void;
 }) {
   const reduce = useReducedMotion();
+  const { timeZone } = usePreferences();
   const noteRef = useRef<HTMLParagraphElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [canExpand, setCanExpand] = useState<boolean>();
@@ -305,7 +311,7 @@ function RequestCard({
             strokeWidth={2}
             className="size-3.5 shrink-0 text-muted-foreground"
           />
-          <span className="truncate">{bookingTimeLabel(booking)}</span>
+          <span className="truncate">{bookingTimeLabel(booking, timeZone)}</span>
         </p>
         <p className="pl-5 text-[11px] text-muted-foreground">
           Requester's timezone: {booking.timeZone.replace(/_/g, " ")}

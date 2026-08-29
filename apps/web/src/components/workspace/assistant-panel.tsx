@@ -40,7 +40,6 @@ import {
   AssistantProposalCard,
   type AssistantAction,
 } from "./assistant-proposal-card";
-import { usePreferences } from "./preferences-context";
 
 type AssistantMessage = Doc<"assistantMessages">;
 
@@ -122,7 +121,6 @@ export function AssistantPanel({
   const [sending, setSending] = useState(false);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
   const sendMessage = useAction(api.domains.assistant.loop.sendMessage);
-  const { timeZone } = usePreferences();
   const reduceMotion = useReducedMotion();
   const sendGooFilterId = useId().replace(/[:]/g, "");
 
@@ -277,8 +275,10 @@ export function AssistantPanel({
         threadId: threadId ?? undefined,
         text: trimmed,
         // The backend must never guess these — every relative date the model
-        // resolves depends on them.
-        timeZone,
+        // resolves depends on them. The browser zone, not the timezone
+        // preference: "tomorrow" must mean tomorrow where the user is, on the
+        // grid they're looking at (which renders browser-local).
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       onThreadChange(result.threadId);
     } catch (error: unknown) {

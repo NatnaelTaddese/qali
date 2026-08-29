@@ -43,6 +43,7 @@ import { toast } from "sonner";
 
 import {
   calendarDisplayName,
+  isWritableCalendar,
   type CalendarListItem,
 } from "@/components/calendar/lib";
 import { calendarColorVar } from "@/components/calendar/colors";
@@ -442,13 +443,26 @@ function AccountsSection() {
   return (
     <div className="space-y-3">
       {connections.map((connection) => (
-        <ConnectionCard key={connection._id} connection={connection} />
+        <ConnectionCard
+          key={connection._id}
+          connection={connection}
+          // Only a sole connection is provably the login grant, whose
+          // identity is the session's. A second account must show its own
+          // providerAccountId — never the session's name over foreign toggles.
+          primary={connections.length === 1}
+        />
       ))}
     </div>
   );
 }
 
-function ConnectionCard({ connection }: { connection: Connection }) {
+function ConnectionCard({
+  connection,
+  primary,
+}: {
+  connection: Connection;
+  primary: boolean;
+}) {
   const { data: session } = authClient.useSession();
   const setStatus = useMutation(
     api.domains.calendar.mutations.setConnectionStatus,
@@ -461,10 +475,14 @@ function ConnectionCard({ connection }: { connection: Connection }) {
 
   const paused = connection.status === "paused";
   const errored = connection.status === "error";
-  // v1's connection is the login grant, so the session's identity is this
-  // account's identity — and it learns providerAccountId lazily.
+  const providerName =
+    connection.provider === "google" ? "Google Calendar" : "Outlook";
+  // The session's identity stands in only for the login grant (primary);
+  // any other connection shows its own account id or an honest placeholder.
+  const accountName = primary ? (session?.user?.name ?? providerName) : providerName;
   const accountLabel =
-    connection.providerAccountId ?? session?.user?.email ?? "";
+    connection.providerAccountId ??
+    (primary ? (session?.user?.email ?? "") : "Account details pending sync");
   const ProviderLogo =
     connection.provider === "google" ? Google : MicrosoftOutlook;
   const intervalMin = Math.max(
@@ -494,28 +512,34 @@ function ConnectionCard({ connection }: { connection: Connection }) {
     <div className="overflow-hidden rounded-3xl bg-muted/50">
       {/* Identity band: who this account is, tinted apart from its toggles. */}
       <div className="flex items-center gap-3 border-b border-border bg-muted/60 px-4 py-3">
-        <span className="relative shrink-0">
-          <UserAvatar className="size-9" />
-          <span className="absolute -right-0.5 -bottom-0.5 flex size-4 items-center justify-center rounded-full bg-background shadow-sm">
-            <ProviderLogo aria-hidden className="size-2.5" />
+        {primary ? (
+          <span className="relative shrink-0">
+            <UserAvatar className="size-9" />
+            <span className="absolute -right-0.5 -bottom-0.5 flex size-4 items-center justify-center rounded-full bg-background shadow-sm">
+              <ProviderLogo aria-hidden className="size-2.5" />
+            </span>
           </span>
-        </span>
+        ) : (
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-background">
+            <ProviderLogo aria-hidden className="size-4" />
+          </span>
+        )}
         <div className="min-w-0 flex-1">
-          {session?.user?.name && (
-            <p className="truncate text-sm font-medium">{session.user.name}</p>
-          )}
+          <p className="truncate text-sm font-medium">{accountName}</p>
           <p className="truncate text-xs text-muted-foreground">
             {accountLabel}
           </p>
         </div>
-        <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-link">
-          <HugeiconsIcon
-            icon={CheckmarkBadge01Icon}
-            strokeWidth={2}
-            className="size-3.5"
-          />
-          Primary
-        </span>
+        {primary && (
+          <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-link">
+            <HugeiconsIcon
+              icon={CheckmarkBadge01Icon}
+              strokeWidth={2}
+              className="size-3.5"
+            />
+            Primary
+          </span>
+        )}
       </div>
 
       <div className="px-4">
@@ -613,13 +637,8 @@ function ConnectionCard({ connection }: { connection: Connection }) {
   );
 }
 
-const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
-
 function isWritable(calendar: CalendarListItem): boolean {
-  return (
-    !calendar.isShared &&
-    WRITABLE_ACCESS_ROLES.has(calendar.accessRole ?? "")
-  );
+  return !calendar.isShared && isWritableCalendar(calendar);
 }
 
 function sortCalendars(calendars: CalendarListItem[]): CalendarListItem[] {
@@ -664,7 +683,9 @@ function CalendarsSection() {
           <div key={connection._id} className="space-y-1.5">
             <p className="truncate px-1 text-xs font-medium text-muted-foreground">
               {connection.providerAccountId ??
-                session?.user?.email ??
+                // The session's email stands in only for the sole login-grant
+                // connection; a second account gets a neutral label.
+                (connections.length === 1 ? session?.user?.email : undefined) ??
                 "Connected account"}
             </p>
             <SettingCard>
@@ -929,7 +950,7 @@ function PreferencesSection() {
       )}
       <SettingRow
         title="Time zone"
-        description="Used for new events and your booking page"
+        description="The zone your booking page's hours are published in"
         control={
           <TimeZonePicker
             value={prefs.timeZone}

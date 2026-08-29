@@ -14,10 +14,11 @@ import {
 import { cn } from "@qali/ui/lib/utils";
 
 import { calendarColorVar, EVENT_COLOR_CHOICES } from "./colors";
-import { calendarDisplayName, type CalendarListItem } from "./lib";
-
-/** Access roles that let us create events on a calendar. */
-const WRITABLE = new Set(["owner", "writer"]);
+import {
+  calendarDisplayName,
+  isWritableCalendar,
+  type CalendarListItem,
+} from "./lib";
 
 /** Primary first, then alphabetical — the same order as the header's picker. */
 function sortCalendars(calendars: CalendarListItem[]): CalendarListItem[] {
@@ -59,7 +60,7 @@ export function EventControls({
   disabled = false,
   canChangeCalendar = false,
 }: EventControlsProps) {
-  const writable = sortCalendars(calendars.filter((c) => WRITABLE.has(c.accessRole ?? "")));
+  const writable = sortCalendars(calendars.filter(isWritableCalendar));
   // An event can sit on a calendar we can't write to; still name it.
   const selected =
     writable.find((c) => c._id === calendarId) ??

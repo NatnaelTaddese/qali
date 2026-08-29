@@ -5,9 +5,8 @@ import { v, type Infer } from "convex/values";
 
 import { mutation, type MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
+import { WRITABLE_ACCESS_ROLES } from "../calendar/mutations";
 import { preferenceFields } from "./tables";
-
-const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
 
 const resettableField = v.union(
   v.literal("timeZone"),

@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { useDock } from "@/components/workspace/dock-context";
-import { usePreferences } from "@/components/workspace/preferences-context";
 
 import { type CalendarEvent, editableEventId, MS_PER_DAY, SNAP_MS } from "./lib";
 import { useEventCapabilities } from "./permissions";
@@ -82,14 +81,8 @@ export function useEventDrag(
   days: Date[],
 ): UseEventDrag {
   const { open } = useDock();
-  const { timeZone } = usePreferences();
   const updateEventTime = useAction(api.domains.calendar.service.updateEventTime);
   const capabilitiesOf = useEventCapabilities();
-
-  // Read at commit time through a ref, like `days`, so a preference change
-  // never re-binds the gesture's window listeners.
-  const timeZoneRef = useRef(timeZone);
-  timeZoneRef.current = timeZone;
 
   const [overrides, setOverrides] = useState<Record<string, OverrideTimes>>({});
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -246,7 +239,9 @@ export function useEventDrag(
         eventId: editableEventId(id),
         startMs: times.startMs,
         endMs: times.endMs,
-        timeZone: timeZoneRef.current,
+        // Browser zone, not the timezone preference — the drag's wall-clock
+        // math is browser-local, and the zone must match how it was composed.
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       }).catch((error: unknown) => {
         // Roll the card back to its synced position and surface the failure.
         pendingRef.current.delete(id);

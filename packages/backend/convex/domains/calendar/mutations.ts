@@ -18,7 +18,9 @@ import {
 } from "./connections";
 import { providerEventValidator } from "./validators";
 
-const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
+/** Access roles that allow writing events. The single backend source — the
+ * preferences domain's default-calendar validation imports it. */
+export const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
 const CALENDAR_OPERATION_LEASE_MS = 10 * 60 * 1000;
 
 /** Resolve an owned local calendar row to a writable provider target. */
@@ -383,10 +385,10 @@ export const setConnectionStatus = mutation({
   },
 });
 
-/** Turn a connection's contacts sync on or off. `capabilities.contacts` is
- * what the adapter registry gates the contacts feeder on (registry.ts), so
- * flipping it here genuinely starts/stops that sync — the settings panel's
- * per-account Contacts toggle. Exported core so itests can drive it. */
+/** Turn a connection's contacts sync on or off. Writes the user-owned
+ * `contactsSyncEnabled` flag — the adapter registry gates the contacts feeder
+ * on it alongside the adapter-owned `capabilities.contacts` (registry.ts),
+ * which this deliberately never touches. Exported core so itests can drive it. */
 export async function setConnectionContactsCore(
   ctx: MutationCtx,
   userId: string,
@@ -397,11 +399,7 @@ export async function setConnectionContactsCore(
     throw new Error("Connection not found");
   }
   await ctx.db.patch(args.connectionId, {
-    capabilities: {
-      // Google supports idempotent create; preserve whatever the adapter set.
-      idempotentCreate: connection.capabilities?.idempotentCreate ?? true,
-      contacts: args.contacts,
-    },
+    contactsSyncEnabled: args.contacts,
     updatedAt: Date.now(),
   });
   return null;

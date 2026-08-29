@@ -49,17 +49,19 @@ function minutesToParts(minutes: number, use24h: boolean): TimeParts {
   };
 }
 
-/** Wheel values → minutes-since-midnight. In an end field, midnight (12 AM /
- * 00) means the end of the day (1440), not 00:00 — so the interval stays valid
- * and midnight is reachable as an end bound. */
+/** Wheel values → minutes-since-midnight. In an end field, exactly midnight
+ * (12:00 AM / 00:00) means the end of the day (1440), not 00:00 — so the
+ * interval stays valid and midnight is reachable as an end bound. Only the
+ * :00 minute maps up: 00:15 stays 15, so sub-hour past-midnight end bounds
+ * remain expressible. */
 function partsToMinutes(parts: TimeParts, mode: Mode, use24h: boolean): number {
-  if (use24h) {
-    if (mode === "end" && parts.hour === "00") return END_OF_DAY;
-    return Number(parts.hour) * 60 + Number(parts.minute);
-  }
-  if (mode === "end" && parts.hour === "12" && parts.meridiem === "AM") {
-    return END_OF_DAY;
-  }
+  const atMidnight =
+    parts.minute === "00" &&
+    (use24h
+      ? parts.hour === "00"
+      : parts.hour === "12" && parts.meridiem === "AM");
+  if (mode === "end" && atMidnight) return END_OF_DAY;
+  if (use24h) return Number(parts.hour) * 60 + Number(parts.minute);
   const h12 = Number(parts.hour) % 12;
   const h24 = parts.meridiem === "PM" ? h12 + 12 : h12;
   return h24 * 60 + Number(parts.minute);

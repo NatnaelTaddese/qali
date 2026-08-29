@@ -1,6 +1,12 @@
 import { api } from "@qali/backend/convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
 
 import {
   WEEK_STARTS_ON,
@@ -20,8 +26,10 @@ interface PreferencesValue {
   weekStartsOn: WeekStart;
   use24h: boolean;
   defaultView: CalendarView;
-  /** The zone for new events and the booking page. Grid rendering stays in the
-   * browser's zone — see the note by TIMEZONES in calendar/lib.ts. */
+  /** The zone the booking page's hours are published in. Event writes and
+   * grid rendering deliberately stay in the browser's zone — event times are
+   * composed in browser-local wall clock, and a different anchor would drift
+   * recurrences (see the note by TIMEZONES in calendar/lib.ts). */
   timeZone: string;
   defaultCalendarId: RawPreferences["defaultCalendarId"];
   /** The stored fields as-is, for UI that distinguishes "automatic" from set. */
@@ -30,30 +38,52 @@ interface PreferencesValue {
 
 const PreferencesContext = createContext<PreferencesValue | null>(null);
 
+/** Everything "automatic": the fallback when nothing is stored or readable. */
+const EMPTY_RAW: RawPreferences = {
+  timeZone: undefined,
+  weekStartsOn: undefined,
+  timeFormat: undefined,
+  defaultView: undefined,
+  defaultCalendarId: undefined,
+};
+
+function resolve(raw: RawPreferences): PreferencesValue {
+  return {
+    weekStartsOn: raw.weekStartsOn ?? WEEK_STARTS_ON,
+    use24h: raw.timeFormat === "24h",
+    defaultView: raw.defaultView ?? "week",
+    timeZone: raw.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+    defaultCalendarId: raw.defaultCalendarId,
+    raw,
+  };
+}
+
 /**
- * Loads the user's preferences once for the workspace. The first paint waits
- * for them (piggybacking on the auth-loading skeleton moment) so the calendar
- * mounts with the right default view and week shape; after that,
- * `useStableQuery` keeps renders warm across reconnects.
+ * Loads the user's preferences once for the workspace. The very first paint
+ * waits for the query (piggybacking on the auth-loading skeleton moment) so
+ * the calendar mounts with the right default view and week shape. After that
+ * the workspace NEVER unmounts on this query: a transient `null` (the query
+ * evaluating during an auth-token blip while <Authenticated> still renders)
+ * keeps the last resolved value, and a `null` with nothing to fall back on
+ * renders the defaults rather than hanging on a skeleton forever.
  */
 export function PreferencesProvider({ children }: { children: ReactNode }) {
   const raw = useStableQuery(api.domains.preferences.queries.getMyPreferences);
+  const lastValue = useRef<PreferencesValue | null>(null);
 
-  const value = useMemo<PreferencesValue | null>(() => {
-    if (raw === undefined || raw === null) return null;
-    return {
-      weekStartsOn: raw.weekStartsOn ?? WEEK_STARTS_ON,
-      use24h: raw.timeFormat === "24h",
-      defaultView: raw.defaultView ?? "week",
-      timeZone:
-        raw.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
-      defaultCalendarId: raw.defaultCalendarId,
-      raw,
-    };
-  }, [raw]);
+  const value = useMemo<PreferencesValue | null>(
+    () => (raw === undefined || raw === null ? null : resolve(raw)),
+    [raw],
+  );
+  if (value) lastValue.current = value;
+  const effective = value ?? lastValue.current;
 
-  if (!value) return <WorkspaceSkeleton />;
-  return <PreferencesContext value={value}>{children}</PreferencesContext>;
+  if (!effective && raw === undefined) return <WorkspaceSkeleton />;
+  return (
+    <PreferencesContext value={effective ?? resolve(EMPTY_RAW)}>
+      {children}
+    </PreferencesContext>
+  );
 }
 
 export function usePreferences(): PreferencesValue {

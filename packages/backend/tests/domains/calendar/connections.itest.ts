@@ -216,7 +216,7 @@ describe("connection model", () => {
     ).rejects.toThrow("Connection not found");
   });
 
-  test("toggling contacts flips the capability the registry gates on", async () => {
+  test("toggling contacts flips the user flag and never touches capabilities", async () => {
     const t = convexTest(schema, modules);
     const userId = "user_contacts";
     const connectionId = await t.run((ctx) =>
@@ -233,16 +233,16 @@ describe("connection model", () => {
     await t.run((ctx) =>
       setConnectionContactsCore(ctx, userId, { connectionId, contacts: false }),
     );
-    expect(
-      (await t.run((ctx) => ctx.db.get(connectionId)))?.capabilities,
-    ).toEqual({ contacts: false, idempotentCreate: true });
+    let row = await t.run((ctx) => ctx.db.get(connectionId));
+    expect(row?.contactsSyncEnabled).toBe(false);
+    // The adapter-owned mirror stays exactly as the adapter wrote it.
+    expect(row?.capabilities).toEqual({ contacts: true, idempotentCreate: true });
 
     await t.run((ctx) =>
       setConnectionContactsCore(ctx, userId, { connectionId, contacts: true }),
     );
-    expect(
-      (await t.run((ctx) => ctx.db.get(connectionId)))?.capabilities,
-    ).toEqual({ contacts: true, idempotentCreate: true });
+    row = await t.run((ctx) => ctx.db.get(connectionId));
+    expect(row?.contactsSyncEnabled).toBe(true);
 
     await expect(
       t.run((ctx) =>

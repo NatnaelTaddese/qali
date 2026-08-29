@@ -117,36 +117,23 @@ export async function listConnectionsHandler(ctx: QueryCtx) {
           q.eq("connectionId", connection._id),
         )
         .unique();
-      // The freshest calendar sync stands in for "last synced" — the
-      // connection itself records no completion time.
-      const calendars = await ctx.db
-        .query("calendars")
-        .withIndex("by_connection_and_providerCalendarId", (q) =>
-          q.eq("connectionId", connection._id),
-        )
-        .collect();
-      let lastSyncAt: number | undefined;
-      for (const calendar of calendars) {
-        if (
-          calendar.lastSyncAt !== undefined &&
-          (lastSyncAt === undefined || calendar.lastSyncAt > lastSyncAt)
-        ) {
-          lastSyncAt = calendar.lastSyncAt;
-        }
-      }
       return {
         _id: connection._id,
         provider: connection.provider,
         providerAccountId: connection.providerAccountId,
         status: connection.status,
-        contactsEnabled: connection.capabilities?.contacts ?? false,
+        contactsEnabled:
+          (connection.capabilities?.contacts ?? false) &&
+          connection.contactsSyncEnabled !== false,
         lastError: connection.lastError,
         createdAt: connection.createdAt,
         syncStatus: syncState?.status,
         syncLastError: syncState?.lastError,
         syncIntervalMs: syncState?.syncIntervalMs,
         nextSyncDueAt: syncState?.nextSyncDueAt,
-        lastSyncAt,
+        // Stamped by recordSyncOutcome; scanning per-calendar lastSyncAt here
+        // would re-run this reactive query on every calendar's sync write.
+        lastSyncAt: syncState?.lastSyncAt,
       };
     }),
   );

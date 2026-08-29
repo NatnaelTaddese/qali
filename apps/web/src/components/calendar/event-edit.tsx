@@ -15,7 +15,6 @@ import {
   toEventTimes,
   type EventFormValue,
 } from "./event-form";
-import { usePreferences } from "@/components/workspace/preferences-context";
 import { editableEventId, type CalendarEvent } from "./lib";
 import { useEventCapabilities } from "./permissions";
 import { toRRule } from "./rrule";
@@ -140,7 +139,6 @@ export function EventEdit({
 }) {
   const updateEvent = useAction(api.domains.calendar.service.updateEvent);
   const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
-  const { timeZone } = usePreferences();
   const capabilities = useEventCapabilities()(event);
   // Captured once: the baseline every save diffs against. Re-seeding it from
   // `event` would erase edits in progress each time a sync lands.
@@ -159,7 +157,9 @@ export function EventEdit({
 
   const save = (scope: SaveScope) => {
     if (!valid || saving) return;
-    const patch = diffEvent(initial, value, event, timeZone);
+    // Browser zone, not the timezone preference: the form's times are
+    // composed browser-locally, and this zone anchors recurring series.
+    const patch = diffEvent(initial, value, event);
     if (Object.keys(patch).length === 0) {
       onSaved();
       return;
@@ -169,7 +169,11 @@ export function EventEdit({
     // requires a time zone on a recurring event. `diffEvent` only sets one when
     // the times change, so guarantee a zone here; an explicitly-diffed one still
     // wins since `patch` is spread last.
-    const finalPatch = finalizeEventPatch(patch, scope, timeZone);
+    const finalPatch = finalizeEventPatch(
+      patch,
+      scope,
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+    );
     if (!operationIdRef.current) {
       operationIdRef.current = crypto.randomUUID();
     }

@@ -35,6 +35,16 @@ export type CalendarListItem = FunctionReturnType<
   typeof api.domains.calendar.queries.listCalendars
 >[number];
 
+/** Access roles that allow writing events — the single frontend source for
+ * the writability rule (the calendar pickers and default-calendar checks). */
+export const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
+
+export function isWritableCalendar(calendar: {
+  accessRole?: string;
+}): boolean {
+  return WRITABLE_ACCESS_ROLES.has(calendar.accessRole ?? "");
+}
+
 /** User-facing calendar name, including a per-user override when one exists.
  * `providerCalendarId` is optional only for the transitional schema: a
  * pre-cutover row without one renders nameless rather than borrowing a legacy

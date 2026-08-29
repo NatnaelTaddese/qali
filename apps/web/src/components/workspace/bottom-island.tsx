@@ -76,6 +76,13 @@ export function BottomIsland() {
     availabilityIntentVersion > 0;
   // This stays live for the dock badge and incoming-request calendar blocks.
   const pendingBookings = useQuery(api.domains.booking.queries.listPendingBookings);
+  // Warm the settings panel's one cold query from the dock itself: the
+  // subscription lives for as long as either panel is open, so the handoff
+  // never depends on panel-swap animation overlap keeping a watcher mounted.
+  useStableQuery(
+    api.domains.calendar.queries.listConnections,
+    view?.kind === "account" || view?.kind === "settings" ? {} : "skip",
+  );
   // Warm settings on interaction intent so the dock knows its final content
   // height before its spring begins. Retain them briefly after close for a
   // smooth reopen, then release both subscriptions.

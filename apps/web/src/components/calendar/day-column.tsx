@@ -1,6 +1,6 @@
 import { cn } from "@qali/ui/lib/utils";
 import { addDays, format, isToday } from "date-fns";
-import { memo, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { memo, type RefObject, useCallback, useMemo, useState } from "react";
 
 import { useAvailabilityEdit } from "@/components/workspace/availability-edit-context";
 import type { Booking } from "@/components/workspace/booking-request-panel";
@@ -10,33 +10,24 @@ import { AvailabilityBlock } from "./availability-block";
 import { BookingBlock } from "./booking-block";
 import { EventCard } from "./event-card";
 import { GhostEvent } from "./ghost-event";
+import type { GridDragMode, GridDragRange } from "./grid-drag";
 import {
   LANE_TILE_MAX_STAGGER_MS,
   layoutDayEvents,
   MS_PER_DAY,
   MS_PER_MINUTE,
-  SNAP_MS,
   SNAP_MINUTES,
-  snappedMsFromOffsetY,
   WEEK_LANE_TILE_MAX_STAGGER_MS,
   type CalendarEvent,
 } from "./lib";
 import type { Reveal } from "./today-pulse";
 import type { DragMode } from "./use-event-drag";
-
-interface Draft {
-  anchorMs: number;
-  startMs: number;
-  endMs: number;
-  status: "armed" | "dragging";
-}
+import { useGridDrag } from "./use-grid-drag";
 
 interface KeyboardDraft {
   startMin: number;
   endMin: number;
 }
-
-const DRAG_THRESHOLD_PX = 4;
 
 interface DayColumnProps {
   day: Date;
@@ -87,9 +78,6 @@ function DayColumnImpl({
     removeInterval,
     resetDay,
   } = useAvailabilityEdit();
-  const ref = useRef<HTMLDivElement>(null);
-  const pressClientY = useRef(0);
-  const [draft, setDraft] = useState<Draft | null>(null);
   const [keyboardDraft, setKeyboardDraft] = useState<KeyboardDraft>({
     startMin: 9 * 60,
     endMin: 9 * 60 + SNAP_MINUTES,
@@ -116,24 +104,27 @@ function DayColumnImpl({
     [events, dayStartMs, tileMaxStaggerMs],
   );
 
-  useEffect(() => {
-    if (!draft) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setDraft(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [draft]);
-
-  const snappedMs = (clientY: number) => {
-    const rect = ref.current?.getBoundingClientRect();
-    const top = rect?.top ?? 0;
-    const height = rect?.height ?? 1;
-    return snappedMsFromOffsetY(clientY - top, dayStartMs, height);
-  };
+  // One gesture serves both features; which one it is gets fixed at pointerdown
+  // and read back here, so leaving edit mode mid-drag can't reroute a selection
+  // into the other branch.
+  const { preview, begin } = useGridDrag(
+    useCallback(
+      (mode: GridDragMode, range: GridDragRange) => {
+        // While painting availability, a selection commits straight to the
+        // day's override — no dock, no confirm step.
+        if (mode === "paint") {
+          addInterval(day, range.startMs, range.endMs);
+          return;
+        }
+        // Otherwise the drag only proposes a range — the dock takes it from
+        // here and the user confirms.
+        open({ kind: "create", startMs: range.startMs, endMs: range.endMs });
+      },
+      [addInterval, day, open],
+    ),
+  );
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
     // Nothing to paint on a day that's already gone.
     if (editing && !canEditDay) return;
     // A pointer down on an existing availability block edits that block, so it
@@ -142,49 +133,13 @@ function DayColumnImpl({
     // Outside edit mode, event cards run their own drag; while painting they are
     // inert context, so a selection may start on top of one.
     if (!editing && (e.target as HTMLElement).closest("[data-event]")) return;
-    const anchorMs = Math.min(snappedMs(e.clientY), dayEndMs - SNAP_MS);
     if (editing) setKeyboardActive(false);
-    pressClientY.current = e.clientY;
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setDraft({ anchorMs, startMs: anchorMs, endMs: anchorMs + SNAP_MS, status: "armed" });
-  };
-
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!draft) return;
-    if (
-      draft.status === "armed" &&
-      Math.abs(e.clientY - pressClientY.current) < DRAG_THRESHOLD_PX
-    ) {
-      return;
-    }
-    const cursorMs = snappedMs(e.clientY);
-    const startMs = Math.min(draft.anchorMs, cursorMs);
-    const endMs = Math.min(
-      Math.max(Math.max(draft.anchorMs, cursorMs), startMs + SNAP_MS),
-      dayEndMs,
-    );
-    setDraft({ ...draft, startMs, endMs, status: "dragging" });
-  };
-
-  const onPointerUp = () => {
-    if (!draft) return;
-    // A plain click (never crossed the drag threshold) creates nothing.
-    if (draft.status === "armed") {
-      setDraft(null);
-      return;
-    }
-    const { startMs, endMs } = draft;
-    setDraft(null);
-    // While painting availability, a selection commits straight to the day's
-    // override — no dock, no confirm step.
-    if (editing) {
-      addInterval(day, startMs, endMs);
-      return;
-    }
-    // Otherwise the drag only proposes a range — the dock takes it from here and
-    // the user confirms. Hand the range over and drop the local draft; the ghost
-    // that stays on the grid is now driven by the dock's create view.
-    open({ kind: "create", startMs, endMs });
+    begin({
+      mode: editing ? "paint" : "create",
+      dayStartMs,
+      columnEl: e.currentTarget,
+      e,
+    });
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -222,10 +177,7 @@ function DayColumnImpl({
 
   return (
     <div
-      ref={ref}
       onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
       onKeyDown={onKeyDown}
       onFocus={(e) => {
         if (e.target === e.currentTarget) setKeyboardActive(true);
@@ -242,8 +194,13 @@ function DayColumnImpl({
           : undefined
       }
       className={cn(
-        "relative border-l border-border",
-        draft && "touch-none select-none",
+        // `touch-action` has to be settled *before* the pointer goes down — the
+        // browser latches it at that moment, so a class applied once a drag
+        // exists lands a render too late and the scroller wins the gesture.
+        // While painting, a vertical drag is always a paint; otherwise the
+        // strip keeps its own scrolling and paging.
+        "relative border-l border-border select-none",
+        canEditDay && "touch-none",
       )}
       style={{
         scrollSnapAlign: "start",
@@ -303,22 +260,24 @@ function DayColumnImpl({
           onRemove={() => removeInterval(day, index)}
         />
       ))}
-      {draft && draft.status === "dragging" && (
+      {preview && (
         <GhostEvent
-          startMs={draft.startMs}
-          endMs={draft.endMs}
+          startMs={preview.startMs}
+          endMs={preview.endMs}
           dayStartMs={dayStartMs}
           pending={false}
-          wallClock={editing}
+          wallClock={preview.mode === "paint"}
+          variant={preview.mode}
         />
       )}
-      {canEditDay && keyboardActive && !draft && (
+      {canEditDay && keyboardActive && !preview && (
         <GhostEvent
           startMs={dayStartMs + keyboardDraft.startMin * MS_PER_MINUTE}
           endMs={dayStartMs + keyboardDraft.endMin * MS_PER_MINUTE}
           dayStartMs={dayStartMs}
           pending={false}
           wallClock
+          variant="paint"
         />
       )}
       {pendingRange && (

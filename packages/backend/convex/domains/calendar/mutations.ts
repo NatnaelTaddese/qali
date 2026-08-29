@@ -383,6 +383,45 @@ export const setConnectionStatus = mutation({
   },
 });
 
+/** Turn a connection's contacts sync on or off. `capabilities.contacts` is
+ * what the adapter registry gates the contacts feeder on (registry.ts), so
+ * flipping it here genuinely starts/stops that sync — the settings panel's
+ * per-account Contacts toggle. Exported core so itests can drive it. */
+export async function setConnectionContactsCore(
+  ctx: MutationCtx,
+  userId: string,
+  args: { connectionId: Id<"calendarConnections">; contacts: boolean },
+): Promise<null> {
+  const connection = await ctx.db.get(args.connectionId);
+  if (!connection || connection.userId !== userId) {
+    throw new Error("Connection not found");
+  }
+  await ctx.db.patch(args.connectionId, {
+    capabilities: {
+      // Google supports idempotent create; preserve whatever the adapter set.
+      idempotentCreate: connection.capabilities?.idempotentCreate ?? true,
+      contacts: args.contacts,
+    },
+    updatedAt: Date.now(),
+  });
+  return null;
+}
+
+export const setConnectionContacts = mutation({
+  args: {
+    connectionId: v.id("calendarConnections"),
+    contacts: v.boolean(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    if (!user) {
+      throw new Error("Not authenticated");
+    }
+    return setConnectionContactsCore(ctx, user._id, args);
+  },
+});
+
 const SUMMARY_OVERRIDE_MAX_LENGTH = 200;
 
 /** Rename a calendar locally. An empty or absent name clears the override so

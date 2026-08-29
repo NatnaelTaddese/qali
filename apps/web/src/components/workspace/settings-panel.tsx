@@ -3,7 +3,7 @@ import {
   ArrowRight01Icon,
   Calendar03Icon,
   Cancel01Icon,
-  GoogleIcon,
+  CheckmarkBadge01Icon,
   Link01Icon,
   PencilEdit01Icon,
   RefreshIcon,
@@ -11,6 +11,7 @@ import {
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { Google, MicrosoftOutlook } from "@thesvg/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import type { Id } from "@qali/backend/convex/_generated/dataModel";
 import { Button } from "@qali/ui/components/button";
@@ -49,6 +50,7 @@ import {
   SPRING_DOCK,
 } from "@/components/calendar/motion";
 import { authClient } from "@/lib/auth-client";
+import { UserAvatar } from "./user-avatar";
 import { useSyncNow } from "./use-sync-now";
 
 export type SettingsSection = "accounts" | "calendars" | "preferences";
@@ -371,19 +373,16 @@ function SettingRow({
   title,
   description,
   destructiveDescription,
-  leading,
   control,
 }: {
   title: ReactNode;
   description?: ReactNode;
   /** Style the description as an error (e.g. a connection's lastError). */
   destructiveDescription?: boolean;
-  leading?: ReactNode;
   control?: ReactNode;
 }) {
   return (
     <div className="flex items-center gap-4 border-b border-border py-3.5 last:border-b-0">
-      {leading}
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">{title}</p>
         {description && (
@@ -447,15 +446,20 @@ function ConnectionCard({ connection }: { connection: Connection }) {
   const setStatus = useMutation(
     api.domains.calendar.mutations.setConnectionStatus,
   );
+  const setContacts = useMutation(
+    api.domains.calendar.mutations.setConnectionContacts,
+  );
   const { sync, isSyncing } = useSyncNow();
   const reduce = useReducedMotion();
 
   const paused = connection.status === "paused";
   const errored = connection.status === "error";
-  // A backfilled login-grant connection learns its account id lazily; until
-  // then the session email is the same account by construction.
+  // v1's connection is the login grant, so the session's identity is this
+  // account's identity — and it learns providerAccountId lazily.
   const accountLabel =
     connection.providerAccountId ?? session?.user?.email ?? "";
+  const ProviderLogo =
+    connection.provider === "google" ? Google : MicrosoftOutlook;
   const intervalMin = Math.max(
     1,
     Math.round((connection.syncIntervalMs ?? 15 * 60 * 1000) / 60_000),
@@ -480,84 +484,125 @@ function ConnectionCard({ connection }: { connection: Connection }) {
         } · checks every ${intervalMin} min`;
 
   return (
-    <SettingCard>
-      <SettingRow
-        leading={
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-background">
-            <HugeiconsIcon
-              icon={GoogleIcon}
-              strokeWidth={2}
-              className="size-4"
-            />
+    <div className="overflow-hidden rounded-3xl bg-muted/50">
+      {/* Identity band: who this account is, tinted apart from its toggles. */}
+      <div className="flex items-center gap-3 border-b border-border bg-muted/60 px-4 py-3">
+        <span className="relative shrink-0">
+          <UserAvatar className="size-9" />
+          <span className="absolute -right-0.5 -bottom-0.5 flex size-4 items-center justify-center rounded-full bg-background shadow-sm">
+            <ProviderLogo aria-hidden className="size-2.5" />
           </span>
-        }
-        title={
-          <span className="flex items-center gap-1.5">
-            {connection.provider === "google" ? "Google Calendar" : "Outlook"}
-            <span className="relative flex size-2 items-center justify-center">
-              <span
-                className={cn(
-                  "size-2 rounded-full",
-                  errored
-                    ? "bg-destructive"
-                    : paused
-                      ? "bg-muted-foreground/40"
-                      : "bg-chart-2",
-                )}
-              />
-              {!paused && !errored && !reduce && (
-                <span className="absolute size-2 animate-ping rounded-full bg-chart-2 opacity-60" />
-              )}
-            </span>
-          </span>
-        }
-        description={accountLabel}
-        control={
-          <Switch
-            checked={!paused}
-            onCheckedChange={toggle}
-            aria-label={paused ? "Sync is paused" : "Sync is on"}
+        </span>
+        <div className="min-w-0 flex-1">
+          {session?.user?.name && (
+            <p className="truncate text-sm font-medium">{session.user.name}</p>
+          )}
+          <p className="truncate text-xs text-muted-foreground">
+            {accountLabel}
+          </p>
+        </div>
+        <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-link">
+          <HugeiconsIcon
+            icon={CheckmarkBadge01Icon}
+            strokeWidth={2}
+            className="size-3.5"
           />
-        }
-      />
-      <SettingRow
-        title="Sync"
-        description={syncDescription}
-        destructiveDescription={errored}
-        control={
-          errored ? (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => toggle(true)}
-            >
-              Resume
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={paused || isSyncing}
-              aria-busy={isSyncing}
-              onClick={() => void sync()}
-            >
-              {isSyncing ? (
-                <Spinner />
-              ) : (
-                <HugeiconsIcon
-                  icon={RefreshIcon}
-                  strokeWidth={2}
-                  className="size-4"
+          Primary
+        </span>
+      </div>
+
+      <div className="px-4">
+        <SettingRow
+          title="Calendar"
+          description="View, create, and update events"
+          control={
+            <Switch
+              checked={!paused}
+              onCheckedChange={toggle}
+              aria-label={
+                paused ? "Calendar sync is paused" : "Calendar sync is on"
+              }
+            />
+          }
+        />
+        <SettingRow
+          title="Contacts"
+          description="Suggests and ranks the people you invite"
+          control={
+            <Switch
+              checked={connection.contactsEnabled}
+              onCheckedChange={(checked) =>
+                void setContacts({
+                  connectionId: connection._id,
+                  contacts: checked === true,
+                }).catch(reportSaveError("Couldn't update contacts sync"))
+              }
+              aria-label={
+                connection.contactsEnabled
+                  ? "Contacts sync is on"
+                  : "Contacts sync is off"
+              }
+            />
+          }
+        />
+        <SettingRow
+          title={
+            <span className="flex items-center gap-1.5">
+              Sync
+              <span className="relative flex size-2 items-center justify-center">
+                <span
+                  className={cn(
+                    "size-2 rounded-full",
+                    errored
+                      ? "bg-destructive"
+                      : paused
+                        ? "bg-muted-foreground/40"
+                        : "bg-chart-2",
+                  )}
                 />
-              )}
-              {isSyncing ? "Syncing…" : "Sync now"}
-            </Button>
-          )
-        }
-      />
-    </SettingCard>
+                {!paused && !errored && !reduce && (
+                  <span className="absolute size-2 animate-ping rounded-full bg-chart-2 opacity-60" />
+                )}
+              </span>
+            </span>
+          }
+          description={syncDescription}
+          destructiveDescription={errored}
+          control={
+            errored ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => toggle(true)}
+              >
+                Resume
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={paused || isSyncing}
+                aria-busy={isSyncing}
+                onClick={() => void sync()}
+              >
+                {isSyncing ? (
+                  <Spinner />
+                ) : (
+                  <HugeiconsIcon
+                    icon={RefreshIcon}
+                    strokeWidth={2}
+                    className="size-4"
+                  />
+                )}
+                {isSyncing ? "Syncing…" : "Sync now"}
+              </Button>
+            )
+          }
+        />
+      </div>
+    </div>
   );
 }
 

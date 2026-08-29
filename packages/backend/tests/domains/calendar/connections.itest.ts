@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import { internal } from "../../../convex/_generated/api";
 import {
   setCalendarSummaryOverrideCore,
+  setConnectionContactsCore,
   setConnectionStatusCore,
 } from "../../../convex/domains/calendar/mutations";
 import schema from "../../../convex/schema";
@@ -210,6 +211,44 @@ describe("connection model", () => {
         setConnectionStatusCore(ctx, "someone_else", {
           connectionId,
           status: "paused",
+        }),
+      ),
+    ).rejects.toThrow("Connection not found");
+  });
+
+  test("toggling contacts flips the capability the registry gates on", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_contacts";
+    const connectionId = await t.run((ctx) =>
+      ctx.db.insert("calendarConnections", {
+        userId,
+        provider: "google",
+        status: "active",
+        capabilities: { contacts: true, idempotentCreate: true },
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+
+    await t.run((ctx) =>
+      setConnectionContactsCore(ctx, userId, { connectionId, contacts: false }),
+    );
+    expect(
+      (await t.run((ctx) => ctx.db.get(connectionId)))?.capabilities,
+    ).toEqual({ contacts: false, idempotentCreate: true });
+
+    await t.run((ctx) =>
+      setConnectionContactsCore(ctx, userId, { connectionId, contacts: true }),
+    );
+    expect(
+      (await t.run((ctx) => ctx.db.get(connectionId)))?.capabilities,
+    ).toEqual({ contacts: true, idempotentCreate: true });
+
+    await expect(
+      t.run((ctx) =>
+        setConnectionContactsCore(ctx, "someone_else", {
+          connectionId,
+          contacts: false,
         }),
       ),
     ).rejects.toThrow("Connection not found");

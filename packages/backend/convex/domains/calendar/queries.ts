@@ -139,6 +139,7 @@ export async function listConnectionsHandler(ctx: QueryCtx) {
         provider: connection.provider,
         providerAccountId: connection.providerAccountId,
         status: connection.status,
+        contactsEnabled: connection.capabilities?.contacts ?? false,
         lastError: connection.lastError,
         createdAt: connection.createdAt,
         syncStatus: syncState?.status,
@@ -163,6 +164,7 @@ export const listConnections = query({
         v.literal("paused"),
         v.literal("error"),
       ),
+      contactsEnabled: v.boolean(),
       lastError: v.optional(v.string()),
       createdAt: v.number(),
       syncStatus: v.optional(

@@ -49,6 +49,7 @@ import type { Recurrence } from "./rrule";
 /** Wheel rows. Module-level so their identity is stable across renders — the
  * picker re-derives its geometry and index whenever `options` changes. */
 const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1));
+const HOURS_24 = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"));
 const MINUTE_STEP = 5;
 const MINUTES = Array.from({ length: 60 / MINUTE_STEP }, (_, i) =>
   String(i * MINUTE_STEP).padStart(2, "0"),
@@ -58,28 +59,33 @@ const MERIDIEM = ["AM", "PM"];
 interface TimeParts {
   hour: string;
   minute: string;
+  /** Unused on a 24-hour clock; the meridiem wheel isn't rendered then. */
   meridiem: string;
 }
 
 /** Split a timestamp into the wheel values. The minute is rounded onto the
  * wheel's step so an off-grid time can never fall through to row 0. */
-function partsOf(ms: number): TimeParts {
+function partsOf(ms: number, use24h: boolean): TimeParts {
   const d = new Date(ms);
   const minute = Math.min(
     Math.round(d.getMinutes() / MINUTE_STEP) * MINUTE_STEP,
     60 - MINUTE_STEP,
   );
   return {
-    hour: format(d, "h"),
+    hour: format(d, use24h ? "HH" : "h"),
     minute: String(minute).padStart(2, "0"),
     meridiem: format(d, "a").toUpperCase(),
   };
 }
 
 /** Rebuild a timestamp from wheel values, keeping `baseMs`'s calendar day. */
-function withParts(baseMs: number, parts: TimeParts): number {
+function withParts(baseMs: number, parts: TimeParts, use24h: boolean): number {
   const h12 = Number(parts.hour) % 12;
-  const hour = parts.meridiem === "PM" ? h12 + 12 : h12;
+  const hour = use24h
+    ? Number(parts.hour)
+    : parts.meridiem === "PM"
+      ? h12 + 12
+      : h12;
   const d = new Date(baseMs);
   d.setHours(hour, Number(parts.minute), 0, 0);
   return d.getTime();
@@ -259,12 +265,13 @@ export function EventForm({
   const [mainHeight, setMainHeight] = useState<number>();
 
   const { canEdit } = capabilities;
+  const { use24h } = usePreferences();
   const valid = isEventFormValid(value);
   const activeMs = editing === "start" ? value.startMs : value.endMs;
-  const parts = partsOf(activeMs);
+  const parts = partsOf(activeMs, use24h);
 
   const setPart = (key: keyof TimeParts, part: string) => {
-    const next = withParts(activeMs, { ...parts, [key]: part });
+    const next = withParts(activeMs, { ...parts, [key]: part }, use24h);
     if (editing === "start") {
       // Drag the end along so the duration survives a later start.
       onChangeRange(next, Math.max(value.endMs, next + SNAP_MS));
@@ -472,7 +479,7 @@ export function EventForm({
                 >
                   <div className="flex gap-2 pt-2">
                     <WheelPicker
-                      options={HOURS}
+                      options={use24h ? HOURS_24 : HOURS}
                       value={parts.hour}
                       onValueChange={(v) => setPart("hour", v)}
                       visibleCount={5}
@@ -493,17 +500,19 @@ export function EventForm({
                       className="flex-1"
                       aria-label="Minute"
                     />
-                    <WheelPicker
-                      options={MERIDIEM}
-                      value={parts.meridiem}
-                      onValueChange={(v) => setPart("meridiem", v)}
-                      visibleCount={5}
-                      itemHeight={32}
-                      sound
-                      disabled={!canEdit}
-                      className="flex-1"
-                      aria-label="AM or PM"
-                    />
+                    {!use24h && (
+                      <WheelPicker
+                        options={MERIDIEM}
+                        value={parts.meridiem}
+                        onValueChange={(v) => setPart("meridiem", v)}
+                        visibleCount={5}
+                        itemHeight={32}
+                        sound
+                        disabled={!canEdit}
+                        className="flex-1"
+                        aria-label="AM or PM"
+                      />
+                    )}
                   </div>
                 </motion.div>
               )}

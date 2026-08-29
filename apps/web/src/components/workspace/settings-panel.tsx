@@ -962,7 +962,8 @@ function Segmented<T>({
     <div
       role="group"
       aria-label={label}
-      className="grid gap-1 rounded-2xl bg-background p-1"
+      // Rounded like the header's day/week/month toggle, not a pill.
+      className="grid gap-1 rounded-lg bg-background p-0.5"
       style={{ gridTemplateColumns: `repeat(${options.length}, 1fr)` }}
     >
       {options.map((option) => (
@@ -972,7 +973,7 @@ function Segmented<T>({
           variant="ghost"
           size="xs"
           aria-pressed={value === option.value}
-          className="rounded-xl px-2.5 text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground aria-pressed:shadow-sm hover:bg-muted/60"
+          className="rounded-md px-2.5 text-muted-foreground aria-pressed:bg-muted aria-pressed:text-foreground aria-pressed:shadow-sm hover:bg-muted/60"
           onClick={() => onChange(option.value)}
         >
           {option.label}
@@ -1000,7 +1001,7 @@ function PickerRow({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         aria-label={ariaLabel}
-        className="flex h-8 max-w-52 items-center gap-2 rounded-2xl bg-background px-3 text-left outline-none transition-colors hover:bg-background/70 focus-visible:ring-3 focus-visible:ring-ring/30"
+        className="flex h-8 max-w-52 items-center gap-2 rounded-lg bg-background px-3 text-left outline-none transition-colors hover:bg-background/70 focus-visible:ring-3 focus-visible:ring-ring/30"
       >
         {swatchVar && (
           <span

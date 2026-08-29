@@ -1,7 +1,6 @@
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
-  Calendar03Icon,
   Cancel01Icon,
   CheckmarkBadge01Icon,
   Link01Icon,
@@ -53,7 +52,7 @@ import { authClient } from "@/lib/auth-client";
 import { UserAvatar } from "./user-avatar";
 import { useSyncNow } from "./use-sync-now";
 
-export type SettingsSection = "accounts" | "calendars" | "preferences";
+export type SettingsSection = "accounts" | "preferences";
 
 const SECTIONS: {
   id: SettingsSection;
@@ -64,14 +63,8 @@ const SECTIONS: {
   {
     id: "accounts",
     label: "Accounts",
-    description: "Connections and sync",
+    description: "Connections and calendars",
     icon: Link01Icon,
-  },
-  {
-    id: "calendars",
-    label: "Calendars",
-    description: "Names and defaults",
-    icon: Calendar03Icon,
   },
   {
     id: "preferences",
@@ -160,13 +153,7 @@ export function SettingsPanel({
   const active = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0];
 
   const sectionContent =
-    section === "accounts" ? (
-      <AccountsSection />
-    ) : section === "calendars" ? (
-      <CalendarsSection />
-    ) : (
-      <PreferencesSection />
-    );
+    section === "accounts" ? <AccountsSection /> : <PreferencesSection />;
 
   return (
     <motion.div
@@ -421,8 +408,11 @@ type Connection = FunctionReturnType<
 
 function AccountsSection() {
   const connections = useQuery(api.domains.calendar.queries.listConnections);
+  const calendars = useQuery(api.domains.calendar.queries.listCalendars);
 
-  if (connections === undefined) return <SectionSkeleton />;
+  if (connections === undefined || calendars === undefined) {
+    return <SectionSkeleton />;
+  }
   if (connections.length === 0) {
     return (
       <SettingCard>
@@ -435,13 +425,25 @@ function AccountsSection() {
   return (
     <div className="space-y-3">
       {connections.map((connection) => (
-        <ConnectionCard key={connection._id} connection={connection} />
+        <ConnectionCard
+          key={connection._id}
+          connection={connection}
+          calendars={sortCalendars(
+            calendars.filter((c) => c.connectionId === connection._id),
+          )}
+        />
       ))}
     </div>
   );
 }
 
-function ConnectionCard({ connection }: { connection: Connection }) {
+function ConnectionCard({
+  connection,
+  calendars,
+}: {
+  connection: Connection;
+  calendars: CalendarListItem[];
+}) {
   const { data: session } = authClient.useSession();
   const setStatus = useMutation(
     api.domains.calendar.mutations.setConnectionStatus,
@@ -601,6 +603,17 @@ function ConnectionCard({ connection }: { connection: Connection }) {
             )
           }
         />
+
+        {calendars.length > 0 && (
+          <>
+            <p className="pt-3.5 pb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
+              Calendars
+            </p>
+            {calendars.map((calendar) => (
+              <CalendarRow key={calendar._id} calendar={calendar} />
+            ))}
+          </>
+        )}
       </div>
     </div>
   );
@@ -621,96 +634,6 @@ function sortCalendars(calendars: CalendarListItem[]): CalendarListItem[] {
     if (a.primary !== b.primary) return a.primary ? -1 : 1;
     return calendarDisplayName(a).localeCompare(calendarDisplayName(b));
   });
-}
-
-function CalendarsSection() {
-  const calendars = useQuery(api.domains.calendar.queries.listCalendars);
-  const prefs = useQuery(api.domains.preferences.queries.getMyPreferences);
-  const updatePrefs = useMutation(
-    api.domains.preferences.mutations.updatePreferences,
-  );
-
-  if (calendars === undefined || prefs === undefined) {
-    return <SectionSkeleton />;
-  }
-  const sorted = sortCalendars(calendars);
-  const writable = sorted.filter(isWritable);
-  const defaultCalendar =
-    writable.find((c) => c._id === prefs?.defaultCalendarId) ?? null;
-
-  return (
-    <div className="space-y-3">
-      <SettingCard>
-        {sorted.map((calendar) => (
-          <CalendarRow key={calendar._id} calendar={calendar} />
-        ))}
-        {sorted.length === 0 && (
-          <p className="py-8 text-center text-xs text-muted-foreground">
-            No calendars yet — they appear after your first sync.
-          </p>
-        )}
-      </SettingCard>
-
-      {writable.length > 0 && (
-        <SettingCard>
-          <SettingRow
-            title="Default calendar"
-            description="Where new events land unless you pick one"
-            control={
-              <PickerRow
-                label={
-                  defaultCalendar
-                    ? calendarDisplayName(defaultCalendar)
-                    : "Automatic"
-                }
-                swatchVar={
-                  defaultCalendar ? calendarColorVar(defaultCalendar) : undefined
-                }
-                ariaLabel="Default calendar for new events"
-              >
-                {(close) => (
-                  <div className="flex flex-col gap-0.5">
-                    <PickerOption
-                      label="Automatic · primary calendar"
-                      selected={!defaultCalendar}
-                      onSelect={() => {
-                        close();
-                        void updatePrefs({
-                          reset: ["defaultCalendarId"],
-                        }).catch(
-                          reportSaveError(
-                            "Couldn't change the default calendar",
-                          ),
-                        );
-                      }}
-                    />
-                    {writable.map((calendar) => (
-                      <PickerOption
-                        key={calendar._id}
-                        label={calendarDisplayName(calendar)}
-                        swatchVar={calendarColorVar(calendar)}
-                        selected={calendar._id === defaultCalendar?._id}
-                        onSelect={() => {
-                          close();
-                          void updatePrefs({
-                            defaultCalendarId: calendar._id,
-                          }).catch(
-                            reportSaveError(
-                              "Couldn't change the default calendar",
-                            ),
-                          );
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </PickerRow>
-            }
-          />
-        </SettingCard>
-      )}
-    </div>
-  );
 }
 
 function CalendarRow({ calendar }: { calendar: CalendarListItem }) {
@@ -818,6 +741,7 @@ const DEFAULT_VIEW_OPTIONS = [
 
 function PreferencesSection() {
   const prefs = useQuery(api.domains.preferences.queries.getMyPreferences);
+  const calendars = useQuery(api.domains.calendar.queries.listCalendars);
   const updatePrefs = useMutation(
     api.domains.preferences.mutations.updatePreferences,
   );
@@ -826,7 +750,13 @@ function PreferencesSection() {
     [],
   );
 
-  if (prefs === undefined || prefs === null) return <SectionSkeleton />;
+  if (prefs === undefined || prefs === null || calendars === undefined) {
+    return <SectionSkeleton />;
+  }
+
+  const writable = sortCalendars(calendars).filter(isWritable);
+  const defaultCalendar =
+    writable.find((c) => c._id === prefs.defaultCalendarId) ?? null;
 
   const save = (patch: Parameters<typeof updatePrefs>[0]) =>
     void updatePrefs(patch).catch(
@@ -875,6 +805,50 @@ function PreferencesSection() {
           />
         }
       />
+      {writable.length > 0 && (
+        <SettingRow
+          title="Default calendar"
+          description="Where new events land unless you pick one"
+          control={
+            <PickerRow
+              label={
+                defaultCalendar
+                  ? calendarDisplayName(defaultCalendar)
+                  : "Automatic"
+              }
+              swatchVar={
+                defaultCalendar ? calendarColorVar(defaultCalendar) : undefined
+              }
+              ariaLabel="Default calendar for new events"
+            >
+              {(close) => (
+                <div className="flex flex-col gap-0.5">
+                  <PickerOption
+                    label="Automatic · primary calendar"
+                    selected={!defaultCalendar}
+                    onSelect={() => {
+                      close();
+                      save({ reset: ["defaultCalendarId"] });
+                    }}
+                  />
+                  {writable.map((calendar) => (
+                    <PickerOption
+                      key={calendar._id}
+                      label={calendarDisplayName(calendar)}
+                      swatchVar={calendarColorVar(calendar)}
+                      selected={calendar._id === defaultCalendar?._id}
+                      onSelect={() => {
+                        close();
+                        save({ defaultCalendarId: calendar._id });
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </PickerRow>
+          }
+        />
+      )}
       <SettingRow
         title="Time zone"
         description="Used for new events and your booking page"

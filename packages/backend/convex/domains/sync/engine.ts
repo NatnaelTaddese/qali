@@ -999,6 +999,7 @@ export const recordSyncOutcome = internalMutation({
     await ctx.db.patch(state._id, {
       status: args.status,
       lastError: args.status === "error" ? args.lastError : undefined,
+      ...(args.status === "idle" ? { lastSyncAt: Date.now() } : {}),
       syncIntervalMs: interval,
       nextSyncDueAt: Date.now() + interval,
       syncAttemptId: undefined,

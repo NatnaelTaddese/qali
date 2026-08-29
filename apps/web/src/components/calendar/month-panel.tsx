@@ -3,6 +3,7 @@ import { addDays, format, isSameMonth, isToday, startOfWeek } from "date-fns";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useDock } from "@/components/workspace/dock-context";
+import { usePreferences } from "@/components/workspace/preferences-context";
 
 import { useEventColor } from "./colors";
 import {
@@ -10,15 +11,9 @@ import {
   MONTH_EVENT_ROW_HEIGHT,
   MS_PER_DAY,
   visibleMonthEventMetrics,
-  WEEK_STARTS_ON,
   type CalendarEvent,
 } from "./lib";
 import { RevealFlash, type Reveal } from "./today-pulse";
-
-const WEEK_REF = startOfWeek(new Date(), { weekStartsOn: WEEK_STARTS_ON });
-const WEEKDAY_LABELS = Array.from({ length: 7 }, (_, i) =>
-  format(addDays(WEEK_REF, i), "EEE"),
-);
 
 interface MonthPanelProps {
   /** The month's anchor (its first day). */
@@ -37,7 +32,12 @@ interface MonthPanelProps {
 /** A single month page: weekday labels over a 6×7 grid of day cells. */
 export function MonthPanel({ monthStart, days, events, onSelectDay, reveal }: MonthPanelProps) {
   const { open } = useDock();
+  const { weekStartsOn } = usePreferences();
   const colorFor = useEventColor();
+  const weekdayLabels = useMemo(() => {
+    const ref = startOfWeek(new Date(), { weekStartsOn });
+    return Array.from({ length: 7 }, (_, i) => format(addDays(ref, i), "EEE"));
+  }, [weekStartsOn]);
   const eventAreaRef = useRef<HTMLDivElement>(null);
   const [eventAreaHeight, setEventAreaHeight] = useState(0);
   const eventsByDay = useMemo(() => {
@@ -68,7 +68,7 @@ export function MonthPanel({ monthStart, days, events, onSelectDay, reveal }: Mo
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="sticky top-0 z-30 grid grid-cols-7 border-b border-border bg-calendar-header backdrop-blur-xs">
-        {WEEKDAY_LABELS.map((label) => (
+        {weekdayLabels.map((label) => (
           <div
             key={label}
             className="px-2 py-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase"

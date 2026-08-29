@@ -10,6 +10,7 @@ import { calendarTables } from "./domains/calendar/tables";
 import { marketingTables } from "./domains/marketing/tables";
 import { notificationTables } from "./domains/notifications/tables";
 import { peopleTables } from "./domains/people/tables";
+import { preferencesTables } from "./domains/preferences/tables";
 import { connectionSyncTables } from "./domains/sync/tables";
 import { infrastructureTables } from "./infrastructure/tables";
 
@@ -21,6 +22,7 @@ export default defineSchema({
   ...peopleTables,
   ...assistantTables,
   ...marketingTables,
+  ...preferencesTables,
   ...calendarConnectionTables,
   ...connectionSyncTables,
   ...calendarOperationTables,

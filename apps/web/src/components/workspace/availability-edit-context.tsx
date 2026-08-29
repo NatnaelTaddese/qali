@@ -53,8 +53,10 @@ const AvailabilityEditContext = createContext<AvailabilityEditValue | null>(
 
 const NO_ARGS = {} as const;
 
-/** `dateKey` as the day reads locally — matches the page's own zone, which
- * `upsertBookingPage` sets from this same browser. */
+/** `dateKey` as the day reads locally. Painting is only enabled while the
+ * page's zone equals this browser's (the `ready` gate below), so the local
+ * key is the page's key — with a foreign preferred zone, edit mode stays
+ * unavailable rather than authoring keys in the wrong zone. */
 function dayKey(day: Date): string {
   return format(day, "yyyy-MM-dd");
 }

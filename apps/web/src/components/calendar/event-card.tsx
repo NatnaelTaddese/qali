@@ -6,11 +6,13 @@ import { motion } from "motion/react";
 
 import { Avatar } from "./avatar";
 import { useEventColor } from "./colors";
+import { usePreferences } from "@/components/workspace/preferences-context";
 import {
   EVENT_LEFT_GUTTER_PX,
   laneBox,
   type PositionedEvent,
   stackIndentPx,
+  timePattern,
 } from "./lib";
 import { pressTransition } from "./motion";
 import { useEventCapabilities } from "./permissions";
@@ -62,6 +64,7 @@ export function EventCard({
   } = positioned;
   const colorFor = useEventColor();
   const colorVar = colorFor(event);
+  const { use24h } = usePreferences();
   // An event the user can't reschedule still opens on tap, but it shouldn't
   // offer a grab cursor or resize edges for a drag that will never happen.
   const { canEdit: draggable, canSeeGuests } = useEventCapabilities()(event);
@@ -140,7 +143,7 @@ export function EventCard({
           {event.summary ?? "(No title)"}
         </p>
         <p className="event-card-time truncate text-muted-foreground">
-          {`${format(event.startMs, "h:mm")} – ${format(event.endMs, "h:mm a")}`}
+          {`${format(event.startMs, timePattern(use24h, false))} – ${format(event.endMs, timePattern(use24h))}`}
         </p>
         {(attendees.length > 0 || event.conferenceUrl) && (
           <div className="event-card-meta mt-auto min-w-0 items-center justify-between gap-1 pt-1">

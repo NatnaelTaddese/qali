@@ -28,6 +28,10 @@ export const calendarConnectionTables = {
         idempotentCreate: v.boolean(),
       }),
     ),
+    // The user's choice, separate from what the provider *can* do: absent or
+    // true = sync contacts (when the capability exists), false = don't. Kept
+    // out of `capabilities` so a capability refresh can never revert it.
+    contactsSyncEnabled: v.optional(v.boolean()),
     lastError: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),

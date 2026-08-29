@@ -275,7 +275,9 @@ export function AssistantPanel({
         threadId: threadId ?? undefined,
         text: trimmed,
         // The backend must never guess these — every relative date the model
-        // resolves depends on them.
+        // resolves depends on them. The browser zone, not the timezone
+        // preference: "tomorrow" must mean tomorrow where the user is, on the
+        // grid they're looking at (which renders browser-local).
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       onThreadChange(result.threadId);

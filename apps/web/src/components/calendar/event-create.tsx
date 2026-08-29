@@ -6,12 +6,15 @@ import { useAction, useQuery } from "convex/react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { usePreferences } from "@/components/workspace/preferences-context";
+
 import {
   EventForm,
   isEventFormValid,
   toEventTimes,
   type EventFormValue,
 } from "./event-form";
+import { isWritableCalendar } from "./lib";
 import { toRRule } from "./rrule";
 
 /** A new event has no owner to answer to yet, so every control is live. */
@@ -51,6 +54,7 @@ export function EventCreate({
 }) {
   const createEvent = useAction(api.domains.calendar.service.createEvent);
   const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
+  const { defaultCalendarId } = usePreferences();
   const [submitting, setSubmitting] = useState(false);
   // Idempotency key for this create intent: minted once and reused across retries
   // (a lost response / re-submit) so the backend dedupes to one Google event
@@ -75,10 +79,18 @@ export function EventCreate({
     ...prefill,
   });
 
-  // Until the user picks one, the event goes to the primary calendar — resolved
-  // here too so the controls can preview its colour.
+  // Until the user picks one, the event goes to their default calendar (the
+  // settings preference), falling back to primary — resolved here too so the
+  // controls can preview its colour. A stale preference (calendar removed, or
+  // since downgraded to read-only or shared) falls through to primary rather
+  // than erroring server-side on every quick-create.
   const activeCalendarId =
-    draft.calendarId ?? calendars.find((c) => c.primary)?._id;
+    draft.calendarId ??
+    calendars.find(
+      (c) =>
+        c._id === defaultCalendarId && !c.isShared && isWritableCalendar(c),
+    )?._id ??
+    calendars.find((c) => c.primary)?._id;
   const value: EventFormValue = {
     ...draft,
     calendarId: activeCalendarId,
@@ -122,6 +134,10 @@ export function EventCreate({
             displayName: g.displayName,
           }))
         : undefined,
+      // The browser zone, NOT the timezone preference: startMs/endMs are
+      // composed in browser-local wall clock (wheels, grid), and for a
+      // recurring event this zone becomes the series anchor — a different
+      // zone would drift instances across divergent DST transitions.
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     })
       .then(() => {

@@ -26,6 +26,9 @@ export const connectionSyncTables = {
       v.literal("error"),
     ),
     lastError: v.optional(v.string()),
+    // Stamped by recordSyncOutcome on each clean cycle, so "last synced"
+    // reads (settings panel) don't have to scan the connection's calendars.
+    lastSyncAt: v.optional(v.number()),
     nextSyncDueAt: v.optional(v.number()),
     syncIntervalMs: v.optional(v.number()),
     syncLeaseExpiresAt: v.optional(v.number()),

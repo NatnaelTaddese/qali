@@ -41,6 +41,7 @@ export function diffEvent(
   initial: EventFormValue,
   next: EventFormValue,
   event: CalendarEvent,
+  timeZone: string = Intl.DateTimeFormat().resolvedOptions().timeZone,
 ): EventPatch {
   const patch: EventPatch = {};
 
@@ -80,7 +81,7 @@ export function diffEvent(
     patch.startMs = times.startMs;
     patch.endMs = times.endMs;
     patch.allDay = next.allDay;
-    patch.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    patch.timeZone = timeZone;
   }
 
   if (
@@ -156,6 +157,8 @@ export function EventEdit({
 
   const save = (scope: SaveScope) => {
     if (!valid || saving) return;
+    // Browser zone, not the timezone preference: the form's times are
+    // composed browser-locally, and this zone anchors recurring series.
     const patch = diffEvent(initial, value, event);
     if (Object.keys(patch).length === 0) {
       onSaved();

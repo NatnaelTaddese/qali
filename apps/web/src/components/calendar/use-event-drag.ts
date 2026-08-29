@@ -239,6 +239,8 @@ export function useEventDrag(
         eventId: editableEventId(id),
         startMs: times.startMs,
         endMs: times.endMs,
+        // Browser zone, not the timezone preference — the drag's wall-clock
+        // math is browser-local, and the zone must match how it was composed.
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       }).catch((error: unknown) => {
         // Roll the card back to its synced position and surface the failure.

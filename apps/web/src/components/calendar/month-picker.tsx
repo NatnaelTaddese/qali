@@ -14,11 +14,16 @@ import {
   startOfMonth,
   startOfWeek,
 } from "date-fns";
-import { type ReactNode, useCallback, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useState } from "react";
 
-import { WEEK_STARTS_ON } from "./lib";
+import { usePreferences } from "@/components/workspace/preferences-context";
+import type { WeekStart } from "./lib";
 
-const WEEKDAYS = ["M", "T", "W", "T", "F", "S", "S"];
+/** Single-letter weekday headers, in the user's week order. */
+function weekdayLetters(weekStartsOn: WeekStart): string[] {
+  const ref = startOfWeek(new Date(), { weekStartsOn });
+  return Array.from({ length: 7 }, (_, i) => format(addDays(ref, i), "EEEEE"));
+}
 
 interface MonthPickerProps {
   selectedWeekStart: Date;
@@ -27,14 +32,14 @@ interface MonthPickerProps {
 }
 
 export function MonthPicker({ selectedWeekStart, onSelect, children }: MonthPickerProps) {
+  const { weekStartsOn } = usePreferences();
   const [viewMonth, setViewMonth] = useState(() => startOfMonth(selectedWeekStart));
 
-  const gridStart = startOfWeek(startOfMonth(viewMonth), {
-    weekStartsOn: WEEK_STARTS_ON,
-  });
-  const gridEnd = endOfWeek(endOfMonth(viewMonth), { weekStartsOn: WEEK_STARTS_ON });
+  const gridStart = startOfWeek(startOfMonth(viewMonth), { weekStartsOn });
+  const gridEnd = endOfWeek(endOfMonth(viewMonth), { weekStartsOn });
   const days = eachDayOfInterval({ start: gridStart, end: gridEnd });
   const weekEnd = addDays(selectedWeekStart, 6);
+  const weekdays = useMemo(() => weekdayLetters(weekStartsOn), [weekStartsOn]);
 
   const resetViewMonth = useCallback(
     (open: boolean) => {
@@ -44,7 +49,7 @@ export function MonthPicker({ selectedWeekStart, onSelect, children }: MonthPick
   );
 
   const select = (day: Date, close: () => void) => {
-    onSelect(startOfWeek(day, { weekStartsOn: WEEK_STARTS_ON }));
+    onSelect(startOfWeek(day, { weekStartsOn }));
     close();
   };
 
@@ -71,7 +76,7 @@ export function MonthPicker({ selectedWeekStart, onSelect, children }: MonthPick
             </div>
           </div>
           <div className="grid grid-cols-7 gap-y-1">
-            {WEEKDAYS.map((label, i) => (
+            {weekdays.map((label, i) => (
               <span
                 key={i}
                 className="flex size-8 items-center justify-center text-xs font-medium opacity-55"

@@ -7,6 +7,7 @@ import {
 } from "@qali/ui/components/popover";
 import { cn } from "@qali/ui/lib/utils";
 import {
+  addDays,
   addMonths,
   eachDayOfInterval,
   endOfMonth,
@@ -18,11 +19,16 @@ import {
   startOfMonth,
   startOfWeek,
 } from "date-fns";
-import { type ReactElement, useState } from "react";
+import { type ReactElement, useMemo, useState } from "react";
 
-import { WEEK_STARTS_ON } from "./lib";
+import { usePreferences } from "@/components/workspace/preferences-context";
+import type { WeekStart } from "./lib";
 
-const WEEKDAYS = ["M", "T", "W", "T", "F", "S", "S"];
+/** Single-letter weekday headers, in the user's week order. */
+function weekdayLetters(weekStartsOn: WeekStart): string[] {
+  const ref = startOfWeek(new Date(), { weekStartsOn });
+  return Array.from({ length: 7 }, (_, i) => format(addDays(ref, i), "EEEEE"));
+}
 
 interface DayPickerProps {
   /** The currently selected day (any instant within it). */
@@ -44,17 +50,15 @@ export function DayPicker({
   side = "bottom",
   children,
 }: DayPickerProps) {
+  const { weekStartsOn } = usePreferences();
   const [open, setOpen] = useState(false);
   const [viewMonth, setViewMonth] = useState(() =>
     startOfMonth(new Date(selectedMs)),
   );
 
-  const gridStart = startOfWeek(startOfMonth(viewMonth), {
-    weekStartsOn: WEEK_STARTS_ON,
-  });
-  const gridEnd = endOfWeek(endOfMonth(viewMonth), {
-    weekStartsOn: WEEK_STARTS_ON,
-  });
+  const gridStart = startOfWeek(startOfMonth(viewMonth), { weekStartsOn });
+  const gridEnd = endOfWeek(endOfMonth(viewMonth), { weekStartsOn });
+  const weekdays = useMemo(() => weekdayLetters(weekStartsOn), [weekStartsOn]);
   const days = eachDayOfInterval({ start: gridStart, end: gridEnd });
   const selectedDate = new Date(selectedMs);
 
@@ -96,7 +100,7 @@ export function DayPicker({
           </div>
         </div>
         <div className="grid grid-cols-7 gap-y-1">
-          {WEEKDAYS.map((label, i) => (
+          {weekdays.map((label, i) => (
             <span
               key={i}
               className="flex size-8 items-center justify-center text-xs font-medium text-muted-foreground"

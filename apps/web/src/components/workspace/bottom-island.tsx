@@ -15,10 +15,9 @@ import {
   TooltipTrigger,
 } from "@qali/ui/components/tooltip";
 import { cn } from "@qali/ui/lib/utils";
-import { useAction, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 
 import { EventCreate } from "@/components/calendar/event-create";
 import { EventDetail } from "@/components/calendar/event-detail";
@@ -26,6 +25,7 @@ import { EventEdit } from "@/components/calendar/event-edit";
 import {
   dockVariants,
   dockVariantsReduced,
+  EASE_OUT_EXPO,
   SPRING_DOCK,
 } from "@/components/calendar/motion";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
@@ -34,7 +34,9 @@ import { useAvailabilityEdit } from "./availability-edit-context";
 import { AvailabilityPanel } from "./availability-panel";
 import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
+import { SettingsPanel } from "./settings-panel";
 import { UserAvatar } from "./user-avatar";
+import { useSyncNow } from "./use-sync-now";
 
 const MAX_TIMEOUT_MS = 2_147_000_000;
 const AVAILABILITY_PREFETCH_GRACE_MS = 10_000;
@@ -50,6 +52,8 @@ function widthClass(view: DockView | null): string {
   // The availability panel carries a seven-row weekly grid, so it needs more
   // room than the event panels.
   if (view.kind === "availability") return "w-[min(30rem,100%)]";
+  // Settings blooms widest: a sidebar beside a page-like content pane.
+  if (view.kind === "settings") return "w-[min(52rem,100%)]";
   return "w-[min(27rem,100%)]";
 }
 
@@ -72,6 +76,13 @@ export function BottomIsland() {
     availabilityIntentVersion > 0;
   // This stays live for the dock badge and incoming-request calendar blocks.
   const pendingBookings = useQuery(api.domains.booking.queries.listPendingBookings);
+  // Warm the settings panel's one cold query from the dock itself: the
+  // subscription lives for as long as either panel is open, so the handoff
+  // never depends on panel-swap animation overlap keeping a watcher mounted.
+  useStableQuery(
+    api.domains.calendar.queries.listConnections,
+    view?.kind === "account" || view?.kind === "settings" ? {} : "skip",
+  );
   // Warm settings on interaction intent so the dock knows its final content
   // height before its spring begins. Retain them briefly after close for a
   // smooth reopen, then release both subscriptions.
@@ -215,7 +226,30 @@ export function BottomIsland() {
   const variants = reduce ? dockVariantsReduced : dockVariants;
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
+    <>
+      {/* Settings is the one view that dims the calendar behind it — a
+          deliberate exception to the dock's no-scrim rule: the wide sheet
+          covers enough of the grid that stray taps should dismiss, not act.
+          A pointer on the scrim lands outside the dock node and closes it via
+          the existing outside-pointer handler; no extra wiring. */}
+      <AnimatePresence>
+        {view?.kind === "settings" && (
+          <motion.div
+            key="settings-scrim"
+            aria-hidden
+            className="fixed inset-0 z-40 bg-background/40"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={
+              reduce
+                ? { duration: 0 }
+                : { duration: 0.24, ease: EASE_OUT_EXPO }
+            }
+          />
+        )}
+      </AnimatePresence>
+      <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
       <motion.nav
         ref={ref}
         layout
@@ -232,7 +266,15 @@ export function BottomIsland() {
         className={cn(
           "pointer-events-auto overflow-hidden border border-border bg-popover/90 shadow-lg backdrop-blur",
           // The edit bar is a pill sized to its own content, like the nav row.
-          editing ? "py-1.5 pr-1.5 pl-4" : view ? "p-4" : "px-2 py-1.5",
+          // Settings carries its own inset so its two-tone sidebar can run
+          // edge to edge (the panel restores the padding on small screens).
+          editing
+            ? "py-1.5 pr-1.5 pl-4"
+            : view
+              ? view.kind === "settings"
+                ? "p-0"
+                : "p-4"
+              : "px-2 py-1.5",
           !editing && widthClass(view),
         )}
       >
@@ -282,7 +324,15 @@ export function BottomIsland() {
                   onCreated={closeCurrent}
                 />
               ) : view?.kind === "account" ? (
-                <AccountPanel onClose={closeCurrent} />
+                <AccountPanel
+                  onClose={closeCurrent}
+                  onOpenSettings={() => open({ kind: "settings" })}
+                />
+              ) : view?.kind === "settings" ? (
+                <SettingsPanel
+                  initialSection={view.section}
+                  onClose={closeCurrent}
+                />
               ) : view?.kind === "availability" ? (
                 <AvailabilityPanel
                   key={availabilityInstance.current}
@@ -310,7 +360,8 @@ export function BottomIsland() {
           </AnimatePresence>
         </motion.div>
       </motion.nav>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -372,22 +423,7 @@ function NavRow({
   onPrepareAvailability: () => void;
   onOpenAvailability: () => void;
 }) {
-  const syncNow = useAction(api.domains.sync.engine.syncNow);
-  const [isSyncing, setIsSyncing] = useState(false);
-
-  const sync = async () => {
-    if (isSyncing) return;
-    setIsSyncing(true);
-    try {
-      await syncNow();
-    } catch (error: unknown) {
-      toast.error("Couldn't sync calendar", {
-        description: error instanceof Error ? error.message : undefined,
-      });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+  const { sync, isSyncing } = useSyncNow();
 
   return (
     <div className="flex items-center gap-1">

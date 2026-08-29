@@ -63,6 +63,8 @@ export async function contactsAdapterFor(
   connection: Doc<"calendarConnections">,
 ): Promise<ContactsProviderAdapter | null> {
   if (!connection.capabilities?.contacts) return null;
+  // The user's own switch, distinct from the provider capability above.
+  if (connection.contactsSyncEnabled === false) return null;
 
   switch (connection.provider) {
     case "google":

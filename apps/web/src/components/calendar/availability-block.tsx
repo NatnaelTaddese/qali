@@ -4,6 +4,7 @@ import type { DayInterval } from "@qali/domain/availability";
 import { cn } from "@qali/ui/lib/utils";
 import { motion, useReducedMotion } from "motion/react";
 
+import { usePreferences } from "@/components/workspace/preferences-context";
 import {
   formatWallClockMinutes,
   msToPct,
@@ -34,6 +35,7 @@ export function AvailabilityBlock({
   onRemove: () => void;
 }) {
   const reduce = useReducedMotion();
+  const { use24h } = usePreferences();
   const startMs = dayStartMs + interval.startMin * MS_PER_MINUTE;
   const endMs = dayStartMs + interval.endMin * MS_PER_MINUTE;
   const topPct = msToPct(startMs, dayStartMs);
@@ -49,7 +51,7 @@ export function AvailabilityBlock({
       transition={
         reduce ? { duration: 0 } : { type: "spring", stiffness: 500, damping: 34 }
       }
-      aria-label={`Remove availability ${formatWallClockMinutes(interval.startMin)} to ${formatWallClockMinutes(interval.endMin)}`}
+      aria-label={`Remove availability ${formatWallClockMinutes(interval.startMin, true, use24h)} to ${formatWallClockMinutes(interval.endMin, true, use24h)}`}
       className={cn(
         "group absolute inset-x-1 z-20 flex min-h-[16px] origin-center overflow-hidden rounded-md border border-chart-2/50 bg-chart-2/15 text-left outline-none transition-colors",
         "hover:bg-chart-2/25 focus-visible:ring-2 focus-visible:ring-ring",
@@ -77,8 +79,8 @@ export function AvailabilityBlock({
         ))}
       <span className="relative flex w-full items-start justify-between gap-1 px-1.5 py-0.5">
         <span className="min-w-0 truncate text-[11px] leading-tight font-medium text-chart-2">
-          {formatWallClockMinutes(interval.startMin, false)} –{" "}
-          {formatWallClockMinutes(interval.endMin)}
+          {formatWallClockMinutes(interval.startMin, false, use24h)} –{" "}
+          {formatWallClockMinutes(interval.endMin, true, use24h)}
         </span>
         <HugeiconsIcon
           icon={Cancel01Icon}

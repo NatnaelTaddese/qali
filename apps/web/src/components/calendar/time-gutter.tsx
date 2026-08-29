@@ -1,3 +1,4 @@
+import { usePreferences } from "@/components/workspace/preferences-context";
 import { MS_PER_HOUR } from "./lib";
 
 const HOURS = Array.from({ length: 23 }, (_, i) => i + 1);
@@ -10,7 +11,12 @@ interface TimeGutterProps {
 }
 
 export function TimeGutter({ timeZone, dayStartMs }: TimeGutterProps) {
-  const fmt = new Intl.DateTimeFormat("en-US", { hour: "numeric", timeZone });
+  const { use24h } = usePreferences();
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    timeZone,
+    hour12: !use24h,
+  });
   return (
     <div className="relative h-full">
       {HOURS.map((hour) => (

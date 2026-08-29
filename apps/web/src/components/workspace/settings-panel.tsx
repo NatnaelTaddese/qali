@@ -1,6 +1,7 @@
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
+  Calendar03Icon,
   Cancel01Icon,
   CheckmarkBadge01Icon,
   Link01Icon,
@@ -14,6 +15,7 @@ import { Google, MicrosoftOutlook } from "@thesvg/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import type { Id } from "@qali/backend/convex/_generated/dataModel";
 import { Button } from "@qali/ui/components/button";
+import { Checkbox } from "@qali/ui/components/checkbox";
 import { Input } from "@qali/ui/components/input";
 import {
   Popover,
@@ -34,6 +36,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import { toast } from "sonner";
@@ -52,7 +55,7 @@ import { authClient } from "@/lib/auth-client";
 import { UserAvatar } from "./user-avatar";
 import { useSyncNow } from "./use-sync-now";
 
-export type SettingsSection = "accounts" | "preferences";
+export type SettingsSection = "accounts" | "calendars" | "preferences";
 
 const SECTIONS: {
   id: SettingsSection;
@@ -63,8 +66,14 @@ const SECTIONS: {
   {
     id: "accounts",
     label: "Accounts",
-    description: "Connections and calendars",
+    description: "Connections and sync",
     icon: Link01Icon,
+  },
+  {
+    id: "calendars",
+    label: "Calendars",
+    description: "Grouped by account",
+    icon: Calendar03Icon,
   },
   {
     id: "preferences",
@@ -153,7 +162,13 @@ export function SettingsPanel({
   const active = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0];
 
   const sectionContent =
-    section === "accounts" ? <AccountsSection /> : <PreferencesSection />;
+    section === "accounts" ? (
+      <AccountsSection />
+    ) : section === "calendars" ? (
+      <CalendarsSection />
+    ) : (
+      <PreferencesSection />
+    );
 
   return (
     <motion.div
@@ -408,11 +423,8 @@ type Connection = FunctionReturnType<
 
 function AccountsSection() {
   const connections = useQuery(api.domains.calendar.queries.listConnections);
-  const calendars = useQuery(api.domains.calendar.queries.listCalendars);
 
-  if (connections === undefined || calendars === undefined) {
-    return <SectionSkeleton />;
-  }
+  if (connections === undefined) return <SectionSkeleton />;
   if (connections.length === 0) {
     return (
       <SettingCard>
@@ -425,25 +437,13 @@ function AccountsSection() {
   return (
     <div className="space-y-3">
       {connections.map((connection) => (
-        <ConnectionCard
-          key={connection._id}
-          connection={connection}
-          calendars={sortCalendars(
-            calendars.filter((c) => c.connectionId === connection._id),
-          )}
-        />
+        <ConnectionCard key={connection._id} connection={connection} />
       ))}
     </div>
   );
 }
 
-function ConnectionCard({
-  connection,
-  calendars,
-}: {
-  connection: Connection;
-  calendars: CalendarListItem[];
-}) {
+function ConnectionCard({ connection }: { connection: Connection }) {
   const { data: session } = authClient.useSession();
   const setStatus = useMutation(
     api.domains.calendar.mutations.setConnectionStatus,
@@ -603,17 +603,6 @@ function ConnectionCard({
             )
           }
         />
-
-        {calendars.length > 0 && (
-          <>
-            <p className="pt-3.5 pb-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
-              Calendars
-            </p>
-            {calendars.map((calendar) => (
-              <CalendarRow key={calendar._id} calendar={calendar} />
-            ))}
-          </>
-        )}
       </div>
     </div>
   );
@@ -636,7 +625,72 @@ function sortCalendars(calendars: CalendarListItem[]): CalendarListItem[] {
   });
 }
 
-function CalendarRow({ calendar }: { calendar: CalendarListItem }) {
+/** Shared column template so the header row and calendar rows line up. */
+const CALENDAR_GRID =
+  "grid grid-cols-[minmax(0,1fr)_3.5rem_5.5rem] items-center gap-3";
+
+function CalendarsSection() {
+  const connections = useQuery(api.domains.calendar.queries.listConnections);
+  const calendars = useQuery(api.domains.calendar.queries.listCalendars);
+  const { data: session } = authClient.useSession();
+
+  if (connections === undefined || calendars === undefined) {
+    return <SectionSkeleton />;
+  }
+  if (calendars.length === 0) {
+    return (
+      <SettingCard>
+        <p className="py-8 text-center text-xs text-muted-foreground">
+          No calendars yet — they appear after your first sync.
+        </p>
+      </SettingCard>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      {connections.map((connection) => {
+        const rows = sortCalendars(
+          calendars.filter((c) => c.connectionId === connection._id),
+        );
+        if (rows.length === 0) return null;
+        return (
+          <div key={connection._id} className="space-y-1.5">
+            <p className="truncate px-1 text-xs font-medium text-muted-foreground">
+              {connection.providerAccountId ??
+                session?.user?.email ??
+                "Connected account"}
+            </p>
+            <SettingCard>
+              <div
+                aria-hidden
+                className={cn(
+                  CALENDAR_GRID,
+                  "border-b border-border py-2.5 text-xs font-medium text-muted-foreground",
+                )}
+              >
+                <span>Calendar</span>
+                <span>Color</span>
+                <span>Type</span>
+              </div>
+              {rows.map((calendar) => (
+                <CalendarTableRow key={calendar._id} calendar={calendar} />
+              ))}
+            </SettingCard>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function calendarType(calendar: CalendarListItem): string {
+  if (calendar.primary) return "Primary";
+  if (calendar.isShared) return "Shared";
+  if (!isWritable(calendar)) return "Read-only";
+  return "Regular";
+}
+
+function CalendarTableRow({ calendar }: { calendar: CalendarListItem }) {
   const setSelected = useMutation(
     api.domains.calendar.mutations.setCalendarSelected,
   );
@@ -645,6 +699,7 @@ function CalendarRow({ calendar }: { calendar: CalendarListItem }) {
   );
   const [editing, setEditing] = useState(false);
   const name = calendarDisplayName(calendar);
+  const colorVar = calendarColorVar(calendar);
 
   const commit = (value: string) => {
     setEditing(false);
@@ -659,64 +714,76 @@ function CalendarRow({ calendar }: { calendar: CalendarListItem }) {
   };
 
   return (
-    <div className="group flex items-center gap-3 border-b border-border py-3 last:border-b-0">
-      <span
-        className="size-3 shrink-0 rounded-full"
-        style={{ backgroundColor: `var(${calendarColorVar(calendar)})` }}
-      />
-      {editing ? (
-        <Input
-          autoFocus
-          defaultValue={name}
-          aria-label={`Rename ${name}`}
-          className="h-7 flex-1 rounded-xl bg-background px-2 text-sm"
-          onFocus={(event) => event.target.select()}
-          onBlur={(event) => commit(event.target.value)}
-          onKeyDown={(event) => {
-            // The dock closes on Escape; while renaming it should only cancel.
-            if (event.key === "Escape") {
-              event.stopPropagation();
-              setEditing(false);
-            }
-            if (event.key === "Enter") commit(event.currentTarget.value);
-          }}
+    <div
+      className={cn(
+        CALENDAR_GRID,
+        "group border-b border-border py-3 last:border-b-0",
+      )}
+      style={{ "--cal-color": `var(${colorVar})` } as CSSProperties}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <Checkbox
+          checked={calendar.selected}
+          onCheckedChange={(checked) =>
+            void setSelected({
+              calendarId: calendar._id as Id<"calendars">,
+              selected: checked === true,
+            }).catch(reportSaveError("Couldn't update the calendar"))
+          }
+          aria-label={`Show ${name}`}
+          className="size-5 rounded-md border-(--cal-color) transition-colors data-checked:border-(--cal-color) data-checked:bg-(--cal-color) data-checked:text-white"
         />
-      ) : (
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">
-          {name}
-          {calendar.summaryOverride && calendar.summary && (
-            <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-              · was {calendar.summary}
-            </span>
-          )}
-        </span>
-      )}
-      {!editing && !calendar.isShared && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Rename ${name}`}
-          onClick={() => setEditing(true)}
-          className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-        >
-          <HugeiconsIcon
-            icon={PencilEdit01Icon}
-            strokeWidth={2}
-            className="size-3.5"
+        {editing ? (
+          <Input
+            autoFocus
+            defaultValue={name}
+            aria-label={`Rename ${name}`}
+            className="h-7 flex-1 rounded-xl bg-background px-2 text-sm"
+            onFocus={(event) => event.target.select()}
+            onBlur={(event) => commit(event.target.value)}
+            onKeyDown={(event) => {
+              // The dock closes on Escape; while renaming it should only cancel.
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                setEditing(false);
+              }
+              if (event.key === "Enter") commit(event.currentTarget.value);
+            }}
           />
-        </Button>
-      )}
-      <Switch
-        checked={calendar.selected}
-        onCheckedChange={(checked) =>
-          void setSelected({
-            calendarId: calendar._id as Id<"calendars">,
-            selected: checked === true,
-          }).catch(reportSaveError("Couldn't update the calendar"))
-        }
-        aria-label={`Show ${name}`}
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+            {name}
+            {calendar.summaryOverride && calendar.summary && (
+              <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                · was {calendar.summary}
+              </span>
+            )}
+          </span>
+        )}
+        {!editing && !calendar.isShared && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Rename ${name}`}
+            onClick={() => setEditing(true)}
+            className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+          >
+            <HugeiconsIcon
+              icon={PencilEdit01Icon}
+              strokeWidth={2}
+              className="size-3.5"
+            />
+          </Button>
+        )}
+      </div>
+      <span
+        className="h-3.5 w-7 rounded-full"
+        style={{ backgroundColor: `var(${colorVar})` }}
       />
+      <span className="truncate text-sm text-muted-foreground">
+        {calendarType(calendar)}
+      </span>
     </div>
   );
 }

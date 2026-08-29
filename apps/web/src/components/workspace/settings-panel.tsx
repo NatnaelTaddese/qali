@@ -1061,8 +1061,6 @@ function PickerOption({
   );
 }
 
-const ZONE_LIST_LIMIT = 8;
-
 function TimeZonePicker({
   value,
   browserZone,
@@ -1094,7 +1092,7 @@ function TimeZonePicker({
             aria-label="Search time zones"
             className="h-8 rounded-2xl"
           />
-          <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto [scrollbar-width:thin]">
+          <div className="flex max-h-72 flex-col gap-0.5 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
             {!needle && (
               <PickerOption
                 label={`Automatic · ${browserZone.replace(/_/g, " ")}`}
@@ -1106,7 +1104,7 @@ function TimeZonePicker({
                 }}
               />
             )}
-            {matches.slice(0, needle ? 50 : ZONE_LIST_LIMIT).map((zone) => (
+            {matches.map((zone) => (
               <PickerOption
                 key={zone}
                 label={zone.replace(/_/g, " ")}

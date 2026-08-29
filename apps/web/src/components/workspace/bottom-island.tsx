@@ -3,7 +3,6 @@ import {
   Cursor02Icon,
   PlusSignIcon,
   Search01Icon,
-  Settings01Icon,
   TimeScheduleIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
@@ -336,7 +335,6 @@ export function BottomIsland() {
                 <NavRow
                   pendingCount={activePendingBookings?.length ?? 0}
                   onOpenAccount={() => open({ kind: "account" })}
-                  onOpenSettings={() => open({ kind: "settings" })}
                   onCreate={openCreate}
                   availabilityLoading={availabilityRequested}
                   onPrepareAvailability={prepareAvailability}
@@ -399,7 +397,6 @@ function NavRow({
   pendingCount,
   availabilityLoading,
   onOpenAccount,
-  onOpenSettings,
   onCreate,
   onPrepareAvailability,
   onOpenAvailability,
@@ -407,7 +404,6 @@ function NavRow({
   pendingCount: number;
   availabilityLoading: boolean;
   onOpenAccount: () => void;
-  onOpenSettings: () => void;
   onCreate: () => void;
   onPrepareAvailability: () => void;
   onOpenAvailability: () => void;
@@ -436,11 +432,6 @@ function NavRow({
         busy={availabilityLoading}
         onIntent={onPrepareAvailability}
         onClick={onOpenAvailability}
-      />
-      <NavButton
-        icon={Settings01Icon}
-        label="Settings"
-        onClick={onOpenSettings}
       />
 
       <div className="mx-1 h-6 w-px bg-border" />

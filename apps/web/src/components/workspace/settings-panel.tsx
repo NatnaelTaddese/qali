@@ -179,7 +179,7 @@ export function SettingsPanel({
           // runs corner to corner — the two-tone split. The height is fixed
           // (viewport-capped) so switching sections never resizes the sheet;
           // a section taller than the pane scrolls inside it instead.
-          <div className="grid h-[min(28rem,70dvh)] grid-cols-[12.5rem_minmax(0,1fr)]">
+          <div className="grid h-[min(34rem,78dvh)] grid-cols-[12.5rem_minmax(0,1fr)]">
             <nav
               aria-label="Settings sections"
               className="flex flex-col gap-1 border-r border-border bg-muted/40 p-3"
@@ -249,7 +249,7 @@ export function SettingsPanel({
                   <h2 className="font-display shrink-0 pr-9 text-2xl font-bold">
                     {active.label}
                   </h2>
-                  <div className="-mr-2 mt-4 min-h-0 flex-1 overflow-y-auto pr-2 pb-1 [scrollbar-width:thin]">
+                  <div className="scroll-fade-y -mr-2 mt-4 min-h-0 flex-1 overflow-y-auto pr-2 pb-1 [scrollbar-width:thin]">
                     {sectionContent}
                   </div>
                 </motion.div>

@@ -198,7 +198,8 @@ export function SettingsPanel({
                   aria-current={entry.id === section || undefined}
                   onClick={() => goTo(entry.id)}
                   className={cn(
-                    "group flex items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+                    // Rounded like the header's day/week/month toggle, not a pill.
+                    "group flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
                     entry.id === section
                       ? "bg-background shadow-sm dark:border dark:border-white/5"
                       : "hover:bg-background/60 dark:hover:bg-background/40",

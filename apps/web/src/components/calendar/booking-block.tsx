@@ -41,7 +41,8 @@ export function BookingBlock({
 }) {
   const { use24h, timeZone } = usePreferences();
   const topPct = msToPct(Math.max(booking.startMs, dayStartMs), dayStartMs);
-  const bottomPct = msToPct(booking.endMs, dayStartMs);
+  // A booking can cross the day cut; clamp so it never renders past the grid.
+  const bottomPct = Math.min(100, msToPct(booking.endMs, dayStartMs));
   const compact =
     (booking.endMs - booking.startMs) / MS_PER_MINUTE < COMPACT_BELOW_MINUTES;
   const startLabel = format(zoned(booking.startMs, timeZone), timePattern(use24h));

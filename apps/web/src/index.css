@@ -1,1 +1,14 @@
 @import "@qali/ui/globals.css";
+
+/* The calendar's vertical scroll deliberately chains to the document so the
+ * macOS rubber-band keeps its native springy feel (Chromium only bounces the
+ * root scroller, never inner overflow divs). The bounce reveals the html
+ * canvas beyond the page edge, so pin it to the app background — otherwise
+ * the prepaint hexes in index.html (near-but-not-equal to the tokens) show
+ * through as an off-color band. The class selectors out-rank the inline
+ * prepaint rules; the bare `html` covers any classless moment. */
+html,
+html.light,
+html.dark {
+  background-color: var(--background);
+}

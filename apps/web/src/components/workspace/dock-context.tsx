@@ -12,8 +12,10 @@ import type { EventPrefill } from "@/components/calendar/event-create";
 import {
   DEFAULT_EVENT_DURATION_MS,
   nextFreeSlot,
+  zonedNow,
   type CalendarEvent,
 } from "@/components/calendar/lib";
+import { usePreferences } from "@/components/workspace/preferences-context";
 import { startOfDay } from "date-fns";
 import type { Booking } from "@/components/workspace/booking-request-panel";
 import type { SettingsSection } from "@/components/workspace/settings-panel";
@@ -85,6 +87,7 @@ interface DockContextValue {
 const DockContext = createContext<DockContextValue | null>(null);
 
 export function DockProvider({ children }: { children: ReactNode }) {
+  const { timeZone } = usePreferences();
   // View and direction move together so the exiting and entering content always
   // agree on which way they are travelling.
   const [state, setState] = useState<{ view: DockView | null; direction: number }>({
@@ -107,7 +110,8 @@ export function DockProvider({ children }: { children: ReactNode }) {
 
   const openCreate = useCallback(() => {
     const seed = createSeedRef.current;
-    const dayStartMs = seed?.dayStartMs ?? startOfDay(Date.now()).getTime();
+    const dayStartMs =
+      seed?.dayStartMs ?? startOfDay(zonedNow(timeZone)).getTime();
     const range = nextFreeSlot(
       dayStartMs,
       seed?.events ?? [],
@@ -115,7 +119,7 @@ export function DockProvider({ children }: { children: ReactNode }) {
       DEFAULT_EVENT_DURATION_MS,
     );
     open({ kind: "create", ...range });
-  }, [open]);
+  }, [open, timeZone]);
 
   // A ref, like the create seed: the calendar registers on mount and callers
   // only read it when they fire, so no render needs to track it.

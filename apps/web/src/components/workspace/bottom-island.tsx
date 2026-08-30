@@ -17,7 +17,7 @@ import {
 import { cn } from "@qali/ui/lib/utils";
 import { useQuery } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { EventCreate } from "@/components/calendar/event-create";
 import { EventDetail } from "@/components/calendar/event-detail";
@@ -34,12 +34,22 @@ import { useAvailabilityEdit } from "./availability-edit-context";
 import { AvailabilityPanel } from "./availability-panel";
 import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
-import { SettingsPanel } from "./settings-panel";
 import { UserAvatar } from "./user-avatar";
 import { useSyncNow } from "./use-sync-now";
 
 const MAX_TIMEOUT_MS = 2_147_000_000;
 const AVAILABILITY_PREFETCH_GRACE_MS = 10_000;
+
+/** Settings is the dock's heaviest panel by far, so it loads as its own chunk
+ * instead of riding in the dock's synchronous module graph (the assistant
+ * panel next door does the same). The dock warms it during idle time right
+ * after mount, so by the time anyone reaches Settings — via the account panel
+ * or the nav gear — the chunk is already resolved and Suspense never shows. */
+const loadSettingsPanel = () =>
+  import("./settings-panel").then((m) => ({ default: m.SettingsPanel }));
+
+// Module scope so React keeps the resolved value across dock open/close.
+const SettingsPanelLazy = lazy(loadSettingsPanel);
 
 /** Each view gets its own width so the shell visibly adapts to what it holds.
  * Padding is deliberately not part of this — every panel shares one inset.
@@ -62,11 +72,37 @@ function cornerRadius(view: DockView | null): number {
   return view ? 20 : 28;
 }
 
+/** Warm the settings panel's one cold query from the dock itself: the
+ * subscription lives for as long as either panel is open, so the handoff
+ * never depends on panel-swap animation overlap keeping a watcher mounted.
+ * It renders nothing and lives outside the island's `layout` node so the
+ * query resolving mid-open never re-measures the in-flight spring. */
+function ConnectionsWarmup({ active }: { active: boolean }) {
+  useStableQuery(
+    api.domains.calendar.queries.listConnections,
+    active ? {} : "skip",
+  );
+  return null;
+}
+
 export function BottomIsland() {
   const { view, viewId, direction, open, close, openCreate } = useDock();
   const { editing, setEditing, ready: availabilityEditReady } =
     useAvailabilityEdit();
   const reduce = useReducedMotion();
+
+  // Warm the settings chunk once the page is idle so a cold open never
+  // suspends. Fire-and-forget: a failed fetch just falls back to Suspense.
+  useEffect(() => {
+    const warm = () => void loadSettingsPanel().catch(() => {});
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(warm);
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(warm, 1_500);
+    return () => window.clearTimeout(id);
+  }, []);
+
   const availabilityOpen = view?.kind === "availability";
   const [availabilityIntentVersion, setAvailabilityIntentVersion] = useState(0);
   const [availabilityRequested, setAvailabilityRequested] = useState(false);
@@ -76,13 +112,6 @@ export function BottomIsland() {
     availabilityIntentVersion > 0;
   // This stays live for the dock badge and incoming-request calendar blocks.
   const pendingBookings = useQuery(api.domains.booking.queries.listPendingBookings);
-  // Warm the settings panel's one cold query from the dock itself: the
-  // subscription lives for as long as either panel is open, so the handoff
-  // never depends on panel-swap animation overlap keeping a watcher mounted.
-  useStableQuery(
-    api.domains.calendar.queries.listConnections,
-    view?.kind === "account" || view?.kind === "settings" ? {} : "skip",
-  );
   // Warm settings on interaction intent so the dock knows its final content
   // height before its spring begins. Retain them briefly after close for a
   // smooth reopen, then release both subscriptions.
@@ -227,6 +256,9 @@ export function BottomIsland() {
 
   return (
     <>
+      <ConnectionsWarmup
+        active={view?.kind === "account" || view?.kind === "settings"}
+      />
       {/* Settings is the one view that dims the calendar behind it — a
           deliberate exception to the dock's no-scrim rule: the wide sheet
           covers enough of the grid that stray taps should dismiss, not act.
@@ -329,10 +361,18 @@ export function BottomIsland() {
                   onOpenSettings={() => open({ kind: "settings" })}
                 />
               ) : view?.kind === "settings" ? (
-                <SettingsPanel
-                  initialSection={view.section}
-                  onClose={closeCurrent}
-                />
+                <Suspense
+                  fallback={
+                    <div className="flex h-96 items-center justify-center">
+                      <Spinner className="size-5" />
+                    </div>
+                  }
+                >
+                  <SettingsPanelLazy
+                    initialSection={view.section}
+                    onClose={closeCurrent}
+                  />
+                </Suspense>
               ) : view?.kind === "availability" ? (
                 <AvailabilityPanel
                   key={availabilityInstance.current}

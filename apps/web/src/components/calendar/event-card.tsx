@@ -13,6 +13,7 @@ import {
   type PositionedEvent,
   stackIndentPx,
   timePattern,
+  zoned,
 } from "./lib";
 import { pressTransition } from "./motion";
 import { useEventCapabilities } from "./permissions";
@@ -64,7 +65,7 @@ export function EventCard({
   } = positioned;
   const colorFor = useEventColor();
   const colorVar = colorFor(event);
-  const { use24h } = usePreferences();
+  const { use24h, timeZone } = usePreferences();
   // An event the user can't reschedule still opens on tap, but it shouldn't
   // offer a grab cursor or resize edges for a drag that will never happen.
   const { canEdit: draggable, canSeeGuests } = useEventCapabilities()(event);
@@ -143,7 +144,7 @@ export function EventCard({
           {event.summary ?? "(No title)"}
         </p>
         <p className="event-card-time truncate text-muted-foreground">
-          {`${format(event.startMs, timePattern(use24h, false))} – ${format(event.endMs, timePattern(use24h))}`}
+          {`${format(zoned(event.startMs, timeZone), timePattern(use24h, false))} – ${format(zoned(event.endMs, timeZone), timePattern(use24h))}`}
         </p>
         {(attendees.length > 0 || event.conferenceUrl) && (
           <div className="event-card-meta mt-auto min-w-0 items-center justify-between gap-1 pt-1">

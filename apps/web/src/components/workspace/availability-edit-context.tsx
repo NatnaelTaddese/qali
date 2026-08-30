@@ -10,6 +10,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -17,6 +18,7 @@ import {
 import { toast } from "sonner";
 
 import { MS_PER_MINUTE } from "@/components/calendar/lib";
+import { usePreferences } from "./preferences-context";
 
 /** A day's availability span with its live save state, so the grid can shimmer a
  * block that is still being written and paint it solid once it lands. */
@@ -53,10 +55,9 @@ const AvailabilityEditContext = createContext<AvailabilityEditValue | null>(
 
 const NO_ARGS = {} as const;
 
-/** `dateKey` as the day reads locally. Painting is only enabled while the
- * page's zone equals this browser's (the `ready` gate below), so the local
- * key is the page's key — with a foreign preferred zone, edit mode stays
- * unavailable rather than authoring keys in the wrong zone. */
+/** `dateKey` as the day reads in its own zone. Grid days are working-zone
+ * TZDates, and the `ready` gate below requires the page's zone to equal the
+ * working zone — so this key is always the page's key. */
 function dayKey(day: Date): string {
   return format(day, "yyyy-MM-dd");
 }
@@ -120,12 +121,29 @@ export function AvailabilityEditProvider({ children }: { children: ReactNode }) 
   }, [overrides]);
 
   const rules = page?.rules ?? [];
-  const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // Painting authors date keys and wall-clock minutes off the grid, which is
+  // cut in the working zone — so the page must be saved in that same zone.
+  // The availability panel persists the working zone before entering edit
+  // mode, so this holds by construction after any save.
+  const { timeZone: workingZone } = usePreferences();
   const ready =
     page !== undefined &&
     page !== null &&
-    page.timeZone === browserTimeZone &&
+    page.timeZone === workingZone &&
     overrides !== undefined;
+
+  // A working-zone change mid-paint (settings on another tab or device) would
+  // desync the grid's date keys from the page's saved zone; rather than sit
+  // inert behind the edit bar's loading state forever, close the session and
+  // say why.
+  useEffect(() => {
+    if (!editing || !page || page.timeZone === workingZone) return;
+    setEditingState(false);
+    toast.error("Availability editing closed", {
+      description:
+        "Your working time zone changed. Reopen to continue in the new zone.",
+    });
+  }, [editing, page, workingZone]);
 
   const intervalsForDay = useCallback(
     (day: Date): DayAvailability => {

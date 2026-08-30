@@ -1,7 +1,10 @@
 // A small, dependency-free RFC5545 recurrence model. We only ever *emit* rules
 // (Google is the source of truth and syncs expanded instances back), so there is
 // no parser here — just a typed model, a string builder, and a human summary.
+import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
+
+import { zoned } from "./lib";
 
 export type Freq = "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
 
@@ -47,7 +50,10 @@ export interface Recurrence {
 
 /** Parse the subset of an RFC5545 RRULE that this UI can create and describe.
  * Other recurrence lines (such as EXDATE) do not change the broad summary. */
-export function parseRRule(lines: string[]): Recurrence | null {
+export function parseRRule(
+  lines: string[],
+  timeZone: string,
+): Recurrence | null {
   const line = lines.find((candidate) => candidate.startsWith("RRULE:"));
   if (!line) return null;
 
@@ -90,7 +96,7 @@ export function parseRRule(lines: string[]): Recurrence | null {
     if (count === null) return null;
     end = { kind: "count", count };
   } else if (untilText !== undefined) {
-    const dateMs = parseUntilDate(untilText);
+    const dateMs = parseUntilDate(untilText, timeZone);
     if (dateMs === null) return null;
     end = { kind: "onDate", dateMs };
   }
@@ -98,17 +104,20 @@ export function parseRRule(lines: string[]): Recurrence | null {
   return { freq, interval, byWeekday, end };
 }
 
-/** The RRULE weekday code for a timestamp's calendar day. */
-export function weekdayOf(ms: number): Weekday {
-  return DAY_CODES[new Date(ms).getDay()];
+/** The RRULE weekday code for a timestamp's working-zone calendar day. */
+export function weekdayOf(ms: number, timeZone: string): Weekday {
+  return DAY_CODES[zoned(ms, timeZone).getDay()];
 }
 
 /** A sensible default recurrence for a preset "Custom…" entry point. */
-export function defaultRecurrence(startMs: number): Recurrence {
+export function defaultRecurrence(
+  startMs: number,
+  timeZone: string,
+): Recurrence {
   return {
     freq: "WEEKLY",
     interval: 1,
-    byWeekday: [weekdayOf(startMs)],
+    byWeekday: [weekdayOf(startMs, timeZone)],
     end: { kind: "never" },
   };
 }
@@ -118,8 +127,9 @@ export function sortWeekdays(days: Weekday[]): Weekday[] {
   return WEEKDAYS.filter((d) => days.includes(d));
 }
 
-/** Build the Google `recurrence` array (a single RRULE line) for a model. */
-export function toRRule(r: Recurrence): string[] {
+/** Build the Google `recurrence` array (a single RRULE line) for a model.
+ * `timeZone` is the working zone the end date was picked in. */
+export function toRRule(r: Recurrence, timeZone: string): string[] {
   const parts = [`FREQ=${r.freq}`];
   if (r.interval > 1) {
     parts.push(`INTERVAL=${r.interval}`);
@@ -130,11 +140,17 @@ export function toRRule(r: Recurrence): string[] {
   if (r.end.kind === "count") {
     parts.push(`COUNT=${Math.max(1, r.end.count)}`);
   } else if (r.end.kind === "onDate") {
-    // UNTIL is inclusive; pin it to end-of-day UTC so the chosen day counts.
-    const d = new Date(r.end.dateMs);
-    const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(
-      d.getDate(),
-    )}T235959Z`;
+    // UNTIL is inclusive; stamp the working zone's end of the chosen day as a
+    // real UTC instant (Google's own convention), so every occurrence on that
+    // day counts and parseUntilDate reads the same day back.
+    const d = zoned(r.end.dateMs, timeZone);
+    d.setHours(23, 59, 59, 0);
+    const u = new Date(d.getTime());
+    const stamp = `${u.getUTCFullYear()}${pad(u.getUTCMonth() + 1)}${pad(
+      u.getUTCDate(),
+    )}T${pad(u.getUTCHours())}${pad(u.getUTCMinutes())}${pad(
+      u.getUTCSeconds(),
+    )}Z`;
     parts.push(`UNTIL=${stamp}`);
   }
   return [`RRULE:${parts.join(";")}`];
@@ -148,7 +164,7 @@ const FREQ_ADVERB: Record<Freq, string> = {
 };
 
 /** Short human description, e.g. "Weekly on Mon, Wed · 5 times". */
-export function summarize(r: Recurrence): string {
+export function summarize(r: Recurrence, timeZone: string): string {
   let base =
     r.interval > 1
       ? `Every ${r.interval} ${FREQ_NOUN[r.freq]}s`
@@ -162,7 +178,7 @@ export function summarize(r: Recurrence): string {
   if (r.end.kind === "count") {
     base += ` · ${r.end.count} time${r.end.count === 1 ? "" : "s"}`;
   } else if (r.end.kind === "onDate") {
-    base += ` · until ${format(r.end.dateMs, "MMM d, yyyy")}`;
+    base += ` · until ${format(zoned(r.end.dateMs, timeZone), "MMM d, yyyy")}`;
   }
   return base;
 }
@@ -190,21 +206,42 @@ function positiveInteger(value: string): number | null {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
-/** UNTIL may be a date or UTC date-time. The control selects a calendar date,
- * so preserve its YYYYMMDD portion rather than shifting it through a timezone. */
-function parseUntilDate(value: string): number | null {
-  const match = /^(\d{4})(\d{2})(\d{2})(?:T\d{6}Z)?$/.exec(value);
+/** UNTIL may be a date or UTC date-time. A date-time is a real instant —
+ * Google normalizes it to UTC (a New-York "ends Aug 26" arrives as
+ * 20260827T035959Z) — so read the working-zone calendar day it falls on. A
+ * bare date is already a calendar date; keep it verbatim. */
+function parseUntilDate(value: string, timeZone: string): number | null {
+  const match = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})Z)?$/.exec(
+    value,
+  );
   if (!match) return null;
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
-  const date = new Date(year, month - 1, day);
+  const utc = new Date(Date.UTC(year, month - 1, day));
   if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
+    utc.getUTCFullYear() !== year ||
+    utc.getUTCMonth() !== month - 1 ||
+    utc.getUTCDate() !== day
   ) {
     return null;
   }
-  return date.getTime();
+  if (match[4] !== undefined) {
+    const instant = Date.UTC(
+      year,
+      month - 1,
+      day,
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6]),
+    );
+    const d = zoned(instant, timeZone);
+    return new TZDate(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate(),
+      timeZone,
+    ).getTime();
+  }
+  return new TZDate(year, month - 1, day, timeZone).getTime();
 }

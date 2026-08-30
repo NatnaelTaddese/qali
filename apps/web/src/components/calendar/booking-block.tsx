@@ -4,7 +4,7 @@ import { format } from "date-fns";
 import type { Booking } from "@/components/workspace/booking-request-panel";
 import { usePreferences } from "@/components/workspace/preferences-context";
 
-import { msToPct, MS_PER_MINUTE, timePattern } from "./lib";
+import { msToPct, MS_PER_MINUTE, timePattern, zoned } from "./lib";
 import { RevealFlash, type Reveal } from "./today-pulse";
 
 /**
@@ -39,12 +39,13 @@ export function BookingBlock({
   reveal: Reveal;
   onOpen: () => void;
 }) {
-  const { use24h } = usePreferences();
+  const { use24h, timeZone } = usePreferences();
   const topPct = msToPct(Math.max(booking.startMs, dayStartMs), dayStartMs);
-  const bottomPct = msToPct(booking.endMs, dayStartMs);
+  // A booking can cross the day cut; clamp so it never renders past the grid.
+  const bottomPct = Math.min(100, msToPct(booking.endMs, dayStartMs));
   const compact =
     (booking.endMs - booking.startMs) / MS_PER_MINUTE < COMPACT_BELOW_MINUTES;
-  const startLabel = format(booking.startMs, timePattern(use24h));
+  const startLabel = format(zoned(booking.startMs, timeZone), timePattern(use24h));
 
   return (
     <button
@@ -54,7 +55,7 @@ export function BookingBlock({
       data-event
       onClick={onOpen}
       aria-label={`Request from ${booking.requesterName}, ${format(
-        booking.startMs,
+        zoned(booking.startMs, timeZone),
         `EEE d MMM ${timePattern(use24h)}`,
       )}`}
       className={cn(

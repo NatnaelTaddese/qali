@@ -11,6 +11,7 @@ import {
   useState,
 } from "react";
 
+import { usePreferences } from "@/components/workspace/preferences-context";
 import { DayColumn } from "./day-column";
 import { GutterColumn } from "./gutter-column";
 import {
@@ -114,6 +115,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
     const centerAtPctRef = useRef<number | "now" | null>(null);
     const nowLayoutRef = useRef<NowIndicatorLayout | null>(null);
     const userInteractedRef = useRef(false);
+    const { timeZone } = usePreferences();
     const [now, setNow] = useState(() => Date.now());
     const [visibleStartIdx, setVisibleStartIdx] = useState(anchorIndex);
     const people = useQuery(api.domains.people.queries.listPeople) ?? NO_CONTACTS;
@@ -478,13 +480,25 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
       visibleAllDayLaneCount,
       allDayExpanded,
     );
-    const nowLayout = getNowIndicatorLayout(days, now);
+    const nowLayout = getNowIndicatorLayout(days, now, timeZone);
     // Expose the latest layout to the imperative scroll helpers (which run
     // outside render) without threading it through their dependency arrays.
     nowLayoutRef.current = nowLayout;
 
     // On first entry to a current day/week, put now comfortably below the
     // sticky header. This guard deliberately prevents event/sync rerenders from
+    // The working zone can resolve a beat after mount (the preferences query
+    // lands once auth attaches) or change from settings: re-arm the initial
+    // now-scroll so the strip re-parks against the new zone's own now-line.
+    // Runs before the scroll effect below (same phase, source order), and the
+    // userInteractedRef guard there keeps a deliberate scroll untouched.
+    const parkedZoneRef = useRef(timeZone);
+    useLayoutEffect(() => {
+      if (parkedZoneRef.current === timeZone) return;
+      parkedZoneRef.current = timeZone;
+      didInitialNowScroll.current = false;
+    }, [timeZone]);
+
     // moving a user's scroll position. Only auto-scroll when today is on the
     // strip, so paging to an unrelated week doesn't yank the scroll position.
     useLayoutEffect(() => {
@@ -515,11 +529,25 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
         onPointerDown={cancelPendingTodayPulse}
         onTouchStart={cancelPendingTodayPulse}
         onWheel={cancelPendingTodayPulse}
-        className="group/strip flex min-h-0 flex-1 overflow-auto overscroll-x-contain bg-calendar-header [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        style={{ scrollSnapType: "x mandatory", scrollPaddingLeft: GUTTER_TOTAL }}
+        className="group/strip flex min-h-0 flex-1 overflow-auto overscroll-x-contain bg-background [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        style={{
+          scrollSnapType: "x mandatory",
+          scrollPaddingLeft: GUTTER_TOTAL,
+          // The scroller's own surface is what an elastic overscroll reveals
+          // (it doesn't travel with the bouncing content): header-colored on
+          // top so a downward tug reads as more header, page-colored below so
+          // scrolling past the last hour reads as more grid.
+          backgroundImage:
+            "linear-gradient(to bottom, var(--calendar-header) 0%, var(--calendar-header) 50%, var(--background) 50%)",
+        }}
       >
+        {/* Both columns opt out of the flex cross-axis stretch (`h-max` with a
+            `min-h-full` floor): stretched, they'd be only as tall as the
+            scroller's viewport, and the sticky day header would run out of
+            containing block a third of the way down the grid and scroll away.
+            Content-height columns give `sticky top-0` the full scroll range. */}
         <div
-          className="sticky left-0 z-[60] shrink-0 overflow-x-clip bg-background"
+          className="sticky left-0 z-[60] h-max min-h-full shrink-0 overflow-x-clip bg-background"
           style={{ flex: `0 0 ${GUTTER_TOTAL}px`, width: GUTTER_TOTAL }}
         >
           <GutterColumn
@@ -533,7 +561,7 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
           />
         </div>
         <div
-          className="flex shrink-0 flex-col"
+          className="flex h-max min-h-full shrink-0 flex-col"
           style={{
             flex: `0 0 calc(${days.length} * (100% - ${GUTTER_TOTAL}px) / ${columns})`,
           }}
@@ -586,6 +614,10 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
             style={{
               gridTemplateColumns: dayColsTemplate(days.length),
               height: TIME_GRID_BOTTOM_SPACER_HEIGHT,
+              // Let the day dividers dissolve instead of stopping dead, so an
+              // overscroll past the last hour trails off smoothly. The masked
+              // bg fades into the scroller's identical bottom color.
+              maskImage: "linear-gradient(to bottom, black, transparent)",
             }}
           >
             {days.map((day) => (

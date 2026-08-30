@@ -26,10 +26,10 @@ interface PreferencesValue {
   weekStartsOn: WeekStart;
   use24h: boolean;
   defaultView: CalendarView;
-  /** The zone the booking page's hours are published in. Event writes and
-   * grid rendering deliberately stay in the browser's zone — event times are
-   * composed in browser-local wall clock, and a different anchor would drift
-   * recurrences (see the note by TIMEZONES in calendar/lib.ts). */
+  /** The WORKING zone: the calendar renders, composes, and labels every
+   * time in it — day cuts, gutter hours, wheel pickers, event writes, the
+   * booking page's hours, and assistant date resolution. Defaults to the
+   * browser's zone when no preference is stored. */
   timeZone: string;
   defaultCalendarId: RawPreferences["defaultCalendarId"];
   /** The stored fields as-is, for UI that distinguishes "automatic" from set. */
@@ -37,15 +37,6 @@ interface PreferencesValue {
 }
 
 const PreferencesContext = createContext<PreferencesValue | null>(null);
-
-/** Everything "automatic": the fallback when nothing is stored or readable. */
-const EMPTY_RAW: RawPreferences = {
-  timeZone: undefined,
-  weekStartsOn: undefined,
-  timeFormat: undefined,
-  defaultView: undefined,
-  defaultCalendarId: undefined,
-};
 
 function resolve(raw: RawPreferences): PreferencesValue {
   return {
@@ -60,12 +51,13 @@ function resolve(raw: RawPreferences): PreferencesValue {
 
 /**
  * Loads the user's preferences once for the workspace. The very first paint
- * waits for the query (piggybacking on the auth-loading skeleton moment) so
- * the calendar mounts with the right default view and week shape. After that
- * the workspace NEVER unmounts on this query: a transient `null` (the query
- * evaluating during an auth-token blip while <Authenticated> still renders)
- * keeps the last resolved value, and a `null` with nothing to fall back on
- * renders the defaults rather than hanging on a skeleton forever.
+ * waits for the query to resolve to a real row (both `undefined` while loading
+ * and the transient `null` while the auth token attaches — the backend only
+ * returns `null` for "no identity", never for "no stored row"), so the
+ * calendar never mounts in the browser zone and then flips to the working
+ * zone. After that first resolution the workspace NEVER unmounts on this
+ * query: a later `null` (an auth-token blip while <Authenticated> still
+ * renders) keeps the last resolved value.
  */
 export function PreferencesProvider({ children }: { children: ReactNode }) {
   const raw = useStableQuery(api.domains.preferences.queries.getMyPreferences);
@@ -78,12 +70,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   if (value) lastValue.current = value;
   const effective = value ?? lastValue.current;
 
-  if (!effective && raw === undefined) return <WorkspaceSkeleton />;
-  return (
-    <PreferencesContext value={effective ?? resolve(EMPTY_RAW)}>
-      {children}
-    </PreferencesContext>
-  );
+  if (!effective) return <WorkspaceSkeleton />;
+  return <PreferencesContext value={effective}>{children}</PreferencesContext>;
 }
 
 export function usePreferences(): PreferencesValue {

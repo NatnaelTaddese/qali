@@ -1,6 +1,6 @@
 import { isSameDay, startOfDay } from "date-fns";
 
-import { msToPct } from "./lib";
+import { msToPct, zoned } from "./lib";
 
 export interface NowIndicatorLayout {
   /** Vertical position within the 24-hour body. */
@@ -15,17 +15,20 @@ export interface NowIndicatorLayout {
 }
 
 /** Indicator geometry: a full-width line at the current time, plus today's
- * column when it falls inside the buffered strip. */
+ * column when it falls inside the buffered strip. `timeZone` is the working
+ * zone the `days` were cut in, so "now" is read on the same clock. */
 export function getNowIndicatorLayout(
   days: Date[],
   now: number,
+  timeZone: string,
 ): NowIndicatorLayout | null {
   if (days.length === 0) return null;
 
-  const todayIndex = days.findIndex((day) => isSameDay(day, now));
+  const zonedNowDate = zoned(now, timeZone);
+  const todayIndex = days.findIndex((day) => isSameDay(day, zonedNowDate));
 
   return {
-    topPct: msToPct(now, startOfDay(now).getTime()),
+    topPct: msToPct(now, startOfDay(zonedNowDate).getTime()),
     today:
       todayIndex === -1
         ? null

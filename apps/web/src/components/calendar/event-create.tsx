@@ -54,7 +54,7 @@ export function EventCreate({
 }) {
   const createEvent = useAction(api.domains.calendar.service.createEvent);
   const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
-  const { defaultCalendarId } = usePreferences();
+  const { defaultCalendarId, timeZone } = usePreferences();
   const [submitting, setSubmitting] = useState(false);
   // Idempotency key for this create intent: minted once and reused across retries
   // (a lost response / re-submit) so the backend dedupes to one Google event
@@ -107,7 +107,7 @@ export function EventCreate({
     e.preventDefault();
     if (!valid || submitting) return;
     setSubmitting(true);
-    const times = toEventTimes(value);
+    const times = toEventTimes(value, timeZone);
     if (!operationIdRef.current) {
       operationIdRef.current = crypto.randomUUID();
     }
@@ -127,18 +127,18 @@ export function EventCreate({
       visibility: value.isPrivate ? "private" : undefined,
       // Busy is the provider default; only send the override when Free.
       busy: value.busy ? undefined : false,
-      recurrence: value.recurrence ? toRRule(value.recurrence) : undefined,
+      recurrence: value.recurrence
+        ? toRRule(value.recurrence, timeZone)
+        : undefined,
       attendees: value.guests.length
         ? value.guests.map((g) => ({
             email: g.email,
             displayName: g.displayName,
           }))
         : undefined,
-      // The browser zone, NOT the timezone preference: startMs/endMs are
-      // composed in browser-local wall clock (wheels, grid), and for a
-      // recurring event this zone becomes the series anchor — a different
-      // zone would drift instances across divergent DST transitions.
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      // The working zone: the grid renders in it and the wheels compose in
+      // it, so it is the honest recurrence anchor for this event's times.
+      timeZone,
     })
       .then(() => {
         operationIdRef.current = null;

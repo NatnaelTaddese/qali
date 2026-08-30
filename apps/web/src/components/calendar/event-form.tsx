@@ -26,6 +26,8 @@ import { EventControls } from "./event-controls";
 import { FreeBusyToggle } from "./free-busy-toggle";
 import { GuestPicker, type Guest } from "./guest-picker";
 import { GoogleMeetIcon } from "./google-meet-icon";
+import { TZDate } from "@date-fns/tz";
+
 import { usePreferences } from "@/components/workspace/preferences-context";
 import {
   type CalendarEvent,
@@ -33,6 +35,7 @@ import {
   MS_PER_DAY,
   SNAP_MS,
   timePattern,
+  zoned,
 } from "./lib";
 import {
   dockVariants,
@@ -63,10 +66,11 @@ interface TimeParts {
   meridiem: string;
 }
 
-/** Split a timestamp into the wheel values. The minute is rounded onto the
- * wheel's step so an off-grid time can never fall through to row 0. */
-function partsOf(ms: number, use24h: boolean): TimeParts {
-  const d = new Date(ms);
+/** Split a timestamp into the wheel values, read in the working zone. The
+ * minute is rounded onto the wheel's step so an off-grid time can never fall
+ * through to row 0. */
+function partsOf(ms: number, use24h: boolean, timeZone: string): TimeParts {
+  const d = zoned(ms, timeZone);
   const minute = Math.min(
     Math.round(d.getMinutes() / MINUTE_STEP) * MINUTE_STEP,
     60 - MINUTE_STEP,
@@ -78,45 +82,55 @@ function partsOf(ms: number, use24h: boolean): TimeParts {
   };
 }
 
-/** Rebuild a timestamp from wheel values, keeping `baseMs`'s calendar day. */
-function withParts(baseMs: number, parts: TimeParts, use24h: boolean): number {
+/** Rebuild a timestamp from wheel values, keeping `baseMs`'s calendar day —
+ * both read and written in the working zone, so a wheel showing 9:00 always
+ * means 9:00 in the zone the grid displays. */
+function withParts(
+  baseMs: number,
+  parts: TimeParts,
+  use24h: boolean,
+  timeZone: string,
+): number {
   const h12 = Number(parts.hour) % 12;
   const hour = use24h
     ? Number(parts.hour)
     : parts.meridiem === "PM"
       ? h12 + 12
       : h12;
-  const d = new Date(baseMs);
+  const d = zoned(baseMs, timeZone);
   d.setHours(hour, Number(parts.minute), 0, 0);
   return d.getTime();
 }
 
-/** Move `baseMs` onto `dayMs`'s calendar day, keeping its time of day. */
-function withDay(baseMs: number, dayMs: number): number {
-  const day = new Date(dayMs);
-  const d = new Date(baseMs);
+/** Move `baseMs` onto `dayMs`'s calendar day (working zone), keeping its
+ * time of day. */
+function withDay(baseMs: number, dayMs: number, timeZone: string): number {
+  const day = zoned(dayMs, timeZone);
+  const d = zoned(baseMs, timeZone);
   d.setFullYear(day.getFullYear(), day.getMonth(), day.getDate());
   return d.getTime();
 }
 
-/** UTC midnight of a timestamp's local calendar day — the instant Google's
- * all-day date strings map to (see mapGoogleEvent / toGoogleTime on the
- * backend). All-day events are stored and sent as these UTC-midnight instants. */
-function toUtcMidnight(ms: number): number {
-  const d = new Date(ms);
+/** UTC midnight of a timestamp's working-zone calendar day — the instant
+ * Google's all-day date strings map to (see mapGoogleEvent / toGoogleTime on
+ * the backend). All-day events are stored and sent as these UTC-midnight
+ * instants. */
+function toUtcMidnight(ms: number, timeZone: string): number {
+  const d = zoned(ms, timeZone);
   return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-/** The inverse: a local-time instant on the same calendar date, so the day
+/** The inverse: a working-zone instant on the same calendar date, so the day
  * pickers show the day Google meant. Noon, so no DST shift can tip it into a
  * neighbouring day. */
-function fromUtcMidnight(ms: number): number {
+export function fromUtcMidnight(ms: number, timeZone: string): number {
   const d = new Date(ms);
-  return new Date(
+  return new TZDate(
     d.getUTCFullYear(),
     d.getUTCMonth(),
     d.getUTCDate(),
     12,
+    timeZone,
   ).getTime();
 }
 
@@ -154,8 +168,12 @@ export function isEventFormValid(value: EventFormValue): boolean {
 }
 
 /** The instants to send to Google. All-day events are date-only: UTC midnight
- * of the first day, and the exclusive UTC midnight *after* the last one. */
-export function toEventTimes(value: EventFormValue): {
+ * of the first day (as read in the working zone), and the exclusive UTC
+ * midnight *after* the last one. */
+export function toEventTimes(
+  value: EventFormValue,
+  timeZone: string,
+): {
   startMs: number;
   endMs: number;
 } {
@@ -163,24 +181,29 @@ export function toEventTimes(value: EventFormValue): {
     return { startMs: value.startMs, endMs: value.endMs };
   }
   return {
-    startMs: toUtcMidnight(value.startMs),
-    endMs: toUtcMidnight(value.endMs) + MS_PER_DAY,
+    startMs: toUtcMidnight(value.startMs, timeZone),
+    endMs: toUtcMidnight(value.endMs, timeZone) + MS_PER_DAY,
   };
 }
 
 /** Seed the form from a synced event. Undoes the all-day conversion above, so
  * the end tab shows the last day of the event rather than the exclusive one
  * after it. */
-export function formValueFromEvent(event: CalendarEvent): EventFormValue {
+export function formValueFromEvent(
+  event: CalendarEvent,
+  timeZone: string,
+): EventFormValue {
   return {
     summary: event.summary ?? "",
     description: event.description ?? "",
     location: event.location ?? "",
     meet: event.conferenceType === "hangoutsMeet",
     conferenceUrl: event.conferenceUrl,
-    startMs: event.allDay ? fromUtcMidnight(event.startMs) : event.startMs,
+    startMs: event.allDay
+      ? fromUtcMidnight(event.startMs, timeZone)
+      : event.startMs,
     endMs: event.allDay
-      ? fromUtcMidnight(event.endMs - MS_PER_DAY)
+      ? fromUtcMidnight(event.endMs - MS_PER_DAY, timeZone)
       : event.endMs,
     allDay: event.allDay,
     isPrivate: event.visibility === "private",
@@ -265,13 +288,13 @@ export function EventForm({
   const [mainHeight, setMainHeight] = useState<number>();
 
   const { canEdit } = capabilities;
-  const { use24h } = usePreferences();
+  const { use24h, timeZone } = usePreferences();
   const valid = isEventFormValid(value);
   const activeMs = editing === "start" ? value.startMs : value.endMs;
-  const parts = partsOf(activeMs, use24h);
+  const parts = partsOf(activeMs, use24h, timeZone);
 
   const setPart = (key: keyof TimeParts, part: string) => {
-    const next = withParts(activeMs, { ...parts, [key]: part }, use24h);
+    const next = withParts(activeMs, { ...parts, [key]: part }, use24h, timeZone);
     if (editing === "start") {
       // Drag the end along so the duration survives a later start.
       onChangeRange(next, Math.max(value.endMs, next + SNAP_MS));
@@ -283,7 +306,7 @@ export function EventForm({
   // Move the active side onto a chosen day, keeping its time of day. The end can
   // never land before the start; the start drags the end along to hold duration.
   const setDay = (dayMs: number) => {
-    const next = withDay(activeMs, dayMs);
+    const next = withDay(activeMs, dayMs, timeZone);
     if (editing === "start") {
       onChangeRange(next, Math.max(value.endMs, next + SNAP_MS));
     } else {
@@ -294,7 +317,7 @@ export function EventForm({
   // `custom` is the travel direction of the drill-down: the entering screen
   // declares its own, the exiting one reads it off the AnimatePresence.
   const variants = reduce ? dockVariantsReduced : dockVariants;
-  const dayLabel = format(activeMs, "EEE, MMM d, yyyy");
+  const dayLabel = format(zoned(activeMs, timeZone), "EEE, MMM d, yyyy");
 
   return (
     <AnimatePresence
@@ -446,7 +469,7 @@ export function EventForm({
                     side="top"
                     minMs={
                       editing === "end"
-                        ? startOfDay(value.startMs).getTime()
+                        ? startOfDay(zoned(value.startMs, timeZone)).getTime()
                         : undefined
                     }
                   >
@@ -614,7 +637,7 @@ function TimeTab({
   active: boolean;
   onSelect: () => void;
 }) {
-  const { use24h } = usePreferences();
+  const { use24h, timeZone } = usePreferences();
   return (
     <motion.button
       type="button"
@@ -629,10 +652,10 @@ function TimeTab({
       )}
     >
       <span className="truncate text-xs font-medium text-muted-foreground">
-        {label} · {format(ms, "EEE d")}
+        {label} · {format(zoned(ms, timeZone), "EEE d")}
       </span>
       <span className={cn("text-sm font-semibold", active && "text-foreground")}>
-        {allDay ? "All day" : format(ms, timePattern(use24h))}
+        {allDay ? "All day" : format(zoned(ms, timeZone), timePattern(use24h))}
       </span>
     </motion.button>
   );

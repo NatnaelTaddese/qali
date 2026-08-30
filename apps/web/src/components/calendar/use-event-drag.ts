@@ -5,8 +5,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { useDock } from "@/components/workspace/dock-context";
+import { usePreferences } from "@/components/workspace/preferences-context";
 
-import { type CalendarEvent, editableEventId, MS_PER_DAY, SNAP_MS } from "./lib";
+import {
+  type CalendarEvent,
+  editableEventId,
+  MS_PER_DAY,
+  SNAP_MS,
+  zoned,
+} from "./lib";
 import { useEventCapabilities } from "./permissions";
 
 /** How a card is being manipulated: relocated whole, or one edge dragged. */
@@ -81,8 +88,14 @@ export function useEventDrag(
   days: Date[],
 ): UseEventDrag {
   const { open } = useDock();
+  const { timeZone } = usePreferences();
   const updateEventTime = useAction(api.domains.calendar.service.updateEventTime);
   const capabilitiesOf = useEventCapabilities();
+
+  // Read at use time through a ref, like `days`, so a preference change never
+  // re-binds the gesture's window listeners mid-drag.
+  const timeZoneRef = useRef(timeZone);
+  timeZoneRef.current = timeZone;
 
   const [overrides, setOverrides] = useState<Record<string, OverrideTimes>>({});
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -202,8 +215,11 @@ export function useEventDrag(
         return { startMs, endMs: startMs + s.durationMs };
       }
 
-      // Resize stays on the event's own day.
-      const dayStart = startOfDay(new Date(origStart)).getTime();
+      // Resize stays on the event's own day — cut in the working zone, like
+      // the strip's day columns the move path reads from.
+      const dayStart = startOfDay(
+        zoned(origStart, timeZoneRef.current),
+      ).getTime();
       const dayEnd = dayStart + MS_PER_DAY;
       const rawPointer = dayStart + (clientY - rect.top) * msPerPx;
       const pointer = clamp(snap(rawPointer, dayStart), dayStart, dayEnd);
@@ -239,9 +255,9 @@ export function useEventDrag(
         eventId: editableEventId(id),
         startMs: times.startMs,
         endMs: times.endMs,
-        // Browser zone, not the timezone preference — the drag's wall-clock
-        // math is browser-local, and the zone must match how it was composed.
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        // The working zone: the strip's day columns (which the drag math
+        // reads its day starts from) are cut in it.
+        timeZone: timeZoneRef.current,
       }).catch((error: unknown) => {
         // Roll the card back to its synced position and surface the failure.
         pendingRef.current.delete(id);

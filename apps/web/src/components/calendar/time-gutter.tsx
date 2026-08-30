@@ -10,13 +10,27 @@ interface TimeGutterProps {
   dayStartMs: number;
 }
 
+/** Cached per zone/clock: Intl construction is costly and this renders on
+ * every strip scroll/drag frame. */
+const hourFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function hourFormatter(timeZone: string, use24h: boolean): Intl.DateTimeFormat {
+  const key = `${timeZone}:${use24h}`;
+  let fmt = hourFormatters.get(key);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      timeZone,
+      hour12: !use24h,
+    });
+    hourFormatters.set(key, fmt);
+  }
+  return fmt;
+}
+
 export function TimeGutter({ timeZone, dayStartMs }: TimeGutterProps) {
   const { use24h } = usePreferences();
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    timeZone,
-    hour12: !use24h,
-  });
+  const fmt = hourFormatter(timeZone, use24h);
   return (
     <div className="relative h-full">
       {HOURS.map((hour) => (

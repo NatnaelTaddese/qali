@@ -36,6 +36,7 @@ describe("event edit recurrence", () => {
       initial,
       next,
       { attendees: [] } as unknown as CalendarEvent,
+      "Asia/Shanghai",
     );
 
     expect(patch.recurrence).toEqual(["RRULE:FREQ=MONTHLY"]);

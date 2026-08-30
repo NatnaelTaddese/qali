@@ -389,12 +389,12 @@ export function timezoneGutters(
   return [{ id: workingZone, label: zoneShortLabel(workingZone) }];
 }
 
-/** How many gutters render — a layout constant so widths can't drift. */
-export const GUTTER_COUNT = 1;
 /** Width of each timezone gutter column, in pixels. */
 export const GUTTER_WIDTH = 64;
-/** Total width of all gutter columns — where the day columns begin. */
-export const GUTTER_TOTAL = GUTTER_WIDTH * GUTTER_COUNT;
+/** Total width of all gutter columns — where the day columns begin. Derived
+ * from the gutter list itself (its length doesn't depend on the zone) so the
+ * two can't drift when more zones land. */
+export const GUTTER_TOTAL = GUTTER_WIDTH * timezoneGutters("UTC").length;
 
 /** Grid template for `n` equal day columns (the gutter is a pinned sibling). */
 export function dayColsTemplate(n: number): string {

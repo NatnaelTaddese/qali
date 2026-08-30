@@ -101,7 +101,9 @@ describe("working-zone event composition", () => {
         },
         tz,
       )[0];
-    expect(rule(NY)).toContain("UNTIL=20260826T235959Z");
-    expect(rule(KIRITIMATI)).toContain("UNTIL=20260827T235959Z");
+    // End of the chosen day in each zone, stamped as a real UTC instant:
+    // 23:59:59 EDT Aug 26 = 03:59:59Z Aug 27; 23:59:59 +14 Aug 27 = 09:59:59Z.
+    expect(rule(NY)).toContain("UNTIL=20260827T035959Z");
+    expect(rule(KIRITIMATI)).toContain("UNTIL=20260827T095959Z");
   });
 });

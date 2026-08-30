@@ -140,11 +140,17 @@ export function toRRule(r: Recurrence, timeZone: string): string[] {
   if (r.end.kind === "count") {
     parts.push(`COUNT=${Math.max(1, r.end.count)}`);
   } else if (r.end.kind === "onDate") {
-    // UNTIL is inclusive; pin it to end-of-day UTC so the chosen day counts.
+    // UNTIL is inclusive; stamp the working zone's end of the chosen day as a
+    // real UTC instant (Google's own convention), so every occurrence on that
+    // day counts and parseUntilDate reads the same day back.
     const d = zoned(r.end.dateMs, timeZone);
-    const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(
-      d.getDate(),
-    )}T235959Z`;
+    d.setHours(23, 59, 59, 0);
+    const u = new Date(d.getTime());
+    const stamp = `${u.getUTCFullYear()}${pad(u.getUTCMonth() + 1)}${pad(
+      u.getUTCDate(),
+    )}T${pad(u.getUTCHours())}${pad(u.getUTCMinutes())}${pad(
+      u.getUTCSeconds(),
+    )}Z`;
     parts.push(`UNTIL=${stamp}`);
   }
   return [`RRULE:${parts.join(";")}`];
@@ -200,22 +206,42 @@ function positiveInteger(value: string): number | null {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
-/** UNTIL may be a date or UTC date-time. The control selects a calendar date,
- * so preserve its YYYYMMDD portion (as a working-zone midnight) rather than
- * shifting it through a timezone. */
+/** UNTIL may be a date or UTC date-time. A date-time is a real instant —
+ * Google normalizes it to UTC (a New-York "ends Aug 26" arrives as
+ * 20260827T035959Z) — so read the working-zone calendar day it falls on. A
+ * bare date is already a calendar date; keep it verbatim. */
 function parseUntilDate(value: string, timeZone: string): number | null {
-  const match = /^(\d{4})(\d{2})(\d{2})(?:T\d{6}Z)?$/.exec(value);
+  const match = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})Z)?$/.exec(
+    value,
+  );
   if (!match) return null;
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
-  const date = new TZDate(year, month - 1, day, timeZone);
+  const utc = new Date(Date.UTC(year, month - 1, day));
   if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
+    utc.getUTCFullYear() !== year ||
+    utc.getUTCMonth() !== month - 1 ||
+    utc.getUTCDate() !== day
   ) {
     return null;
   }
-  return date.getTime();
+  if (match[4] !== undefined) {
+    const instant = Date.UTC(
+      year,
+      month - 1,
+      day,
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6]),
+    );
+    const d = zoned(instant, timeZone);
+    return new TZDate(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate(),
+      timeZone,
+    ).getTime();
+  }
+  return new TZDate(year, month - 1, day, timeZone).getTime();
 }

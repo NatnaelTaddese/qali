@@ -311,6 +311,10 @@ function AvailabilityForm({
   const openDayCount = WEEKDAYS.filter(
     ({ weekday }) => rows[weekday]?.enabled,
   ).length;
+  // Saving rewrites the page into the current working zone; published hours
+  // and painted days are wall-clock-relative to it, so a zone change must be
+  // visible before the user re-bases them.
+  const zoneChanged = page !== null && page.timeZone !== timeZone;
   const slugReady =
     normalized.length >= 3 && (slugUnchanged || check?.available === true);
   const canSave = slugReady && rules.length > 0 && !saving;
@@ -675,7 +679,9 @@ function AvailabilityForm({
                 <span className="truncate text-xs text-muted-foreground">
                   {page === null
                     ? "Save your link first to override single days"
-                    : "Save these settings, then paint individual days"}
+                    : zoneChanged
+                      ? `Saving moves your published hours to ${timeZone.replace(/_/g, " ")} time`
+                      : "Save these settings, then paint individual days"}
                 </span>
               </span>
               <HugeiconsIcon
@@ -753,6 +759,13 @@ function AvailabilityForm({
                 />
               </div>
             </div>
+
+            {zoneChanged && (
+              <p className="px-2 text-xs text-muted-foreground">
+                Your working time zone changed — saving moves these hours and
+                any painted days to {timeZone.replace(/_/g, " ")} time.
+              </p>
+            )}
 
             <div className="flex items-center gap-2">
               <label className="flex min-w-0 flex-1 items-center gap-2.5">

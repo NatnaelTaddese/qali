@@ -3,7 +3,7 @@ import {
   ArrowUp01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { startOfDay } from "date-fns";
+import { format, startOfDay } from "date-fns";
 
 import { usePreferences } from "@/components/workspace/preferences-context";
 import {
@@ -12,35 +12,11 @@ import {
   MIN_DAY_HEIGHT,
   msToPct,
   TIME_GRID_BOTTOM_SPACER_HEIGHT,
+  timePattern,
   timezoneGutters,
   zoned,
-  zonedNow,
 } from "./lib";
 import { TimeGutter } from "./time-gutter";
-
-/** Formatters are the costliest Intl construction; cache per zone/clock so
- * the drag/scroll-driven re-renders of this column reuse them. */
-const nowFormatters = new Map<string, Intl.DateTimeFormat>();
-
-function formatNow(now: number, use24h: boolean, timeZone: string): string {
-  const key = `${timeZone}:${use24h}`;
-  let fmt = nowFormatters.get(key);
-  if (!fmt) {
-    fmt = new Intl.DateTimeFormat("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone,
-      hour12: !use24h,
-    });
-    nowFormatters.set(key, fmt);
-  }
-  return fmt
-    .formatToParts(now)
-    .filter(({ type }) => type !== "dayPeriod")
-    .map(({ value }) => value)
-    .join("")
-    .trim();
-}
 
 /** The hour-labels column, pinned to the left of the paging day/week panels.
  * Its header block matches the panel header height so the hour rows align. */
@@ -59,8 +35,9 @@ export function GutterColumn({
 }) {
   const { use24h, timeZone } = usePreferences();
   const gutters = timezoneGutters(timeZone);
-  const dayStartMs = startOfDay(zonedNow(timeZone)).getTime();
-  const nowTopPct = msToPct(now, startOfDay(zoned(now, timeZone)).getTime());
+  const nowDate = zoned(now, timeZone);
+  const dayStartMs = startOfDay(nowDate).getTime();
+  const nowTopPct = msToPct(now, dayStartMs);
   return (
     <div className="flex h-full flex-col bg-background">
       <div
@@ -107,7 +84,9 @@ export function GutterColumn({
         style={{ minHeight: MIN_DAY_HEIGHT }}
       >
         {gutters.map((tz) => (
-          <div key={tz.id} className="h-full" style={{ width: GUTTER_WIDTH }}>
+          // Flex stretch (not h-full): the gutter wrapper is content-height
+          // now, so a percentage chain has nothing definite to resolve against.
+          <div key={tz.id} style={{ width: GUTTER_WIDTH }}>
             <TimeGutter timeZone={tz.id} dayStartMs={dayStartMs} />
           </div>
         ))}
@@ -115,7 +94,7 @@ export function GutterColumn({
           className="pointer-events-none absolute right-1.5 z-0 -translate-y-1/2 rounded-full bg-red-500 px-1.5 py-0.5 text-xs font-semibold leading-none tabular-nums text-white shadow-sm"
           style={{ top: `${nowTopPct}%` }}
         >
-          {formatNow(now, use24h, timeZone)}
+          {format(nowDate, timePattern(use24h, false))}
           <span
             aria-hidden
             className="absolute top-1/2 left-full h-0.5 w-1.5 -translate-y-1/2 bg-red-500"

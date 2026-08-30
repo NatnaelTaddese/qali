@@ -10,6 +10,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -130,6 +131,19 @@ export function AvailabilityEditProvider({ children }: { children: ReactNode }) 
     page !== null &&
     page.timeZone === workingZone &&
     overrides !== undefined;
+
+  // A working-zone change mid-paint (settings on another tab or device) would
+  // desync the grid's date keys from the page's saved zone; rather than sit
+  // inert behind the edit bar's loading state forever, close the session and
+  // say why.
+  useEffect(() => {
+    if (!editing || !page || page.timeZone === workingZone) return;
+    setEditingState(false);
+    toast.error("Availability editing closed", {
+      description:
+        "Your working time zone changed. Reopen to continue in the new zone.",
+    });
+  }, [editing, page, workingZone]);
 
   const intervalsForDay = useCallback(
     (day: Date): DayAvailability => {

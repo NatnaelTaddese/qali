@@ -34,6 +34,7 @@ import { Avatar } from "./avatar";
 import { calendarColorVar, useEventColor } from "./colors";
 import { buttonClass } from "./event-controls";
 import type { EventPrefill } from "./event-create";
+import { fromUtcMidnight } from "./event-form";
 import { GoogleMeetIcon } from "./google-meet-icon";
 import {
   GuestRow,
@@ -46,6 +47,7 @@ import { usePreferences } from "@/components/workspace/preferences-context";
 import {
   calendarDisplayName,
   editableEventId,
+  MS_PER_DAY,
   timePattern,
   zoned,
   type CalendarEvent,
@@ -73,15 +75,20 @@ function timeText(
   use24h: boolean,
   timeZone: string,
 ): string {
-  const start = zoned(event.startMs, timeZone);
-  const end = zoned(event.endMs, timeZone);
   if (event.allDay) {
-    // Google all-day endMs is exclusive midnight.
-    const lastDay = zoned(event.endMs - 1, timeZone);
+    // All-day boundaries are UTC midnights (endMs exclusive); read them back
+    // through fromUtcMidnight so the working zone can't shift the day.
+    const start = zoned(fromUtcMidnight(event.startMs, timeZone), timeZone);
+    const lastDay = zoned(
+      fromUtcMidnight(event.endMs - MS_PER_DAY, timeZone),
+      timeZone,
+    );
     return isSameDay(start, lastDay)
       ? format(start, "EEE d MMM")
       : `${format(start, "EEE d MMM")} – ${format(lastDay, "EEE d MMM")}`;
   }
+  const start = zoned(event.startMs, timeZone);
+  const end = zoned(event.endMs, timeZone);
   const time = timePattern(use24h);
   const endText = format(
     end,
@@ -586,8 +593,13 @@ export function EventDetail({
           displayName: g.displayName,
         })),
       },
-      event.startMs,
-      event.endMs,
+      // The form works in working values; undo the all-day UTC-midnight
+      // conversion (as formValueFromEvent does) or submit re-applies it and
+      // the copy shifts or grows by a day.
+      event.allDay ? fromUtcMidnight(event.startMs, timeZone) : event.startMs,
+      event.allDay
+        ? fromUtcMidnight(event.endMs - MS_PER_DAY, timeZone)
+        : event.endMs,
     );
   };
 

@@ -10,13 +10,17 @@ import { getNowIndicatorLayout } from "./now-indicator";
 const WEEK_SIDE = STRIP_SIDE_DAYS.week;
 const DAY_SIDE = STRIP_SIDE_DAYS.day;
 
+// These cases build their strips from runner-local Dates, so the runner's own
+// zone is the working zone; working-zone.test.ts covers explicit zones.
+const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 describe("getNowIndicatorLayout", () => {
   test("positions today's column within the full buffered strip", () => {
     const weekStart = new Date(2026, 6, 13);
     const days = stripDays(weekStart, VIEW_COLUMNS.week, WEEK_SIDE);
     const now = new Date(2026, 6, 19, 9, 30).getTime();
 
-    const layout = getNowIndicatorLayout(days, now);
+    const layout = getNowIndicatorLayout(days, now, TZ);
 
     expect(layout).not.toBeNull();
     // July 19 is 6 days after the anchor, which itself sits at WEEK_SIDE.
@@ -31,7 +35,7 @@ describe("getNowIndicatorLayout", () => {
     const days = stripDays(today, VIEW_COLUMNS.day, DAY_SIDE);
     const now = new Date(2026, 6, 19, 15).getTime();
 
-    const layout = getNowIndicatorLayout(days, now);
+    const layout = getNowIndicatorLayout(days, now, TZ);
 
     expect(layout).not.toBeNull();
     expect(layout?.today?.leftPct).toBeCloseTo((DAY_SIDE / days.length) * 100);
@@ -44,7 +48,7 @@ describe("getNowIndicatorLayout", () => {
     const days = stripDays(visibleStart, VIEW_COLUMNS.week, WEEK_SIDE);
     const now = new Date(2026, 6, 19, 12).getTime();
 
-    const layout = getNowIndicatorLayout(days, now);
+    const layout = getNowIndicatorLayout(days, now, TZ);
 
     // The current-time line always renders; today's column is still marked so
     // long as the day sits somewhere in the buffered strip.
@@ -59,8 +63,8 @@ describe("getNowIndicatorLayout", () => {
     const beforeMidnight = new Date(2026, 6, 19, 23, 59).getTime();
     const afterMidnight = new Date(2026, 6, 20, 0, 0).getTime();
 
-    const before = getNowIndicatorLayout(days, beforeMidnight);
-    const after = getNowIndicatorLayout(days, afterMidnight);
+    const before = getNowIndicatorLayout(days, beforeMidnight, TZ);
+    const after = getNowIndicatorLayout(days, afterMidnight, TZ);
 
     // The marked column advances one day across midnight.
     const julyNineteenth = WEEK_SIDE + 6;

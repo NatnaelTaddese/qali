@@ -123,7 +123,7 @@ function toUtcMidnight(ms: number, timeZone: string): number {
 /** The inverse: a working-zone instant on the same calendar date, so the day
  * pickers show the day Google meant. Noon, so no DST shift can tip it into a
  * neighbouring day. */
-function fromUtcMidnight(ms: number, timeZone: string): number {
+export function fromUtcMidnight(ms: number, timeZone: string): number {
   const d = new Date(ms);
   return new TZDate(
     d.getUTCFullYear(),

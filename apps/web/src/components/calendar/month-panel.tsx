@@ -44,8 +44,18 @@ export function MonthPanel({ monthStart, days, events, onSelectDay, reveal }: Mo
     return days.map((day) => {
       const dayStartMs = day.getTime();
       const dayEndMs = dayStartMs + MS_PER_DAY;
+      // All-day boundaries are UTC-midnight instants (see allDayColumnSpan);
+      // compare them against the cell's calendar date in UTC, or a working-zone
+      // offset spills a single-day chip into the neighbouring cell.
+      const dayUtcMs = Date.UTC(day.getFullYear(), day.getMonth(), day.getDate());
       return events
-        .filter((e) => e.startMs < dayEndMs && e.endMs > dayStartMs && e.status !== "cancelled")
+        .filter(
+          (e) =>
+            e.status !== "cancelled" &&
+            (e.allDay
+              ? e.startMs <= dayUtcMs && dayUtcMs < e.endMs
+              : e.startMs < dayEndMs && e.endMs > dayStartMs),
+        )
         .sort((a, b) => Number(b.allDay) - Number(a.allDay) || a.startMs - b.startMs);
     });
   }, [days, events]);

@@ -19,6 +19,14 @@ describe("parseRRule", () => {
     );
   });
 
+  test("reads a Google-normalized UTC UNTIL back as the authored day", () => {
+    // Google emits end-of-day in the rule's own zone as a UTC instant; a
+    // New-York "ends Aug 26" arrives as 03:59:59Z the next day.
+    expect(summary("RRULE:FREQ=DAILY;UNTIL=20260827T035959Z")).toBe(
+      "Daily · until Aug 26, 2026",
+    );
+  });
+
   test("describes weekly days in display order", () => {
     expect(summary("RRULE:FREQ=WEEKLY;BYDAY=WE,MO")).toBe(
       "Weekly on Mon, Wed",

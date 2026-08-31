@@ -355,3 +355,153 @@ export const purgeUserData = internalMutation({
     return { done: true };
   },
 });
+
+/** Disconnect-an-account purge: everything a single connection synced, in the
+ * same batched self-rescheduling shape as purgeUserData, followed by the
+ * pointer fixups (default calendar, booking-page target) and finally the
+ * connection row itself. The sibling connections' data is untouched. */
+export const purgeConnectionData = internalMutation({
+  args: { connectionId: v.id("calendarConnections"), userId: v.string() },
+  returns: v.object({ done: v.boolean() }),
+  handler: async (ctx, args): Promise<{ done: boolean }> => {
+    const connectionId = args.connectionId;
+    let more = false;
+    const drain = async (rows: { _id: Id<TableNames> }[]): Promise<void> => {
+      for (const row of rows) {
+        await ctx.db.delete(row._id);
+      }
+      if (rows.length === PURGE_BATCH) {
+        more = true;
+      }
+    };
+
+    // Children before the parent connection row, same as purgeUserData: a
+    // retry never observes connection-owned state without its connection.
+    await drain(
+      await ctx.db
+        .query("connectionSyncState")
+        .withIndex("by_connection", (q) => q.eq("connectionId", connectionId))
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("calendarOperations")
+        .withIndex("by_connection_and_key", (q) =>
+          q.eq("connectionId", connectionId),
+        )
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("contacts")
+        .withIndex("by_connection_and_providerContactId", (q) =>
+          q.eq("connectionId", connectionId),
+        )
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("otherContactSources")
+        .withIndex("by_connection_and_providerContactId", (q) =>
+          q.eq("connectionId", connectionId),
+        )
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("personSourceClaims")
+        .withIndex("by_connection_and_source_and_email", (q) =>
+          q.eq("connectionId", connectionId),
+        )
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("events")
+        .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
+          q.eq("connectionId", connectionId),
+        )
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("recurringSeries")
+        .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
+          q.eq("connectionId", connectionId),
+        )
+        .take(PURGE_BATCH),
+    );
+    await drain(
+      await ctx.db
+        .query("calendars")
+        .withIndex("by_connection_and_providerCalendarId", (q) =>
+          q.eq("connectionId", connectionId),
+        )
+        .take(PURGE_BATCH),
+    );
+
+    if (more) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.jobs.maintenance.purgeConnectionData,
+        args,
+      );
+      return { done: false };
+    }
+
+    // Final batch: repoint anything that referenced the removed data. A
+    // preference for one of this connection's calendars now dangles — clearing
+    // it lets the preferred connection's primary take over. A booking page
+    // targeting this connection is likewise cleared; the next reconcile
+    // re-adopts a target from a surviving connection.
+    const prefs = await ctx.db
+      .query("userPreferences")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .unique();
+    if (
+      prefs?.defaultCalendarId &&
+      (await ctx.db.get(prefs.defaultCalendarId)) === null
+    ) {
+      await ctx.db.patch(prefs._id, {
+        defaultCalendarId: undefined,
+        updatedAt: Date.now(),
+      });
+    }
+    const pages = await ctx.db
+      .query("bookingPages")
+      .withIndex("by_targetConnectionId_and_targetCalendarId", (q) =>
+        q.eq("targetConnectionId", connectionId),
+      )
+      .take(PURGE_BATCH);
+    for (const page of pages) {
+      await ctx.db.patch(page._id, {
+        targetConnectionId: undefined,
+        targetCalendarId: undefined,
+      });
+    }
+    // A pending request pinned its target when it was made, and acceptance
+    // trusts that pair over the page's — leaving it would fail
+    // validateBookingTarget forever. Cleared, acceptance re-resolves through
+    // the booking page. Terminal bookings keep theirs: they never re-resolve.
+    const pending = await ctx.db
+      .query("bookings")
+      .withIndex("by_host_and_status_and_start", (q) =>
+        q.eq("hostUserId", args.userId).eq("status", "pending"),
+      )
+      .take(PURGE_BATCH);
+    for (const booking of pending) {
+      if (booking.targetConnectionId !== connectionId) continue;
+      await ctx.db.patch(booking._id, {
+        targetConnectionId: undefined,
+        targetCalendarId: undefined,
+      });
+    }
+    // People rows may keep a stale source entry pointing at the removed feed;
+    // the next contacts sync re-ranks them, so they're deliberately left alone.
+    const connection = await ctx.db.get(connectionId);
+    if (connection && connection.userId === args.userId) {
+      await ctx.db.delete(connectionId);
+    }
+    return { done: true };
+  },
+});

@@ -29,26 +29,153 @@ describe("connection model", () => {
     expect(
       await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
         connectionId,
+        userId: "owner",
       }),
     ).toMatchObject({ credentialRef: "account-1", provider: "google" });
+    // A foreign caller never sees the connection, even while it is active.
+    expect(
+      await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
+        connectionId,
+        userId: "someone_else",
+      }),
+    ).toBeNull();
     await t.run((ctx) => ctx.db.patch(connectionId, { status: "paused" }));
     expect(
       await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
         connectionId,
+        userId: "owner",
       }),
     ).toBeNull();
     await t.run((ctx) => ctx.db.patch(connectionId, { status: "error" }));
     expect(
       await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
         connectionId,
+        userId: "owner",
       }),
     ).toBeNull();
     await t.run((ctx) => ctx.db.delete(connectionId));
     expect(
       await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
         connectionId,
+        userId: "owner",
       }),
     ).toBeNull();
+  });
+
+  test("linked-account reconcile stamps the login grant and creates the rest once", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_link";
+    // The pre-linking bootstrap connection: no credentialRef yet.
+    const legacyId = await t.run((ctx) =>
+      ctx.db.insert("calendarConnections", {
+        userId,
+        provider: "google",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    const accounts = [
+      { credentialRef: "google-sub-linked", createdAt: 2_000 },
+      { credentialRef: "google-sub-login", createdAt: 1_000 },
+    ];
+    const first = await t.mutation(
+      internal.domains.calendar.mutations.reconcileLinkedAccounts,
+      { userId, accounts },
+    );
+    expect(first.created).toBe(1);
+    // Both rows now know their grant but not their profile yet.
+    expect(
+      first.pendingIdentity.map((p) => p.credentialRef).sort(),
+    ).toEqual(["google-sub-linked", "google-sub-login"]);
+    // The oldest grant is the login one; it claims the legacy row.
+    expect(
+      (await t.run((ctx) => ctx.db.get(legacyId)))?.credentialRef,
+    ).toBe("google-sub-login");
+    const connections = await t.run((ctx) =>
+      ctx.db
+        .query("calendarConnections")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect(),
+    );
+    expect(connections).toHaveLength(2);
+    const linked = connections.find(
+      (row) => row.credentialRef === "google-sub-linked",
+    );
+    expect(linked).toMatchObject({ provider: "google", status: "active" });
+    // The new connection starts with clean sync state.
+    expect(
+      await t.run((ctx) =>
+        ctx.db
+          .query("connectionSyncState")
+          .withIndex("by_connection", (q) =>
+            q.eq("connectionId", linked!._id),
+          )
+          .unique(),
+      ),
+    ).toMatchObject({ status: "idle", nextSyncDueAt: 0 });
+    // Re-running with the same grants creates nothing, but keeps reporting
+    // the unstamped profiles until stampConnectionIdentity fills them.
+    const second = await t.mutation(
+      internal.domains.calendar.mutations.reconcileLinkedAccounts,
+      { userId, accounts },
+    );
+    expect(second.created).toBe(0);
+    expect(second.pendingIdentity).toHaveLength(2);
+    await t.mutation(
+      internal.domains.calendar.mutations.stampConnectionIdentity,
+      {
+        userId,
+        connectionId: linked!._id,
+        providerAccountId: "linked@example.com",
+        providerAccountName: "Linked Account",
+        providerAccountImageUrl: "https://example.com/a.png",
+      },
+    );
+    expect(await t.run((ctx) => ctx.db.get(linked!._id))).toMatchObject({
+      providerAccountId: "linked@example.com",
+      providerAccountName: "Linked Account",
+      providerAccountImageUrl: "https://example.com/a.png",
+    });
+    // A foreign stamp is refused, and a sync-stamped email is never replaced.
+    await t.mutation(
+      internal.domains.calendar.mutations.stampConnectionIdentity,
+      {
+        userId: "someone_else",
+        connectionId: linked!._id,
+        providerAccountName: "Hijacked",
+      },
+    );
+    await t.mutation(
+      internal.domains.calendar.mutations.stampConnectionIdentity,
+      {
+        userId,
+        connectionId: linked!._id,
+        providerAccountId: "other@example.com",
+        providerAccountName: "Linked Renamed",
+      },
+    );
+    expect(await t.run((ctx) => ctx.db.get(linked!._id))).toMatchObject({
+      providerAccountId: "linked@example.com",
+      providerAccountName: "Linked Renamed",
+    });
+    const third = await t.mutation(
+      internal.domains.calendar.mutations.reconcileLinkedAccounts,
+      { userId, accounts },
+    );
+    expect(third.pendingIdentity.map((p) => p.credentialRef)).toEqual([
+      "google-sub-login",
+    ]);
+    expect(
+      await t.run(async (ctx) =>
+        (
+          await ctx.db
+            .query("calendarConnections")
+            .withIndex("by_user", (q) => q.eq("userId", userId))
+            .collect()
+        ).length,
+      ),
+    ).toBe(2);
   });
 
   test("a connection links its sync-state and operation rows", async () => {
@@ -303,5 +430,59 @@ describe("connection model", () => {
         }),
       ),
     ).rejects.toThrow("Calendar not found");
+  });
+});
+
+describe("default create target with several accounts", () => {
+  test("resolves to the oldest active connection's primary, unless one is requested", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_two_primaries";
+    const seed = async (key: string, createdAt: number) =>
+      await t.run(async (ctx) => {
+        const connectionId = await ctx.db.insert("calendarConnections", {
+          userId,
+          provider: "google",
+          credentialRef: `sub-${key}`,
+          status: "active",
+          createdAt,
+          updatedAt: createdAt,
+        });
+        const calendarId = await ctx.db.insert("calendars", {
+          userId,
+          connectionId,
+          providerCalendarId: `${key}@example.com`,
+          primary: true,
+          accessRole: "owner",
+          selected: true,
+          isShared: false,
+        });
+        return { connectionId, calendarId };
+      });
+    // Inserted linked-first so document order can't accidentally pass the test.
+    const linked = await seed("linked", 2);
+    const login = await seed("login", 1);
+
+    const byDefault = await t.mutation(
+      internal.domains.calendar.mutations.resolveCreateTarget,
+      { userId },
+    );
+    expect(byDefault.connectionId).toEqual(login.connectionId);
+    expect(byDefault.localCalendarId).toEqual(login.calendarId);
+
+    const requested = await t.mutation(
+      internal.domains.calendar.mutations.resolveCreateTarget,
+      { userId, requestedCalendarId: linked.calendarId },
+    );
+    expect(requested.connectionId).toEqual(linked.connectionId);
+
+    // Pausing the login connection hands the default to the linked account.
+    await t.run((ctx) =>
+      ctx.db.patch(login.connectionId, { status: "paused" }),
+    );
+    const afterPause = await t.mutation(
+      internal.domains.calendar.mutations.resolveCreateTarget,
+      { userId },
+    );
+    expect(afterPause.connectionId).toEqual(linked.connectionId);
   });
 });

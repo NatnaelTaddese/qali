@@ -10,9 +10,11 @@ import {
 } from "../../_generated/server";
 import type { ActionCtx, MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
+import { reconcileLinkedAccountsForUser } from "../calendar/connectionService";
 import {
   ensureConnectionSyncState,
   ensureGoogleConnection,
+  preferredConnection,
 } from "../calendar/connections";
 import { providerEventValidator } from "../calendar/validators";
 import type {
@@ -723,7 +725,7 @@ async function runConnection(
     // adapter and the feeds no-op.
     const connection: Doc<"calendarConnections"> | null = await ctx.runQuery(
       internal.domains.calendar.queries.getCalendarConnectionForAdapter,
-      { connectionId },
+      { connectionId, userId: state.userId },
     );
     if (!connection) {
       throw new Error("Calendar connection is unavailable");
@@ -859,6 +861,17 @@ export async function syncNowForCurrentUser(
 ): Promise<UserSyncStatus> {
   const user = await authComponent.safeGetAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
+  // A user-initiated sync doubles as the linking safety net: a Google grant
+  // that never got its connection row (a missed link redirect) gets one here
+  // and joins the fan-out below.
+  try {
+    await reconcileLinkedAccountsForUser(ctx, user._id);
+  } catch (error) {
+    console.warn(
+      "Linked-account reconcile failed:",
+      error instanceof Error ? error.message : error,
+    );
+  }
   return await runUser(ctx, user._id, true);
 }
 
@@ -1099,7 +1112,22 @@ export const reconcileCalendars = internalMutation({
           ...patch,
         });
       }
-      if (calendar.primary) primary = id;
+      if (calendar.primary) {
+        primary = id;
+        // Google's primary calendar id is the account email — the cheapest
+        // provider-account identity there is. Stamping it here lazily
+        // backfills connections created before linking existed, so the
+        // settings panel can label every account without a migration.
+        if (
+          connection.provider === "google" &&
+          connection.providerAccountId === undefined
+        ) {
+          await ctx.db.patch(connection._id, {
+            providerAccountId: calendar.id,
+            updatedAt: Date.now(),
+          });
+        }
+      }
       stored.push({
         localCalendarId: id,
         providerCalendarId: calendar.id,
@@ -1133,14 +1161,7 @@ export const reconcileCalendars = internalMutation({
       if (connections.length > 100) {
         throw new Error("Too many connections to choose a booking target safely");
       }
-      const preferred = connections
-        .filter((row) => row.status === "active")
-        .sort(
-          (a, b) =>
-            Number(b.provider === "google") - Number(a.provider === "google") ||
-            a.createdAt - b.createdAt ||
-            a._creationTime - b._creationTime,
-        )[0];
+      const preferred = preferredConnection(connections);
       if (
         booking &&
         !booking.targetConnectionId &&
@@ -2294,7 +2315,7 @@ export async function refreshConnectionCalendar(
   );
   if (!attemptId) return;
   try {
-    const adapter = await getCalendarAdapter(ctx, connectionId);
+    const adapter = await getCalendarAdapter(ctx, userId, connectionId);
     const calendars: Doc<"calendars">[] = await ctx.runQuery(
       internal.domains.sync.engine.listCalendarsForUser,
       { userId },

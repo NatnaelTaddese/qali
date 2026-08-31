@@ -392,6 +392,30 @@ describe("connection identity and lease fencing", () => {
     expect(repatched?.selected).toBe(false);
   });
 
+  test("reconciliation stamps the account identity from the primary calendar once", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "reconcile-identity";
+    const connectionId = await setupConnection(t, userId, "google");
+    const attemptId = await t.mutation(internal.domains.sync.engine.claimSyncLease, {
+      connectionId,
+    });
+    const reconcile = (primaryId: string) =>
+      t.mutation(internal.domains.sync.engine.reconcileCalendars, {
+        connectionId,
+        attemptId: attemptId!,
+        calendars: [{ id: primaryId, writable: true, primary: true }],
+      });
+    await reconcile("owner@example.com");
+    expect(
+      (await t.run((ctx) => ctx.db.get(connectionId)))?.providerAccountId,
+    ).toBe("owner@example.com");
+    // A connection that already knows its identity is never re-stamped.
+    await reconcile("renamed@example.com");
+    expect(
+      (await t.run((ctx) => ctx.db.get(connectionId)))?.providerAccountId,
+    ).toBe("owner@example.com");
+  });
+
   test("event upserts key on connection, local calendar, and provider event id", async () => {
     const t = convexTest(schema, modules);
     const userId = "neutral-upsert";
@@ -594,7 +618,9 @@ describe("connection-aware contact ownership", () => {
         capabilities: { contacts: false, idempotentCreate: true },
       }),
     );
-    expect(await getContactsAdapter(testActionCtx(t), connectionId)).toBeNull();
+    expect(
+      await getContactsAdapter(testActionCtx(t), "no-contacts-user", connectionId),
+    ).toBeNull();
   });
 
   test("removing one connection's contact keeps another claim for the same email", async () => {

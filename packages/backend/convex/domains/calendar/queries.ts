@@ -121,6 +121,8 @@ export async function listConnectionsHandler(ctx: QueryCtx) {
         _id: connection._id,
         provider: connection.provider,
         providerAccountId: connection.providerAccountId,
+        providerAccountName: connection.providerAccountName,
+        providerAccountImageUrl: connection.providerAccountImageUrl,
         status: connection.status,
         contactsEnabled:
           (connection.capabilities?.contacts ?? false) &&
@@ -146,6 +148,8 @@ export const listConnections = query({
       _id: v.id("calendarConnections"),
       provider: v.union(v.literal("google"), v.literal("microsoft")),
       providerAccountId: v.optional(v.string()),
+      providerAccountName: v.optional(v.string()),
+      providerAccountImageUrl: v.optional(v.string()),
       status: v.union(
         v.literal("active"),
         v.literal("paused"),
@@ -169,10 +173,14 @@ export const listConnections = query({
 /** Registry lookup that deliberately hides foreign and inactive connections. */
 export async function getCalendarConnectionForAdapterHandler(
   ctx: QueryCtx,
-  args: { connectionId: Id<"calendarConnections"> },
+  args: { connectionId: Id<"calendarConnections">; userId: string },
 ): Promise<Doc<"calendarConnections"> | null> {
   const connection = await ctx.db.get(args.connectionId);
-  if (!connection || connection.status !== "active") {
+  if (
+    !connection ||
+    connection.status !== "active" ||
+    connection.userId !== args.userId
+  ) {
     return null;
   }
   return connection;
@@ -181,8 +189,38 @@ export async function getCalendarConnectionForAdapterHandler(
 export const getCalendarConnectionForAdapter = internalQuery({
   args: {
     connectionId: v.id("calendarConnections"),
+    userId: v.string(),
   },
   handler: (ctx, args) => getCalendarConnectionForAdapterHandler(ctx, args),
+});
+
+/** Everything disconnectAccount needs to decide: the owned connection (any
+ * status — a paused account can still be removed) and how many same-provider
+ * connections the user holds, since the last one may only be paused. */
+export const getConnectionForRemoval = internalQuery({
+  args: {
+    connectionId: v.id("calendarConnections"),
+    userId: v.string(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    connection: Doc<"calendarConnections">;
+    providerConnectionCount: number;
+  } | null> => {
+    const connection = await ctx.db.get(args.connectionId);
+    if (!connection || connection.userId !== args.userId) {
+      return null;
+    }
+    const siblings = await ctx.db
+      .query("calendarConnections")
+      .withIndex("by_user_and_provider", (q) =>
+        q.eq("userId", args.userId).eq("provider", connection.provider),
+      )
+      .take(101);
+    return { connection, providerConnectionCount: siblings.length };
+  },
 });
 
 /** Events overlapping [startMs, endMs) for the current user, e.g. a week window. */

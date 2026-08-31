@@ -321,3 +321,203 @@ describe("calendar operation retention", () => {
     expect(await t.run((ctx) => ctx.db.get(operationId))).not.toBeNull();
   });
 });
+
+describe("purgeConnectionData", () => {
+  const seedConnection = async (
+    t: ReturnType<typeof convexTest>,
+    userId: string,
+    key: string,
+  ) =>
+    await t.run(async (ctx) => {
+      const connectionId = await ctx.db.insert("calendarConnections", {
+        userId,
+        provider: "google",
+        credentialRef: `sub-${key}`,
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("connectionSyncState", {
+        connectionId,
+        userId,
+        status: "idle",
+      });
+      await ctx.db.insert("calendarOperations", {
+        connectionId,
+        userId,
+        idempotencyKey: `op-${key}`,
+        kind: "create",
+        status: "pending",
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const calendarId = await ctx.db.insert("calendars", {
+        userId,
+        connectionId,
+        providerCalendarId: `cal-${key}`,
+        selected: true,
+        isShared: false,
+      });
+      await ctx.db.insert("events", {
+        userId,
+        connectionId,
+        localCalendarId: calendarId,
+        providerEventId: `event-${key}`,
+        providerUpdatedMs: 1,
+        startMs: 1,
+        endMs: 2,
+        allDay: false,
+        status: "confirmed",
+      });
+      await ctx.db.insert("recurringSeries", {
+        userId,
+        connectionId,
+        localCalendarId: calendarId,
+        providerEventId: `event-${key}`,
+        providerUpdatedMs: 1,
+        recurrence: ["RRULE:FREQ=DAILY"],
+      });
+      await ctx.db.insert("contacts", {
+        userId,
+        connectionId,
+        providerContactId: `contact-${key}`,
+        emails: [`${key}@example.com`],
+        phones: [],
+      });
+      await ctx.db.insert("otherContactSources", {
+        userId,
+        connectionId,
+        providerContactId: `other-${key}`,
+        emails: [`${key}@example.com`],
+      });
+      await ctx.db.insert("personSourceClaims", {
+        userId,
+        connectionId,
+        providerContactId: `contact-${key}`,
+        email: `${key}@example.com`,
+        source: "connection",
+        updatedAt: 1,
+      });
+      return { connectionId, calendarId };
+    });
+
+  test("erases one connection's rows, repoints defaults, spares the sibling", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "splitter";
+    const doomed = await seedConnection(t, userId, "doomed");
+    const kept = await seedConnection(t, userId, "kept");
+    await t.run(async (ctx) => {
+      await ctx.db.insert("userPreferences", {
+        userId,
+        defaultCalendarId: doomed.calendarId,
+        updatedAt: 1,
+      });
+      await ctx.db.insert("bookingPages", {
+        userId,
+        slug: "splitter",
+        displayName: "Splitter",
+        timeZone: "UTC",
+        slotMinutes: 30,
+        bufferMinutes: 0,
+        minNoticeMinutes: 0,
+        horizonDays: 14,
+        rules: [],
+        enabled: true,
+        targetConnectionId: doomed.connectionId,
+        targetCalendarId: doomed.calendarId,
+      });
+    });
+
+    const res = await t.mutation(internal.jobs.maintenance.purgeConnectionData, {
+      connectionId: doomed.connectionId,
+      userId,
+    });
+    expect(res.done).toBe(true);
+
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(doomed.connectionId)).toBeNull();
+      expect(await ctx.db.get(kept.connectionId)).not.toBeNull();
+      for (const table of [
+        "connectionSyncState",
+        "calendarOperations",
+        "calendars",
+        "events",
+        "recurringSeries",
+        "contacts",
+        "otherContactSources",
+        "personSourceClaims",
+      ] as const) {
+        const rows = await ctx.db.query(table).collect();
+        expect(rows).toHaveLength(1);
+        expect(rows[0].connectionId).toEqual(kept.connectionId);
+      }
+      const prefs = await ctx.db.query("userPreferences").unique();
+      expect(prefs?.defaultCalendarId).toBeUndefined();
+      const page = await ctx.db.query("bookingPages").unique();
+      expect(page?.targetConnectionId).toBeUndefined();
+      expect(page?.targetCalendarId).toBeUndefined();
+    });
+  });
+
+  test("a default calendar on a surviving connection is left alone", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "keeper";
+    const doomed = await seedConnection(t, userId, "doomed");
+    const kept = await seedConnection(t, userId, "kept");
+    await t.run(async (ctx) => {
+      await ctx.db.insert("userPreferences", {
+        userId,
+        defaultCalendarId: kept.calendarId,
+        updatedAt: 1,
+      });
+    });
+    const res = await t.mutation(internal.jobs.maintenance.purgeConnectionData, {
+      connectionId: doomed.connectionId,
+      userId,
+    });
+    expect(res.done).toBe(true);
+    expect(
+      (await t.run((ctx) => ctx.db.query("userPreferences").unique()))
+        ?.defaultCalendarId,
+    ).toEqual(kept.calendarId);
+  });
+
+  test("a full batch reports more work and finishes on the retry", async () => {
+    // Fake timers park the self-reschedule so each pass runs explicitly.
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const userId = "bulk";
+    const doomed = await seedConnection(t, userId, "doomed");
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 100; i++) {
+        await ctx.db.insert("events", {
+          userId,
+          connectionId: doomed.connectionId,
+          localCalendarId: doomed.calendarId,
+          providerEventId: `bulk-${i}`,
+          providerUpdatedMs: 1,
+          startMs: i,
+          endMs: i + 1,
+          allDay: false,
+          status: "confirmed",
+        });
+      }
+    });
+    const first = await t.mutation(internal.jobs.maintenance.purgeConnectionData, {
+      connectionId: doomed.connectionId,
+      userId,
+    });
+    expect(first.done).toBe(false);
+    expect(
+      await t.run((ctx) => ctx.db.get(doomed.connectionId)),
+    ).not.toBeNull();
+    const second = await t.mutation(internal.jobs.maintenance.purgeConnectionData, {
+      connectionId: doomed.connectionId,
+      userId,
+    });
+    expect(second.done).toBe(true);
+    expect(await t.run((ctx) => ctx.db.get(doomed.connectionId))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.query("events").collect())).toHaveLength(0);
+    vi.useRealTimers();
+  });
+});

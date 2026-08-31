@@ -12,6 +12,15 @@ export const calendarConnectionTables = {
     // The provider account identity (email / tenant), when known. Absent for a
     // backfilled login-grant connection until a sync learns it.
     providerAccountId: v.optional(v.string()),
+    // Cosmetic profile identity for the settings card, decoded from the
+    // provider's stored ID token at link time. Absent until stamped; the card
+    // falls back to the provider's name and logo.
+    providerAccountName: v.optional(v.string()),
+    providerAccountImageUrl: v.optional(v.string()),
+    // When the profile fetch last ran, successful or not. A grant whose
+    // profile can't be read (revoked, or a provider that reports no name)
+    // would otherwise be refetched on every single sync.
+    providerIdentityAttemptedAt: v.optional(v.number()),
     // How the credential broker finds this connection's token (v1: the Better
     // Auth account id). No secret or refresh token lives in app tables.
     credentialRef: v.optional(v.string()),

@@ -12,11 +12,12 @@ import type { CalendarProviderAdapter } from "./types";
 
 async function connectionForAdapter(
   ctx: GenericCtx<DataModel>,
+  userId: string,
   connectionId: Id<"calendarConnections">,
 ): Promise<Doc<"calendarConnections">> {
   const connection: Doc<"calendarConnections"> | null = await ctx.runQuery(
     internal.domains.calendar.queries.getCalendarConnectionForAdapter,
-    { connectionId },
+    { connectionId, userId },
   );
   if (!connection) {
     throw new Error("Calendar connection is unavailable");
@@ -48,11 +49,12 @@ export async function calendarAdapterFor(
 
 export async function getCalendarAdapter(
   ctx: GenericCtx<DataModel>,
+  userId: string,
   connectionId: Id<"calendarConnections">,
 ): Promise<CalendarProviderAdapter> {
   return await calendarAdapterFor(
     ctx,
-    await connectionForAdapter(ctx, connectionId),
+    await connectionForAdapter(ctx, userId, connectionId),
   );
 }
 
@@ -82,10 +84,11 @@ export async function contactsAdapterFor(
 
 export async function getContactsAdapter(
   ctx: GenericCtx<DataModel>,
+  userId: string,
   connectionId: Id<"calendarConnections">,
 ): Promise<ContactsProviderAdapter | null> {
   return await contactsAdapterFor(
     ctx,
-    await connectionForAdapter(ctx, connectionId),
+    await connectionForAdapter(ctx, userId, connectionId),
   );
 }

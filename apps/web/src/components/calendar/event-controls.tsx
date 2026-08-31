@@ -1,6 +1,8 @@
 import { Calendar03Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { api } from "@qali/backend/convex/_generated/api";
 import type { Id } from "@qali/backend/convex/_generated/dataModel";
+import { useQuery } from "convex/react";
 import {
   Popover,
   PopoverContent,
@@ -16,6 +18,7 @@ import { cn } from "@qali/ui/lib/utils";
 import { calendarColorVar, EVENT_COLOR_CHOICES } from "./colors";
 import {
   calendarDisplayName,
+  groupCalendarsByAccount,
   isWritableCalendar,
   type CalendarListItem,
 } from "./lib";
@@ -60,7 +63,11 @@ export function EventControls({
   disabled = false,
   canChangeCalendar = false,
 }: EventControlsProps) {
+  const connections =
+    useQuery(api.domains.calendar.queries.listConnections) ?? [];
   const writable = sortCalendars(calendars.filter(isWritableCalendar));
+  // Two accounts can each have a "Personal"; the account label tells them apart.
+  const grouped = groupCalendarsByAccount(writable, connections);
   // An event can sit on a calendar we can't write to; still name it.
   const selected =
     writable.find((c) => c._id === calendarId) ??
@@ -138,24 +145,33 @@ export function EventControls({
         </Tooltip>
         <PopoverContent side="top" align="start" className="w-64 p-2">
           <div className="flex flex-col gap-0.5">
-            {writable.map((cal) => (
-              <button
-                key={cal._id}
-                type="button"
-                onClick={() => onCalendarChange(cal._id)}
-                className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <span
-                  className="size-3 shrink-0 rounded-full"
-                  style={{ backgroundColor: `var(${calendarColorVar(cal)})` }}
-                />
-                <span className="min-w-0 flex-1 truncate text-sm">
-                  {calendarDisplayName(cal)}
-                </span>
-                {cal._id === calendarId && (
-                  <HugeiconsIcon icon={Tick02Icon} strokeWidth={2.5} className="size-4" />
+            {grouped.map((group) => (
+              <div key={group.key} className="flex flex-col gap-0.5">
+                {grouped.length > 1 && group.label && (
+                  <p className="truncate px-1.5 pt-1 text-[11px] font-medium text-muted-foreground">
+                    {group.label}
+                  </p>
                 )}
-              </button>
+                {group.calendars.map((cal) => (
+                  <button
+                    key={cal._id}
+                    type="button"
+                    onClick={() => onCalendarChange(cal._id)}
+                    className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span
+                      className="size-3 shrink-0 rounded-full"
+                      style={{ backgroundColor: `var(${calendarColorVar(cal)})` }}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      {calendarDisplayName(cal)}
+                    </span>
+                    {cal._id === calendarId && (
+                      <HugeiconsIcon icon={Tick02Icon} strokeWidth={2.5} className="size-4" />
+                    )}
+                  </button>
+                ))}
+              </div>
             ))}
             {writable.length === 0 && (
               <p className="px-1.5 py-1 text-sm text-muted-foreground">

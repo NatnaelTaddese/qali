@@ -13,8 +13,10 @@ import {
 } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import {
+  ensureConnectionSyncState,
   ensureDefaultPrimaryCalendar,
   ensureGoogleConnection,
+  preferredConnection,
 } from "./connections";
 import { providerEventValidator } from "./validators";
 
@@ -22,6 +24,10 @@ import { providerEventValidator } from "./validators";
  * preferences domain's default-calendar validation imports it. */
 export const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
 const CALENDAR_OPERATION_LEASE_MS = 10 * 60 * 1000;
+/** How long a connection whose profile fetch came back nameless waits before
+ * the next attempt. Without it, an unstampable grant re-fetches a token and
+ * hits userinfo on every user-initiated sync — i.e. every page load. */
+const IDENTITY_RETRY_MS = 24 * 60 * 60 * 1000;
 
 /** Resolve an owned local calendar row to a writable provider target. */
 export async function resolveCreateTargetHandler(
@@ -45,7 +51,23 @@ export async function resolveCreateTargetHandler(
     if (calendars.length > 500) {
       throw new Error("Too many calendars to choose a write target safely");
     }
-    calendar = calendars.find((row) => row.primary) ?? null;
+    const primaries = calendars.filter((row) => row.primary);
+    calendar = primaries[0] ?? null;
+    if (primaries.length > 1) {
+      // Several connected accounts each have a `primary` calendar; the
+      // preferred connection's one is the deterministic default.
+      const connections = await ctx.db
+        .query("calendarConnections")
+        .withIndex("by_user", (q) => q.eq("userId", args.userId))
+        .take(101);
+      if (connections.length > 100) {
+        throw new Error("Too many connections to choose a write target safely");
+      }
+      const preferred = preferredConnection(connections);
+      calendar =
+        primaries.find((row) => row.connectionId === preferred?._id) ??
+        primaries[0];
+    }
   }
   if (!calendar && !args.requestedCalendarId) {
     const connectionId = await ensureGoogleConnection(ctx, args.userId);
@@ -81,6 +103,175 @@ export const resolveCreateTarget = internalMutation({
     requestedCalendarId: v.optional(v.id("calendars")),
   },
   handler: (ctx, args) => resolveCreateTargetHandler(ctx, args),
+});
+
+/** Bring the connection rows in line with the Google grants Better Auth holds
+ * for the user. Each grant is keyed by `credentialRef` (the provider account
+ * id Better Auth resolves tokens by); a lone pre-linking connection — the
+ * login grant, which predates every link — claims the oldest unclaimed grant
+ * instead of being duplicated. Idempotent: re-running with the same grants
+ * changes nothing. */
+export async function reconcileLinkedAccountsHandler(
+  ctx: MutationCtx,
+  args: {
+    userId: string;
+    accounts: { credentialRef: string; createdAt: number }[];
+  },
+): Promise<{
+  created: number;
+  pendingIdentity: {
+    connectionId: Id<"calendarConnections">;
+    credentialRef: string;
+  }[];
+}> {
+  const connections = await ctx.db
+    .query("calendarConnections")
+    .withIndex("by_user_and_provider", (q) =>
+      q.eq("userId", args.userId).eq("provider", "google"),
+    )
+    .take(101);
+  if (connections.length > 100) {
+    throw new Error("Too many connections to reconcile safely");
+  }
+  // Rows whose grant is known but whose profile (name/photo) isn't stamped
+  // yet — the caller fetches those from the provider, action-side. A fetch
+  // that came back empty (or threw) still stamps its attempt, so a grant that
+  // can never yield a name is retried daily rather than on every sync.
+  const now = Date.now();
+  const pendingIdentity: {
+    connectionId: Id<"calendarConnections">;
+    credentialRef: string;
+  }[] = [];
+  for (const row of connections) {
+    if (
+      row.credentialRef !== undefined &&
+      row.providerAccountName === undefined &&
+      now - (row.providerIdentityAttemptedAt ?? 0) > IDENTITY_RETRY_MS
+    ) {
+      pendingIdentity.push({
+        connectionId: row._id,
+        credentialRef: row.credentialRef,
+      });
+    }
+  }
+  const claimed = new Set(
+    connections
+      .map((row) => row.credentialRef)
+      .filter((ref) => ref !== undefined),
+  );
+  const unclaimed = args.accounts
+    .filter((account) => !claimed.has(account.credentialRef))
+    .sort((a, b) => a.createdAt - b.createdAt);
+  if (unclaimed.length === 0) return { created: 0, pendingIdentity };
+  const legacy = connections.filter((row) => row.credentialRef === undefined);
+  if (legacy.length === 1) {
+    const oldest = unclaimed.shift()!;
+    await ctx.db.patch(legacy[0]._id, {
+      credentialRef: oldest.credentialRef,
+      updatedAt: now,
+    });
+    if (legacy[0].providerAccountName === undefined) {
+      pendingIdentity.push({
+        connectionId: legacy[0]._id,
+        credentialRef: oldest.credentialRef,
+      });
+    }
+  }
+  let created = 0;
+  for (const account of unclaimed) {
+    const connectionId = await ctx.db.insert("calendarConnections", {
+      userId: args.userId,
+      provider: "google",
+      credentialRef: account.credentialRef,
+      status: "active",
+      capabilities: { contacts: true, idempotentCreate: true },
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ensureConnectionSyncState(ctx, args.userId, connectionId);
+    pendingIdentity.push({ connectionId, credentialRef: account.credentialRef });
+    created += 1;
+  }
+  return { created, pendingIdentity };
+}
+
+export const reconcileLinkedAccounts = internalMutation({
+  args: {
+    userId: v.string(),
+    accounts: v.array(
+      v.object({ credentialRef: v.string(), createdAt: v.number() }),
+    ),
+  },
+  returns: v.object({
+    created: v.number(),
+    pendingIdentity: v.array(
+      v.object({
+        connectionId: v.id("calendarConnections"),
+        credentialRef: v.string(),
+      }),
+    ),
+  }),
+  handler: (ctx, args) => reconcileLinkedAccountsHandler(ctx, args),
+});
+
+/** Best-effort profile stamp from the provider's ID token: the account email
+ * fills `providerAccountId` only when a sync hasn't already, while name and
+ * photo are refreshed whenever the provider reports new ones. Called with no
+ * profile fields when the fetch failed or came back empty — the attempt is
+ * recorded either way, which is what keeps the retry off the sync hot path. */
+export const stampConnectionIdentity = internalMutation({
+  args: {
+    userId: v.string(),
+    connectionId: v.id("calendarConnections"),
+    providerAccountId: v.optional(v.string()),
+    providerAccountName: v.optional(v.string()),
+    providerAccountImageUrl: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const connection = await ctx.db.get(args.connectionId);
+    if (!connection || connection.userId !== args.userId) return null;
+    const patch: Partial<Doc<"calendarConnections">> = {
+      providerIdentityAttemptedAt: Date.now(),
+    };
+    if (
+      args.providerAccountId !== undefined &&
+      connection.providerAccountId === undefined
+    ) {
+      patch.providerAccountId = args.providerAccountId;
+    }
+    if (
+      args.providerAccountName !== undefined &&
+      connection.providerAccountName !== args.providerAccountName
+    ) {
+      patch.providerAccountName = args.providerAccountName;
+    }
+    if (
+      args.providerAccountImageUrl !== undefined &&
+      connection.providerAccountImageUrl !== args.providerAccountImageUrl
+    ) {
+      patch.providerAccountImageUrl = args.providerAccountImageUrl;
+    }
+    await ctx.db.patch(args.connectionId, { ...patch, updatedAt: Date.now() });
+    return null;
+  },
+});
+
+/** Take a connection out of the sync fan-out ahead of its purge, so no new
+ * sync starts against a grant that is about to be (or was just) revoked. */
+export const pauseConnectionForRemoval = internalMutation({
+  args: { userId: v.string(), connectionId: v.id("calendarConnections") },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const connection = await ctx.db.get(args.connectionId);
+    if (connection && connection.userId === args.userId) {
+      await ctx.db.patch(args.connectionId, {
+        status: "paused",
+        updatedAt: Date.now(),
+      });
+    }
+    return null;
+  },
 });
 
 /** Resolve neutral event identity before any provider operation. */

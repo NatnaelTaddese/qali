@@ -112,7 +112,7 @@ async function adapterFor(
 ): Promise<CalendarProviderAdapter> {
   return dependencies?.getAdapter
     ? await dependencies.getAdapter(ctx, userId, connectionId)
-    : await getCalendarAdapter(ctx, connectionId);
+    : await getCalendarAdapter(ctx, userId, connectionId);
 }
 
 async function refreshTarget(

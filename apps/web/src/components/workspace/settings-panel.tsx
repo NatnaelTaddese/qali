@@ -27,7 +27,7 @@ import { Spinner } from "@qali/ui/components/spinner";
 import { Switch } from "@qali/ui/components/switch";
 import { cn } from "@qali/ui/lib/utils";
 import type { FunctionReturnType } from "convex/server";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
@@ -43,6 +43,7 @@ import { toast } from "sonner";
 
 import {
   calendarDisplayName,
+  groupCalendarsByAccount,
   isWritableCalendar,
   type CalendarListItem,
 } from "@/components/calendar/lib";
@@ -54,6 +55,7 @@ import {
 } from "@/components/calendar/motion";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { authClient } from "@/lib/auth-client";
+import { useScrollFadeFallback } from "@/lib/use-scroll-fade";
 import { UserAvatar } from "./user-avatar";
 import { useSyncNow } from "./use-sync-now";
 
@@ -147,6 +149,8 @@ export function SettingsPanel({
   }, []);
 
   const variants = reduce ? dockVariantsReduced : dockVariants;
+  // Firefox has no scroll-driven animations; this drives the fade by hand there.
+  const scrollFadeRef = useScrollFadeFallback();
 
   const goTo = (next: SettingsSection) => {
     const from = SECTIONS.findIndex((s) => s.id === section);
@@ -256,7 +260,10 @@ export function SettingsPanel({
                   <h2 className="font-display shrink-0 pr-9 text-2xl font-bold">
                     {active.label}
                   </h2>
-                  <div className="scroll-fade-y -mr-2 mt-4 min-h-0 flex-1 overflow-y-auto pr-2 pb-1 [scrollbar-width:thin]">
+                  <div
+                    ref={scrollFadeRef}
+                    className="scroll-fade-y -mr-2 mt-4 min-h-0 flex-1 overflow-y-auto pr-2 pb-1 [scrollbar-width:thin]"
+                  >
                     {sectionContent}
                   </div>
                 </motion.div>
@@ -434,9 +441,12 @@ function AccountsSection() {
   if (connections.length === 0) {
     return (
       <SettingCard>
-        <p className="py-8 text-center text-xs text-muted-foreground">
-          No connected accounts yet — they appear after your first sync.
-        </p>
+        <div className="flex flex-col items-center gap-4 py-8">
+          <p className="text-center text-xs text-muted-foreground">
+            No connected accounts yet — they appear after your first sync.
+          </p>
+          <AddAccountButton />
+        </div>
       </SettingCard>
     );
   }
@@ -446,24 +456,76 @@ function AccountsSection() {
         <ConnectionCard
           key={connection._id}
           connection={connection}
-          // Only a sole connection is provably the login grant, whose
-          // identity is the session's. A second account must show its own
-          // providerAccountId — never the session's name over foreign toggles.
-          primary={connections.length === 1}
+          sole={connections.length === 1}
+          // Disconnecting the only account would strand the login; the sole
+          // connection offers Pause instead.
+          canDisconnect={connections.length > 1}
         />
       ))}
+      <AddAccountButton />
     </div>
+  );
+}
+
+/** Starts Better Auth's link flow: the Google chooser + consent, then back to
+ * the workspace with `?linked=google`, where connectLinkedAccounts turns the
+ * new grant into a connection. */
+function AddAccountButton() {
+  const [isLinking, setIsLinking] = useState(false);
+
+  const linkAccount = async () => {
+    setIsLinking(true);
+    await authClient.linkSocial(
+      {
+        provider: "google",
+        callbackURL: "/?linked=google",
+        errorCallbackURL: "/?linkError=google",
+      },
+      {
+        onError: (error) => {
+          setIsLinking(false);
+          toast.error(error.error.message || error.error.statusText);
+        },
+      },
+    );
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={() => void linkAccount()}
+      disabled={isLinking}
+      aria-busy={isLinking}
+      className="flex w-full items-center justify-center gap-2 rounded-3xl border border-dashed border-border bg-muted/30 px-4 py-4 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
+    >
+      {isLinking ? <Spinner /> : <Google aria-hidden className="size-4" />}
+      {isLinking ? "Opening Google…" : "Add Google account"}
+    </button>
   );
 }
 
 function ConnectionCard({
   connection,
-  primary,
+  sole,
+  canDisconnect,
 }: {
   connection: Connection;
-  primary: boolean;
+  sole: boolean;
+  canDisconnect: boolean;
 }) {
   const { data: session } = authClient.useSession();
+  // The login grant gets the session's identity (avatar, name, Primary badge);
+  // any other account must show its own providerAccountId — never the
+  // session's name over foreign toggles. The stamped account email is what
+  // proves which one is the login grant; a sole connection only stands in for
+  // it while unstamped, since disconnecting the login account can leave a
+  // single connection that is somebody else entirely.
+  const sessionEmail = session?.user?.email?.toLowerCase();
+  const primary =
+    (connection.providerAccountId !== undefined &&
+      sessionEmail !== undefined &&
+      connection.providerAccountId.toLowerCase() === sessionEmail) ||
+    (sole && connection.providerAccountId === undefined);
   const setStatus = useMutation(
     api.domains.calendar.mutations.setConnectionStatus,
   );
@@ -477,9 +539,12 @@ function ConnectionCard({
   const errored = connection.status === "error";
   const providerName =
     connection.provider === "google" ? "Google Calendar" : "Outlook";
-  // The session's identity stands in only for the login grant (primary);
-  // any other connection shows its own account id or an honest placeholder.
-  const accountName = primary ? (session?.user?.name ?? providerName) : providerName;
+  // The session's identity stands in only for the login grant (primary); any
+  // other connection shows its own stamped profile, falling back to the bare
+  // provider while the profile is still pending.
+  const accountName = primary
+    ? (session?.user?.name ?? providerName)
+    : (connection.providerAccountName ?? providerName);
   const accountLabel =
     connection.providerAccountId ??
     (primary ? (session?.user?.email ?? "") : "Account details pending sync");
@@ -512,9 +577,21 @@ function ConnectionCard({
     <div className="overflow-hidden rounded-3xl bg-muted/50">
       {/* Identity band: who this account is, tinted apart from its toggles. */}
       <div className="flex items-center gap-3 border-b border-border bg-muted/60 px-4 py-3">
-        {primary ? (
+        {primary || connection.providerAccountImageUrl ? (
           <span className="relative shrink-0">
-            <UserAvatar className="size-9" />
+            {primary ? (
+              <UserAvatar className="size-9" />
+            ) : (
+              <img
+                src={connection.providerAccountImageUrl}
+                alt=""
+                aria-hidden
+                draggable={false}
+                // Google's avatar host rejects requests carrying a referrer.
+                referrerPolicy="no-referrer"
+                className="size-9 rounded-full object-cover"
+              />
+            )}
             <span className="absolute -right-0.5 -bottom-0.5 flex size-4 items-center justify-center rounded-full bg-background shadow-sm">
               <ProviderLogo aria-hidden className="size-2.5" />
             </span>
@@ -632,8 +709,71 @@ function ConnectionCard({
             )
           }
         />
+        {canDisconnect && (
+          <SettingRow
+            title="Disconnect"
+            description="Removes this account and everything it synced"
+            control={<DisconnectButton connectionId={connection._id} />}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+const DISCONNECT_CONFIRM_TIMEOUT_MS = 4_000;
+
+/** Two-step disconnect, same shape as the event panel's delete: the dock has
+ * no modal layer, so the button confirms on itself and disarms if the second
+ * click never comes. */
+function DisconnectButton({
+  connectionId,
+}: {
+  connectionId: Id<"calendarConnections">;
+}) {
+  const disconnect = useAction(
+    api.domains.calendar.connectionService.disconnectAccount,
+  );
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(
+      () => setArmed(false),
+      DISCONNECT_CONFIRM_TIMEOUT_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [armed]);
+
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant={armed ? "destructive" : "secondary"}
+      disabled={busy}
+      aria-busy={busy}
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        setBusy(true);
+        disconnect({ connectionId })
+          .then(() => toast.success("Account disconnected"))
+          .catch(reportSaveError("Couldn't disconnect the account"))
+          // The row outlives the call — it's paused here and deleted by the
+          // background purge — so releasing the button is what keeps a stalled
+          // purge from stranding the card with no way to retry.
+          .finally(() => {
+            setBusy(false);
+            setArmed(false);
+          });
+      }}
+    >
+      {busy && <Spinner />}
+      {busy ? "Disconnecting…" : armed ? "Confirm?" : "Disconnect"}
+    </Button>
   );
 }
 
@@ -841,6 +981,7 @@ const DEFAULT_VIEW_OPTIONS = [
 function PreferencesSection() {
   const prefs = useQuery(api.domains.preferences.queries.getMyPreferences);
   const calendars = useQuery(api.domains.calendar.queries.listCalendars);
+  const connections = useQuery(api.domains.calendar.queries.listConnections);
   const updatePrefs = useMutation(
     api.domains.preferences.mutations.updatePreferences,
   );
@@ -856,6 +997,10 @@ function PreferencesSection() {
   const writable = sortCalendars(calendars).filter(isWritable);
   const defaultCalendar =
     writable.find((c) => c._id === prefs.defaultCalendarId) ?? null;
+  // Two accounts can each have a "Personal"; without the account heading the
+  // rows are indistinguishable and picking the wrong one silently routes new
+  // events to the other account.
+  const grouped = groupCalendarsByAccount(writable, connections ?? []);
 
   const save = (patch: Parameters<typeof updatePrefs>[0]) =>
     void updatePrefs(patch).catch(
@@ -930,17 +1075,26 @@ function PreferencesSection() {
                       save({ reset: ["defaultCalendarId"] });
                     }}
                   />
-                  {writable.map((calendar) => (
-                    <PickerOption
-                      key={calendar._id}
-                      label={calendarDisplayName(calendar)}
-                      swatchVar={calendarColorVar(calendar)}
-                      selected={calendar._id === defaultCalendar?._id}
-                      onSelect={() => {
-                        close();
-                        save({ defaultCalendarId: calendar._id });
-                      }}
-                    />
+                  {grouped.map((group) => (
+                    <div key={group.key} className="flex flex-col gap-0.5">
+                      {grouped.length > 1 && group.label && (
+                        <p className="truncate px-2.5 pt-1 text-[11px] font-medium text-muted-foreground">
+                          {group.label}
+                        </p>
+                      )}
+                      {group.calendars.map((calendar) => (
+                        <PickerOption
+                          key={calendar._id}
+                          label={calendarDisplayName(calendar)}
+                          swatchVar={calendarColorVar(calendar)}
+                          selected={calendar._id === defaultCalendar?._id}
+                          onSelect={() => {
+                            close();
+                            save({ defaultCalendarId: calendar._id });
+                          }}
+                        />
+                      ))}
+                    </div>
                   ))}
                 </div>
               )}

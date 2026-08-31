@@ -5,7 +5,11 @@ import { describe, expect, test } from "bun:test";
 import {
   calendarDisplayName,
   type CalendarEvent,
+  type CalendarListItem,
+  type ConnectionListItem,
   formatWallClockMinutes,
+  groupCalendarsByAccount,
+  pickPrimaryCalendar,
   LANE_ADVANCE_RATIO,
   laneBox,
   WEEK_LANE_TILE_MAX_STAGGER_MS,
@@ -549,5 +553,77 @@ describe("eventQueryRange", () => {
       const sameWeek = new Date(monday.getTime() + i * MS_PER_DAY);
       expect(eventQueryRange("week", sameWeek)).toEqual(base);
     }
+  });
+});
+
+describe("multi-account picker helpers", () => {
+  const cal = (id: string, connectionId?: string, primary = false) =>
+    ({
+      _id: id,
+      connectionId,
+      primary,
+      selected: true,
+      isShared: false,
+    }) as unknown as CalendarListItem;
+  const conn = (
+    id: string,
+    createdAt: number,
+    over: Partial<{ status: string; provider: string; providerAccountId: string }> = {},
+  ) =>
+    ({
+      _id: id,
+      provider: "google",
+      status: "active",
+      createdAt,
+      ...over,
+    }) as unknown as ConnectionListItem;
+
+  test("pickPrimaryCalendar returns the lone primary without consulting connections", () => {
+    const primary = cal("p", "c1", true);
+    expect(pickPrimaryCalendar([cal("a", "c1"), primary], [])).toBe(primary);
+    expect(pickPrimaryCalendar([cal("a", "c1")], [])).toBeUndefined();
+  });
+
+  test("pickPrimaryCalendar prefers the oldest active connection's primary", () => {
+    const loginPrimary = cal("login-p", "login", true);
+    const linkedPrimary = cal("linked-p", "linked", true);
+    const connections = [conn("linked", 2), conn("login", 1)];
+    expect(
+      pickPrimaryCalendar([linkedPrimary, loginPrimary], connections),
+    ).toBe(loginPrimary);
+    // A paused login connection cedes the default to the linked account.
+    expect(
+      pickPrimaryCalendar(
+        [linkedPrimary, loginPrimary],
+        [conn("linked", 2), conn("login", 1, { status: "paused" })],
+      ),
+    ).toBe(linkedPrimary);
+  });
+
+  test("groupCalendarsByAccount stays flat for a single account", () => {
+    const calendars = [cal("a", "c1"), cal("b", "c1")];
+    expect(groupCalendarsByAccount(calendars, [conn("c1", 1)])).toEqual([
+      { key: "all", calendars },
+    ]);
+    expect(groupCalendarsByAccount([], [conn("c1", 1)])).toEqual([]);
+  });
+
+  test("groupCalendarsByAccount labels per connection, oldest first, orphans last", () => {
+    const a = cal("a", "login");
+    const b = cal("b", "linked");
+    const orphan = cal("o", undefined);
+    const groups = groupCalendarsByAccount(
+      [b, a, orphan],
+      [
+        conn("linked", 2, { providerAccountId: "second@example.com" }),
+        conn("login", 1, { providerAccountId: "first@example.com" }),
+      ],
+    );
+    expect(groups.map((g) => g.label)).toEqual([
+      "first@example.com",
+      "second@example.com",
+      "Other",
+    ]);
+    expect(groups.map((g) => g.calendars)).toEqual([[a], [b], [orphan]]);
   });
 });

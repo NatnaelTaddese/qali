@@ -17,6 +17,20 @@ function createAuth(ctx: GenericCtx<DataModel>) {
     baseURL: env.CONVEX_SITE_URL,
     trustedOrigins: [siteUrl],
     database: authComponent.adapter(ctx),
+    // Login is OAuth-only, so there is no cheap way to re-prove freshness;
+    // without this, unlink-account (used by disconnect) rejects any session
+    // older than Better Auth's default freshness window.
+    session: { freshAge: 0 },
+    account: {
+      accountLinking: {
+        enabled: true,
+        // A second Google account is by definition a different email; the
+        // linked grant still lands on the signed-in user, never a lookup by
+        // email, so this doesn't open account-takeover-by-email.
+        allowDifferentEmails: true,
+        trustedProviders: ["google"],
+      },
+    },
     socialProviders: {
       google: {
         clientId: env.GOOGLE_CLIENT_ID,

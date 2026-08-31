@@ -65,6 +65,66 @@ export function isWritableCalendar(calendar: {
   return WRITABLE_ACCESS_ROLES.has(calendar.accessRole ?? "");
 }
 
+/** One row of the `listConnections` DTO, mirroring {@link CalendarListItem}. */
+export type ConnectionListItem = FunctionReturnType<
+  typeof api.domains.calendar.queries.listConnections
+>[number];
+
+/** The default calendar when nothing is chosen: the primary calendar of the
+ * preferred connection. With several connected accounts each contributing a
+ * `primary` calendar, this mirrors the backend's `preferredConnection`
+ * ordering (active → Google first → oldest) so the client's preview and the
+ * server's resolved target can never disagree. */
+export function pickPrimaryCalendar(
+  calendars: CalendarListItem[],
+  connections: ConnectionListItem[] | undefined,
+): CalendarListItem | undefined {
+  const primaries = calendars.filter((c) => c.primary);
+  if (primaries.length <= 1) return primaries[0];
+  // Which account wins is unknowable until the connections load. Returning
+  // nothing leaves `calendarId` unset, so the server resolves the target
+  // through `preferredConnection` instead of honouring a guess sent as an
+  // explicit request.
+  if (connections === undefined) return undefined;
+  const preferred = connections
+    .filter((c) => c.status === "active")
+    .sort(
+      (a, b) =>
+        Number(b.provider === "google") - Number(a.provider === "google") ||
+        a.createdAt - b.createdAt,
+    )[0];
+  return (
+    primaries.find((c) => c.connectionId === preferred?._id) ?? primaries[0]
+  );
+}
+
+/** Calendars grouped for pickers: one unlabeled group while there's a single
+ * account, one group per connection (oldest first, matching the preferred-
+ * connection ordering) once a second is linked. Input order is preserved
+ * inside each group, so callers sort first and group after. */
+export function groupCalendarsByAccount(
+  calendars: CalendarListItem[],
+  connections: ConnectionListItem[],
+): { key: string; label?: string; calendars: CalendarListItem[] }[] {
+  if (connections.length <= 1) {
+    return calendars.length > 0 ? [{ key: "all", calendars }] : [];
+  }
+  const ordered = [...connections].sort((a, b) => a.createdAt - b.createdAt);
+  const known = new Set<string>(ordered.map((c) => c._id));
+  const groups = ordered.map((connection) => ({
+    key: connection._id as string,
+    label: connection.providerAccountId ?? "Connected account",
+    calendars: calendars.filter((c) => c.connectionId === connection._id),
+  }));
+  const orphans = calendars.filter(
+    (c) => c.connectionId === undefined || !known.has(c.connectionId),
+  );
+  if (orphans.length > 0) {
+    groups.push({ key: "other", label: "Other", calendars: orphans });
+  }
+  return groups.filter((group) => group.calendars.length > 0);
+}
+
 /** User-facing calendar name, including a per-user override when one exists.
  * `providerCalendarId` is optional only for the transitional schema: a
  * pre-cutover row without one renders nameless rather than borrowing a legacy

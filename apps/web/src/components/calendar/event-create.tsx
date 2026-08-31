@@ -14,7 +14,7 @@ import {
   toEventTimes,
   type EventFormValue,
 } from "./event-form";
-import { isWritableCalendar } from "./lib";
+import { isWritableCalendar, pickPrimaryCalendar } from "./lib";
 import { toRRule } from "./rrule";
 
 /** A new event has no owner to answer to yet, so every control is live. */
@@ -54,6 +54,8 @@ export function EventCreate({
 }) {
   const createEvent = useAction(api.domains.calendar.service.createEvent);
   const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
+  // Left undefined while loading on purpose — see pickPrimaryCalendar.
+  const connections = useQuery(api.domains.calendar.queries.listConnections);
   const { defaultCalendarId, timeZone } = usePreferences();
   const [submitting, setSubmitting] = useState(false);
   // Idempotency key for this create intent: minted once and reused across retries
@@ -90,7 +92,7 @@ export function EventCreate({
       (c) =>
         c._id === defaultCalendarId && !c.isShared && isWritableCalendar(c),
     )?._id ??
-    calendars.find((c) => c.primary)?._id;
+    pickPrimaryCalendar(calendars, connections)?._id;
   const value: EventFormValue = {
     ...draft,
     calendarId: activeCalendarId,

@@ -5,15 +5,20 @@
 import { v } from "convex/values";
 
 import { internal } from "../../_generated/api";
-import type { Doc } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import { action, type ActionCtx } from "../../_generated/server";
 import { authComponent, createAuth } from "../../auth";
+import {
+  fetchGoogleUserProfile,
+  getGoogleAccessToken,
+} from "../../integrations/google/credentials";
 
 /** Diff Better Auth's Google grants against the user's connection rows and
- * create what's missing. The account email is deliberately not fetched here:
- * the first sync stamps it from the primary calendar id (reconcileCalendars),
- * and any provider call that could fetch it sooner shares the same failure
- * domain as that sync anyway. */
+ * create what's missing, then stamp each unstamped connection's profile
+ * (email, name, photo) from the grant's stored ID token. The profile is
+ * cosmetic and best-effort: a failed fetch is only logged, and the first
+ * sync still stamps the email from the primary calendar id
+ * (reconcileCalendars) regardless. */
 export async function reconcileLinkedAccountsForUser(
   ctx: ActionCtx,
   userId: string,
@@ -27,10 +32,45 @@ export async function reconcileLinkedAccountsForUser(
       createdAt: new Date(account.createdAt).getTime(),
     }));
   if (accounts.length === 0) return 0;
-  const result: { created: number } = await ctx.runMutation(
+  const result: {
+    created: number;
+    pendingIdentity: {
+      connectionId: Id<"calendarConnections">;
+      credentialRef: string;
+    }[];
+  } = await ctx.runMutation(
     internal.domains.calendar.mutations.reconcileLinkedAccounts,
     { userId, accounts },
   );
+  for (const pending of result.pendingIdentity) {
+    try {
+      // The broker resolves (and refreshes) this grant's token; the userinfo
+      // endpoint then works for every grant, unlike decoding a stored ID
+      // token, which a refresh cycle may not have kept.
+      const accessToken = await getGoogleAccessToken(
+        ctx,
+        userId,
+        pending.credentialRef,
+      );
+      const profile = await fetchGoogleUserProfile(accessToken);
+      if (!profile) continue;
+      await ctx.runMutation(
+        internal.domains.calendar.mutations.stampConnectionIdentity,
+        {
+          userId,
+          connectionId: pending.connectionId,
+          providerAccountId: profile.email,
+          providerAccountName: profile.name,
+          providerAccountImageUrl: profile.picture,
+        },
+      );
+    } catch (error) {
+      console.warn(
+        "Linked-account profile fetch failed:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
   return result.created;
 }
 

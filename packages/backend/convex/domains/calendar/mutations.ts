@@ -113,7 +113,13 @@ export async function reconcileLinkedAccountsHandler(
     userId: string;
     accounts: { credentialRef: string; createdAt: number }[];
   },
-): Promise<{ created: number }> {
+): Promise<{
+  created: number;
+  pendingIdentity: {
+    connectionId: Id<"calendarConnections">;
+    credentialRef: string;
+  }[];
+}> {
   const connections = await ctx.db
     .query("calendarConnections")
     .withIndex("by_user_and_provider", (q) =>
@@ -123,6 +129,20 @@ export async function reconcileLinkedAccountsHandler(
   if (connections.length > 100) {
     throw new Error("Too many connections to reconcile safely");
   }
+  // Rows whose grant is known but whose profile (name/photo) isn't stamped
+  // yet — the caller fetches those from the provider, action-side.
+  const pendingIdentity: {
+    connectionId: Id<"calendarConnections">;
+    credentialRef: string;
+  }[] = [];
+  for (const row of connections) {
+    if (row.credentialRef !== undefined && row.providerAccountName === undefined) {
+      pendingIdentity.push({
+        connectionId: row._id,
+        credentialRef: row.credentialRef,
+      });
+    }
+  }
   const claimed = new Set(
     connections
       .map((row) => row.credentialRef)
@@ -131,7 +151,7 @@ export async function reconcileLinkedAccountsHandler(
   const unclaimed = args.accounts
     .filter((account) => !claimed.has(account.credentialRef))
     .sort((a, b) => a.createdAt - b.createdAt);
-  if (unclaimed.length === 0) return { created: 0 };
+  if (unclaimed.length === 0) return { created: 0, pendingIdentity };
   const now = Date.now();
   const legacy = connections.filter((row) => row.credentialRef === undefined);
   if (legacy.length === 1) {
@@ -140,6 +160,12 @@ export async function reconcileLinkedAccountsHandler(
       credentialRef: oldest.credentialRef,
       updatedAt: now,
     });
+    if (legacy[0].providerAccountName === undefined) {
+      pendingIdentity.push({
+        connectionId: legacy[0]._id,
+        credentialRef: oldest.credentialRef,
+      });
+    }
   }
   let created = 0;
   for (const account of unclaimed) {
@@ -153,9 +179,10 @@ export async function reconcileLinkedAccountsHandler(
       updatedAt: now,
     });
     await ensureConnectionSyncState(ctx, args.userId, connectionId);
+    pendingIdentity.push({ connectionId, credentialRef: account.credentialRef });
     created += 1;
   }
-  return { created };
+  return { created, pendingIdentity };
 }
 
 export const reconcileLinkedAccounts = internalMutation({
@@ -165,8 +192,57 @@ export const reconcileLinkedAccounts = internalMutation({
       v.object({ credentialRef: v.string(), createdAt: v.number() }),
     ),
   },
-  returns: v.object({ created: v.number() }),
+  returns: v.object({
+    created: v.number(),
+    pendingIdentity: v.array(
+      v.object({
+        connectionId: v.id("calendarConnections"),
+        credentialRef: v.string(),
+      }),
+    ),
+  }),
   handler: (ctx, args) => reconcileLinkedAccountsHandler(ctx, args),
+});
+
+/** Best-effort profile stamp from the provider's ID token: the account email
+ * fills `providerAccountId` only when a sync hasn't already, while name and
+ * photo are refreshed whenever the provider reports new ones. */
+export const stampConnectionIdentity = internalMutation({
+  args: {
+    userId: v.string(),
+    connectionId: v.id("calendarConnections"),
+    providerAccountId: v.optional(v.string()),
+    providerAccountName: v.optional(v.string()),
+    providerAccountImageUrl: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const connection = await ctx.db.get(args.connectionId);
+    if (!connection || connection.userId !== args.userId) return null;
+    const patch: Partial<Doc<"calendarConnections">> = {};
+    if (
+      args.providerAccountId !== undefined &&
+      connection.providerAccountId === undefined
+    ) {
+      patch.providerAccountId = args.providerAccountId;
+    }
+    if (
+      args.providerAccountName !== undefined &&
+      connection.providerAccountName !== args.providerAccountName
+    ) {
+      patch.providerAccountName = args.providerAccountName;
+    }
+    if (
+      args.providerAccountImageUrl !== undefined &&
+      connection.providerAccountImageUrl !== args.providerAccountImageUrl
+    ) {
+      patch.providerAccountImageUrl = args.providerAccountImageUrl;
+    }
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch(args.connectionId, { ...patch, updatedAt: Date.now() });
+    }
+    return null;
+  },
 });
 
 /** Take a connection out of the sync fan-out ahead of its purge, so no new

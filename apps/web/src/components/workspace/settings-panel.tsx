@@ -536,9 +536,12 @@ function ConnectionCard({
   const errored = connection.status === "error";
   const providerName =
     connection.provider === "google" ? "Google Calendar" : "Outlook";
-  // The session's identity stands in only for the login grant (primary);
-  // any other connection shows its own account id or an honest placeholder.
-  const accountName = primary ? (session?.user?.name ?? providerName) : providerName;
+  // The session's identity stands in only for the login grant (primary); any
+  // other connection shows its own stamped profile, falling back to the bare
+  // provider while the profile is still pending.
+  const accountName = primary
+    ? (session?.user?.name ?? providerName)
+    : (connection.providerAccountName ?? providerName);
   const accountLabel =
     connection.providerAccountId ??
     (primary ? (session?.user?.email ?? "") : "Account details pending sync");
@@ -571,9 +574,21 @@ function ConnectionCard({
     <div className="overflow-hidden rounded-3xl bg-muted/50">
       {/* Identity band: who this account is, tinted apart from its toggles. */}
       <div className="flex items-center gap-3 border-b border-border bg-muted/60 px-4 py-3">
-        {primary ? (
+        {primary || connection.providerAccountImageUrl ? (
           <span className="relative shrink-0">
-            <UserAvatar className="size-9" />
+            {primary ? (
+              <UserAvatar className="size-9" />
+            ) : (
+              <img
+                src={connection.providerAccountImageUrl}
+                alt=""
+                aria-hidden
+                draggable={false}
+                // Google's avatar host rejects requests carrying a referrer.
+                referrerPolicy="no-referrer"
+                className="size-9 rounded-full object-cover"
+              />
+            )}
             <span className="absolute -right-0.5 -bottom-0.5 flex size-4 items-center justify-center rounded-full bg-background shadow-sm">
               <ProviderLogo aria-hidden className="size-2.5" />
             </span>

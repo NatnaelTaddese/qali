@@ -16,6 +16,30 @@ import { createAuth } from "../../auth";
  * for provider credentials: when the connection model lands it becomes
  * connection-aware, and today connection == the user's Google login grant.
  */
+/** The account's OpenID profile (email, name, photo) for the settings card.
+ * Fetched from the standard userinfo endpoint rather than decoded from a
+ * stored ID token, which a refresh cycle may not have kept. Best-effort:
+ * a non-OK response is null, never an error. */
+export async function fetchGoogleUserProfile(accessToken: string): Promise<{
+  email?: string;
+  name?: string;
+  picture?: string;
+} | null> {
+  const response = await fetch(
+    "https://www.googleapis.com/oauth2/v3/userinfo",
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!response.ok) return null;
+  const data: unknown = await response.json();
+  if (typeof data !== "object" || data === null) return null;
+  const record = data as Record<string, unknown>;
+  return {
+    email: typeof record.email === "string" ? record.email : undefined,
+    name: typeof record.name === "string" ? record.name : undefined,
+    picture: typeof record.picture === "string" ? record.picture : undefined,
+  };
+}
+
 export async function getGoogleAccessToken(
   ctx: GenericCtx<DataModel>,
   userId: string,

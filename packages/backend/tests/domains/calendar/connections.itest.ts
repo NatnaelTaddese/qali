@@ -83,7 +83,11 @@ describe("connection model", () => {
       internal.domains.calendar.mutations.reconcileLinkedAccounts,
       { userId, accounts },
     );
-    expect(first).toEqual({ created: 1 });
+    expect(first.created).toBe(1);
+    // Both rows now know their grant but not their profile yet.
+    expect(
+      first.pendingIdentity.map((p) => p.credentialRef).sort(),
+    ).toEqual(["google-sub-linked", "google-sub-login"]);
     // The oldest grant is the login one; it claims the legacy row.
     expect(
       (await t.run((ctx) => ctx.db.get(legacyId)))?.credentialRef,
@@ -110,12 +114,58 @@ describe("connection model", () => {
           .unique(),
       ),
     ).toMatchObject({ status: "idle", nextSyncDueAt: 0 });
-    // Re-running with the same grants is a no-op.
+    // Re-running with the same grants creates nothing, but keeps reporting
+    // the unstamped profiles until stampConnectionIdentity fills them.
     const second = await t.mutation(
       internal.domains.calendar.mutations.reconcileLinkedAccounts,
       { userId, accounts },
     );
-    expect(second).toEqual({ created: 0 });
+    expect(second.created).toBe(0);
+    expect(second.pendingIdentity).toHaveLength(2);
+    await t.mutation(
+      internal.domains.calendar.mutations.stampConnectionIdentity,
+      {
+        userId,
+        connectionId: linked!._id,
+        providerAccountId: "linked@example.com",
+        providerAccountName: "Linked Account",
+        providerAccountImageUrl: "https://example.com/a.png",
+      },
+    );
+    expect(await t.run((ctx) => ctx.db.get(linked!._id))).toMatchObject({
+      providerAccountId: "linked@example.com",
+      providerAccountName: "Linked Account",
+      providerAccountImageUrl: "https://example.com/a.png",
+    });
+    // A foreign stamp is refused, and a sync-stamped email is never replaced.
+    await t.mutation(
+      internal.domains.calendar.mutations.stampConnectionIdentity,
+      {
+        userId: "someone_else",
+        connectionId: linked!._id,
+        providerAccountName: "Hijacked",
+      },
+    );
+    await t.mutation(
+      internal.domains.calendar.mutations.stampConnectionIdentity,
+      {
+        userId,
+        connectionId: linked!._id,
+        providerAccountId: "other@example.com",
+        providerAccountName: "Linked Renamed",
+      },
+    );
+    expect(await t.run((ctx) => ctx.db.get(linked!._id))).toMatchObject({
+      providerAccountId: "linked@example.com",
+      providerAccountName: "Linked Renamed",
+    });
+    const third = await t.mutation(
+      internal.domains.calendar.mutations.reconcileLinkedAccounts,
+      { userId, accounts },
+    );
+    expect(third.pendingIdentity.map((p) => p.credentialRef)).toEqual([
+      "google-sub-login",
+    ]);
     expect(
       await t.run(async (ctx) =>
         (

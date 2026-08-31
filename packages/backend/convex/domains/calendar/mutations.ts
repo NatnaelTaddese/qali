@@ -13,6 +13,7 @@ import {
 } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import {
+  ensureConnectionSyncState,
   ensureDefaultPrimaryCalendar,
   ensureGoogleConnection,
   preferredConnection,
@@ -98,6 +99,74 @@ export const resolveCreateTarget = internalMutation({
     requestedCalendarId: v.optional(v.id("calendars")),
   },
   handler: (ctx, args) => resolveCreateTargetHandler(ctx, args),
+});
+
+/** Bring the connection rows in line with the Google grants Better Auth holds
+ * for the user. Each grant is keyed by `credentialRef` (the provider account
+ * id Better Auth resolves tokens by); a lone pre-linking connection — the
+ * login grant, which predates every link — claims the oldest unclaimed grant
+ * instead of being duplicated. Idempotent: re-running with the same grants
+ * changes nothing. */
+export async function reconcileLinkedAccountsHandler(
+  ctx: MutationCtx,
+  args: {
+    userId: string;
+    accounts: { credentialRef: string; createdAt: number }[];
+  },
+): Promise<{ created: number }> {
+  const connections = await ctx.db
+    .query("calendarConnections")
+    .withIndex("by_user_and_provider", (q) =>
+      q.eq("userId", args.userId).eq("provider", "google"),
+    )
+    .take(101);
+  if (connections.length > 100) {
+    throw new Error("Too many connections to reconcile safely");
+  }
+  const claimed = new Set(
+    connections
+      .map((row) => row.credentialRef)
+      .filter((ref) => ref !== undefined),
+  );
+  const unclaimed = args.accounts
+    .filter((account) => !claimed.has(account.credentialRef))
+    .sort((a, b) => a.createdAt - b.createdAt);
+  if (unclaimed.length === 0) return { created: 0 };
+  const now = Date.now();
+  const legacy = connections.filter((row) => row.credentialRef === undefined);
+  if (legacy.length === 1) {
+    const oldest = unclaimed.shift()!;
+    await ctx.db.patch(legacy[0]._id, {
+      credentialRef: oldest.credentialRef,
+      updatedAt: now,
+    });
+  }
+  let created = 0;
+  for (const account of unclaimed) {
+    const connectionId = await ctx.db.insert("calendarConnections", {
+      userId: args.userId,
+      provider: "google",
+      credentialRef: account.credentialRef,
+      status: "active",
+      capabilities: { contacts: true, idempotentCreate: true },
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ensureConnectionSyncState(ctx, args.userId, connectionId);
+    created += 1;
+  }
+  return { created };
+}
+
+export const reconcileLinkedAccounts = internalMutation({
+  args: {
+    userId: v.string(),
+    accounts: v.array(
+      v.object({ credentialRef: v.string(), createdAt: v.number() }),
+    ),
+  },
+  returns: v.object({ created: v.number() }),
+  handler: (ctx, args) => reconcileLinkedAccountsHandler(ctx, args),
 });
 
 /** Resolve neutral event identity before any provider operation. */

@@ -62,6 +62,72 @@ describe("connection model", () => {
     ).toBeNull();
   });
 
+  test("linked-account reconcile stamps the login grant and creates the rest once", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_link";
+    // The pre-linking bootstrap connection: no credentialRef yet.
+    const legacyId = await t.run((ctx) =>
+      ctx.db.insert("calendarConnections", {
+        userId,
+        provider: "google",
+        status: "active",
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+    );
+    const accounts = [
+      { credentialRef: "google-sub-linked", createdAt: 2_000 },
+      { credentialRef: "google-sub-login", createdAt: 1_000 },
+    ];
+    const first = await t.mutation(
+      internal.domains.calendar.mutations.reconcileLinkedAccounts,
+      { userId, accounts },
+    );
+    expect(first).toEqual({ created: 1 });
+    // The oldest grant is the login one; it claims the legacy row.
+    expect(
+      (await t.run((ctx) => ctx.db.get(legacyId)))?.credentialRef,
+    ).toBe("google-sub-login");
+    const connections = await t.run((ctx) =>
+      ctx.db
+        .query("calendarConnections")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect(),
+    );
+    expect(connections).toHaveLength(2);
+    const linked = connections.find(
+      (row) => row.credentialRef === "google-sub-linked",
+    );
+    expect(linked).toMatchObject({ provider: "google", status: "active" });
+    // The new connection starts with clean sync state.
+    expect(
+      await t.run((ctx) =>
+        ctx.db
+          .query("connectionSyncState")
+          .withIndex("by_connection", (q) =>
+            q.eq("connectionId", linked!._id),
+          )
+          .unique(),
+      ),
+    ).toMatchObject({ status: "idle", nextSyncDueAt: 0 });
+    // Re-running with the same grants is a no-op.
+    const second = await t.mutation(
+      internal.domains.calendar.mutations.reconcileLinkedAccounts,
+      { userId, accounts },
+    );
+    expect(second).toEqual({ created: 0 });
+    expect(
+      await t.run(async (ctx) =>
+        (
+          await ctx.db
+            .query("calendarConnections")
+            .withIndex("by_user", (q) => q.eq("userId", userId))
+            .collect()
+        ).length,
+      ),
+    ).toBe(2);
+  });
+
   test("a connection links its sync-state and operation rows", async () => {
     const t = convexTest(schema, modules);
     const userId = "user_conn";

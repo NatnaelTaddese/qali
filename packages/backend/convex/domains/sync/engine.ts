@@ -10,6 +10,7 @@ import {
 } from "../../_generated/server";
 import type { ActionCtx, MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
+import { reconcileLinkedAccountsForUser } from "../calendar/connectionService";
 import {
   ensureConnectionSyncState,
   ensureGoogleConnection,
@@ -860,6 +861,17 @@ export async function syncNowForCurrentUser(
 ): Promise<UserSyncStatus> {
   const user = await authComponent.safeGetAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
+  // A user-initiated sync doubles as the linking safety net: a Google grant
+  // that never got its connection row (a missed link redirect) gets one here
+  // and joins the fan-out below.
+  try {
+    await reconcileLinkedAccountsForUser(ctx, user._id);
+  } catch (error) {
+    console.warn(
+      "Linked-account reconcile failed:",
+      error instanceof Error ? error.message : error,
+    );
+  }
   return await runUser(ctx, user._id, true);
 }
 

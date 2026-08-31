@@ -15,6 +15,8 @@ export const Route = createFileRoute("/_auth/login")({
 
 const googleIconSrc = `data:image/svg+xml,${encodeURIComponent(googleSvg)}`;
 
+const MARKETING_URL = "https://myqali.com";
+
 function GoogleIcon() {
   return (
     <img
@@ -51,7 +53,7 @@ function LoginComponent() {
     <div className="relative min-h-svh overflow-hidden bg-background">
       <CalendarBackdrop />
 
-      <div className="relative z-10 flex min-h-svh items-center justify-center px-4">
+      <div className="relative z-10 flex min-h-svh flex-col items-center justify-center gap-3 px-4">
         <div
           className={cn(
             "relative w-full max-w-[400px] overflow-hidden rounded-xl shadow-lg",
@@ -89,6 +91,28 @@ function LoginComponent() {
             </Button>
           </div>
         </div>
+
+        <p className="max-w-[400px] text-center text-xs leading-snug text-balance text-muted-foreground">
+          By signing in, you agree to our{" "}
+          <a
+            href={`${MARKETING_URL}/terms`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 transition-colors hover:text-link"
+          >
+            Terms of Service
+          </a>{" "}
+          and{" "}
+          <a
+            href={`${MARKETING_URL}/privacy`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 transition-colors hover:text-link"
+          >
+            Privacy Policy
+          </a>
+          .
+        </p>
       </div>
     </div>
   );

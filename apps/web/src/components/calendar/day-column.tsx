@@ -145,6 +145,10 @@ function DayColumnImpl({
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!canEditDay || e.target !== e.currentTarget) return;
     if (e.key === "Enter") {
+      // Enter commits the draft, so it must never fire on a draft that isn't
+      // on screen: a paint drag leaves this column focused, and blind-adding
+      // the default 9:00 span from that state would be a nasty surprise.
+      if (!keyboardActive) return;
       e.preventDefault();
       addInterval(
         day,
@@ -155,6 +159,9 @@ function DayColumnImpl({
     }
     if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
     e.preventDefault();
+    // Arrowing is how someone who focused this column with a pointer reaches
+    // the keyboard draft, so it raises the draft as well as moving it.
+    setKeyboardActive(true);
     const delta = e.key === "ArrowUp" ? -SNAP_MINUTES : SNAP_MINUTES;
     setKeyboardDraft((current) => {
       if (e.shiftKey) {
@@ -180,7 +187,12 @@ function DayColumnImpl({
       onPointerDown={onPointerDown}
       onKeyDown={onKeyDown}
       onFocus={(e) => {
-        if (e.target === e.currentTarget) setKeyboardActive(true);
+        if (e.target !== e.currentTarget) return;
+        // A paint drag focuses this column too — the browser runs that default
+        // action *after* onPointerDown, so clearing the flag there can't hold.
+        // `:focus-visible` is the browser's own answer to "did this focus come
+        // from the keyboard", and only that kind should raise the draft.
+        setKeyboardActive(e.currentTarget.matches(":focus-visible"));
       }}
       onBlur={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget)) setKeyboardActive(false);

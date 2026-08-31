@@ -10,7 +10,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
-import { normalizeSlug } from "@qali/domain/slug";
+import { normalizeSlug, slugError } from "@qali/domain/slug";
 import { Button } from "@qali/ui/components/button";
 import { Input } from "@qali/ui/components/input";
 import { Switch } from "@qali/ui/components/switch";
@@ -152,6 +152,43 @@ function NumberStepper({
       </Button>
     </div>
   );
+}
+
+/** Why per-date painting is blocked before anything has been saved. The gate is
+ * *saved*, not *live*: a saved page that is paused paints just fine. */
+const UNSAVED_PAGE_REASON =
+  "Save your booking link first, then you can override single days";
+
+/**
+ * Why a booking-page save can't run, in the host's terms — or null when nothing
+ * blocks it.
+ *
+ * A save already in flight reports null: the button's own spinner says that
+ * better than a tooltip would. `slugError` is the same validator the mutation
+ * rejects with, so a name the server would refuse is refused in the same words
+ * here rather than in a second, drifting set of copy.
+ */
+export function bookingSaveBlockedReason(state: {
+  saving: boolean;
+  /** Weekly openings that survived validation — what `canSave` counts. */
+  openRuleCount: number;
+  /** The slug as normalized, not as typed. */
+  slug: string;
+  /** Whether the slug still matches the one already persisted, in which case
+   * there is no availability check in flight to wait on. */
+  slugUnchanged: boolean;
+  check: { available: boolean; reason: string | null } | undefined;
+}): string | null {
+  if (state.saving) return null;
+  if (state.openRuleCount === 0) return "Open at least one day";
+  const slugProblem = slugError(state.slug);
+  if (slugProblem) return slugProblem;
+  if (state.slugUnchanged) return null;
+  if (state.check === undefined) return "Checking that link name…";
+  if (!state.check.available) {
+    return state.check.reason ?? "That link name is taken";
+  }
+  return null;
 }
 
 /**
@@ -318,6 +355,19 @@ function AvailabilityForm({
   const slugReady =
     normalized.length >= 3 && (slugUnchanged || check?.available === true);
   const canSave = slugReady && rules.length > 0 && !saving;
+  const saveBlockedReason = bookingSaveBlockedReason({
+    saving,
+    openRuleCount: rules.length,
+    slug: normalized,
+    slugUnchanged,
+    check,
+  });
+  // Per-date overrides need a page to hang off, so an unsaved draft blocks them
+  // even when everything else is valid. Being *live* is not required — a saved
+  // but paused page paints fine.
+  const dateEditorBlocked = page === null || !canSave;
+  const dateEditorBlockedReason =
+    page === null ? UNSAVED_PAGE_REASON : saveBlockedReason;
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const publicUrl = `${origin}/${normalized}`;
   const variants = reduce ? dockVariantsReduced : dockVariants;
@@ -662,34 +712,52 @@ function AvailabilityForm({
             </div>
 
             {/* Per-date painting overrides individual days on the calendar; it
-                needs a saved page, so it's gated until one exists. */}
-            <button
-              type="button"
-              disabled={page === null || !canSave}
-              onClick={() => void openDateEditor()}
-              className="group flex items-center gap-3 rounded-2xl bg-muted/60 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-muted/60"
-            >
-              <HugeiconsIcon
-                icon={Calendar03Icon}
-                strokeWidth={2}
-                className="size-5 shrink-0 text-muted-foreground"
+                needs a saved page, so it's gated until one exists. The gate is
+                `aria-disabled` rather than `disabled` so the button still takes
+                a hover and a focus and can say why it won't open — a natively
+                disabled element emits no pointer events, and the tooltip would
+                never fire. The click guard, not the browser, is what blocks it. */}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-disabled={dateEditorBlocked}
+                    onClick={() => {
+                      if (dateEditorBlocked) return;
+                      void openDateEditor();
+                    }}
+                    className="group flex items-center gap-3 rounded-2xl bg-muted/60 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-muted/60"
+                  >
+                    <HugeiconsIcon
+                      icon={Calendar03Icon}
+                      strokeWidth={2}
+                      className="size-5 shrink-0 text-muted-foreground"
+                    />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="text-sm font-medium">
+                        Set specific dates
+                      </span>
+                      <span className="truncate text-xs text-muted-foreground">
+                        {page === null
+                          ? "Save your link first to override single days"
+                          : zoneChanged
+                            ? `Saving moves your published hours to ${timeZone.replace(/_/g, " ")} time`
+                            : "Save these settings, then paint individual days"}
+                      </span>
+                    </span>
+                    <HugeiconsIcon
+                      icon={ArrowRight01Icon}
+                      strokeWidth={2}
+                      className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+                    />
+                  </button>
+                }
               />
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="text-sm font-medium">Set specific dates</span>
-                <span className="truncate text-xs text-muted-foreground">
-                  {page === null
-                    ? "Save your link first to override single days"
-                    : zoneChanged
-                      ? `Saving moves your published hours to ${timeZone.replace(/_/g, " ")} time`
-                      : "Save these settings, then paint individual days"}
-                </span>
-              </span>
-              <HugeiconsIcon
-                icon={ArrowRight01Icon}
-                strokeWidth={2}
-                className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
-              />
-            </button>
+              {dateEditorBlockedReason && (
+                <TooltipContent>{dateEditorBlockedReason}</TooltipContent>
+              )}
+            </Tooltip>
 
             <div className="space-y-1.5">
               <p className="px-2 text-xs font-medium text-muted-foreground">
@@ -801,16 +869,37 @@ function AvailabilityForm({
                   </span>
                 </span>
               </label>
-              <Button
-                type="button"
-                size="sm"
-                disabled={!canSave}
-                className={cn(saving && "opacity-80")}
-                onClick={() => void persist(true)}
-              >
-                {saving && <Spinner />}
-                {saving ? "Saving…" : "Save"}
-              </Button>
+              {/* This is where the button above sends the host, so it has to
+                  explain itself too. `focusableWhenDisabled` is Base UI's own
+                  version of the trick used there: it marks the button
+                  `aria-disabled` instead of natively disabled — so it keeps
+                  emitting the pointer events the tooltip needs — while still
+                  swallowing the click. The `disabled:` variants in
+                  `buttonVariants` key off the native attribute and so no longer
+                  match, hence the `aria-disabled:` ones here. */}
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={!canSave}
+                      focusableWhenDisabled
+                      className={cn(
+                        "aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:bg-primary",
+                        saving && "opacity-80",
+                      )}
+                      onClick={() => void persist(true)}
+                    >
+                      {saving && <Spinner />}
+                      {saving ? "Saving…" : "Save"}
+                    </Button>
+                  }
+                />
+                {saveBlockedReason && (
+                  <TooltipContent>{saveBlockedReason}</TooltipContent>
+                )}
+              </Tooltip>
             </div>
           </motion.div>
         )}

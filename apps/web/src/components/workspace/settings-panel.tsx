@@ -455,10 +455,7 @@ function AccountsSection() {
         <ConnectionCard
           key={connection._id}
           connection={connection}
-          // Only a sole connection is provably the login grant, whose
-          // identity is the session's. A second account must show its own
-          // providerAccountId — never the session's name over foreign toggles.
-          primary={connections.length === 1}
+          sole={connections.length === 1}
           // Disconnecting the only account would strand the login; the sole
           // connection offers Pause instead.
           canDisconnect={connections.length > 1}
@@ -508,14 +505,24 @@ function AddAccountButton() {
 
 function ConnectionCard({
   connection,
-  primary,
+  sole,
   canDisconnect,
 }: {
   connection: Connection;
-  primary: boolean;
+  sole: boolean;
   canDisconnect: boolean;
 }) {
   const { data: session } = authClient.useSession();
+  // The login grant gets the session's identity (avatar, name, Primary badge);
+  // any other account must show its own providerAccountId — never the
+  // session's name over foreign toggles. A sole connection is the login grant
+  // by construction; with several, the stamped account email proves which one
+  // is (until a sync stamps it, a linked account renders as its provider).
+  const primary =
+    sole ||
+    (connection.providerAccountId !== undefined &&
+      connection.providerAccountId.toLowerCase() ===
+        session?.user?.email?.toLowerCase());
   const setStatus = useMutation(
     api.domains.calendar.mutations.setConnectionStatus,
   );

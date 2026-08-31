@@ -24,6 +24,10 @@ import { providerEventValidator } from "./validators";
  * preferences domain's default-calendar validation imports it. */
 export const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
 const CALENDAR_OPERATION_LEASE_MS = 10 * 60 * 1000;
+/** How long a connection whose profile fetch came back nameless waits before
+ * the next attempt. Without it, an unstampable grant re-fetches a token and
+ * hits userinfo on every user-initiated sync — i.e. every page load. */
+const IDENTITY_RETRY_MS = 24 * 60 * 60 * 1000;
 
 /** Resolve an owned local calendar row to a writable provider target. */
 export async function resolveCreateTargetHandler(
@@ -130,13 +134,20 @@ export async function reconcileLinkedAccountsHandler(
     throw new Error("Too many connections to reconcile safely");
   }
   // Rows whose grant is known but whose profile (name/photo) isn't stamped
-  // yet — the caller fetches those from the provider, action-side.
+  // yet — the caller fetches those from the provider, action-side. A fetch
+  // that came back empty (or threw) still stamps its attempt, so a grant that
+  // can never yield a name is retried daily rather than on every sync.
+  const now = Date.now();
   const pendingIdentity: {
     connectionId: Id<"calendarConnections">;
     credentialRef: string;
   }[] = [];
   for (const row of connections) {
-    if (row.credentialRef !== undefined && row.providerAccountName === undefined) {
+    if (
+      row.credentialRef !== undefined &&
+      row.providerAccountName === undefined &&
+      now - (row.providerIdentityAttemptedAt ?? 0) > IDENTITY_RETRY_MS
+    ) {
       pendingIdentity.push({
         connectionId: row._id,
         credentialRef: row.credentialRef,
@@ -152,7 +163,6 @@ export async function reconcileLinkedAccountsHandler(
     .filter((account) => !claimed.has(account.credentialRef))
     .sort((a, b) => a.createdAt - b.createdAt);
   if (unclaimed.length === 0) return { created: 0, pendingIdentity };
-  const now = Date.now();
   const legacy = connections.filter((row) => row.credentialRef === undefined);
   if (legacy.length === 1) {
     const oldest = unclaimed.shift()!;
@@ -206,7 +216,9 @@ export const reconcileLinkedAccounts = internalMutation({
 
 /** Best-effort profile stamp from the provider's ID token: the account email
  * fills `providerAccountId` only when a sync hasn't already, while name and
- * photo are refreshed whenever the provider reports new ones. */
+ * photo are refreshed whenever the provider reports new ones. Called with no
+ * profile fields when the fetch failed or came back empty — the attempt is
+ * recorded either way, which is what keeps the retry off the sync hot path. */
 export const stampConnectionIdentity = internalMutation({
   args: {
     userId: v.string(),
@@ -219,7 +231,9 @@ export const stampConnectionIdentity = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const connection = await ctx.db.get(args.connectionId);
     if (!connection || connection.userId !== args.userId) return null;
-    const patch: Partial<Doc<"calendarConnections">> = {};
+    const patch: Partial<Doc<"calendarConnections">> = {
+      providerIdentityAttemptedAt: Date.now(),
+    };
     if (
       args.providerAccountId !== undefined &&
       connection.providerAccountId === undefined
@@ -238,9 +252,7 @@ export const stampConnectionIdentity = internalMutation({
     ) {
       patch.providerAccountImageUrl = args.providerAccountImageUrl;
     }
-    if (Object.keys(patch).length > 0) {
-      await ctx.db.patch(args.connectionId, { ...patch, updatedAt: Date.now() });
-    }
+    await ctx.db.patch(args.connectionId, { ...patch, updatedAt: Date.now() });
     return null;
   },
 });

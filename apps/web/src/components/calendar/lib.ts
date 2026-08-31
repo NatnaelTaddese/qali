@@ -77,10 +77,15 @@ export type ConnectionListItem = FunctionReturnType<
  * server's resolved target can never disagree. */
 export function pickPrimaryCalendar(
   calendars: CalendarListItem[],
-  connections: ConnectionListItem[],
+  connections: ConnectionListItem[] | undefined,
 ): CalendarListItem | undefined {
   const primaries = calendars.filter((c) => c.primary);
   if (primaries.length <= 1) return primaries[0];
+  // Which account wins is unknowable until the connections load. Returning
+  // nothing leaves `calendarId` unset, so the server resolves the target
+  // through `preferredConnection` instead of honouring a guess sent as an
+  // explicit request.
+  if (connections === undefined) return undefined;
   const preferred = connections
     .filter((c) => c.status === "active")
     .sort(

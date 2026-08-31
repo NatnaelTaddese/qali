@@ -43,6 +43,7 @@ import { toast } from "sonner";
 
 import {
   calendarDisplayName,
+  groupCalendarsByAccount,
   isWritableCalendar,
   type CalendarListItem,
 } from "@/components/calendar/lib";
@@ -515,14 +516,16 @@ function ConnectionCard({
   const { data: session } = authClient.useSession();
   // The login grant gets the session's identity (avatar, name, Primary badge);
   // any other account must show its own providerAccountId — never the
-  // session's name over foreign toggles. A sole connection is the login grant
-  // by construction; with several, the stamped account email proves which one
-  // is (until a sync stamps it, a linked account renders as its provider).
+  // session's name over foreign toggles. The stamped account email is what
+  // proves which one is the login grant; a sole connection only stands in for
+  // it while unstamped, since disconnecting the login account can leave a
+  // single connection that is somebody else entirely.
+  const sessionEmail = session?.user?.email?.toLowerCase();
   const primary =
-    sole ||
     (connection.providerAccountId !== undefined &&
-      connection.providerAccountId.toLowerCase() ===
-        session?.user?.email?.toLowerCase());
+      sessionEmail !== undefined &&
+      connection.providerAccountId.toLowerCase() === sessionEmail) ||
+    (sole && connection.providerAccountId === undefined);
   const setStatus = useMutation(
     api.domains.calendar.mutations.setConnectionStatus,
   );
@@ -758,10 +761,13 @@ function DisconnectButton({
         setBusy(true);
         disconnect({ connectionId })
           .then(() => toast.success("Account disconnected"))
-          .catch((error: unknown) => {
+          .catch(reportSaveError("Couldn't disconnect the account"))
+          // The row outlives the call — it's paused here and deleted by the
+          // background purge — so releasing the button is what keeps a stalled
+          // purge from stranding the card with no way to retry.
+          .finally(() => {
             setBusy(false);
             setArmed(false);
-            reportSaveError("Couldn't disconnect the account")(error);
           });
       }}
     >
@@ -975,6 +981,7 @@ const DEFAULT_VIEW_OPTIONS = [
 function PreferencesSection() {
   const prefs = useQuery(api.domains.preferences.queries.getMyPreferences);
   const calendars = useQuery(api.domains.calendar.queries.listCalendars);
+  const connections = useQuery(api.domains.calendar.queries.listConnections);
   const updatePrefs = useMutation(
     api.domains.preferences.mutations.updatePreferences,
   );
@@ -990,6 +997,10 @@ function PreferencesSection() {
   const writable = sortCalendars(calendars).filter(isWritable);
   const defaultCalendar =
     writable.find((c) => c._id === prefs.defaultCalendarId) ?? null;
+  // Two accounts can each have a "Personal"; without the account heading the
+  // rows are indistinguishable and picking the wrong one silently routes new
+  // events to the other account.
+  const grouped = groupCalendarsByAccount(writable, connections ?? []);
 
   const save = (patch: Parameters<typeof updatePrefs>[0]) =>
     void updatePrefs(patch).catch(
@@ -1064,17 +1075,26 @@ function PreferencesSection() {
                       save({ reset: ["defaultCalendarId"] });
                     }}
                   />
-                  {writable.map((calendar) => (
-                    <PickerOption
-                      key={calendar._id}
-                      label={calendarDisplayName(calendar)}
-                      swatchVar={calendarColorVar(calendar)}
-                      selected={calendar._id === defaultCalendar?._id}
-                      onSelect={() => {
-                        close();
-                        save({ defaultCalendarId: calendar._id });
-                      }}
-                    />
+                  {grouped.map((group) => (
+                    <div key={group.key} className="flex flex-col gap-0.5">
+                      {grouped.length > 1 && group.label && (
+                        <p className="truncate px-2.5 pt-1 text-[11px] font-medium text-muted-foreground">
+                          {group.label}
+                        </p>
+                      )}
+                      {group.calendars.map((calendar) => (
+                        <PickerOption
+                          key={calendar._id}
+                          label={calendarDisplayName(calendar)}
+                          swatchVar={calendarColorVar(calendar)}
+                          selected={calendar._id === defaultCalendar?._id}
+                          onSelect={() => {
+                            close();
+                            save({ defaultCalendarId: calendar._id });
+                          }}
+                        />
+                      ))}
+                    </div>
                   ))}
                 </div>
               )}

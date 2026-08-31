@@ -479,6 +479,23 @@ export const purgeConnectionData = internalMutation({
         targetCalendarId: undefined,
       });
     }
+    // A pending request pinned its target when it was made, and acceptance
+    // trusts that pair over the page's — leaving it would fail
+    // validateBookingTarget forever. Cleared, acceptance re-resolves through
+    // the booking page. Terminal bookings keep theirs: they never re-resolve.
+    const pending = await ctx.db
+      .query("bookings")
+      .withIndex("by_host_and_status_and_start", (q) =>
+        q.eq("hostUserId", args.userId).eq("status", "pending"),
+      )
+      .take(PURGE_BATCH);
+    for (const booking of pending) {
+      if (booking.targetConnectionId !== connectionId) continue;
+      await ctx.db.patch(booking._id, {
+        targetConnectionId: undefined,
+        targetCalendarId: undefined,
+      });
+    }
     // People rows may keep a stale source entry pointing at the removed feed;
     // the next contacts sync re-ranks them, so they're deliberately left alone.
     const connection = await ctx.db.get(connectionId);

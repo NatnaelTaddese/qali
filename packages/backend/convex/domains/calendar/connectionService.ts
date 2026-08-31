@@ -43,6 +43,7 @@ export async function reconcileLinkedAccountsForUser(
     { userId, accounts },
   );
   for (const pending of result.pendingIdentity) {
+    let profile: Awaited<ReturnType<typeof fetchGoogleUserProfile>> = null;
     try {
       // The broker resolves (and refreshes) this grant's token; the userinfo
       // endpoint then works for every grant, unlike decoding a stored ID
@@ -52,24 +53,26 @@ export async function reconcileLinkedAccountsForUser(
         userId,
         pending.credentialRef,
       );
-      const profile = await fetchGoogleUserProfile(accessToken);
-      if (!profile) continue;
-      await ctx.runMutation(
-        internal.domains.calendar.mutations.stampConnectionIdentity,
-        {
-          userId,
-          connectionId: pending.connectionId,
-          providerAccountId: profile.email,
-          providerAccountName: profile.name,
-          providerAccountImageUrl: profile.picture,
-        },
-      );
+      profile = await fetchGoogleUserProfile(accessToken);
     } catch (error) {
       console.warn(
         "Linked-account profile fetch failed:",
         error instanceof Error ? error.message : error,
       );
     }
+    // Stamped even when the profile is missing: the mutation records the
+    // attempt, which is what stops a revoked or nameless grant from being
+    // refetched on every sync.
+    await ctx.runMutation(
+      internal.domains.calendar.mutations.stampConnectionIdentity,
+      {
+        userId,
+        connectionId: pending.connectionId,
+        providerAccountId: profile?.email,
+        providerAccountName: profile?.name,
+        providerAccountImageUrl: profile?.picture,
+      },
+    );
   }
   return result.created;
 }

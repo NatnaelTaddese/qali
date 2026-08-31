@@ -54,8 +54,8 @@ export function EventCreate({
 }) {
   const createEvent = useAction(api.domains.calendar.service.createEvent);
   const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
-  const connections =
-    useQuery(api.domains.calendar.queries.listConnections) ?? [];
+  // Left undefined while loading on purpose — see pickPrimaryCalendar.
+  const connections = useQuery(api.domains.calendar.queries.listConnections);
   const { defaultCalendarId, timeZone } = usePreferences();
   const [submitting, setSubmitting] = useState(false);
   // Idempotency key for this create intent: minted once and reused across retries

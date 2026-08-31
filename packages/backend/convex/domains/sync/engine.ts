@@ -1100,7 +1100,22 @@ export const reconcileCalendars = internalMutation({
           ...patch,
         });
       }
-      if (calendar.primary) primary = id;
+      if (calendar.primary) {
+        primary = id;
+        // Google's primary calendar id is the account email — the cheapest
+        // provider-account identity there is. Stamping it here lazily
+        // backfills connections created before linking existed, so the
+        // settings panel can label every account without a migration.
+        if (
+          connection.provider === "google" &&
+          connection.providerAccountId === undefined
+        ) {
+          await ctx.db.patch(connection._id, {
+            providerAccountId: calendar.id,
+            updatedAt: Date.now(),
+          });
+        }
+      }
       stored.push({
         localCalendarId: id,
         providerCalendarId: calendar.id,

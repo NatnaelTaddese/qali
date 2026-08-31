@@ -54,6 +54,7 @@ import {
 } from "@/components/calendar/motion";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { authClient } from "@/lib/auth-client";
+import { useScrollFadeFallback } from "@/lib/use-scroll-fade";
 import { UserAvatar } from "./user-avatar";
 import { useSyncNow } from "./use-sync-now";
 
@@ -147,6 +148,8 @@ export function SettingsPanel({
   }, []);
 
   const variants = reduce ? dockVariantsReduced : dockVariants;
+  // Firefox has no scroll-driven animations; this drives the fade by hand there.
+  const scrollFadeRef = useScrollFadeFallback();
 
   const goTo = (next: SettingsSection) => {
     const from = SECTIONS.findIndex((s) => s.id === section);
@@ -256,7 +259,10 @@ export function SettingsPanel({
                   <h2 className="font-display shrink-0 pr-9 text-2xl font-bold">
                     {active.label}
                   </h2>
-                  <div className="scroll-fade-y -mr-2 mt-4 min-h-0 flex-1 overflow-y-auto pr-2 pb-1 [scrollbar-width:thin]">
+                  <div
+                    ref={scrollFadeRef}
+                    className="scroll-fade-y -mr-2 mt-4 min-h-0 flex-1 overflow-y-auto pr-2 pb-1 [scrollbar-width:thin]"
+                  >
                     {sectionContent}
                   </div>
                 </motion.div>

@@ -177,7 +177,7 @@ export async function acceptBookingForHost(
   }
   let adapter;
   try {
-    adapter = await getCalendarAdapter(ctx, claimed.connectionId);
+    adapter = await getCalendarAdapter(ctx, args.hostUserId, claimed.connectionId);
   } catch (error) {
     await ctx.runMutation(
       internal.domains.booking.mutations.releaseBookingAcceptance,
@@ -263,7 +263,7 @@ export async function reconcileBookingAcceptanceHandler(
   if (!claimed) return null;
   let adapter: CalendarProviderAdapter;
   try {
-    adapter = await getCalendarAdapter(ctx, claimed.connectionId);
+    adapter = await getCalendarAdapter(ctx, claimed.hostUserId, claimed.connectionId);
   } catch (error) {
     await ctx.runMutation(
       internal.domains.booking.mutations.releaseBookingAcceptance,

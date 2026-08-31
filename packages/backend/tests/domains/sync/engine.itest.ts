@@ -594,7 +594,9 @@ describe("connection-aware contact ownership", () => {
         capabilities: { contacts: false, idempotentCreate: true },
       }),
     );
-    expect(await getContactsAdapter(testActionCtx(t), connectionId)).toBeNull();
+    expect(
+      await getContactsAdapter(testActionCtx(t), "no-contacts-user", connectionId),
+    ).toBeNull();
   });
 
   test("removing one connection's contact keeps another claim for the same email", async () => {

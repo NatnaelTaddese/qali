@@ -65,6 +65,34 @@ export function isWritableCalendar(calendar: {
   return WRITABLE_ACCESS_ROLES.has(calendar.accessRole ?? "");
 }
 
+/** One row of the `listConnections` DTO, mirroring {@link CalendarListItem}. */
+export type ConnectionListItem = FunctionReturnType<
+  typeof api.domains.calendar.queries.listConnections
+>[number];
+
+/** The default calendar when nothing is chosen: the primary calendar of the
+ * preferred connection. With several connected accounts each contributing a
+ * `primary` calendar, this mirrors the backend's `preferredConnection`
+ * ordering (active → Google first → oldest) so the client's preview and the
+ * server's resolved target can never disagree. */
+export function pickPrimaryCalendar(
+  calendars: CalendarListItem[],
+  connections: ConnectionListItem[],
+): CalendarListItem | undefined {
+  const primaries = calendars.filter((c) => c.primary);
+  if (primaries.length <= 1) return primaries[0];
+  const preferred = connections
+    .filter((c) => c.status === "active")
+    .sort(
+      (a, b) =>
+        Number(b.provider === "google") - Number(a.provider === "google") ||
+        a.createdAt - b.createdAt,
+    )[0];
+  return (
+    primaries.find((c) => c.connectionId === preferred?._id) ?? primaries[0]
+  );
+}
+
 /** User-facing calendar name, including a per-user override when one exists.
  * `providerCalendarId` is optional only for the transitional schema: a
  * pre-cutover row without one renders nameless rather than borrowing a legacy

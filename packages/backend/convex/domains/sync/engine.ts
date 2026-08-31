@@ -13,6 +13,7 @@ import { authComponent } from "../../auth";
 import {
   ensureConnectionSyncState,
   ensureGoogleConnection,
+  preferredConnection,
 } from "../calendar/connections";
 import { providerEventValidator } from "../calendar/validators";
 import type {
@@ -723,7 +724,7 @@ async function runConnection(
     // adapter and the feeds no-op.
     const connection: Doc<"calendarConnections"> | null = await ctx.runQuery(
       internal.domains.calendar.queries.getCalendarConnectionForAdapter,
-      { connectionId },
+      { connectionId, userId: state.userId },
     );
     if (!connection) {
       throw new Error("Calendar connection is unavailable");
@@ -1133,14 +1134,7 @@ export const reconcileCalendars = internalMutation({
       if (connections.length > 100) {
         throw new Error("Too many connections to choose a booking target safely");
       }
-      const preferred = connections
-        .filter((row) => row.status === "active")
-        .sort(
-          (a, b) =>
-            Number(b.provider === "google") - Number(a.provider === "google") ||
-            a.createdAt - b.createdAt ||
-            a._creationTime - b._creationTime,
-        )[0];
+      const preferred = preferredConnection(connections);
       if (
         booking &&
         !booking.targetConnectionId &&
@@ -2294,7 +2288,7 @@ export async function refreshConnectionCalendar(
   );
   if (!attemptId) return;
   try {
-    const adapter = await getCalendarAdapter(ctx, connectionId);
+    const adapter = await getCalendarAdapter(ctx, userId, connectionId);
     const calendars: Doc<"calendars">[] = await ctx.runQuery(
       internal.domains.sync.engine.listCalendarsForUser,
       { userId },

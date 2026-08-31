@@ -68,6 +68,23 @@ export async function ensureGoogleConnection(
   return connectionId;
 }
 
+/** The deterministic "primary account" among a user's connections: active
+ * first, Google before Microsoft, then the oldest — so the login grant keeps
+ * winning after a second account is linked. Every default-target choice
+ * (event create, booking adoption) must go through this one ordering. */
+export function preferredConnection(
+  connections: Doc<"calendarConnections">[],
+): Doc<"calendarConnections"> | undefined {
+  return connections
+    .filter((row) => row.status === "active")
+    .sort(
+      (a, b) =>
+        Number(b.provider === "google") - Number(a.provider === "google") ||
+        a.createdAt - b.createdAt ||
+        a._creationTime - b._creationTime,
+    )[0];
+}
+
 /** A provider's `primary` alias is writable before CalendarList has synced. */
 export async function ensureDefaultPrimaryCalendar(
   ctx: MutationCtx,

@@ -169,10 +169,14 @@ export const listConnections = query({
 /** Registry lookup that deliberately hides foreign and inactive connections. */
 export async function getCalendarConnectionForAdapterHandler(
   ctx: QueryCtx,
-  args: { connectionId: Id<"calendarConnections"> },
+  args: { connectionId: Id<"calendarConnections">; userId: string },
 ): Promise<Doc<"calendarConnections"> | null> {
   const connection = await ctx.db.get(args.connectionId);
-  if (!connection || connection.status !== "active") {
+  if (
+    !connection ||
+    connection.status !== "active" ||
+    connection.userId !== args.userId
+  ) {
     return null;
   }
   return connection;
@@ -181,6 +185,7 @@ export async function getCalendarConnectionForAdapterHandler(
 export const getCalendarConnectionForAdapter = internalQuery({
   args: {
     connectionId: v.id("calendarConnections"),
+    userId: v.string(),
   },
   handler: (ctx, args) => getCalendarConnectionForAdapterHandler(ctx, args),
 });

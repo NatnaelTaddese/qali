@@ -29,24 +29,35 @@ describe("connection model", () => {
     expect(
       await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
         connectionId,
+        userId: "owner",
       }),
     ).toMatchObject({ credentialRef: "account-1", provider: "google" });
+    // A foreign caller never sees the connection, even while it is active.
+    expect(
+      await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
+        connectionId,
+        userId: "someone_else",
+      }),
+    ).toBeNull();
     await t.run((ctx) => ctx.db.patch(connectionId, { status: "paused" }));
     expect(
       await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
         connectionId,
+        userId: "owner",
       }),
     ).toBeNull();
     await t.run((ctx) => ctx.db.patch(connectionId, { status: "error" }));
     expect(
       await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
         connectionId,
+        userId: "owner",
       }),
     ).toBeNull();
     await t.run((ctx) => ctx.db.delete(connectionId));
     expect(
       await t.query(internal.domains.calendar.queries.getCalendarConnectionForAdapter, {
         connectionId,
+        userId: "owner",
       }),
     ).toBeNull();
   });

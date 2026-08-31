@@ -15,6 +15,7 @@ import { authComponent } from "../../auth";
 import {
   ensureDefaultPrimaryCalendar,
   ensureGoogleConnection,
+  preferredConnection,
 } from "./connections";
 import { providerEventValidator } from "./validators";
 
@@ -45,7 +46,23 @@ export async function resolveCreateTargetHandler(
     if (calendars.length > 500) {
       throw new Error("Too many calendars to choose a write target safely");
     }
-    calendar = calendars.find((row) => row.primary) ?? null;
+    const primaries = calendars.filter((row) => row.primary);
+    calendar = primaries[0] ?? null;
+    if (primaries.length > 1) {
+      // Several connected accounts each have a `primary` calendar; the
+      // preferred connection's one is the deterministic default.
+      const connections = await ctx.db
+        .query("calendarConnections")
+        .withIndex("by_user", (q) => q.eq("userId", args.userId))
+        .take(101);
+      if (connections.length > 100) {
+        throw new Error("Too many connections to choose a write target safely");
+      }
+      const preferred = preferredConnection(connections);
+      calendar =
+        primaries.find((row) => row.connectionId === preferred?._id) ??
+        primaries[0];
+    }
   }
   if (!calendar && !args.requestedCalendarId) {
     const connectionId = await ensureGoogleConnection(ctx, args.userId);

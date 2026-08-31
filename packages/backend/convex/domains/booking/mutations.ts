@@ -22,6 +22,7 @@ import { consumeRateLimit } from "../../infrastructure/rateLimit";
 import {
   ensureDefaultPrimaryCalendar,
   ensureGoogleConnection,
+  preferredConnection,
 } from "../calendar/connections";
 import { calendarRequestFingerprint } from "../calendar/operationIdentity";
 import { clearBookingNotifications } from "../notifications/model";
@@ -107,7 +108,16 @@ async function primaryGoogleBookingTarget(
   ctx: MutationCtx,
   userId: string,
 ): Promise<BookingTarget> {
-  const connectionId = await ensureGoogleConnection(ctx, userId);
+  const connections = await ctx.db
+    .query("calendarConnections")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .take(101);
+  if (connections.length > 100) {
+    throw new Error("Too many connections to choose a booking target safely");
+  }
+  const connectionId =
+    preferredConnection(connections)?._id ??
+    (await ensureGoogleConnection(ctx, userId));
   const calendar =
     (await primaryLocalCalendar(ctx, userId, connectionId)) ??
     (await ensureDefaultPrimaryCalendar(ctx, userId, connectionId));

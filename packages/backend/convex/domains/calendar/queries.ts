@@ -190,6 +190,35 @@ export const getCalendarConnectionForAdapter = internalQuery({
   handler: (ctx, args) => getCalendarConnectionForAdapterHandler(ctx, args),
 });
 
+/** Everything disconnectAccount needs to decide: the owned connection (any
+ * status — a paused account can still be removed) and how many same-provider
+ * connections the user holds, since the last one may only be paused. */
+export const getConnectionForRemoval = internalQuery({
+  args: {
+    connectionId: v.id("calendarConnections"),
+    userId: v.string(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    connection: Doc<"calendarConnections">;
+    providerConnectionCount: number;
+  } | null> => {
+    const connection = await ctx.db.get(args.connectionId);
+    if (!connection || connection.userId !== args.userId) {
+      return null;
+    }
+    const siblings = await ctx.db
+      .query("calendarConnections")
+      .withIndex("by_user_and_provider", (q) =>
+        q.eq("userId", args.userId).eq("provider", connection.provider),
+      )
+      .take(101);
+    return { connection, providerConnectionCount: siblings.length };
+  },
+});
+
 /** Events overlapping [startMs, endMs) for the current user, e.g. a week window. */
 export async function listEventsInRangeHandler(
   ctx: QueryCtx,

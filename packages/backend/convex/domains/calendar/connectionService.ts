@@ -5,6 +5,7 @@
 import { v } from "convex/values";
 
 import { internal } from "../../_generated/api";
+import type { Doc } from "../../_generated/dataModel";
 import { action, type ActionCtx } from "../../_generated/server";
 import { authComponent, createAuth } from "../../auth";
 
@@ -49,5 +50,67 @@ export const connectLinkedAccounts = action({
       });
     }
     return { created };
+  },
+});
+
+/** Remove a linked account: revoke the Better Auth grant (so the reconcile
+ * safety net can't resurrect the connection), take it out of the sync
+ * fan-out, and purge everything it synced in the background. The sole
+ * remaining account can only be paused, never disconnected — that would
+ * strand the user's login. */
+export const disconnectAccount = action({
+  args: { connectionId: v.id("calendarConnections") },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    if (!user) throw new Error("Not authenticated");
+    const target: {
+      connection: Doc<"calendarConnections">;
+      providerConnectionCount: number;
+    } | null = await ctx.runQuery(
+      internal.domains.calendar.queries.getConnectionForRemoval,
+      { connectionId: args.connectionId, userId: user._id },
+    );
+    if (!target) throw new Error("Connection not found");
+    const { connection, providerConnectionCount } = target;
+    if (providerConnectionCount < 2) {
+      throw new Error(
+        "Your only account can't be disconnected — pause it instead",
+      );
+    }
+    if (!connection.credentialRef) {
+      // Without a credentialRef there is no grant to target; the next sync's
+      // reconcile stamps it, so this is transient.
+      throw new Error(
+        "This account hasn't finished connecting — try again after a sync",
+      );
+    }
+    const auth = createAuth(ctx);
+    const headers = await authComponent.getHeaders(ctx);
+    try {
+      await auth.api.unlinkAccount({
+        body: {
+          providerId: connection.provider,
+          accountId: connection.credentialRef,
+        },
+        headers,
+      });
+    } catch (error) {
+      // A grant a previous partial disconnect already revoked is fine — the
+      // point of this call is that it be gone. Anything else aborts before
+      // any data is touched.
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/account.*not.*found/i.test(message)) throw error;
+    }
+    await ctx.runMutation(
+      internal.domains.calendar.mutations.pauseConnectionForRemoval,
+      { connectionId: args.connectionId, userId: user._id },
+    );
+    await ctx.scheduler.runAfter(
+      0,
+      internal.jobs.maintenance.purgeConnectionData,
+      { connectionId: args.connectionId, userId: user._id },
+    );
+    return null;
   },
 });

@@ -27,7 +27,7 @@ import { Spinner } from "@qali/ui/components/spinner";
 import { Switch } from "@qali/ui/components/switch";
 import { cn } from "@qali/ui/lib/utils";
 import type { FunctionReturnType } from "convex/server";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { formatDistanceToNow } from "date-fns";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
@@ -453,6 +453,9 @@ function AccountsSection() {
           // identity is the session's. A second account must show its own
           // providerAccountId — never the session's name over foreign toggles.
           primary={connections.length === 1}
+          // Disconnecting the only account would strand the login; the sole
+          // connection offers Pause instead.
+          canDisconnect={connections.length > 1}
         />
       ))}
       <AddAccountButton />
@@ -500,9 +503,11 @@ function AddAccountButton() {
 function ConnectionCard({
   connection,
   primary,
+  canDisconnect,
 }: {
   connection: Connection;
   primary: boolean;
+  canDisconnect: boolean;
 }) {
   const { data: session } = authClient.useSession();
   const setStatus = useMutation(
@@ -673,8 +678,68 @@ function ConnectionCard({
             )
           }
         />
+        {canDisconnect && (
+          <SettingRow
+            title="Disconnect"
+            description="Removes this account and everything it synced"
+            control={<DisconnectButton connectionId={connection._id} />}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+const DISCONNECT_CONFIRM_TIMEOUT_MS = 4_000;
+
+/** Two-step disconnect, same shape as the event panel's delete: the dock has
+ * no modal layer, so the button confirms on itself and disarms if the second
+ * click never comes. */
+function DisconnectButton({
+  connectionId,
+}: {
+  connectionId: Id<"calendarConnections">;
+}) {
+  const disconnect = useAction(
+    api.domains.calendar.connectionService.disconnectAccount,
+  );
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(
+      () => setArmed(false),
+      DISCONNECT_CONFIRM_TIMEOUT_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [armed]);
+
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant={armed ? "destructive" : "secondary"}
+      disabled={busy}
+      aria-busy={busy}
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        setBusy(true);
+        disconnect({ connectionId })
+          .then(() => toast.success("Account disconnected"))
+          .catch((error: unknown) => {
+            setBusy(false);
+            setArmed(false);
+            reportSaveError("Couldn't disconnect the account")(error);
+          });
+      }}
+    >
+      {busy && <Spinner />}
+      {busy ? "Disconnecting…" : armed ? "Confirm?" : "Disconnect"}
+    </Button>
   );
 }
 

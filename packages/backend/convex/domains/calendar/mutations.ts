@@ -169,6 +169,23 @@ export const reconcileLinkedAccounts = internalMutation({
   handler: (ctx, args) => reconcileLinkedAccountsHandler(ctx, args),
 });
 
+/** Take a connection out of the sync fan-out ahead of its purge, so no new
+ * sync starts against a grant that is about to be (or was just) revoked. */
+export const pauseConnectionForRemoval = internalMutation({
+  args: { userId: v.string(), connectionId: v.id("calendarConnections") },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const connection = await ctx.db.get(args.connectionId);
+    if (connection && connection.userId === args.userId) {
+      await ctx.db.patch(args.connectionId, {
+        status: "paused",
+        updatedAt: Date.now(),
+      });
+    }
+    return null;
+  },
+});
+
 /** Resolve neutral event identity before any provider operation. */
 export async function resolveEventWriteTargetHandler(
   ctx: MutationCtx,

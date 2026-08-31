@@ -382,3 +382,57 @@ describe("connection model", () => {
     ).rejects.toThrow("Calendar not found");
   });
 });
+
+describe("default create target with several accounts", () => {
+  test("resolves to the oldest active connection's primary, unless one is requested", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_two_primaries";
+    const seed = async (key: string, createdAt: number) =>
+      await t.run(async (ctx) => {
+        const connectionId = await ctx.db.insert("calendarConnections", {
+          userId,
+          provider: "google",
+          credentialRef: `sub-${key}`,
+          status: "active",
+          createdAt,
+          updatedAt: createdAt,
+        });
+        const calendarId = await ctx.db.insert("calendars", {
+          userId,
+          connectionId,
+          providerCalendarId: `${key}@example.com`,
+          primary: true,
+          accessRole: "owner",
+          selected: true,
+          isShared: false,
+        });
+        return { connectionId, calendarId };
+      });
+    // Inserted linked-first so document order can't accidentally pass the test.
+    const linked = await seed("linked", 2);
+    const login = await seed("login", 1);
+
+    const byDefault = await t.mutation(
+      internal.domains.calendar.mutations.resolveCreateTarget,
+      { userId },
+    );
+    expect(byDefault.connectionId).toEqual(login.connectionId);
+    expect(byDefault.localCalendarId).toEqual(login.calendarId);
+
+    const requested = await t.mutation(
+      internal.domains.calendar.mutations.resolveCreateTarget,
+      { userId, requestedCalendarId: linked.calendarId },
+    );
+    expect(requested.connectionId).toEqual(linked.connectionId);
+
+    // Pausing the login connection hands the default to the linked account.
+    await t.run((ctx) =>
+      ctx.db.patch(login.connectionId, { status: "paused" }),
+    );
+    const afterPause = await t.mutation(
+      internal.domains.calendar.mutations.resolveCreateTarget,
+      { userId },
+    );
+    expect(afterPause.connectionId).toEqual(linked.connectionId);
+  });
+});

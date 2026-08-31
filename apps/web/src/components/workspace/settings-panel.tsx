@@ -434,9 +434,12 @@ function AccountsSection() {
   if (connections.length === 0) {
     return (
       <SettingCard>
-        <p className="py-8 text-center text-xs text-muted-foreground">
-          No connected accounts yet — they appear after your first sync.
-        </p>
+        <div className="flex flex-col items-center gap-4 py-8">
+          <p className="text-center text-xs text-muted-foreground">
+            No connected accounts yet — they appear after your first sync.
+          </p>
+          <AddAccountButton />
+        </div>
       </SettingCard>
     );
   }
@@ -452,7 +455,45 @@ function AccountsSection() {
           primary={connections.length === 1}
         />
       ))}
+      <AddAccountButton />
     </div>
+  );
+}
+
+/** Starts Better Auth's link flow: the Google chooser + consent, then back to
+ * the workspace with `?linked=google`, where connectLinkedAccounts turns the
+ * new grant into a connection. */
+function AddAccountButton() {
+  const [isLinking, setIsLinking] = useState(false);
+
+  const linkAccount = async () => {
+    setIsLinking(true);
+    await authClient.linkSocial(
+      {
+        provider: "google",
+        callbackURL: "/?linked=google",
+        errorCallbackURL: "/?linkError=google",
+      },
+      {
+        onError: (error) => {
+          setIsLinking(false);
+          toast.error(error.error.message || error.error.statusText);
+        },
+      },
+    );
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={() => void linkAccount()}
+      disabled={isLinking}
+      aria-busy={isLinking}
+      className="flex w-full items-center justify-center gap-2 rounded-3xl border border-dashed border-border bg-muted/30 px-4 py-4 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
+    >
+      {isLinking ? <Spinner /> : <Google aria-hidden className="size-4" />}
+      {isLinking ? "Opening Google…" : "Add Google account"}
+    </button>
   );
 }
 

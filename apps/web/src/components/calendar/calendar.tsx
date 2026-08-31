@@ -9,7 +9,7 @@ import type { Doc } from "@qali/backend/convex/_generated/dataModel";
 import { Checkbox } from "@qali/ui/components/checkbox";
 import { GooDropdown } from "@qali/ui/components/ui/goo-dropdown";
 import { cn } from "@qali/ui/lib/utils";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { addDays, getISOWeek, isSameDay, isSameMonth, startOfDay } from "date-fns";
 import { useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -24,6 +24,7 @@ import {
   type CalendarView,
   dayKey,
   eventQueryRange,
+  groupCalendarsByAccount,
   msToPct,
   pageDays,
   pageStart,
@@ -430,12 +431,15 @@ export function CalendarWeekView() {
 
 function CalendarPicker({ calendars }: { calendars: CalendarListItem[] }) {
   const setSelected = useMutation(api.domains.calendar.mutations.setCalendarSelected);
+  const connections =
+    useQuery(api.domains.calendar.queries.listConnections) ?? [];
   const selectedCount = calendars.filter((c) => c.selected).length;
   // Primary first, then alphabetical by display name.
   const sorted = [...calendars].sort((a, b) => {
     if (a.primary !== b.primary) return a.primary ? -1 : 1;
     return calendarDisplayName(a).localeCompare(calendarDisplayName(b));
   });
+  const grouped = groupCalendarsByAccount(sorted, connections);
 
   return (
     <GooDropdown
@@ -472,13 +476,20 @@ function CalendarPicker({ calendars }: { calendars: CalendarListItem[] }) {
             Calendars
           </p>
           <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
-            {sorted.map((cal, index) => (
+            {grouped.map((group) => (
+              <div key={group.key}>
+                {grouped.length > 1 && group.label && (
+                  <p className="flex h-6 items-center truncate px-1.5 pt-1 text-[11px] font-medium opacity-60">
+                    {group.label}
+                  </p>
+                )}
+            {group.calendars.map((cal) => (
               <label
                 key={cal._id}
                 className="flex h-8 cursor-pointer items-center gap-2.5 rounded-lg px-1.5 transition-colors hover:bg-[var(--goo-hover-fill)]"
               >
                 <Checkbox
-                  autoFocus={index === 0}
+                  autoFocus={cal._id === sorted[0]?._id}
                   className="size-5 rounded-md border-primary-foreground/40 bg-primary-foreground/10 transition-colors focus-visible:border-primary-foreground focus-visible:ring-primary-foreground/30 data-checked:border-primary-foreground data-checked:bg-primary-foreground data-checked:text-primary dark:data-checked:bg-primary-foreground"
                   checked={cal.selected}
                   onCheckedChange={(checked) =>
@@ -499,10 +510,16 @@ function CalendarPicker({ calendars }: { calendars: CalendarListItem[] }) {
                 </span>
               </label>
             ))}
+              </div>
+            ))}
           </div>
         </div>
       }
-      contentHeight={28 + Math.min(sorted.length, 8) * 32}
+      contentHeight={
+        28 +
+        Math.min(sorted.length, 8) * 32 +
+        (grouped.length > 1 ? grouped.filter((g) => g.label).length * 28 : 0)
+      }
       triggerSound={false}
       align="end"
       side="bottom"

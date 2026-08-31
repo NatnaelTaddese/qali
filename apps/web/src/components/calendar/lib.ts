@@ -93,6 +93,33 @@ export function pickPrimaryCalendar(
   );
 }
 
+/** Calendars grouped for pickers: one unlabeled group while there's a single
+ * account, one group per connection (oldest first, matching the preferred-
+ * connection ordering) once a second is linked. Input order is preserved
+ * inside each group, so callers sort first and group after. */
+export function groupCalendarsByAccount(
+  calendars: CalendarListItem[],
+  connections: ConnectionListItem[],
+): { key: string; label?: string; calendars: CalendarListItem[] }[] {
+  if (connections.length <= 1) {
+    return calendars.length > 0 ? [{ key: "all", calendars }] : [];
+  }
+  const ordered = [...connections].sort((a, b) => a.createdAt - b.createdAt);
+  const known = new Set<string>(ordered.map((c) => c._id));
+  const groups = ordered.map((connection) => ({
+    key: connection._id as string,
+    label: connection.providerAccountId ?? "Connected account",
+    calendars: calendars.filter((c) => c.connectionId === connection._id),
+  }));
+  const orphans = calendars.filter(
+    (c) => c.connectionId === undefined || !known.has(c.connectionId),
+  );
+  if (orphans.length > 0) {
+    groups.push({ key: "other", label: "Other", calendars: orphans });
+  }
+  return groups.filter((group) => group.calendars.length > 0);
+}
+
 /** User-facing calendar name, including a per-user override when one exists.
  * `providerCalendarId` is optional only for the transitional schema: a
  * pre-cutover row without one renders nameless rather than borrowing a legacy

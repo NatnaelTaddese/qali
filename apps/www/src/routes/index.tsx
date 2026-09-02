@@ -88,7 +88,7 @@ function Hero() {
     // whenever a mobile browser's small and dynamic viewports disagree, which
     // reads as a flicker as the toolbar collapses. The sky is clipped inside a
     // rounded card that lines up with the feature grid below.
-    <section className="bg-background px-4 pt-4 sm:px-6 sm:pt-6">
+    <section className="bg-background px-4 pt-8 sm:px-6 sm:pt-10 lg:pt-14">
       <motion.div
         style={{ scale }}
         className="relative mx-auto max-w-[96rem] origin-top overflow-hidden rounded-3xl ring-1 ring-border"

@@ -71,12 +71,24 @@
 /* The loading-screen styles (.chroma-loop, its keyframe, and the .loading-screen
  * exit) live in the shared @qali/ui globals so apps/web reuses them too. */
 
-/* The hero's HalftoneCmyk sky is clipped by a rounded card (overflow-hidden)
- * rather than faded or masked. A CSS `mask-image` would push the WebGL layer
- * through an offscreen alpha-composite pass that Chromium colour-manages
- * differently depending on compositing state, so the sky's saturation used to
- * shift while the mascot animated over it. Plain clipping keeps the shader on
- * one stable layer. */
+/* Hero shader fade: inside its rounded card, the HalftoneCmyk sky is fully
+ * opaque along the bottom and fades into the page background toward the top,
+ * so it reads as ground rising into the page rather than a hard-edged panel.
+ *
+ * This is painted as an ordinary gradient OVERLAY rather than a CSS `mask-image`
+ * on purpose. A mask forces the WebGL layer through an offscreen alpha-composite
+ * pass, and in Chromium that pass is colour-managed differently depending on the
+ * layer's compositing state. The mascot animating over the backdrop flipped that
+ * state on and off, so the sky visibly gained blue saturation for the duration
+ * of each interaction (a Chromium-only artifact). Fading with a plain overlay
+ * keeps the shader on a single stable layer, so its colour never shifts. */
+.hero-shader-fade {
+  background-image: linear-gradient(
+    to top,
+    transparent 0%,
+    var(--background) 100%
+  );
+}
 
 /* Feature-grid micro-animations (components/features/*). Deliberately
  * transform-only (never animate opacity from 0): the resting state is always

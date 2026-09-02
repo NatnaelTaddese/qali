@@ -90,6 +90,7 @@ function Hero() {
           colorK="#231F20"
           style={{ width: "100%", height: "100%", backgroundColor: "#FBFAF5" }}
           />
+          <div className="hero-shader-fade absolute inset-0" />
         </div>
         <div className="relative z-10 flex flex-col items-center px-6 pt-20 pb-12 text-center sm:pt-28 sm:pb-16">
           <Mascot className="mb-5 shrink-0 sm:mb-7" />

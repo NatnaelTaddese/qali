@@ -22,7 +22,7 @@ const CHIPS: Chip[] = [
   { title: "Dentist", tint: "--event-6", account: 2 },
   { title: "1:1 Sam", tint: "--event-2", account: 1 },
   { title: "Gym", tint: "--event-6", account: 2 },
-  { title: "Roadmap", tint: "--event-2", account: 1 },
+  { title: "Sync", tint: "--event-2", account: 1 },
 ];
 
 export function AccountsScene({ playing }: { playing: boolean }) {
@@ -74,16 +74,20 @@ export function AccountsScene({ playing }: { playing: boolean }) {
             <span
               key={chip.title}
               className={cn(
-                "h-6 flex-1 truncate rounded-md border-l-[3px] px-1.5 text-[0.6rem] leading-6 font-medium text-foreground transition-[transform,opacity] duration-500 ease-out motion-reduce:transition-none",
+                "relative h-6 min-w-0 flex-1 overflow-hidden rounded-md pr-1.5 pl-2.5 text-[0.6rem] leading-6 font-medium text-foreground shadow-sm ring-1 ring-border/60 inset-ring inset-ring-black/10 transition-[transform,opacity] duration-500 ease-out motion-reduce:transition-none dark:inset-ring-white/10",
                 hidden ? "scale-90 opacity-0" : "scale-100 opacity-100",
               )}
               style={{
                 backgroundColor: `color-mix(in oklab, var(${chip.tint}) 22%, var(--card))`,
-                borderLeftColor: `var(${chip.tint})`,
                 transitionDelay: linked && chip.account === 2 ? `${i * 90}ms` : "0ms",
               }}
             >
-              {chip.title}
+              <span
+                aria-hidden
+                className="absolute top-1 bottom-1 left-1 w-[3px] rounded-full"
+                style={{ backgroundColor: `var(${chip.tint})` }}
+              />
+              <span className="block truncate">{chip.title}</span>
             </span>
           );
         })}

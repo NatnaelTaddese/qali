@@ -116,7 +116,7 @@ function FeatureCell({
       <div
         ref={ref}
         aria-hidden={interactive ? undefined : true}
-        className="relative flex min-h-40 flex-1 items-center justify-center overflow-hidden px-4 pt-5 pb-3 select-none sm:px-6 sm:pt-6 sm:pb-4"
+        className="relative flex min-h-40 flex-1 items-center justify-center overflow-hidden px-4 pt-5 pb-5 select-none sm:px-6 sm:pt-6 sm:pb-6"
       >
         {children(playing)}
       </div>

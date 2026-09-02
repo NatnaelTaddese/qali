@@ -203,7 +203,7 @@ export function AssistantScene({ playing }: { playing: boolean }) {
         )}
       </MiniGrid>
 
-      <div className="flex justify-center">
+      <div className="mt-3 flex justify-center">
         <div
           className="overflow-hidden rounded-full bg-primary text-primary-foreground shadow-lg ring-1 ring-black/10 transition-[width] duration-300 ease-out motion-reduce:transition-none"
           style={pillWidth != null ? { width: pillWidth } : undefined}

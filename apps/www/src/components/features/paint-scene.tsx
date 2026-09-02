@@ -83,7 +83,7 @@ export function PaintScene({ playing }: { playing: boolean }) {
         days={WEEK_DAYS}
         dates={days}
         todayIndex={todayIndex}
-        className="h-44 sm:h-52"
+        className="h-56 sm:h-64"
       >
         {(dayIndex) => (
           <>

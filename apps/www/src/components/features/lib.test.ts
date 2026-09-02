@@ -13,10 +13,10 @@ import {
 } from "./lib";
 
 describe("grid geometry", () => {
-  test("positions minutes within the default 8am–6pm window", () => {
+  test("positions minutes within the default 8am–5pm window", () => {
     expect(topPct(8 * 60)).toBe(0);
-    expect(topPct(13 * 60)).toBe(50);
-    expect(heightPct(9 * 60, 10 * 60)).toBe(10);
+    expect(topPct(17 * 60)).toBe(100);
+    expect(heightPct(9 * 60, 10 * 60)).toBeCloseTo(100 / 9);
   });
 
   test("honours a custom window", () => {

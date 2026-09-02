@@ -13,8 +13,9 @@ export interface TimeWindow {
   end: number;
 }
 
-/** The assistant scene's window: 8am – 6pm. */
-export const DEFAULT_WINDOW: TimeWindow = { start: 8 * 60, end: 18 * 60 };
+/** The assistant scene's window: 8am – 5pm. Nine hours keeps each hour row
+ * tall enough for a card to show its title and time without clipping. */
+export const DEFAULT_WINDOW: TimeWindow = { start: 8 * 60, end: 17 * 60 };
 
 /** Hour marks across a window, inclusive of both edges. */
 export function hoursIn(win: TimeWindow): number[] {
@@ -98,19 +99,19 @@ export interface Scene {
 export const SCENES: Scene[] = [
   {
     id: "move",
-    prompt: "Move my Focus block to the morning",
+    prompt: "Move Focus block to the morning",
     thinking: "Drafting a reschedule",
     confirmation: "Moved Focus block to 8:00 AM",
   },
   {
     id: "find",
-    prompt: "Find 30 minutes for a call Thursday",
+    prompt: "Find 30 min on Thursday",
     thinking: "Looking for open time",
     confirmation: "Found 30 min Thursday at 10:00 AM",
   },
   {
     id: "clear",
-    prompt: "Clear my Friday afternoon",
+    prompt: "Clear Friday afternoon",
     thinking: "Drafting a cancellation",
     confirmation: "Cleared Friday afternoon",
   },

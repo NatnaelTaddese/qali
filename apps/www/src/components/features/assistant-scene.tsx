@@ -183,7 +183,7 @@ export function AssistantScene({ playing }: { playing: boolean }) {
         days={ASSISTANT_DAYS}
         dates={days}
         todayIndex={todayIndex}
-        className="h-52 sm:h-60"
+        className="h-72 sm:h-80"
       >
         {(dayIndex) => (
           <>

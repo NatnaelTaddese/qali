@@ -26,7 +26,7 @@ describe("FeatureGrid", () => {
   test("keeps the assistant's prompt chips live and the rest decorative", () => {
     // Three prompt chips; the Reset button only appears after a click.
     expect(html.match(/<button/g)?.length).toBe(3);
-    expect(html).toContain("Move my Focus block to the morning");
+    expect(html).toContain("Move Focus block to the morning");
     // Four decorative scene wrappers plus the assistant's own grid.
     expect(html.match(/aria-hidden="true"/g)?.length).toBeGreaterThanOrEqual(5);
   });

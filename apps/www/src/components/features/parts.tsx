@@ -132,6 +132,8 @@ export function MiniEvent({
   win?: TimeWindow;
 }) {
   const color = dim ? "--event-neutral" : event.color;
+  // A short card only has room for its title; the time line would clip.
+  const showTime = event.end - event.start >= 60;
   return (
     <div
       className={cn(
@@ -155,9 +157,11 @@ export function MiniEvent({
         <p className="truncate text-[0.6rem] font-medium leading-tight text-foreground sm:text-[0.7rem]">
           {event.title}
         </p>
-        <p className="hidden truncate text-[0.6rem] leading-tight text-muted-foreground sm:block">
-          {formatRange(event.start, event.end)}
-        </p>
+        {showTime && (
+          <p className="hidden truncate text-[0.6rem] leading-tight text-muted-foreground sm:block">
+            {formatRange(event.start, event.end)}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -182,9 +186,11 @@ export function GhostCard({
       <span className="truncate text-[0.6rem] font-semibold text-primary sm:text-[0.7rem]">
         {slot.label}
       </span>
-      <span className="hidden truncate text-[0.6rem] text-primary/70 sm:block">
-        {formatRange(slot.start, slot.end)}
-      </span>
+      {slot.end - slot.start >= 60 && (
+        <span className="hidden truncate text-[0.6rem] text-primary/70 sm:block">
+          {formatRange(slot.start, slot.end)}
+        </span>
+      )}
     </div>
   );
 }

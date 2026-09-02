@@ -5,6 +5,7 @@ import { Input } from "@qali/ui/components/input";
 import { cn } from "@qali/ui/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
+import { motion, useReducedMotion, useScroll, useTransform } from "motion/react";
 import { useState } from "react";
 import type { CSSProperties } from "react";
 import { toast } from "sonner";
@@ -55,15 +56,49 @@ function LandingPage() {
   );
 }
 
+/** How far the page scrolls while the hero card grows to full size. */
+const HERO_GROW_SCROLL = 360;
+/** The card's starting scale, before any scroll. */
+const HERO_START_SCALE = 0.92;
+/** Scroll range and travel for the sky's parallax drift. */
+const SKY_DRIFT_SCROLL = 720;
+const SKY_DRIFT_PX = 120;
+
 function Hero() {
+  // Scroll-driven, not viewport-driven: the card scales from slightly inset
+  // to full size over the first few hundred pixels of scroll and holds there,
+  // while the sky drifts down more slowly than the page. Motion values write
+  // transforms directly, so no React re-render runs per scroll frame. Reduced
+  // motion gets the resting frame.
+  const reduce = useReducedMotion();
+  const { scrollY } = useScroll();
+  const scale = useTransform(
+    scrollY,
+    [0, HERO_GROW_SCROLL],
+    [reduce ? 1 : HERO_START_SCALE, 1],
+  );
+  const skyY = useTransform(
+    scrollY,
+    [0, SKY_DRIFT_SCROLL],
+    [0, reduce ? 0 : SKY_DRIFT_PX],
+  );
+
   return (
     // Content-sized rather than viewport-sized: a `min-h-svh` hero reflows
     // whenever a mobile browser's small and dynamic viewports disagree, which
     // reads as a flicker as the toolbar collapses. The sky is clipped inside a
     // rounded card that lines up with the feature grid below.
     <section className="bg-background px-4 pt-4 sm:px-6 sm:pt-6">
-      <div className="relative mx-auto max-w-[96rem] overflow-hidden rounded-3xl ring-1 ring-border">
-        <div aria-hidden className="pointer-events-none absolute inset-0 z-0">
+      <motion.div
+        style={{ scale }}
+        className="relative mx-auto max-w-[96rem] origin-top overflow-hidden rounded-3xl ring-1 ring-border"
+      >
+        {/* The sky is oversized so its parallax travel never exposes an edge. */}
+        <motion.div
+          aria-hidden
+          style={{ y: skyY, scale: 1.12 }}
+          className="pointer-events-none absolute inset-0 z-0"
+        >
           <HalftoneCmyk
           speed={0}
           size={0.08}
@@ -91,7 +126,7 @@ function Hero() {
           style={{ width: "100%", height: "100%", backgroundColor: "#FBFAF5" }}
           />
           <div className="hero-shader-fade absolute inset-0" />
-        </div>
+        </motion.div>
         {/* One column, one gap: the mascot, eyebrow, title, subline and
             button all sit the same distance apart. */}
         <div className="relative z-10 flex flex-col items-center gap-5 px-6 pt-32 pb-20 text-center sm:gap-6 sm:pt-48 sm:pb-32">
@@ -121,7 +156,7 @@ function Hero() {
             </Button>
           </div>
         </div>
-      </div>
+      </motion.div>
     </section>
   );
 }

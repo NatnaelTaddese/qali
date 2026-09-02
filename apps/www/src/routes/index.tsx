@@ -99,7 +99,7 @@ function Hero() {
               className="hero-reveal rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10"
               style={{ "--hero-delay": "0.35s" } as CSSProperties}
             >
-              Currently in beta
+              Now in beta for Google Calendar
             </span>
             <h1 className="chroma-text chroma-text-animate font-display text-4xl font-medium tracking-tight text-balance sm:text-6xl">
               The calendar that runs itself
@@ -108,7 +108,8 @@ function Hero() {
               className="hero-reveal-blur max-w-xl text-lg text-muted-foreground text-balance"
               style={{ "--hero-delay": "0.7s" } as CSSProperties}
             >
-              Cursor for your daily schedules
+              Tell qali what you need in plain words. It reads your whole
+              week, finds the time, and asks before anything changes.
             </p>
             <div
               className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"

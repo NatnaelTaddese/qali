@@ -57,12 +57,14 @@ function LandingPage() {
 
 function Hero() {
   return (
-    <section className="relative flex min-h-svh flex-col bg-background items-center justify-end overflow-hidden px-6 pt-16 pb-10 text-center">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 z-0 bg-background"
-      >
-        <HalftoneCmyk
+    // Content-sized rather than viewport-sized: a `min-h-svh` hero reflows
+    // whenever a mobile browser's small and dynamic viewports disagree, which
+    // reads as a flicker as the toolbar collapses. The sky is clipped inside a
+    // rounded card that lines up with the feature grid below.
+    <section className="bg-background px-4 pt-4 sm:px-6 sm:pt-6">
+      <div className="relative mx-auto max-w-5xl overflow-hidden rounded-3xl ring-1 ring-border">
+        <div aria-hidden className="pointer-events-none absolute inset-0 z-0">
+          <HalftoneCmyk
           speed={0}
           size={0.08}
           gridNoise={0.16}
@@ -87,33 +89,35 @@ function Hero() {
           colorY="#FFD800"
           colorK="#231F20"
           style={{ width: "100%", height: "100%", backgroundColor: "#FBFAF5" }}
-        />
-        <div className="hero-shader-fade absolute inset-0" />
-      </div>
-      <Mascot className="relative z-10 mb-5 shrink-0 sm:mb-7" />
-      <div className="relative z-10 mx-auto flex max-w-3xl flex-col items-center gap-4">
-        <span
-          className="hero-reveal rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10"
-          style={{ "--hero-delay": "0.35s" } as CSSProperties}
-        >
-          Currently in beta
-        </span>
-        <h1 className="chroma-text chroma-text-animate font-display text-4xl font-medium tracking-tight text-balance sm:text-6xl">
-          The calendar that runs itself
-        </h1>
-        <p
-          className="hero-reveal-blur max-w-xl text-lg text-muted-foreground text-balance"
-          style={{ "--hero-delay": "0.7s" } as CSSProperties}
-        >
-          Cursor for your daily schedules
-        </p>
-        <div
-          className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"
-          style={{ "--hero-delay": "0.9s" } as CSSProperties}
-        >
-          <Button size="lg" onClick={() => scrollToId("waitlist")}>
-            Join the waitlist
-          </Button>
+          />
+        </div>
+        <div className="relative z-10 flex flex-col items-center px-6 pt-20 pb-12 text-center sm:pt-28 sm:pb-16">
+          <Mascot className="mb-5 shrink-0 sm:mb-7" />
+          <div className="flex max-w-3xl flex-col items-center gap-4">
+            <span
+              className="hero-reveal rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10"
+              style={{ "--hero-delay": "0.35s" } as CSSProperties}
+            >
+              Currently in beta
+            </span>
+            <h1 className="chroma-text chroma-text-animate font-display text-4xl font-medium tracking-tight text-balance sm:text-6xl">
+              The calendar that runs itself
+            </h1>
+            <p
+              className="hero-reveal-blur max-w-xl text-lg text-muted-foreground text-balance"
+              style={{ "--hero-delay": "0.7s" } as CSSProperties}
+            >
+              Cursor for your daily schedules
+            </p>
+            <div
+              className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"
+              style={{ "--hero-delay": "0.9s" } as CSSProperties}
+            >
+              <Button size="lg" onClick={() => scrollToId("waitlist")}>
+                Join the waitlist
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     </section>

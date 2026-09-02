@@ -92,11 +92,11 @@
   );
 }
 
-/* Feature-preview micro-animations. Deliberately transform-only (never animate
- * opacity from 0): the resting state is always fully visible, so content can
- * never be left invisible if the animation is throttled or disabled — the slide
- * is pure enhancement. `feature-line-in` replays each time its span is
- * key-remounted with a new assistant message. */
+/* Feature-grid micro-animations (components/features/*). Deliberately
+ * transform-only (never animate opacity from 0): the resting state is always
+ * fully visible, so content can never be left invisible if the animation is
+ * throttled or disabled — the slide is pure enhancement. `feature-line-in`
+ * replays each time its span is key-remounted with a new message. */
 @keyframes feature-line-in {
   from {
     transform: translateY(4px);
@@ -134,11 +134,30 @@
   animation: feature-dot 1s ease-in-out infinite;
 }
 
+/* The save shimmer from the app's availability blocks: one band crossing the
+ * painted span, same 0.55s the real `AvailabilityBlock` uses. */
+@keyframes feature-sweep {
+  from {
+    transform: translateX(-60%);
+  }
+  to {
+    transform: translateX(60%);
+  }
+}
+.feature-sweep {
+  animation: feature-sweep 0.55s ease-in-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .feature-line-in,
   .feature-pop-in,
   .feature-dot {
     animation: none;
+  }
+  /* A band that never moves would sit as a slab across the span. */
+  .feature-sweep {
+    animation: none;
+    opacity: 0;
   }
 }
 

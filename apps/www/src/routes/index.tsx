@@ -93,6 +93,7 @@ function Hero() {
     // card's bottom edge.
     <section className="relative z-10 bg-background px-4 pt-8 pb-6 sm:px-6 sm:pt-10 sm:pb-8 lg:pt-14">
       <motion.div
+        data-mascot-stage
         style={{ scale }}
         className="relative mx-auto max-w-[96rem] origin-top overflow-hidden rounded-3xl ring-1 ring-foreground/10 shadow-[0_24px_60px_-28px_rgba(24,20,40,0.35)] dark:ring-white/10"
       >

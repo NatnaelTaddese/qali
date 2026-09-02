@@ -177,7 +177,7 @@ export function GhostCard({
 }) {
   return (
     <div
-      className="feature-pop-in absolute inset-x-0.5 z-20 flex flex-col justify-center gap-0.5 overflow-hidden rounded-md border-2 border-dashed border-primary/60 bg-primary/[0.08] px-1.5 py-0.5 text-left sm:inset-x-1 sm:rounded-lg"
+      className="feature-pop-in absolute inset-x-0.5 z-20 flex min-h-[16px] flex-col justify-center gap-0.5 overflow-hidden rounded-md border-2 border-dashed border-primary/60 bg-primary/[0.08] px-1.5 text-left leading-none sm:inset-x-1 sm:rounded-lg"
       style={{
         top: `${topPct(slot.start, win)}%`,
         height: `${heightPct(slot.start, slot.end, win)}%`,

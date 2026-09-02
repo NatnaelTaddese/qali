@@ -185,8 +185,10 @@ export function useMediaQuery(query: string) {
   return matches;
 }
 
-export function useReducedMotion() {
-  return useMediaQuery("(prefers-reduced-motion: reduce)");
+/** True below Tailwind's `sm` breakpoint, where a five-column week is too
+ * narrow to read. */
+export function useIsMobile() {
+  return useMediaQuery("(max-width: 639px)");
 }
 
 /** Fires once when the element scrolls into view. The section title sits below

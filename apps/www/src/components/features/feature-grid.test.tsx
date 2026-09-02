@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import { AssistantScene } from "./assistant-scene";
 import { FeatureGrid } from "./feature-grid";
 
 describe("FeatureGrid", () => {
@@ -27,8 +28,25 @@ describe("FeatureGrid", () => {
     // Three prompt chips; the Reset button only appears after a click.
     expect(html.match(/<button/g)?.length).toBe(3);
     expect(html).toContain("Move Focus block to the morning");
-    // Four decorative scene wrappers plus the assistant's own grid.
-    expect(html.match(/aria-hidden="true"/g)?.length).toBeGreaterThanOrEqual(5);
+    // Each cell's scene wrapper is its article's first child. The assistant's
+    // (first in DOM order) stays in the accessibility tree; the other four are
+    // decorative.
+    const wrappers = [...html.matchAll(/<article[^>]*>\s*<div([^>]*)>/g)].map(
+      (m) => m[1],
+    );
+    expect(wrappers).toHaveLength(5);
+    expect(wrappers[0]).not.toContain("aria-hidden");
+    for (const attrs of wrappers.slice(1)) {
+      expect(attrs).toContain('aria-hidden="true"');
+    }
+  });
+
+  test("rests the assistant on its fully applied week when still", () => {
+    const still = renderToStaticMarkup(
+      <AssistantScene playing={false} still />,
+    );
+    expect(still).toContain("Cleared Friday afternoon");
+    expect(still).toContain("Suggested");
   });
 
   test("rests on a complete still frame", () => {

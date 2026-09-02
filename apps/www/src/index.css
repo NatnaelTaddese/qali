@@ -157,6 +157,19 @@
     animation: none;
     opacity: 0;
   }
+  /* The chroma titles rest transparent until their sweep paints them in, so
+   * stopping the animation alone would leave them invisible: drop the
+   * gradient and paint the letters plainly, as globals.css does for
+   * `.chroma-stream`. */
+  .chroma-text,
+  .chroma-text-animate,
+  .chroma-text-reveal {
+    animation: none;
+    filter: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    color: var(--foreground);
+  }
 }
 
 /* The homepage character uses the same chroma tokens as the title and the same

@@ -1,10 +1,11 @@
 import { cn } from "@qali/ui/lib/utils";
+import { useReducedMotion } from "motion/react";
 import { useId, type ReactNode } from "react";
 
 import { AccountsScene } from "./accounts-scene";
 import { AssistantScene } from "./assistant-scene";
 import { BookingScene } from "./booking-scene";
-import { useInViewOnce, useReducedMotion } from "./lib";
+import { useInViewOnce } from "./lib";
 import { PaintScene } from "./paint-scene";
 import { ProposalScene } from "./proposal-scene";
 import { useVisible } from "./use-loop";
@@ -53,7 +54,9 @@ export function FeatureGrid() {
           interactive
           className="sm:col-span-2 lg:col-span-6 lg:col-start-1 lg:row-start-1"
         >
-          {(playing) => <AssistantScene playing={playing} />}
+          {(playing, still) => (
+            <AssistantScene playing={playing} still={still} />
+          )}
         </FeatureCell>
 
         <FeatureCell
@@ -104,11 +107,13 @@ function FeatureCell({
   className?: string;
   /** The scene has real controls; keep it in the accessibility tree. */
   interactive?: boolean;
-  children: (playing: boolean) => ReactNode;
+  /** `still` is true under reduced motion: the scene should rest on its
+   * richest frame rather than wait to be animated into it. */
+  children: (playing: boolean, still: boolean) => ReactNode;
 }) {
   const id = useId();
   const { ref, visible } = useVisible<HTMLDivElement>();
-  const reduce = useReducedMotion();
+  const reduce = useReducedMotion() ?? false;
   const playing = visible && !reduce;
 
   return (
@@ -121,7 +126,7 @@ function FeatureCell({
         aria-hidden={interactive ? undefined : true}
         className="relative flex min-h-40 flex-1 items-center justify-center overflow-hidden px-4 pt-5 pb-5 select-none sm:px-6 sm:pt-6 sm:pb-6"
       >
-        {children(playing)}
+        {children(playing, reduce)}
       </div>
       <div className="mt-auto px-4 pb-5 sm:px-6 sm:pb-6">
         <h3

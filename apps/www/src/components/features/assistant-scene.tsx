@@ -83,12 +83,24 @@ export function autoStateAt(step: number): AssistantState {
   return { applied, busy, confirmation };
 }
 
-export function AssistantScene({ playing }: { playing: boolean }) {
+/** The loop's last frame: every scene applied. Under reduced motion the cell
+ * rests here instead of on the empty grid it would otherwise start from. */
+const ALL_DONE = autoStateAt(AUTO_PHASES.length - 1);
+
+export function AssistantScene({
+  playing,
+  still = false,
+}: {
+  playing: boolean;
+  /** Rest on the fully applied week rather than animate toward it. */
+  still?: boolean;
+}) {
   const { days, todayIndex } = useWeekDays();
   const [mode, setMode] = useState<"auto" | "manual">("auto");
   const [manual, setManual] = useState<AssistantState>(IDLE);
   const { step, reset } = useLoop(AUTO_DURATIONS, playing && mode === "auto");
-  const view = mode === "auto" ? autoStateAt(step) : manual;
+  const view =
+    mode === "auto" ? (still ? ALL_DONE : autoStateAt(step)) : manual;
   const grid = deriveGrid(view.applied);
 
   // The pill's width is intrinsic (message length + the Reset button toggling),

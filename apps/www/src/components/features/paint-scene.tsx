@@ -5,6 +5,7 @@ import {
   formatTime,
   heightPct,
   topPct,
+  useIsMobile,
   useWeekDays,
   WEEK_DAYS,
   type TimeWindow,
@@ -18,7 +19,11 @@ import { useLoop } from "./use-loop";
  * shimmer on save). The loop clears the week, paints it back span by span with
  * a brush dot riding the growing edge, then sweeps and saves.
  */
-const STEPS = [2600, 700, 1300, 1300, 2400] as const;
+const STEPS = [2600, 700, 1300, 1300, 1300, 2400] as const;
+
+/** Below `sm` a five-column week is unreadable; Mon–Wed keeps two of the
+ * three painted spans in view. */
+const MOBILE_DAYS = [0, 1, 2];
 
 const PAINT_WINDOW: TimeWindow = { start: 9 * 60, end: 17 * 60 };
 
@@ -41,14 +46,18 @@ const CONTEXT_EVENTS = BASE_EVENTS.filter(
   (e) => !["mon-design", "wed-focus", "fri-demo"].includes(e.id),
 );
 
+/** The step at which each span is painted back; one beat per span. */
+const PAINT_STEP: Record<PaintSpan["id"], number> = { mon: 2, wed: 3, fri: 4 };
+
 function grownAt(span: PaintSpan, step: number) {
   if (step === 1) return false;
-  if (step === 2) return span.id === "mon";
-  return true;
+  if (step === 0 || step === 5) return true;
+  return step >= PAINT_STEP[span.id];
 }
 
+/** The brush rides whichever span is growing this step. */
 function brushAt(span: PaintSpan, step: number) {
-  return (step === 2 && span.id === "mon") || (step === 3 && span.id === "wed");
+  return step === PAINT_STEP[span.id];
 }
 
 const SWEEP_GRADIENT =
@@ -57,7 +66,8 @@ const SWEEP_GRADIENT =
 export function PaintScene({ playing }: { playing: boolean }) {
   const { step } = useLoop(STEPS, playing);
   const { days, todayIndex } = useWeekDays();
-  const saved = step === 4;
+  const isMobile = useIsMobile();
+  const saved = step === 5;
 
   return (
     <div className="flex w-full flex-col gap-2.5">
@@ -80,7 +90,7 @@ export function PaintScene({ playing }: { playing: boolean }) {
 
       <MiniGrid
         win={PAINT_WINDOW}
-        days={WEEK_DAYS}
+        days={isMobile ? MOBILE_DAYS : WEEK_DAYS}
         dates={days}
         todayIndex={todayIndex}
         className="h-72 sm:h-80"

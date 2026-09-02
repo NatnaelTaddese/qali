@@ -140,7 +140,7 @@ function Hero() {
         />
         {/* One column, one gap: the mascot, eyebrow, title, subline and
             button all sit the same distance apart. */}
-        <div className="relative z-10 flex flex-col items-center gap-4 px-5 pt-16 pb-12 text-center sm:gap-6 sm:px-6 sm:pt-48 sm:pb-32 lg:pt-64 lg:pb-44">
+        <div className="relative z-10 flex flex-col items-center gap-4 px-5 pt-24 pb-20 text-center sm:gap-6 sm:px-6 sm:pt-48 sm:pb-32 lg:pt-64 lg:pb-44">
           <Mascot className="shrink-0" />
           <span
             className="hero-reveal rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10"
@@ -148,11 +148,11 @@ function Hero() {
           >
             Now in beta for Google Calendar
           </span>
-          <h1 className="chroma-text chroma-text-animate max-w-3xl font-display text-4xl leading-[1.1] font-medium tracking-tight text-balance sm:text-6xl">
+          <h1 className="chroma-text chroma-text-animate max-w-3xl font-display text-[2.35rem] leading-[1.05] font-medium tracking-tight text-balance sm:text-6xl sm:leading-[1.1]">
             Work and personal, one calendar
           </h1>
           <p
-            className="hero-reveal-blur max-w-xl text-lg text-muted-foreground text-balance"
+            className="hero-reveal-blur max-w-xl text-base text-muted-foreground text-balance sm:text-lg"
             style={{ "--hero-delay": "0.7s" } as CSSProperties}
           >
             Every Google account in a single week, with an assistant that

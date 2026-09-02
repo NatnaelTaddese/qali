@@ -97,11 +97,19 @@ function Hero() {
         style={{ scale }}
         className="relative mx-auto max-w-[96rem] origin-top overflow-hidden rounded-3xl ring-1 ring-foreground/10 shadow-[0_24px_60px_-28px_rgba(24,20,40,0.35)] dark:ring-white/10"
       >
-        {/* The sky is oversized so its parallax travel never exposes an edge. */}
-        <motion.div
+        {/* The sky is oversized so its parallax travel never exposes an edge.
+            It sits in its own clipped wrapper: Firefox doesn't clip a
+            transformed child to a rounded box with `overflow-hidden` alone,
+            so the sky bled past the corners; `clip-path` clips regardless. The
+            wrapper, not the card, carries the clip so the card's outer ring
+            and drop shadow aren't cut off with it. */}
+        <div
           aria-hidden
+          className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-3xl [clip-path:inset(0_round_var(--radius-3xl))]"
+        >
+        <motion.div
           style={{ y: skyY, scale: 1.12 }}
-          className="pointer-events-none absolute inset-0 z-0"
+          className="absolute inset-0"
         >
           <HalftoneCmyk
           speed={0}
@@ -131,6 +139,7 @@ function Hero() {
           />
           <div className="hero-shader-fade absolute inset-0" />
         </motion.div>
+        </div>
         {/* Inner highlight ring, on its own layer above the sky so the shader
             can't paint over it. With the darker outer ring it reads as a
             bevelled edge. */}

@@ -71,9 +71,9 @@
 /* The loading-screen styles (.chroma-loop, its keyframe, and the .loading-screen
  * exit) live in the shared @qali/ui globals so apps/web reuses them too. */
 
-/* Hero shader fade: the HalftoneCmyk backdrop is fully opaque along the bottom
- * of the section and fades into the page background toward the top, so it reads
- * as ground rising into the page rather than a hard-edged panel.
+/* Hero shader fade: inside its rounded card, the HalftoneCmyk sky is fully
+ * opaque along the bottom and fades into the page background toward the top,
+ * so it reads as ground rising into the page rather than a hard-edged panel.
  *
  * This is painted as an ordinary gradient OVERLAY rather than a CSS `mask-image`
  * on purpose. A mask forces the WebGL layer through an offscreen alpha-composite
@@ -81,9 +81,7 @@
  * layer's compositing state. The mascot animating over the backdrop flipped that
  * state on and off, so the sky visibly gained blue saturation for the duration
  * of each interaction (a Chromium-only artifact). Fading with a plain overlay
- * keeps the shader on a single stable layer, so its colour never shifts. The
- * overlay lives inside each backdrop container, so the waitlist's `rotate-180`
- * flips it exactly as it did the old mask. */
+ * keeps the shader on a single stable layer, so its colour never shifts. */
 .hero-shader-fade {
   background-image: linear-gradient(
     to top,
@@ -92,11 +90,11 @@
   );
 }
 
-/* Feature-preview micro-animations. Deliberately transform-only (never animate
- * opacity from 0): the resting state is always fully visible, so content can
- * never be left invisible if the animation is throttled or disabled — the slide
- * is pure enhancement. `feature-line-in` replays each time its span is
- * key-remounted with a new assistant message. */
+/* Feature-grid micro-animations (components/features/*). Deliberately
+ * transform-only (never animate opacity from 0): the resting state is always
+ * fully visible, so content can never be left invisible if the animation is
+ * throttled or disabled — the slide is pure enhancement. `feature-line-in`
+ * replays each time its span is key-remounted with a new message. */
 @keyframes feature-line-in {
   from {
     transform: translateY(4px);
@@ -134,11 +132,43 @@
   animation: feature-dot 1s ease-in-out infinite;
 }
 
+/* The save shimmer from the app's availability blocks: one band crossing the
+ * painted span, same 0.55s the real `AvailabilityBlock` uses. */
+@keyframes feature-sweep {
+  from {
+    transform: translateX(-60%);
+  }
+  to {
+    transform: translateX(60%);
+  }
+}
+.feature-sweep {
+  animation: feature-sweep 0.55s ease-in-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .feature-line-in,
   .feature-pop-in,
   .feature-dot {
     animation: none;
+  }
+  /* A band that never moves would sit as a slab across the span. */
+  .feature-sweep {
+    animation: none;
+    opacity: 0;
+  }
+  /* The chroma titles rest transparent until their sweep paints them in, so
+   * stopping the animation alone would leave them invisible: drop the
+   * gradient and paint the letters plainly, as globals.css does for
+   * `.chroma-stream`. */
+  .chroma-text,
+  .chroma-text-animate,
+  .chroma-text-reveal {
+    animation: none;
+    filter: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    color: var(--foreground);
   }
 }
 

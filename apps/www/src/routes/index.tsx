@@ -2,14 +2,17 @@ import { api } from "@qali/backend/convex/_generated/api";
 import { HalftoneCmyk } from "@paper-design/shaders-react";
 import { Button } from "@qali/ui/components/button";
 import { Input } from "@qali/ui/components/input";
+import { cn } from "@qali/ui/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
+import { motion, useReducedMotion, useScroll, useTransform } from "motion/react";
 import { useState } from "react";
 import type { CSSProperties } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
-import { FeaturePreview } from "@/components/feature-preview";
+import { FeatureGrid } from "@/components/features/feature-grid";
+import { useInViewOnce } from "@/components/features/lib";
 import { Mascot } from "@/components/mascot";
 
 const SITE_URL = "https://myqali.com";
@@ -46,21 +49,61 @@ function LandingPage() {
   return (
     <main className="min-h-svh bg-background text-foreground">
       <Hero />
-      <FeaturePreview />
+      <FeatureGrid />
       <Waitlist />
       <Footer />
     </main>
   );
 }
 
+/** How far the page scrolls while the hero card grows to full size. */
+const HERO_GROW_SCROLL = 360;
+/** The card's starting scale, before any scroll. */
+const HERO_START_SCALE = 0.92;
+/** Scroll range and travel for the sky's parallax drift. */
+const SKY_DRIFT_SCROLL = 720;
+const SKY_DRIFT_PX = 120;
+
 function Hero() {
+  // Scroll-driven, not viewport-driven: the card scales from slightly inset
+  // to full size over the first few hundred pixels of scroll and holds there,
+  // while the sky drifts down more slowly than the page. Motion values write
+  // transforms directly, so no React re-render runs per scroll frame. Reduced
+  // motion gets the resting frame.
+  const reduce = useReducedMotion();
+  const { scrollY } = useScroll();
+  const scale = useTransform(
+    scrollY,
+    [0, HERO_GROW_SCROLL],
+    [reduce ? 1 : HERO_START_SCALE, 1],
+  );
+  const skyY = useTransform(
+    scrollY,
+    [0, SKY_DRIFT_SCROLL],
+    [0, reduce ? 0 : SKY_DRIFT_PX],
+  );
+
   return (
-    <section className="relative flex min-h-svh flex-col bg-background items-center justify-end overflow-hidden px-6 pt-16 pb-10 text-center">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 z-0 bg-background"
+    // Content-sized rather than viewport-sized: a `min-h-svh` hero reflows
+    // whenever a mobile browser's small and dynamic viewports disagree, which
+    // reads as a flicker as the toolbar collapses. The sky is clipped inside a
+    // rounded card that lines up with the feature grid below.
+    // `z-10` keeps the card's ring and drop shadow above the next section's
+    // background, which would otherwise paint over whatever spills past the
+    // card's bottom edge.
+    <section className="relative z-10 bg-background px-4 pt-6 pb-2 sm:px-6 sm:pt-10 sm:pb-8 lg:pt-14">
+      <motion.div
+        data-mascot-stage
+        style={{ scale }}
+        className="relative mx-auto max-w-[96rem] origin-top overflow-hidden rounded-3xl ring-1 ring-foreground/10 shadow-[0_24px_60px_-28px_rgba(24,20,40,0.35)] dark:ring-white/10"
       >
-        <HalftoneCmyk
+        {/* The sky is oversized so its parallax travel never exposes an edge. */}
+        <motion.div
+          aria-hidden
+          style={{ y: skyY, scale: 1.12 }}
+          className="pointer-events-none absolute inset-0 z-0"
+        >
+          <HalftoneCmyk
           speed={0}
           size={0.08}
           gridNoise={0.16}
@@ -85,35 +128,46 @@ function Hero() {
           colorY="#FFD800"
           colorK="#231F20"
           style={{ width: "100%", height: "100%", backgroundColor: "#FBFAF5" }}
-        />
-        <div className="hero-shader-fade absolute inset-0" />
-      </div>
-      <Mascot className="relative z-10 mb-5 shrink-0 sm:mb-7" />
-      <div className="relative z-10 mx-auto flex max-w-3xl flex-col items-center gap-4">
-        <span
-          className="hero-reveal rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10"
-          style={{ "--hero-delay": "0.35s" } as CSSProperties}
-        >
-          Currently in beta
-        </span>
-        <h1 className="chroma-text chroma-text-animate font-display text-4xl font-medium tracking-tight text-balance sm:text-6xl">
-          The calendar that runs itself
-        </h1>
-        <p
-          className="hero-reveal-blur max-w-xl text-lg text-muted-foreground text-balance"
-          style={{ "--hero-delay": "0.7s" } as CSSProperties}
-        >
-          Cursor for your daily schedules
-        </p>
+          />
+          <div className="hero-shader-fade absolute inset-0" />
+        </motion.div>
+        {/* Inner highlight ring, on its own layer above the sky so the shader
+            can't paint over it. With the darker outer ring it reads as a
+            bevelled edge. */}
         <div
-          className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"
-          style={{ "--hero-delay": "0.9s" } as CSSProperties}
-        >
-          <Button size="lg" onClick={() => scrollToId("waitlist")}>
-            Join the waitlist
-          </Button>
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-10 rounded-3xl inset-ring-2 inset-ring-white/60 dark:inset-ring-white/10"
+        />
+        {/* One column, one gap: the mascot, eyebrow, title, subline and
+            button all sit the same distance apart. */}
+        <div className="relative z-10 flex flex-col items-center gap-4 px-5 pt-24 pb-20 text-center sm:gap-6 sm:px-6 sm:pt-48 sm:pb-32 lg:pt-64 lg:pb-44">
+          <Mascot className="shrink-0" />
+          <span
+            className="hero-reveal rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10"
+            style={{ "--hero-delay": "0.35s" } as CSSProperties}
+          >
+            Now in beta for Google Calendar
+          </span>
+          <h1 className="chroma-text chroma-text-animate max-w-3xl font-display text-[2.35rem] leading-[1.05] font-medium tracking-tight text-balance sm:text-6xl sm:leading-[1.1]">
+            Work and personal, one calendar
+          </h1>
+          <p
+            className="hero-reveal-blur max-w-xl text-base text-muted-foreground text-balance sm:text-lg"
+            style={{ "--hero-delay": "0.7s" } as CSSProperties}
+          >
+            Every Google account in a single week, with an assistant that
+            asks before it acts.
+          </p>
+          <div
+            className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"
+            style={{ "--hero-delay": "0.9s" } as CSSProperties}
+          >
+            <Button size="lg" onClick={() => scrollToId("waitlist")}>
+              Get early access
+            </Button>
+          </div>
         </div>
-      </div>
+      </motion.div>
     </section>
   );
 }
@@ -145,27 +199,40 @@ function Waitlist() {
     }
   }
 
+  // Same header stack as the feature section: eyebrow, chroma display title
+  // that sweeps in as it scrolls into view, muted subline.
+  const title = useInViewOnce<HTMLHeadingElement>();
+
   return (
     <section
       id="waitlist"
-      className="relative flex flex-col items-center gap-6 overflow-hidden bg-background px-6 pb-16 pt-10 text-center sm:gap-8 sm:pb-24 sm:pt-14"
+      className="relative flex flex-col items-center overflow-hidden bg-background px-6 pb-14 pt-10 text-center sm:pb-20 sm:pt-14"
     >
-      <div className="flex max-w-xl flex-col items-center gap-3">
-        <h2 className="font-heading text-3xl font-medium tracking-tight sm:text-4xl">
+      <div className="mx-auto flex max-w-2xl flex-col items-center gap-4">
+        <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10">
+          Early access
+        </span>
+        <h2
+          ref={title.ref}
+          className={cn(
+            "chroma-text font-display text-3xl font-medium tracking-tight text-balance pb-[0.12em] -mb-[0.12em] sm:text-5xl",
+            title.inView && "chroma-text-reveal",
+          )}
+        >
           Get early access
         </h2>
-        <p className="text-base text-muted-foreground text-balance sm:text-lg">
+        <p className="max-w-lg text-lg text-muted-foreground text-balance">
           Join the waitlist and be the first to know when qali is ready.
         </p>
       </div>
       {joined ? (
-        <p className="text-sm font-medium text-foreground">
+        <p className="mt-8 text-sm font-medium text-foreground">
           Thanks — you're on the list. 🎉
         </p>
       ) : (
         <form
           onSubmit={handleSubmit}
-          className="flex w-full max-w-md flex-col gap-3 sm:flex-row"
+          className="mt-8 flex w-full max-w-md flex-col gap-3 sm:flex-row"
         >
           <Input
             type="email"

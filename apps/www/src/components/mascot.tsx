@@ -169,7 +169,11 @@ export function Mascot({ className, proximity = 220 }: MascotProps) {
 
   useEffect(() => {
     const root = rootRef.current;
-    const hero = root?.parentElement;
+    // The pointer surface is the nearest `data-mascot-stage` ancestor (the
+    // hero card), so the gaze follows the cursor across the whole sky rather
+    // than only the padded copy column the mascot sits in.
+    const hero =
+      root?.closest<HTMLElement>("[data-mascot-stage]") ?? root?.parentElement;
     if (!root || !hero || paused) return;
 
     let bounds = root.getBoundingClientRect();

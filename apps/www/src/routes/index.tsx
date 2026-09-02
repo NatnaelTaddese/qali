@@ -2,6 +2,7 @@ import { api } from "@qali/backend/convex/_generated/api";
 import { HalftoneCmyk } from "@paper-design/shaders-react";
 import { Button } from "@qali/ui/components/button";
 import { Input } from "@qali/ui/components/input";
+import { cn } from "@qali/ui/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation } from "convex/react";
 import { useState } from "react";
@@ -10,6 +11,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import { FeatureGrid } from "@/components/features/feature-grid";
+import { useInViewOnce } from "@/components/features/lib";
 import { Mascot } from "@/components/mascot";
 
 const SITE_URL = "https://myqali.com";
@@ -145,27 +147,40 @@ function Waitlist() {
     }
   }
 
+  // Same header stack as the feature section: eyebrow, chroma display title
+  // that sweeps in as it scrolls into view, muted subline.
+  const title = useInViewOnce<HTMLHeadingElement>();
+
   return (
     <section
       id="waitlist"
-      className="relative flex flex-col items-center gap-6 overflow-hidden bg-background px-6 pb-16 pt-10 text-center sm:gap-8 sm:pb-24 sm:pt-14"
+      className="relative flex flex-col items-center overflow-hidden bg-background px-6 pb-14 pt-10 text-center sm:pb-20 sm:pt-14"
     >
-      <div className="flex max-w-xl flex-col items-center gap-3">
-        <h2 className="font-heading text-3xl font-medium tracking-tight sm:text-4xl">
+      <div className="mx-auto flex max-w-2xl flex-col items-center gap-4">
+        <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10">
+          Early access
+        </span>
+        <h2
+          ref={title.ref}
+          className={cn(
+            "chroma-text font-display text-3xl font-medium tracking-tight text-balance pb-[0.12em] -mb-[0.12em] sm:text-5xl",
+            title.inView && "chroma-text-reveal",
+          )}
+        >
           Get early access
         </h2>
-        <p className="text-base text-muted-foreground text-balance sm:text-lg">
+        <p className="max-w-lg text-lg text-muted-foreground text-balance">
           Join the waitlist and be the first to know when qali is ready.
         </p>
       </div>
       {joined ? (
-        <p className="text-sm font-medium text-foreground">
+        <p className="mt-8 text-sm font-medium text-foreground">
           Thanks — you're on the list. 🎉
         </p>
       ) : (
         <form
           onSubmit={handleSubmit}
-          className="flex w-full max-w-md flex-col gap-3 sm:flex-row"
+          className="mt-8 flex w-full max-w-md flex-col gap-3 sm:flex-row"
         >
           <Input
             type="email"

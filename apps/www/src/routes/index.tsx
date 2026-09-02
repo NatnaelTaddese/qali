@@ -91,7 +91,7 @@ function Hero() {
     <section className="bg-background px-4 pt-8 sm:px-6 sm:pt-10 lg:pt-14">
       <motion.div
         style={{ scale }}
-        className="relative mx-auto max-w-[96rem] origin-top overflow-hidden rounded-3xl ring-1 ring-border"
+        className="relative mx-auto max-w-[96rem] origin-top overflow-hidden rounded-3xl ring-1 ring-foreground/10 shadow-[0_24px_60px_-28px_rgba(24,20,40,0.35)] dark:ring-white/10"
       >
         {/* The sky is oversized so its parallax travel never exposes an edge. */}
         <motion.div
@@ -127,6 +127,13 @@ function Hero() {
           />
           <div className="hero-shader-fade absolute inset-0" />
         </motion.div>
+        {/* Inner highlight ring, on its own layer above the sky so the shader
+            can't paint over it. With the darker outer ring it reads as a
+            bevelled edge. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-10 rounded-3xl inset-ring-2 inset-ring-white/60 dark:inset-ring-white/10"
+        />
         {/* One column, one gap: the mascot, eyebrow, title, subline and
             button all sit the same distance apart. */}
         <div className="relative z-10 flex flex-col items-center gap-5 px-6 pt-32 pb-20 text-center sm:gap-6 sm:pt-48 sm:pb-32 lg:pt-64 lg:pb-44">

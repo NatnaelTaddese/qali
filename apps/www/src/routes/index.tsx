@@ -91,7 +91,7 @@ function Hero() {
     // `z-10` keeps the card's ring and drop shadow above the next section's
     // background, which would otherwise paint over whatever spills past the
     // card's bottom edge.
-    <section className="relative z-10 bg-background px-4 pt-8 pb-6 sm:px-6 sm:pt-10 sm:pb-8 lg:pt-14">
+    <section className="relative z-10 bg-background px-4 pt-6 pb-2 sm:px-6 sm:pt-10 sm:pb-8 lg:pt-14">
       <motion.div
         data-mascot-stage
         style={{ scale }}
@@ -140,7 +140,7 @@ function Hero() {
         />
         {/* One column, one gap: the mascot, eyebrow, title, subline and
             button all sit the same distance apart. */}
-        <div className="relative z-10 flex flex-col items-center gap-5 px-6 pt-32 pb-20 text-center sm:gap-6 sm:pt-48 sm:pb-32 lg:pt-64 lg:pb-44">
+        <div className="relative z-10 flex flex-col items-center gap-4 px-5 pt-16 pb-12 text-center sm:gap-6 sm:px-6 sm:pt-48 sm:pb-32 lg:pt-64 lg:pb-44">
           <Mascot className="shrink-0" />
           <span
             className="hero-reveal rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10"

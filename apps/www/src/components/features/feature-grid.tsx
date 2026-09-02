@@ -26,7 +26,7 @@ export function FeatureGrid() {
     <section className="relative bg-background px-6 pb-14 pt-10 sm:pb-20 sm:pt-14">
       <div className="mx-auto flex max-w-2xl flex-col items-center gap-4 text-center">
         <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10">
-          Your week, on autopilot
+          What it does
         </span>
         <h2
           ref={title.ref}
@@ -62,7 +62,7 @@ export function FeatureGrid() {
         </FeatureCell>
 
         <FeatureCell
-          title="Every Google account, one calendar"
+          title="Link as many accounts as you need"
           blurb="Link work and personal accounts and see them side by side."
           className="lg:col-span-4 lg:col-start-1 lg:row-start-3"
         >

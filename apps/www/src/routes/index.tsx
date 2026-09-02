@@ -102,14 +102,14 @@ function Hero() {
               Now in beta for Google Calendar
             </span>
             <h1 className="chroma-text chroma-text-animate font-display text-4xl font-medium tracking-tight text-balance sm:text-6xl">
-              A calendar that asks before it acts
+              Work and personal, one calendar
             </h1>
             <p
               className="hero-reveal-blur max-w-xl text-lg text-muted-foreground text-balance"
               style={{ "--hero-delay": "0.7s" } as CSSProperties}
             >
-              Say what you need in plain words. It does the rest once you
-              say yes.
+              Every Google account in a single week, with an assistant that
+              asks before it acts.
             </p>
             <div
               className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"

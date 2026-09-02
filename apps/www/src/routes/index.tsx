@@ -62,7 +62,7 @@ function Hero() {
     // reads as a flicker as the toolbar collapses. The sky is clipped inside a
     // rounded card that lines up with the feature grid below.
     <section className="bg-background px-4 pt-4 sm:px-6 sm:pt-6">
-      <div className="relative mx-auto max-w-5xl overflow-hidden rounded-3xl ring-1 ring-border">
+      <div className="relative mx-auto max-w-6xl overflow-hidden rounded-3xl ring-1 ring-border">
         <div aria-hidden className="pointer-events-none absolute inset-0 z-0">
           <HalftoneCmyk
           speed={0}
@@ -92,7 +92,7 @@ function Hero() {
           />
           <div className="hero-shader-fade absolute inset-0" />
         </div>
-        <div className="relative z-10 flex flex-col items-center px-6 pt-20 pb-12 text-center sm:pt-28 sm:pb-16">
+        <div className="relative z-10 flex flex-col items-center px-6 pt-28 pb-16 text-center sm:pt-40 sm:pb-24">
           <Mascot className="mb-5 shrink-0 sm:mb-7" />
           <div className="flex max-w-3xl flex-col items-center gap-4">
             <span

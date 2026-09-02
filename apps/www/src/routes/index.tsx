@@ -102,21 +102,21 @@ function Hero() {
               Now in beta for Google Calendar
             </span>
             <h1 className="chroma-text chroma-text-animate font-display text-4xl font-medium tracking-tight text-balance sm:text-6xl">
-              The calendar that runs itself
+              A calendar that asks before it acts
             </h1>
             <p
               className="hero-reveal-blur max-w-xl text-lg text-muted-foreground text-balance"
               style={{ "--hero-delay": "0.7s" } as CSSProperties}
             >
-              Tell it what you need in plain words. It finds the time and
-              asks before anything changes.
+              Say what you need in plain words. It does the rest once you
+              say yes.
             </p>
             <div
               className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"
               style={{ "--hero-delay": "0.9s" } as CSSProperties}
             >
               <Button size="lg" onClick={() => scrollToId("waitlist")}>
-                Join the waitlist
+                Get early access
               </Button>
             </div>
           </div>

@@ -62,7 +62,7 @@ function Hero() {
     // reads as a flicker as the toolbar collapses. The sky is clipped inside a
     // rounded card that lines up with the feature grid below.
     <section className="bg-background px-4 pt-4 sm:px-6 sm:pt-6">
-      <div className="relative mx-auto max-w-7xl overflow-hidden rounded-3xl ring-1 ring-border">
+      <div className="relative mx-auto max-w-[96rem] overflow-hidden rounded-3xl ring-1 ring-border">
         <div aria-hidden className="pointer-events-none absolute inset-0 z-0">
           <HalftoneCmyk
           speed={0}
@@ -94,7 +94,7 @@ function Hero() {
         </div>
         {/* One column, one gap: the mascot, eyebrow, title, subline and
             button all sit the same distance apart. */}
-        <div className="relative z-10 flex flex-col items-center gap-5 px-6 pt-28 pb-16 text-center sm:gap-6 sm:pt-40 sm:pb-24">
+        <div className="relative z-10 flex flex-col items-center gap-5 px-6 pt-32 pb-20 text-center sm:gap-6 sm:pt-48 sm:pb-32">
           <Mascot className="shrink-0" />
           <span
             className="hero-reveal rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10"

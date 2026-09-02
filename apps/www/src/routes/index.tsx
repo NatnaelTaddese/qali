@@ -108,8 +108,8 @@ function Hero() {
               className="hero-reveal-blur max-w-xl text-lg text-muted-foreground text-balance"
               style={{ "--hero-delay": "0.7s" } as CSSProperties}
             >
-              Tell qali what you need in plain words. It reads your whole
-              week, finds the time, and asks before anything changes.
+              Tell it what you need in plain words. It finds the time and
+              asks before anything changes.
             </p>
             <div
               className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"

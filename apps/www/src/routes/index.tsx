@@ -9,7 +9,7 @@ import type { CSSProperties } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
-import { FeaturePreview } from "@/components/feature-preview";
+import { FeatureGrid } from "@/components/features/feature-grid";
 import { Mascot } from "@/components/mascot";
 
 const SITE_URL = "https://myqali.com";
@@ -46,7 +46,7 @@ function LandingPage() {
   return (
     <main className="min-h-svh bg-background text-foreground">
       <Hero />
-      <FeaturePreview />
+      <FeatureGrid />
       <Waitlist />
       <Footer />
     </main>

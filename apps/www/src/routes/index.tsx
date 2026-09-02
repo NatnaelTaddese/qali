@@ -62,7 +62,7 @@ function Hero() {
     // reads as a flicker as the toolbar collapses. The sky is clipped inside a
     // rounded card that lines up with the feature grid below.
     <section className="bg-background px-4 pt-4 sm:px-6 sm:pt-6">
-      <div className="relative mx-auto max-w-6xl overflow-hidden rounded-3xl ring-1 ring-border">
+      <div className="relative mx-auto max-w-7xl overflow-hidden rounded-3xl ring-1 ring-border">
         <div aria-hidden className="pointer-events-none absolute inset-0 z-0">
           <HalftoneCmyk
           speed={0}
@@ -92,33 +92,33 @@ function Hero() {
           />
           <div className="hero-shader-fade absolute inset-0" />
         </div>
-        <div className="relative z-10 flex flex-col items-center px-6 pt-28 pb-16 text-center sm:pt-40 sm:pb-24">
-          <Mascot className="mb-5 shrink-0 sm:mb-7" />
-          <div className="flex max-w-3xl flex-col items-center gap-4">
-            <span
-              className="hero-reveal rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10"
-              style={{ "--hero-delay": "0.35s" } as CSSProperties}
-            >
-              Now in beta for Google Calendar
-            </span>
-            <h1 className="chroma-text chroma-text-animate font-display text-4xl font-medium tracking-tight text-balance sm:text-6xl">
-              Work and personal, one calendar
-            </h1>
-            <p
-              className="hero-reveal-blur max-w-xl text-lg text-muted-foreground text-balance"
-              style={{ "--hero-delay": "0.7s" } as CSSProperties}
-            >
-              Every Google account in a single week, with an assistant that
-              asks before it acts.
-            </p>
-            <div
-              className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"
-              style={{ "--hero-delay": "0.9s" } as CSSProperties}
-            >
-              <Button size="lg" onClick={() => scrollToId("waitlist")}>
-                Get early access
-              </Button>
-            </div>
+        {/* One column, one gap: the mascot, eyebrow, title, subline and
+            button all sit the same distance apart. */}
+        <div className="relative z-10 flex flex-col items-center gap-5 px-6 pt-28 pb-16 text-center sm:gap-6 sm:pt-40 sm:pb-24">
+          <Mascot className="shrink-0" />
+          <span
+            className="hero-reveal rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground ring ring-black/10"
+            style={{ "--hero-delay": "0.35s" } as CSSProperties}
+          >
+            Now in beta for Google Calendar
+          </span>
+          <h1 className="chroma-text chroma-text-animate max-w-3xl font-display text-4xl leading-[1.1] font-medium tracking-tight text-balance sm:text-6xl">
+            Work and personal, one calendar
+          </h1>
+          <p
+            className="hero-reveal-blur max-w-xl text-lg text-muted-foreground text-balance"
+            style={{ "--hero-delay": "0.7s" } as CSSProperties}
+          >
+            Every Google account in a single week, with an assistant that
+            asks before it acts.
+          </p>
+          <div
+            className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"
+            style={{ "--hero-delay": "0.9s" } as CSSProperties}
+          >
+            <Button size="lg" onClick={() => scrollToId("waitlist")}>
+              Get early access
+            </Button>
           </div>
         </div>
       </div>

@@ -46,7 +46,7 @@ export function FeatureGrid() {
       {/* The hairlines are the container showing through a 1px gap. `--border`
           is only 6% black, which disappears between two near-white cells, so
           the lines take the foreground at a higher alpha instead. */}
-      <div className="mx-auto mt-12 grid max-w-5xl grid-cols-1 gap-px overflow-hidden rounded-3xl bg-foreground/15 ring-1 ring-foreground/15 sm:grid-cols-2 lg:grid-cols-10">
+      <div className="mx-auto mt-12 grid max-w-6xl grid-cols-1 gap-px overflow-hidden rounded-3xl bg-foreground/15 ring-1 ring-foreground/15 sm:grid-cols-2 lg:grid-cols-10">
         <FeatureCell
           title="Just tell it what you need"
           blurb="Qali reads your whole week and makes the change for you."

@@ -34,7 +34,7 @@ export function AccountsScene({ playing }: { playing: boolean }) {
   return (
     <div className="flex w-full max-w-xs flex-col gap-2">
       <AccountCard
-        name="Nat Taddese"
+        name="Nat Personal"
         email="nat@myqali.com"
         tint="--event-2"
         primary

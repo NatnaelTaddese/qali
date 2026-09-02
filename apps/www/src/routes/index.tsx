@@ -92,25 +92,24 @@ function Hero() {
     // background, which would otherwise paint over whatever spills past the
     // card's bottom edge.
     <section className="relative z-10 bg-background px-4 pt-6 pb-2 sm:px-6 sm:pt-10 sm:pb-8 lg:pt-14">
+      {/* The scaled stage. The clipped card, its frame and the copy all scale
+          together; overflow and rounding live on the card child rather than
+          here so the frame can paint outside the clip. */}
       <motion.div
         data-mascot-stage
         style={{ scale }}
-        className="relative mx-auto max-w-[96rem] origin-top overflow-hidden rounded-3xl ring-1 ring-foreground/10 shadow-[0_24px_60px_-28px_rgba(24,20,40,0.35)] dark:ring-white/10"
+        className="relative mx-auto max-w-[96rem] origin-top"
       >
-        {/* The sky is oversized so its parallax travel never exposes an edge.
-            It sits in its own clipped wrapper: Firefox doesn't clip a
-            transformed child to a rounded box with `overflow-hidden` alone,
-            so the sky bled past the corners; `clip-path` clips regardless. The
-            wrapper, not the card, carries the clip so the card's outer ring
-            and drop shadow aren't cut off with it. */}
+        {/* The card: the sky clipped to the rounded box. The sky is oversized
+            so its parallax travel never exposes an edge. */}
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-3xl [clip-path:inset(0_round_var(--radius-3xl))]"
+          className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-3xl"
         >
-        <motion.div
-          style={{ y: skyY, scale: 1.12 }}
-          className="absolute inset-0"
-        >
+          <motion.div
+            style={{ y: skyY, scale: 1.12 }}
+            className="absolute inset-0"
+          >
           <HalftoneCmyk
           speed={0}
           size={0.08}
@@ -137,15 +136,21 @@ function Hero() {
           colorK="#231F20"
           style={{ width: "100%", height: "100%", backgroundColor: "#FBFAF5" }}
           />
-          <div className="hero-shader-fade absolute inset-0" />
-        </motion.div>
+            <div className="hero-shader-fade absolute inset-0" />
+          </motion.div>
         </div>
-        {/* Inner highlight ring, on its own layer above the sky so the shader
-            can't paint over it. With the darker outer ring it reads as a
-            bevelled edge. */}
+        {/* The frame, a sibling above the card rather than a child. Firefox
+            doesn't apply a rounded clip (overflow or clip-path) to a WebGL
+            canvas, so the sky's square corners showed past the card's radius,
+            and nothing inside the clip can cover them because the clip does
+            trim ordinary children. From outside, this rounded div's flat
+            1rem outer shadow paints the page background into exactly those
+            corner regions; the outer ring and drop shadow are listed ahead of
+            it so they paint on top, and the inset ring is the inner
+            highlight. */}
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-10 rounded-3xl inset-ring-2 inset-ring-white/60 dark:inset-ring-white/10"
+          className="pointer-events-none absolute inset-0 z-10 rounded-3xl ring-1 ring-foreground/10 shadow-[0_24px_60px_-28px_rgba(24,20,40,0.35),0_0_0_1rem_var(--background)] inset-ring-2 inset-ring-white/60 dark:ring-white/10 dark:inset-ring-white/10"
         />
         {/* One column, one gap: the mascot, eyebrow, title, subline and
             button all sit the same distance apart. */}

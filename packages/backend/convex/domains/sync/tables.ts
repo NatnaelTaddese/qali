@@ -26,6 +26,11 @@ export const connectionSyncTables = {
       v.literal("error"),
     ),
     lastError: v.optional(v.string()),
+    // Consecutive cycles that failed because the provider refused the
+    // credential (revoked or expired grant). Reset by any other outcome; once
+    // it reaches the threshold the connection itself is marked `error` and
+    // leaves the polling fan-out until the user reconnects.
+    authFailureCount: v.optional(v.number()),
     // Stamped by recordSyncOutcome on each clean cycle, so "last synced"
     // reads (settings panel) don't have to scan the connection's calendars.
     lastSyncAt: v.optional(v.number()),

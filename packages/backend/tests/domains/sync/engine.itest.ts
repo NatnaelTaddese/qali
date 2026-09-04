@@ -17,6 +17,7 @@ import type {
 import schema from "../../../convex/schema";
 import {
   chunkEngagementScores,
+  eventBatches,
   summarizeConnectionSyncs,
   syncOneConnectionCalendar,
   syncSharedCalendar,
@@ -1006,5 +1007,22 @@ describe("shared generation and engagement maintenance", () => {
       (await t.run((ctx) => ctx.db.query("sharedCalendars").unique()))
         ?.syncGeneration,
     ).toBe(2);
+  });
+});
+
+describe("eventBatches", () => {
+  test("splits a page by count and by serialized size", () => {
+    const small = Array.from({ length: 120 }, (_, i) => ({ id: `e${i}` }));
+    const byCount = eventBatches(small);
+    expect(byCount.map((b) => b.length)).toEqual([50, 50, 20]);
+    expect(byCount.flat()).toEqual(small);
+
+    // Three events of ~300KB each cannot share a 512KB batch.
+    const big = Array.from({ length: 3 }, (_, i) => ({
+      id: `big${i}`,
+      description: "x".repeat(300 * 1024),
+    }));
+    expect(eventBatches(big).map((b) => b.length)).toEqual([1, 1, 1]);
+    expect(eventBatches([])).toEqual([]);
   });
 });

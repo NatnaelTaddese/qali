@@ -21,6 +21,15 @@ export const SPRING_DOCK = {
   mass: 0.9,
 } as const;
 
+const EASE_OUT_CUBIC: [number, number, number, number] = [0.33, 1, 0.68, 1];
+
+/** The settings scrim dims the calendar behind the dock. Its fade-in tracks
+ * the ~0.4s SPRING_DOCK takes to settle (an expo ease read as a snap next to
+ * it); the fade-out is quicker so a dismiss feels immediate. Retune these
+ * together with the spring. */
+export const SCRIM_ENTER = { duration: 0.45, ease: EASE_OUT_CUBIC };
+export const SCRIM_EXIT = { duration: 0.28, ease: EASE_OUT_CUBIC };
+
 const DOCK_ENTER = { duration: 0.24, ease: EASE_OUT_EXPO };
 const DOCK_EXIT = { duration: 0.16, ease: EASE_OUT_EXPO };
 const SLIDE_PX = 28;

@@ -25,7 +25,8 @@ import { EventEdit } from "@/components/calendar/event-edit";
 import {
   dockVariants,
   dockVariantsReduced,
-  EASE_OUT_EXPO,
+  SCRIM_ENTER,
+  SCRIM_EXIT,
   SPRING_DOCK,
 } from "@/components/calendar/motion";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
@@ -36,6 +37,7 @@ import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
 import { UserAvatar } from "./user-avatar";
 import { useSyncNow } from "./use-sync-now";
+import { SettingsPanelSkeleton } from "./settings-skeleton";
 
 const MAX_TIMEOUT_MS = 2_147_000_000;
 const AVAILABILITY_PREFETCH_GRACE_MS = 10_000;
@@ -253,6 +255,8 @@ export function BottomIsland() {
   }, [expanded, view?.kind, close, closeCurrent, editing, setEditing]);
 
   const variants = reduce ? dockVariantsReduced : dockVariants;
+  const timed = (transition: typeof SCRIM_ENTER) =>
+    reduce ? { duration: 0 } : transition;
 
   return (
     <>
@@ -271,13 +275,8 @@ export function BottomIsland() {
             aria-hidden
             className="fixed inset-0 z-40 bg-background/40"
             initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={
-              reduce
-                ? { duration: 0 }
-                : { duration: 0.24, ease: EASE_OUT_EXPO }
-            }
+            animate={{ opacity: 1, transition: timed(SCRIM_ENTER) }}
+            exit={{ opacity: 0, transition: timed(SCRIM_EXIT) }}
           />
         )}
       </AnimatePresence>
@@ -296,7 +295,7 @@ export function BottomIsland() {
           willChange: "transform",
         }}
         className={cn(
-          "pointer-events-auto overflow-hidden border border-border bg-popover/90 shadow-lg backdrop-blur",
+          "pointer-events-auto overflow-hidden border border-black/20 bg-white shadow-lg dark:border-border dark:bg-popover",
           // The edit bar is a pill sized to its own content, like the nav row.
           // Settings carries its own inset so its two-tone sidebar can run
           // edge to edge (the panel restores the padding on small screens).
@@ -361,13 +360,7 @@ export function BottomIsland() {
                   onOpenSettings={() => open({ kind: "settings" })}
                 />
               ) : view?.kind === "settings" ? (
-                <Suspense
-                  fallback={
-                    <div className="flex h-96 items-center justify-center">
-                      <Spinner className="size-5" />
-                    </div>
-                  }
-                >
+                <Suspense fallback={<SettingsPanelSkeleton />}>
                   <SettingsPanelLazy
                     initialSection={view.section}
                     onClose={closeCurrent}
@@ -469,6 +462,8 @@ function NavRow({
     <div className="flex items-center gap-1">
       <NavButton
         icon={Calendar03Icon}
+        // The glyph's binder rings pull its weight left; nudge it to read centred.
+        iconClassName="translate-x-px"
         label={isSyncing ? "Syncing calendar" : "Sync calendar"}
         active
         busy={isSyncing}
@@ -505,6 +500,7 @@ function NavRow({
 
 function NavButton({
   icon,
+  iconClassName,
   label,
   active,
   busy,
@@ -513,6 +509,8 @@ function NavButton({
   onClick,
 }: {
   icon: IconSvgElement;
+  /** Optical correction for a glyph whose visual weight sits off-center. */
+  iconClassName?: string;
   label: string;
   active?: boolean;
   busy?: boolean;
@@ -538,9 +536,13 @@ function NavButton({
         )}
       >
         {busy ? (
-          <Spinner className="size-5" />
+          <Spinner className={cn("size-5", iconClassName)} />
         ) : (
-          <HugeiconsIcon icon={icon} strokeWidth={2} className="size-5" />
+          <HugeiconsIcon
+            icon={icon}
+            strokeWidth={2}
+            className={cn("size-5", iconClassName)}
+          />
         )}
         {badge ? (
           <span className="absolute top-1 right-1 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] leading-none font-medium text-primary-foreground">

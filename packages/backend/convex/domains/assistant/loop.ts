@@ -166,6 +166,12 @@ function requireApiKey(): string {
   return key;
 }
 
+/** Dev stand-in. Setting DEEPSEEK_API_KEY to this literal keeps the panel
+ * enabled, but a turn never leaves the deployment: the loop streams a canned
+ * reply instead of calling DeepSeek, so the panel can be exercised — and its
+ * UI worked on — without a real key. */
+const MOCK_API_KEY = "mock";
+
 // --- History ---------------------------------------------------------------
 
 /** What became of a proposal, in the words the model should read. */
@@ -301,6 +307,10 @@ async function runAgentLoop(
     nowMs: number;
   },
 ): Promise<FollowUpContext | null> {
+  if (run.apiKey === MOCK_API_KEY) {
+    return runMockTurn(ctx, run);
+  }
+
   const client = new OpenAI({
     apiKey: run.apiKey,
     baseURL: DEEPSEEK_BASE_URL,
@@ -499,6 +509,37 @@ async function runAgentLoop(
   return null;
 }
 
+/** The mock turn: the canned reply rides the same flushText path the real
+ * stream uses, in a few timed chunks, so the panel renders it indistinguishably
+ * from a live model — that fidelity is the whole point of the mock. */
+async function runMockTurn(
+  ctx: ActionCtx,
+  run: {
+    assistantMessageId: Id<"assistantMessages">;
+    userText: string;
+  },
+): Promise<FollowUpContext | null> {
+  const chunks = [
+    `**Mock mode** — no model is connected, so I can't see your calendar. `,
+    `You asked:\n\n> ${run.userText.slice(0, 200)}\n\n`,
+    `A real reply would read something like:\n\n`,
+    `- **Standup** — 9:00 to 9:15 AM\n`,
+    `- **Deep work** — 10:00 AM to 12:00 PM\n`,
+    `- **Design review** — 2:00 to 3:00 PM\n\n`,
+    `Set a real \`DEEPSEEK_API_KEY\` on the deployment to bring me to life.`,
+  ];
+  let text = "";
+  for (const chunk of chunks) {
+    text += chunk;
+    await ctx.runMutation(internal.domains.assistant.data.flushText, {
+      messageId: run.assistantMessageId,
+      text,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return { userText: run.userText, assistantText: text };
+}
+
 /** The follow-up generator's frozen instruction. Kept lean and strict: the panel
  * only ever wants a short JSON array, and most turns should yield none. */
 const FOLLOWUP_SYSTEM = `You suggest what the user of a calendar scheduling assistant might naturally ask next.
@@ -514,6 +555,13 @@ async function generateFollowUps(
   apiKey: string,
   context: FollowUpContext,
 ): Promise<string[]> {
+  if (apiKey === MOCK_API_KEY) {
+    return [
+      "What's on my calendar tomorrow?",
+      "Find 30 minutes for a call",
+      "Move my next meeting an hour later",
+    ];
+  }
   const client = new OpenAI({
     apiKey,
     baseURL: DEEPSEEK_BASE_URL,

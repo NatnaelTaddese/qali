@@ -93,43 +93,40 @@ export function AccountPanel({
           ))}
         </div>
       </div>
-      <button
-        type="button"
-        onClick={onOpenSettings}
-        className="group flex items-center gap-3 rounded-2xl bg-muted/60 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <HugeiconsIcon
-          icon={Settings01Icon}
-          strokeWidth={2}
-          className="size-5 shrink-0 text-muted-foreground"
-        />
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="text-sm font-medium">Settings</span>
-          <span className="truncate text-xs text-muted-foreground">
-            Accounts, calendars, and preferences
-          </span>
-        </span>
-        <HugeiconsIcon
-          icon={ArrowRight01Icon}
-          strokeWidth={2}
-          className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
-        />
-      </button>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="justify-start"
-        disabled={isSigningOut}
-        aria-busy={isSigningOut}
-        onClick={signOut}
-      >
-        {isSigningOut ? (
-          <Spinner />
-        ) : (
-          <HugeiconsIcon icon={Logout01Icon} strokeWidth={2} className="size-4" />
-        )}
-        {isSigningOut ? "Signing out…" : "Sign out"}
-      </Button>
+      <div className="flex flex-col overflow-hidden rounded-2xl bg-muted/60">
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="flex items-center gap-3 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        >
+          <HugeiconsIcon
+            icon={Settings01Icon}
+            strokeWidth={2}
+            className="size-4 shrink-0 text-muted-foreground"
+          />
+          <span className="min-w-0 flex-1 text-sm font-medium">Settings</span>
+          <HugeiconsIcon
+            icon={ArrowRight01Icon}
+            strokeWidth={2}
+            className="size-4 shrink-0 text-muted-foreground"
+          />
+        </button>
+        <div className="mx-3 h-px bg-border" />
+        <button
+          type="button"
+          className="flex items-center gap-3 px-3 py-2.5 text-left text-sm font-medium text-destructive outline-none transition-colors hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-50"
+          disabled={isSigningOut}
+          aria-busy={isSigningOut}
+          onClick={signOut}
+        >
+          {isSigningOut ? (
+            <Spinner className="size-4" />
+          ) : (
+            <HugeiconsIcon icon={Logout01Icon} strokeWidth={2} className="size-4" />
+          )}
+          {isSigningOut ? "Signing out…" : "Sign out"}
+        </button>
+      </div>
     </div>
   );
 }

@@ -305,7 +305,7 @@ export function BottomIsland() {
           willChange: "transform",
         }}
         className={cn(
-          "pointer-events-auto relative overflow-hidden bg-background shadow-lg",
+          "pointer-events-auto overflow-hidden border border-black/20 bg-white shadow-lg dark:border-border dark:bg-popover",
           // The edit bar is a pill sized to its own content, like the nav row.
           // Settings carries its own inset so its two-tone sidebar can run
           // edge to edge (the panel restores the padding on small screens).
@@ -319,17 +319,6 @@ export function BottomIsland() {
           !editing && widthClass(view),
         )}
       >
-        {/* The hairline lives on its own layout-animated layer. A border on the
-          * nav itself is scaled with the box during the layout spring and
-          * visibly thickens and thins as the spring settles; motion
-          * counter-scales a child with its own `layout`, so this stays 1px. */}
-        <motion.div
-          layout
-          aria-hidden
-          transition={SPRING_DOCK}
-          style={{ borderRadius: editing ? 28 : cornerRadius(view) }}
-          className="pointer-events-none absolute inset-0 z-10 border border-foreground/10"
-        />
         <motion.div layout="position">
           <AnimatePresence mode="popLayout" initial={false} custom={direction}>
             <motion.div

@@ -2,7 +2,7 @@
  * root `booking.ts` facade re-exports the same registered objects on the
  * legacy `api.booking.*` / `internal.booking.*` paths while they drain. */
 
-import type { SlotOption } from "@qali/domain/availability";
+import { MS_PER_DAY, type SlotOption } from "@qali/domain/availability";
 import { normalizeSlug, slugError } from "@qali/domain/slug";
 import { v } from "convex/values";
 
@@ -81,7 +81,12 @@ export async function bookingPageDefaultsHandler(ctx: QueryCtx) {
   const user = await authComponent.safeGetAuthUser(ctx);
   return {
     ...DEFAULT_PAGE,
-    suggestedSlug: user ? normalizeSlug(user.email.split("@")[0] ?? "") : "",
+    // Suggest from the display name, not the email's local part: the slug is
+    // public, and seeding it from the address would let a list of addresses be
+    // checked against live pages.
+    suggestedSlug: user
+      ? normalizeSlug(user.name?.trim() || user.email.split("@")[0] || "")
+      : "",
     displayName: user?.name ?? "",
   };
 }
@@ -189,11 +194,12 @@ export async function getPublicPageHandler(
   if (!page || !page.enabled) {
     return null;
   }
+  // The host's zone stays private: the picker renders in the visitor's zone
+  // and the slot list already carries absolute instants.
   return {
     slug: page.slug,
     displayName: page.displayName,
     imageUrl: page.imageUrl,
-    timeZone: page.timeZone,
     title: page.title,
     description: page.description,
     slotMinutes: page.slotMinutes,
@@ -207,6 +213,14 @@ export const getPublicPage = query({
   handler: (ctx, args) => getPublicPageHandler(ctx, args),
 });
 
+/** How far a visitor's own clock may drift from the server's before the
+ * server's wins. Wide enough for a skewed device, far too narrow to move the
+ * disclosure window (see listSlotsHandler). */
+const NOW_TOLERANCE_MS = 15 * 60 * 1000;
+/** Slots that started this long ago are still answered, so a picker rendering
+ * "today" doesn't lose the current hour to clock skew. */
+const PAST_GRACE_MS = 60 * 60 * 1000;
+
 /**
  * The slot grid in `[fromMs, toMs)`. Slot starts, a taken/free flag, and the
  * slot length are the entire payload: a visitor can tell that the host is free
@@ -214,6 +228,14 @@ export const getPublicPage = query({
  *
  * Taken slots are sent rather than filtered out so the picker can disable them
  * in place.
+ *
+ * The host's `minNoticeMinutes` and `horizonDays` are the only things that
+ * bound how much of their schedule a stranger can read, and both are measured
+ * from "now" — so "now" must be the server's, not the caller's. The visitor's
+ * `nowMs` is accepted only within a small tolerance of the server clock, and
+ * the requested window is clamped to what the page actually offers: anything
+ * earlier than the current hour or later than the horizon is simply not
+ * answered, whatever the caller asked for.
  */
 export async function listSlotsHandler(
   ctx: QueryCtx,
@@ -223,16 +245,23 @@ export async function listSlotsHandler(
   if (!page || !page.enabled) {
     return { slotMinutes: 0, slots: [] };
   }
-  const fromMs = args.fromMs;
-  const toMs = Math.min(args.toMs, fromMs + MAX_SLOT_RANGE_MS);
+  const serverNow = Date.now();
+  const nowMs = Math.min(
+    Math.max(args.nowMs ?? serverNow, serverNow - NOW_TOLERANCE_MS),
+    serverNow + NOW_TOLERANCE_MS,
+  );
+  const fromMs = Math.max(args.fromMs, serverNow - PAST_GRACE_MS);
+  const toMs = Math.min(
+    args.toMs,
+    fromMs + MAX_SLOT_RANGE_MS,
+    serverNow + (page.horizonDays + 1) * MS_PER_DAY,
+  );
   if (toMs <= fromMs) {
     return { slotMinutes: page.slotMinutes, slots: [] };
   }
   return {
     slotMinutes: page.slotMinutes,
-    // `fromMs` was already caller-materialized by legacy clients, so it is a
-    // safe compatibility fallback that does not introduce a reactive wall clock.
-    slots: await slotGrid(ctx, page, fromMs, toMs, args.nowMs ?? fromMs),
+    slots: await slotGrid(ctx, page, fromMs, toMs, nowMs),
   };
 }
 

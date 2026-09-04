@@ -47,3 +47,17 @@ describe("waitlist.join", () => {
     expect(rows).toHaveLength(0);
   });
 });
+
+describe("waitlist.join input bounds", () => {
+  test("rejects an oversized source label", async () => {
+    const t = convexTest(schema, modules);
+    await expect(
+      t.mutation(api.domains.marketing.mutations.join, {
+        email: "big@example.com",
+        source: "x".repeat(10_000),
+      }),
+    ).rejects.toThrow();
+    const rows = await t.run((ctx) => ctx.db.query("waitlist").collect());
+    expect(rows).toEqual([]);
+  });
+});

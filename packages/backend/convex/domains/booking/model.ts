@@ -43,9 +43,44 @@ export const DEFAULT_PAGE = {
 export const MAX_SLOT_RANGE_MS = 35 * MS_PER_DAY;
 
 export const RATE_WINDOW_MS = 60 * 60 * 1000;
+// A Convex mutation has no client IP, so every key below is something the
+// anonymous caller chose. None of them can tell one visitor from another; what
+// they can do is bound the damage. The per-email key mostly serializes repeat
+// submits of one address. The per-page key is a spam ceiling on the host's
+// inbox — deliberately loose, because it is also the easiest lever for locking
+// a page: once it trips, every real visitor is turned away for the rest of the
+// hour. The global key bounds total write volume the way the waitlist's does.
+// Both page-scoped limits are consumed only after the request has passed slot
+// validation, so a flood of junk can't spend them.
 export const MAX_REQUESTS_PER_EMAIL = 3;
-export const MAX_REQUESTS_PER_PAGE = 20;
+export const MAX_REQUESTS_PER_PAGE = 60;
+export const MAX_REQUESTS_GLOBAL = 600;
+// How many of a host's requests may sit undecided at once. Each pending
+// request withholds its slot from every later visitor, so without a ceiling a
+// stream of throwaway addresses can squat a whole booking horizon.
+export const MAX_PENDING_PER_PAGE = 50;
+// A request the host hasn't answered stops holding its slot after this long,
+// rather than at the slot's own end (which can be weeks out). Two days is
+// ample for a host who checks in daily and short enough that a squatted slot
+// returns to the page while it is still bookable.
+export const PENDING_TTL_MS = 48 * 60 * 60 * 1000;
 export const MAX_PENDING_BOOKINGS = 500;
+// IANA zone ids top out well under this; the check is a bound on stored bytes
+// from anonymous callers, not a format rule (Intl does the real validation).
+export const MAX_TIME_ZONE_LENGTH = 64;
+
+/** Whether `timeZone` is a zone the runtime's Intl can resolve. Both the host's
+ * page zone (which every slot computation runs through) and a visitor's
+ * display zone are validated with this before they are stored. */
+export function isValidTimeZone(timeZone: string): boolean {
+  if (!timeZone || timeZone.length > MAX_TIME_ZONE_LENGTH) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 export const EXPIRATION_BATCH_SIZE = 100;
 export const ACCEPT_LEASE_MS = 2 * 60 * 1000;
 export const ACCEPT_RECONCILE_MAX_ATTEMPTS = 5;

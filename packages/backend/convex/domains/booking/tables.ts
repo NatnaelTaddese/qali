@@ -96,6 +96,10 @@ export const bookingTables = {
     // while the provider write is in flight so existing clients keep rendering
     // the request correctly and a lost response can be reconciled on retry.
     acceptOperationId: v.optional(v.string()),
+    // When a still-pending request stops holding its slot: the earlier of the
+    // slot's end and a fixed time after it was made. Absent on rows written
+    // before the TTL existed; those expire at `endMs` as they always did.
+    expiresAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_host_and_start", ["hostUserId", "startMs"])

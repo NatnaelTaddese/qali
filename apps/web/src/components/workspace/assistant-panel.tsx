@@ -381,7 +381,7 @@ export function AssistantPanel({
       </svg>
       {/* Fills the goo dock's fixed-height panel body; the conversation scrolls
         * inside rather than the container growing to fit. */}
-      <div className="mx-1 mt-1.5 mb-1 flex items-start gap-2.5">
+      <div className="flex items-start gap-2.5">
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">Assistant</p>
           <p className="text-xs text-muted-foreground">

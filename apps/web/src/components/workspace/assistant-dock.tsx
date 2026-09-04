@@ -182,7 +182,9 @@ export function AssistantDock() {
           // The notification panel inherits the goo surface's resolved colour.
           // Bridge that same palette into semantic tokens for the assistant's
           // bubbles, cards and composer instead of relying on the page theme.
-          <div className="goo-panel-theme h-full">
+          // The goo shell's own 6px of padding is menu-tier; a content panel
+          // needs real margins, so the breathing room lives here.
+          <div className="goo-panel-theme h-full p-2.5">
             <AssistantPanelLoader
               threadId={threadId}
               onThreadChange={selectThread}

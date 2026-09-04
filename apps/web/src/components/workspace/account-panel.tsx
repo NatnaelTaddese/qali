@@ -115,7 +115,7 @@ export function AccountPanel({
         <Button
           variant="destructive"
           size="sm"
-          className="h-auto justify-start gap-3 rounded-none bg-transparent px-3 py-2.5 focus-visible:ring-inset dark:bg-transparent"
+          className="h-auto justify-start gap-3 rounded-none border-0 bg-transparent px-3 py-2.5 focus-visible:ring-inset dark:bg-transparent"
           disabled={isSigningOut}
           aria-busy={isSigningOut}
           onClick={signOut}

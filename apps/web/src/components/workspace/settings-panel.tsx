@@ -192,7 +192,7 @@ export function SettingsPanel({
           <div className="grid h-[min(34rem,78dvh)] grid-cols-[12.5rem_minmax(0,1fr)]">
             <nav
               aria-label="Settings sections"
-              className="flex flex-col gap-1 border-r border-border bg-muted/40 p-3"
+              className="flex flex-col gap-1 border-r border-border bg-muted p-3"
             >
               <p className="px-3 pt-1.5 pb-2.5 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
                 Settings
@@ -207,8 +207,8 @@ export function SettingsPanel({
                     // Rounded like the header's day/week/month toggle, not a pill.
                     "group flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
                     entry.id === section
-                      ? "bg-background shadow-sm dark:border dark:border-white/5"
-                      : "hover:bg-background/60 dark:hover:bg-background/40",
+                      ? "bg-background shadow-sm dark:bg-accent dark:shadow-none dark:border dark:border-white/10"
+                      : "hover:bg-background/60 dark:hover:bg-accent/50",
                   )}
                 >
                   <HugeiconsIcon

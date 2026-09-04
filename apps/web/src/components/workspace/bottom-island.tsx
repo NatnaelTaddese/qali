@@ -25,6 +25,8 @@ import { EventEdit } from "@/components/calendar/event-edit";
 import {
   dockVariants,
   dockVariantsReduced,
+  SCRIM_ENTER,
+  SCRIM_EXIT,
   SPRING_DOCK,
 } from "@/components/calendar/motion";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
@@ -253,6 +255,8 @@ export function BottomIsland() {
   }, [expanded, view?.kind, close, closeCurrent, editing, setEditing]);
 
   const variants = reduce ? dockVariantsReduced : dockVariants;
+  const timed = (transition: typeof SCRIM_ENTER) =>
+    reduce ? { duration: 0 } : transition;
 
   return (
     <>
@@ -271,22 +275,8 @@ export function BottomIsland() {
             aria-hidden
             className="fixed inset-0 z-40 bg-background/40"
             initial={{ opacity: 0 }}
-            // The island's spring takes roughly 0.4s to settle; an expo fade
-            // finished well before that and read as a snap. Ease the scrim in
-            // over the same window so the calendar dims with the sheet, and
-            // let it out faster so a dismiss feels immediate.
-            animate={{
-              opacity: 1,
-              transition: reduce
-                ? { duration: 0 }
-                : { duration: 0.45, ease: [0.33, 1, 0.68, 1] },
-            }}
-            exit={{
-              opacity: 0,
-              transition: reduce
-                ? { duration: 0 }
-                : { duration: 0.28, ease: [0.33, 1, 0.68, 1] },
-            }}
+            animate={{ opacity: 1, transition: timed(SCRIM_ENTER) }}
+            exit={{ opacity: 0, transition: timed(SCRIM_EXIT) }}
           />
         )}
       </AnimatePresence>
@@ -546,7 +536,7 @@ function NavButton({
         )}
       >
         {busy ? (
-          <Spinner className="size-5" />
+          <Spinner className={cn("size-5", iconClassName)} />
         ) : (
           <HugeiconsIcon
             icon={icon}

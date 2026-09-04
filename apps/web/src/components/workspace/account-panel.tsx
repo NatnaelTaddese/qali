@@ -112,21 +112,20 @@ export function AccountPanel({
           />
         </button>
         <div className="mx-3 h-px bg-border" />
-        <Button
-          variant="destructive"
-          size="sm"
-          className="h-auto justify-start gap-3 rounded-none border-0 bg-transparent px-3 py-2.5 focus-visible:ring-inset dark:bg-transparent"
+        <button
+          type="button"
+          className="flex items-center gap-3 px-3 py-2.5 text-left text-sm font-medium text-destructive outline-none transition-colors hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-50"
           disabled={isSigningOut}
           aria-busy={isSigningOut}
           onClick={signOut}
         >
           {isSigningOut ? (
-            <Spinner />
+            <Spinner className="size-4" />
           ) : (
             <HugeiconsIcon icon={Logout01Icon} strokeWidth={2} className="size-4" />
           )}
           {isSigningOut ? "Signing out…" : "Sign out"}
-        </Button>
+        </button>
       </div>
     </div>
   );

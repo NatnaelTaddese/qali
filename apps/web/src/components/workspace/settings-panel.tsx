@@ -1,16 +1,13 @@
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
-  Calendar03Icon,
   Cancel01Icon,
   CheckmarkBadge01Icon,
-  Link01Icon,
   PencilEdit01Icon,
   RefreshIcon,
-  SlidersHorizontalIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { Google, MicrosoftOutlook } from "@thesvg/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import type { Id } from "@qali/backend/convex/_generated/dataModel";
@@ -57,38 +54,16 @@ import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { authClient } from "@/lib/auth-client";
 import { useScrollFadeFallback } from "@/lib/use-scroll-fade";
 import { UserAvatar } from "./user-avatar";
+import {
+  DESKTOP_QUERY,
+  SECTIONS,
+  SETTINGS_ACTIVE_ROW,
+  SETTINGS_PANE,
+  type SettingsSection,
+} from "./settings-layout";
 import { useSyncNow } from "./use-sync-now";
 
-export type SettingsSection = "accounts" | "calendars" | "preferences";
-
-const SECTIONS: {
-  id: SettingsSection;
-  label: string;
-  description: string;
-  icon: IconSvgElement;
-}[] = [
-  {
-    id: "accounts",
-    label: "Accounts",
-    description: "Connections and sync",
-    icon: Link01Icon,
-  },
-  {
-    id: "calendars",
-    label: "Calendars",
-    description: "Grouped by account",
-    icon: Calendar03Icon,
-  },
-  {
-    id: "preferences",
-    label: "Preferences",
-    description: "Time and display",
-    icon: SlidersHorizontalIcon,
-  },
-];
-
-/** The panel goes two-column at the same point Tailwind's `sm:` would. */
-const DESKTOP_QUERY = "(min-width: 640px)";
+export type { SettingsSection } from "./settings-layout";
 
 function useIsDesktop(): boolean {
   return useSyncExternalStore(
@@ -189,7 +164,7 @@ export function SettingsPanel({
           // runs corner to corner — the two-tone split. The height is fixed
           // (viewport-capped) so switching sections never resizes the sheet;
           // a section taller than the pane scrolls inside it instead.
-          <div className="grid h-[min(34rem,78dvh)] grid-cols-[12.5rem_minmax(0,1fr)]">
+          <div className={cn("grid", SETTINGS_PANE)}>
             <nav
               aria-label="Settings sections"
               className="flex flex-col gap-1 border-r border-border bg-muted p-3"
@@ -207,7 +182,7 @@ export function SettingsPanel({
                     // Rounded like the header's day/week/month toggle, not a pill.
                     "group flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
                     entry.id === section
-                      ? "bg-background shadow-sm dark:bg-accent dark:shadow-none dark:border dark:border-white/10"
+                      ? SETTINGS_ACTIVE_ROW
                       : "hover:bg-background/60 dark:hover:bg-accent/50",
                   )}
                 >

@@ -27,13 +27,19 @@ export function toEditorHtml(input: string): string {
 
 /** Collapse description HTML to a single line of plain text, for one-line
  * previews (the create dock's "Add description" button). Decodes entities and
- * squashes whitespace; not a security boundary — never render this as HTML. */
+ * squashes whitespace.
+ *
+ * The HTML is untrusted — it is whatever the event's author put in a Google
+ * description — so it must never touch the live document. Assigning it to a
+ * created element's `innerHTML` is not safe even when that element is never
+ * attached: the parser instantiates real nodes, an `<img>` starts loading the
+ * moment `src` is set, and its `onerror` runs with the app's session. Parse it
+ * in an inert document instead, where nothing loads and no handler fires. */
 export function htmlToPreviewText(html: string): string {
   if (!html) return "";
-  if (typeof document === "undefined") {
+  if (typeof DOMParser === "undefined") {
     return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   }
-  const el = document.createElement("div");
-  el.innerHTML = html;
-  return (el.textContent ?? "").replace(/\s+/g, " ").trim();
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return (doc.body.textContent ?? "").replace(/\s+/g, " ").trim();
 }

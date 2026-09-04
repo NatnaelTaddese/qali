@@ -25,7 +25,6 @@ import { EventEdit } from "@/components/calendar/event-edit";
 import {
   dockVariants,
   dockVariantsReduced,
-  EASE_OUT_EXPO,
   SPRING_DOCK,
 } from "@/components/calendar/motion";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
@@ -272,13 +271,22 @@ export function BottomIsland() {
             aria-hidden
             className="fixed inset-0 z-40 bg-background/40"
             initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={
-              reduce
+            // The island's spring takes roughly 0.4s to settle; an expo fade
+            // finished well before that and read as a snap. Ease the scrim in
+            // over the same window so the calendar dims with the sheet, and
+            // let it out faster so a dismiss feels immediate.
+            animate={{
+              opacity: 1,
+              transition: reduce
                 ? { duration: 0 }
-                : { duration: 0.24, ease: EASE_OUT_EXPO }
-            }
+                : { duration: 0.45, ease: [0.33, 1, 0.68, 1] },
+            }}
+            exit={{
+              opacity: 0,
+              transition: reduce
+                ? { duration: 0 }
+                : { duration: 0.28, ease: [0.33, 1, 0.68, 1] },
+            }}
           />
         )}
       </AnimatePresence>

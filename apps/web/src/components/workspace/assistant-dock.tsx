@@ -213,13 +213,13 @@ export function AssistantDock() {
         panelRadius={20}
         // Resting: a neutral FAB on the app surface. Open: it morphs into the
         // inverted primary surface, matching the notification panel's flip.
-        fill="var(--popover)"
-        foreground="var(--popover-foreground)"
+        fill="var(--background)"
+        foreground="var(--foreground)"
         hoverFill="var(--accent)"
         activeFill="var(--primary)"
         activeForeground="var(--primary-foreground)"
         activeHoverFill="color-mix(in oklch, var(--primary-foreground) 14%, var(--primary))"
-        triggerClassName="mascot-trigger !size-12 !px-0 rounded-full border border-border shadow-lg"
+        triggerClassName="mascot-trigger !size-12 !px-0 rounded-full border border-foreground/10 shadow-lg"
       />
     </div>
   );

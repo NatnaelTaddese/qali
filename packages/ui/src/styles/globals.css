@@ -36,6 +36,10 @@
   --card-foreground: oklch(13% 0 0);
   --popover: oklch(97% 0 0);
   --popover-foreground: oklch(13% 0 0);
+  /* The floating dock. A step above --muted in both themes so the muted
+   * groups laid inside it (theme toggle, settings rows) keep their inset
+   * contrast: white over 97% here, #232323 over #1b1b1b in the dark. */
+  --dock: #ffffff;
   --primary: oklch(13% 0 0);
   --primary-foreground: oklch(99% 0 0);
   --secondary: oklch(97% 0 0);
@@ -96,6 +100,7 @@
   --card-foreground: oklch(96% 0 0);
   --popover: #1b1b1b;
   --popover-foreground: oklch(96% 0 0);
+  --dock: #232323;
   --primary: oklch(96% 0 0);
   --primary-foreground: #111111;
   --secondary: #1b1b1b;
@@ -167,6 +172,7 @@
   --color-primary: var(--primary);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
+  --color-dock: var(--dock);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-foreground: var(--foreground);

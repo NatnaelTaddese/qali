@@ -36,6 +36,7 @@ import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
 import { UserAvatar } from "./user-avatar";
 import { useSyncNow } from "./use-sync-now";
+import { SettingsPanelSkeleton } from "./settings-skeleton";
 
 const MAX_TIMEOUT_MS = 2_147_000_000;
 const AVAILABILITY_PREFETCH_GRACE_MS = 10_000;
@@ -372,13 +373,7 @@ export function BottomIsland() {
                   onOpenSettings={() => open({ kind: "settings" })}
                 />
               ) : view?.kind === "settings" ? (
-                <Suspense
-                  fallback={
-                    <div className="flex h-96 items-center justify-center">
-                      <Spinner className="size-5" />
-                    </div>
-                  }
-                >
+                <Suspense fallback={<SettingsPanelSkeleton />}>
                   <SettingsPanelLazy
                     initialSection={view.section}
                     onClose={closeCurrent}

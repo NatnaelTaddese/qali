@@ -296,7 +296,7 @@ export function BottomIsland() {
           willChange: "transform",
         }}
         className={cn(
-          "pointer-events-auto overflow-hidden border border-[#ccc] bg-white shadow-lg backdrop-blur dark:border-border dark:bg-popover/90",
+          "pointer-events-auto overflow-hidden border border-foreground/20 bg-background shadow-lg",
           // The edit bar is a pill sized to its own content, like the nav row.
           // Settings carries its own inset so its two-tone sidebar can run
           // edge to edge (the panel restores the padding on small screens).

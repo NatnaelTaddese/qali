@@ -144,7 +144,7 @@ export function WorkspaceSkeleton() {
         aria-hidden
         className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4"
       >
-        <div className="flex items-center gap-1 rounded-[28px] border border-[#ccc] bg-white px-2 py-1.5 shadow-lg backdrop-blur dark:border-border dark:bg-popover/90">
+        <div className="flex items-center gap-1 rounded-[28px] border border-foreground/20 bg-background px-2 py-1.5 shadow-lg">
           <Skeleton className="size-9 rounded-lg" />
           <Skeleton className="size-9 rounded-lg" />
           <Skeleton className="size-9 rounded-lg" />

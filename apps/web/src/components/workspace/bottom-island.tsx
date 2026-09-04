@@ -480,6 +480,8 @@ function NavRow({
     <div className="flex items-center gap-1">
       <NavButton
         icon={Calendar03Icon}
+        // The glyph's binder rings pull its weight left; nudge it to read centred.
+        iconClassName="translate-x-px"
         label={isSyncing ? "Syncing calendar" : "Sync calendar"}
         active
         busy={isSyncing}
@@ -516,6 +518,7 @@ function NavRow({
 
 function NavButton({
   icon,
+  iconClassName,
   label,
   active,
   busy,
@@ -524,6 +527,8 @@ function NavButton({
   onClick,
 }: {
   icon: IconSvgElement;
+  /** Optical correction for a glyph whose visual weight sits off-center. */
+  iconClassName?: string;
   label: string;
   active?: boolean;
   busy?: boolean;
@@ -551,7 +556,11 @@ function NavButton({
         {busy ? (
           <Spinner className="size-5" />
         ) : (
-          <HugeiconsIcon icon={icon} strokeWidth={2} className="size-5" />
+          <HugeiconsIcon
+            icon={icon}
+            strokeWidth={2}
+            className={cn("size-5", iconClassName)}
+          />
         )}
         {badge ? (
           <span className="absolute top-1 right-1 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] leading-none font-medium text-primary-foreground">

@@ -467,6 +467,9 @@ export function mapGoogleEvent(raw: RawEvent, calendarId: string): MappedEvent {
   };
 }
 
+/** The most guests a synced event carries. See fetchRawCalendarPage. */
+export const MAX_ATTENDEES_PER_EVENT = 100;
+
 async function fetchRawCalendarPage(
   accessToken: string,
   opts: {
@@ -481,6 +484,12 @@ async function fetchRawCalendarPage(
     singleEvents: "true",
     showDeleted: "true",
     maxResults: "250",
+    // Bound the guest list per event. Anyone can invite the user to a
+    // thousands-strong event; without this cap one such invite makes every
+    // expanded instance carry the whole list, the page blows past the write
+    // budget of the mutation that stores it, and the calendar stops syncing
+    // for good. Google sets `attendeesOmitted` when it truncates.
+    maxAttendees: String(MAX_ATTENDEES_PER_EVENT),
   });
   if (opts.pageToken) {
     params.set("pageToken", opts.pageToken);

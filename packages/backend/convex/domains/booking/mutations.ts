@@ -35,14 +35,27 @@ import {
   bookingNotificationBody,
   collectBusy,
   EXPIRATION_BATCH_SIZE,
+  isValidTimeZone,
+  MAX_PENDING_PER_PAGE,
+  MAX_REQUESTS_GLOBAL,
   MAX_REQUESTS_PER_EMAIL,
   MAX_REQUESTS_PER_PAGE,
   pageBySlug,
   pageByUser,
+  PENDING_TTL_MS,
   RATE_WINDOW_MS,
   slotGrid,
   slotSettingsValidator,
 } from "./model";
+
+/** Drop anything tag-shaped from a visitor's note. The note becomes the
+ * description of the event Google creates on acceptance, and Google keeps
+ * description HTML verbatim — so markup a stranger typed would otherwise be
+ * stored, synced back, and rendered in the host's own workspace. Plain
+ * angle brackets in prose ("a < b", "<3") survive; only `<tag ...>` shapes go. */
+function stripTags(text: string): string {
+  return text.replace(/<\/?[a-z!?][^>]*>/gi, "");
+}
 
 async function primaryLocalCalendar(
   ctx: MutationCtx,
@@ -126,9 +139,32 @@ async function primaryGoogleBookingTarget(
   return await validateBookingTarget(ctx, userId, connectionId, calendar._id);
 }
 
+/** The primary target resolved from rows that already exist — no connection or
+ * calendar is created on the way. This is the only resolution the anonymous
+ * request path may use: a stranger's form submission must not be able to
+ * insert into the host's connection tables, however benign the defaults. */
+async function existingPrimaryBookingTarget(
+  ctx: MutationCtx,
+  userId: string,
+): Promise<BookingTarget> {
+  const connections = await ctx.db
+    .query("calendarConnections")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .take(101);
+  if (connections.length > 100) {
+    throw new Error("Too many connections to choose a booking target safely");
+  }
+  const connection = preferredConnection(connections);
+  if (!connection) throw new Error("Booking calendar target is unavailable");
+  const calendar = await primaryLocalCalendar(ctx, userId, connection._id);
+  if (!calendar) throw new Error("Booking calendar target is unavailable");
+  return await validateBookingTarget(ctx, userId, connection._id, calendar._id);
+}
+
 async function bookingPageTarget(
   ctx: MutationCtx,
   page: Doc<"bookingPages">,
+  options: { createMissing: boolean } = { createMissing: true },
 ): Promise<BookingTarget> {
   if (page.targetConnectionId && page.targetCalendarId) {
     return await validateBookingTarget(
@@ -140,6 +176,13 @@ async function bookingPageTarget(
   }
   if (page.targetConnectionId || page.targetCalendarId) {
     throw new Error("Booking calendar target is unavailable");
+  }
+  // A page saved before targets were stored (the provider cutover nulled the
+  // pair) self-heals from the host's primary calendar. Host-initiated paths
+  // may create the rows that need to exist; the anonymous request path only
+  // reads what is already there and persists nothing on the page.
+  if (!options.createMissing) {
+    return await existingPrimaryBookingTarget(ctx, page.userId);
   }
   const target = await primaryGoogleBookingTarget(ctx, page.userId);
   await ctx.db.patch(page._id, {
@@ -314,6 +357,11 @@ export async function upsertBookingPageHandler(
   if (args.horizonDays < 1 || args.horizonDays > 365) {
     throw new Error("Booking window must be between 1 and 365 days");
   }
+  // Every slot computation for this page runs through Intl with this zone; an
+  // unresolvable one would make the public page throw for every visitor.
+  if (!isValidTimeZone(args.timeZone)) {
+    throw new Error("Please choose a valid time zone");
+  }
 
   const existing = await pageByUser(ctx, user._id);
   const target =
@@ -327,7 +375,9 @@ export async function upsertBookingPageHandler(
       : await primaryGoogleBookingTarget(ctx, user._id);
   const value = {
     slug,
-    displayName: user.name || user.email || "qali user",
+    // The public page renders this to strangers. Never fall through to the
+    // email: a host whose profile has no name would otherwise publish it.
+    displayName: user.name?.trim() || slug,
     imageUrl: user.image ?? undefined,
     timeZone: args.timeZone,
     title: args.title,
@@ -446,9 +496,60 @@ export async function requestBookingHandler(
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) {
     throw new Error("Please enter a valid email address");
   }
-  const note = args.note?.trim();
-  if (note && note.length > 2000) {
+  const rawNote = args.note?.trim();
+  if (rawNote && rawNote.length > 2000) {
     throw new Error("Please shorten your message");
+  }
+  const note = rawNote ? stripTags(rawNote).trim() : undefined;
+  // Display only, but stored and later shown to the host and fed to the
+  // assistant; an unbounded or unresolvable string has no business here.
+  if (!isValidTimeZone(args.timeZone)) {
+    throw new Error("Invalid time zone");
+  }
+
+  // The global ceiling comes first, before any per-request reads, so a flood
+  // is throttled before it costs anything; it is shared by every page, so
+  // tripping it isn't a way to single one host out.
+  if (
+    !(await consumeRateLimit(
+      ctx,
+      "booking:global",
+      MAX_REQUESTS_GLOBAL,
+      RATE_WINDOW_MS,
+    ))
+  ) {
+    throw new ConvexError({ code: "PAGE_RATE_LIMIT" });
+  }
+
+  // Ask for a window just wide enough to contain the requested slot, so the
+  // check is cheap but still runs the same rules as the listing. This runs
+  // before the page-scoped limits below are spent: an invalid or already-taken
+  // slot must not count against the page, or junk submissions could exhaust
+  // its hourly allowance and turn every real visitor away.
+  const now = Date.now();
+  const endMs = args.startMs + page.slotMinutes * 60_000;
+  const slots = await slotGrid(
+    ctx,
+    page,
+    args.startMs - MS_PER_DAY,
+    endMs + MS_PER_DAY,
+    now,
+  );
+  const slot = slots.find((s) => s.startMs === args.startMs);
+  if (!slot?.available) {
+    throw new Error("That time is no longer available");
+  }
+
+  // Undecided requests withhold their slots; cap how many may pile up so a
+  // run of throwaway addresses can't hold the whole horizon hostage.
+  const pending = await ctx.db
+    .query("bookings")
+    .withIndex("by_host_and_status_and_start", (q) =>
+      q.eq("hostUserId", page.userId).eq("status", "pending"),
+    )
+    .take(MAX_PENDING_PER_PAGE);
+  if (pending.length >= MAX_PENDING_PER_PAGE) {
+    throw new ConvexError({ code: "PAGE_RATE_LIMIT" });
   }
 
   if (
@@ -472,23 +573,11 @@ export async function requestBookingHandler(
     throw new ConvexError({ code: "EMAIL_RATE_LIMIT" });
   }
 
-  // Ask for a window just wide enough to contain the requested slot, so the
-  // check is cheap but still runs the same rules as the listing.
-  const endMs = args.startMs + page.slotMinutes * 60_000;
-  const slots = await slotGrid(
-    ctx,
-    page,
-    args.startMs - MS_PER_DAY,
-    endMs + MS_PER_DAY,
-    Date.now(),
-  );
-  const slot = slots.find((s) => s.startMs === args.startMs);
-  if (!slot?.available) {
-    throw new Error("That time is no longer available");
-  }
-
   const token = crypto.randomUUID();
-  const target = await bookingPageTarget(ctx, page);
+  // Read-only: an anonymous request never creates rows in the host's
+  // connection tables or rewrites their page.
+  const target = await bookingPageTarget(ctx, page, { createMissing: false });
+  const expiresAt = Math.min(endMs, now + PENDING_TTL_MS);
   const bookingId = await ctx.db.insert("bookings", {
     hostUserId: page.userId,
     startMs: args.startMs,
@@ -502,7 +591,8 @@ export async function requestBookingHandler(
     connectionId: target.connection._id,
     targetConnectionId: target.connection._id,
     targetCalendarId: target.calendar._id,
-    createdAt: Date.now(),
+    expiresAt,
+    createdAt: now,
   });
   // Surface the request in the host's notification bell. Times render in the
   // host's page zone so the body reads the same as the booking panel.
@@ -516,7 +606,7 @@ export async function requestBookingHandler(
     createdAt: Date.now(),
   });
   await ctx.scheduler.runAt(
-    endMs,
+    expiresAt,
     internal.domains.booking.mutations.expireBooking,
     { bookingId },
   );
@@ -537,6 +627,14 @@ export const requestBooking = mutation({
   handler: (ctx, args) => requestBookingHandler(ctx, args),
 });
 
+/** When a pending request stops holding its slot: its TTL when it has one,
+ * otherwise (rows from before the TTL existed) the slot's end. */
+export function bookingExpiresAt(
+  booking: Pick<Doc<"bookings">, "endMs" | "expiresAt">,
+): number {
+  return booking.expiresAt ?? booking.endMs;
+}
+
 /** Expire one request at its scheduled end. A decision that won the race first
  * is left untouched. */
 export async function expireBookingHandler(
@@ -544,7 +642,11 @@ export async function expireBookingHandler(
   args: { bookingId: Id<"bookings"> },
 ): Promise<null> {
   const booking = await ctx.db.get(args.bookingId);
-  if (!booking || booking.status !== "pending" || booking.endMs > Date.now()) {
+  if (
+    !booking ||
+    booking.status !== "pending" ||
+    bookingExpiresAt(booking) > Date.now()
+  ) {
     return null;
   }
   const now = Date.now();

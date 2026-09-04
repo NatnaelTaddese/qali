@@ -1,4 +1,4 @@
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 
 import { api, internal } from "../../../convex/_generated/api";
@@ -898,7 +898,7 @@ describe("booking acceptance authority", () => {
         slug: "self-heal-host",
       });
       // Both page targets absent — the cutover nulls the pair — so the request
-      // must fall back to the host's primary calendar and persist it.
+      // must resolve the host's primary calendar without creating anything.
       const connectionId = await ctx.db.insert("calendarConnections", {
         userId: HOST,
         provider: "google",
@@ -935,13 +935,13 @@ describe("booking acceptance authority", () => {
         .query("bookings")
         .withIndex("by_host_and_start", (q) => q.eq("hostUserId", HOST))
         .unique();
-      expect(page?.targetConnectionId).toBeDefined();
-      expect(page?.targetCalendarId).toBeDefined();
-      expect(booking).toMatchObject({
-        connectionId: page?.targetConnectionId,
-        targetConnectionId: page?.targetConnectionId,
-        targetCalendarId: page?.targetCalendarId,
-      });
+      // The anonymous path persists nothing on the host's page; only a
+      // host-initiated save rewrites it.
+      expect(page?.targetConnectionId).toBeUndefined();
+      expect(page?.targetCalendarId).toBeUndefined();
+      expect(booking?.connectionId).toBeDefined();
+      expect(booking?.targetConnectionId).toBe(booking?.connectionId);
+      expect(booking?.targetCalendarId).toBeDefined();
     });
   });
 
@@ -986,30 +986,41 @@ describe("booking acceptance authority", () => {
 });
 
 describe("booking context conflict detection", () => {
-  test("slot generation uses caller-materialized time", async () => {
+  test("slot listing measures notice and horizon from the server clock", async () => {
     const t = convexTest(schema, modules);
-    const fromMs = Date.UTC(2030, 0, 1);
+    const HOUR = 60 * 60_000;
+    const DAY = 24 * HOUR;
     await t.run((ctx) =>
       ctx.db.insert("bookingPages", {
         ...pageDoc(HOST),
-        slug: "materialized-time",
+        slug: "server-clock",
         minNoticeMinutes: 120,
+        horizonDays: 7,
       }),
     );
-    const earlier = await t.query(api.domains.booking.queries.listSlots, {
-      slug: "materialized-time",
-      fromMs,
-      toMs: fromMs + 4 * 60 * 60_000,
-      nowMs: fromMs - 3 * 60 * 60_000,
+    const now = Date.now();
+    // A caller who claims it is three days ago, asking for a window that
+    // starts then: the host's two-hour notice still applies to the real now.
+    const backdated = await t.query(api.domains.booking.queries.listSlots, {
+      slug: "server-clock",
+      fromMs: now - 3 * DAY,
+      toMs: now + DAY,
+      nowMs: now - 3 * DAY,
     });
-    const current = await t.query(api.domains.booking.queries.listSlots, {
-      slug: "materialized-time",
-      fromMs,
-      toMs: fromMs + 4 * 60 * 60_000,
-      nowMs: fromMs,
+    expect(backdated.slots.length).toBeGreaterThan(0);
+    // 15 minutes of tolerance on `nowMs`, so the earliest slot may sit a
+    // little inside the notice window measured from the true clock.
+    for (const slot of backdated.slots) {
+      expect(slot.startMs).toBeGreaterThanOrEqual(now + 2 * HOUR - 15 * 60_000);
+    }
+    // Beyond the horizon nothing is answered, whatever the caller's clock says.
+    const beyond = await t.query(api.domains.booking.queries.listSlots, {
+      slug: "server-clock",
+      fromMs: now + 20 * DAY,
+      toMs: now + 21 * DAY,
+      nowMs: now + 20 * DAY,
     });
-    expect(earlier.slots[0]?.startMs).toBe(fromMs);
-    expect(current.slots[0]?.startMs).toBe(fromMs + 2 * 60 * 60_000);
+    expect(beyond.slots).toEqual([]);
   });
 
   test("reports a conflict when another event overlaps the pending slot", async () => {
@@ -1061,5 +1072,166 @@ describe("booking context conflict detection", () => {
       hostUserId: HOST,
     });
     expect(ctxRow!.conflict).toBe(true);
+  });
+});
+
+describe("anonymous request hardening", () => {
+  const SLOT = 30 * 60_000;
+  const HOUR = 60 * 60_000;
+  const DAY = 24 * HOUR;
+  const nextSlot = (offsetMs: number) =>
+    Math.ceil((Date.now() + offsetMs) / SLOT) * SLOT;
+
+  type T = TestConvex<typeof schema>;
+
+  async function seedPage(
+    t: T,
+    slug: string,
+    overrides: Record<string, unknown> = {},
+  ) {
+    return await t.run(async (ctx) => {
+      const now = Date.now();
+      const connectionId = await ctx.db.insert("calendarConnections", {
+        userId: HOST,
+        provider: "google",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const calendarId = await ctx.db.insert("calendars", {
+        userId: HOST,
+        connectionId,
+        providerCalendarId: CAL,
+        primary: true,
+        accessRole: "owner",
+        selected: true,
+        isShared: false,
+      });
+      await ctx.db.insert("bookingPages", {
+        ...pageDoc(HOST),
+        slug,
+        targetConnectionId: connectionId,
+        targetCalendarId: calendarId,
+        ...overrides,
+      });
+      return { connectionId, calendarId };
+    });
+  }
+
+  function request(
+    t: T,
+    slug: string,
+    extra: Record<string, unknown> = {},
+  ) {
+    return t.mutation(api.domains.booking.mutations.requestBooking, {
+      slug,
+      startMs: nextSlot(HOUR),
+      name: "Requester",
+      email: "requester@example.com",
+      timeZone: "UTC",
+      ...extra,
+    });
+  }
+
+  async function storedBooking(t: T) {
+    return await t.run((ctx) =>
+      ctx.db
+        .query("bookings")
+        .withIndex("by_host_and_start", (q) => q.eq("hostUserId", HOST))
+        .unique(),
+    );
+  }
+
+  test("strips markup from the visitor's note", async () => {
+    const t = convexTest(schema, modules);
+    await seedPage(t, "note-host");
+    await request(t, "note-host", {
+      note: '<img src=x onerror="alert(1)">Hi <b>there</b>, 3 < 5 and <3',
+    });
+    const booking = await storedBooking(t);
+    expect(booking?.note).toBe("Hi there, 3 < 5 and <3");
+  });
+
+  test("rejects an unresolvable time zone", async () => {
+    const t = convexTest(schema, modules);
+    await seedPage(t, "zone-host");
+    await expect(
+      request(t, "zone-host", { timeZone: "Mars/Olympus_Mons" }),
+    ).rejects.toThrow();
+    await expect(
+      request(t, "zone-host", { timeZone: "x".repeat(5_000) }),
+    ).rejects.toThrow();
+    expect(await storedBooking(t)).toBeNull();
+  });
+
+  test("a request far out stops holding its slot after the TTL", async () => {
+    const t = convexTest(schema, modules);
+    await seedPage(t, "ttl-host");
+    const before = Date.now();
+    await request(t, "ttl-host", { startMs: nextSlot(5 * DAY) });
+    const booking = await storedBooking(t);
+    expect(booking?.expiresAt).toBeDefined();
+    expect(booking!.expiresAt!).toBeGreaterThanOrEqual(before + 2 * DAY);
+    expect(booking!.expiresAt!).toBeLessThanOrEqual(Date.now() + 2 * DAY);
+    expect(booking!.expiresAt!).toBeLessThan(booking!.endMs);
+    // Not yet due: the scheduled expiry leaves it pending.
+    await t.mutation(internal.domains.booking.mutations.expireBooking, {
+      bookingId: booking!._id,
+    });
+    expect((await storedBooking(t))?.status).toBe("pending");
+  });
+
+  test("only an accepted request spends the page's hourly allowance", async () => {
+    const t = convexTest(schema, modules);
+    await seedPage(t, "junk-host");
+    const keys = async () =>
+      await t.run(async (ctx) =>
+        (await ctx.db.query("bookingRateLimits").collect()).map((row) => row.key),
+      );
+    // A rejected request is a rolled-back transaction: nothing it counted
+    // survives, so junk can't wear the page's allowance down.
+    await expect(
+      request(t, "junk-host", { startMs: nextSlot(-2 * DAY) }),
+    ).rejects.toThrow("no longer available");
+    expect(await keys()).toEqual([]);
+    await request(t, "junk-host");
+    expect(await keys()).toEqual(
+      expect.arrayContaining([
+        "booking:global",
+        "page:junk-host",
+        "email:requester@example.com",
+      ]),
+    );
+  });
+
+  test("refuses new requests once the host has too many pending", async () => {
+    const t = convexTest(schema, modules);
+    await seedPage(t, "pending-host");
+    await t.run(async (ctx) => {
+      const base = nextSlot(10 * DAY);
+      for (let i = 0; i < 50; i += 1) {
+        const start = base + i * SLOT;
+        await ctx.db.insert("bookings", bookingDoc(HOST, start, start + SLOT));
+      }
+    });
+    await expect(request(t, "pending-host")).rejects.toThrow();
+    const count = await t.run(async (ctx) =>
+      (await ctx.db.query("bookings").collect()).length,
+    );
+    expect(count).toBe(50);
+  });
+
+  test("a page without a stored target creates nothing for an anonymous request", async () => {
+    const t = convexTest(schema, modules);
+    // A page whose host has no connection at all: the host-facing paths would
+    // materialize one, the anonymous path must fail closed instead.
+    await t.run((ctx) =>
+      ctx.db.insert("bookingPages", { ...pageDoc(HOST), slug: "bare-host" }),
+    );
+    await expect(request(t, "bare-host")).rejects.toThrow("unavailable");
+    const connections = await t.run((ctx) =>
+      ctx.db.query("calendarConnections").collect(),
+    );
+    expect(connections).toEqual([]);
   });
 });

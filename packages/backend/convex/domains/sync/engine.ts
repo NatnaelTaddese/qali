@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -22,6 +22,7 @@ import type {
   ProviderContact,
 } from "../../integrations/calendar/contacts";
 import { ProviderError } from "../../integrations/calendar/errors";
+import { consumeRateLimit } from "../../infrastructure/rateLimit";
 import {
   calendarAdapterFor,
   contactsAdapterFor,
@@ -48,6 +49,25 @@ const BATCH_SIZE = 100;
 const FANOUT_BATCH = 100;
 const ENGAGEMENT_CHUNK_SIZE = 200;
 const ENGAGEMENT_LEASE_MS = 10 * 60 * 1000;
+// One provider page can be 250 expanded instances of an event with hundreds
+// of guests each. Written through a single mutation, such a page exceeds the
+// transaction's write budget and the sync then fails identically on every
+// retry — so pages are stored in bounded sub-batches instead.
+const UPSERT_BATCH_MAX_EVENTS = 50;
+const UPSERT_BATCH_MAX_BYTES = 512 * 1024;
+// Guests of a large broadcast aren't "people the user meets"; harvesting them
+// would seed the directory with an all-hands' entire attendee list.
+const MAX_HARVEST_ATTENDEES = 50;
+// Consecutive credential failures before a connection leaves the polling
+// fan-out (see recordSyncOutcome). Below this, a transient token hiccup is
+// just retried on the normal back-off.
+const MAX_AUTH_FAILURES = 3;
+// Provider error bodies are unbounded; the settings panel only needs a line.
+const MAX_LAST_ERROR_CHARS = 500;
+// "Sync now" is a full fan-out against the shared Google project quota, so a
+// client can't be allowed to spam it.
+const MANUAL_SYNC_LIMIT = 10;
+const MANUAL_SYNC_WINDOW_MS = 15 * 60 * 1000;
 
 const providerValidator = v.union(v.literal("google"), v.literal("microsoft"));
 const providerCalendarValidator = v.object({
@@ -182,6 +202,39 @@ function eventPeople(event: ProviderEvent): PersonInput[] {
   return people;
 }
 
+/** Split a provider page into sub-batches small enough to store in one
+ * mutation each: at most UPSERT_BATCH_MAX_EVENTS events, and at most
+ * UPSERT_BATCH_MAX_BYTES of serialized event data. */
+export function eventBatches<T>(events: T[]): T[][] {
+  const batches: T[][] = [];
+  let current: T[] = [];
+  let bytes = 0;
+  for (const event of events) {
+    const size = JSON.stringify(event).length;
+    if (
+      current.length > 0 &&
+      (current.length >= UPSERT_BATCH_MAX_EVENTS ||
+        bytes + size > UPSERT_BATCH_MAX_BYTES)
+    ) {
+      batches.push(current);
+      current = [];
+      bytes = 0;
+    }
+    current.push(event);
+    bytes += size;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+
+/** Whether a sync failed because the provider no longer honours the stored
+ * credential (a revoked or expired grant), as opposed to anything transient. */
+function isCredentialFailure(error: unknown): boolean {
+  if (error instanceof ProviderError) return error.kind === "authentication";
+  const message = error instanceof Error ? error.message : String(error);
+  return /access token|invalid_grant|FAILED_TO_GET_ACCESS_TOKEN/i.test(message);
+}
+
 async function upsertPeople(
   ctx: MutationCtx,
   userId: string,
@@ -272,7 +325,7 @@ async function claimPersonSource(
   }
 }
 
-async function releasePersonSource(
+export async function releasePersonSource(
   ctx: MutationCtx,
   userId: string,
   connectionId: Id<"calendarConnections">,
@@ -360,14 +413,14 @@ export async function syncOneConnectionCalendar(
           fromMs: Date.now() - CALENDAR_HISTORY_MS,
           toMs: Date.now() + CALENDAR_FUTURE_MS,
         });
-        if (page.items.length > 0) {
+        for (const events of eventBatches(page.items.map(valueEvent))) {
           const wrote: boolean = await ctx.runMutation(
             internal.domains.sync.engine.upsertEventsPage,
             {
               connectionId: args.connectionId,
               attemptId: args.attemptId,
               localCalendarId: args.localCalendarId,
-              events: page.items.map(valueEvent),
+              events,
               syncGeneration: generation ?? undefined,
             },
           );
@@ -775,6 +828,7 @@ async function runConnection(
       status: "error",
       active: false,
       lastError: error instanceof Error ? error.message : String(error),
+      authFailure: isCredentialFailure(error),
     });
     throw error;
   }
@@ -861,6 +915,11 @@ export async function syncNowForCurrentUser(
 ): Promise<UserSyncStatus> {
   const user = await authComponent.safeGetAuthUser(ctx);
   if (!user) throw new Error("Not authenticated");
+  const allowed: boolean = await ctx.runMutation(
+    internal.domains.sync.engine.claimManualSync,
+    { userId: user._id },
+  );
+  if (!allowed) throw new ConvexError({ code: "SYNC_RATE_LIMIT" });
   // A user-initiated sync doubles as the linking safety net: a Google grant
   // that never got its connection row (a missed link redirect) gets one here
   // and joins the fan-out below.
@@ -878,6 +937,20 @@ export async function syncNowForCurrentUser(
 export const syncNow = action({
   args: {},
   handler: (ctx): Promise<UserSyncStatus> => syncNowForCurrentUser(ctx),
+});
+
+/** Per-user budget for manual syncs. The lease only stops two from
+ * overlapping; back-to-back runs each re-read every calendar and both People
+ * feeds against a quota shared by every user of the app. */
+export const claimManualSync = internalMutation({
+  args: { userId: v.string() },
+  handler: (ctx, args): Promise<boolean> =>
+    consumeRateLimit(
+      ctx,
+      `syncNow:${args.userId}`,
+      MANUAL_SYNC_LIMIT,
+      MANUAL_SYNC_WINDOW_MS,
+    ),
 });
 
 /** User-scoped sync pass; the migration fan-outs schedule one per user. */
@@ -1002,6 +1075,8 @@ export const recordSyncOutcome = internalMutation({
     status: v.union(v.literal("idle"), v.literal("error")),
     active: v.boolean(),
     lastError: v.optional(v.string()),
+    /** The failure was the provider refusing the credential. */
+    authFailure: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<null> => {
     const state = await liveState(ctx, args.connectionId, args.attemptId);
@@ -1009,15 +1084,36 @@ export const recordSyncOutcome = internalMutation({
     const interval = args.active
       ? SYNC_MIN_MS
       : Math.min((state.syncIntervalMs ?? SYNC_MIN_MS) * 2, SYNC_MAX_MS);
+    const failed = args.status === "error";
+    const lastError = failed
+      ? args.lastError?.slice(0, MAX_LAST_ERROR_CHARS)
+      : undefined;
+    const authFailureCount =
+      failed && args.authFailure ? (state.authFailureCount ?? 0) + 1 : 0;
     await ctx.db.patch(state._id, {
       status: args.status,
-      lastError: args.status === "error" ? args.lastError : undefined,
+      lastError,
+      authFailureCount: authFailureCount || undefined,
       ...(args.status === "idle" ? { lastSyncAt: Date.now() } : {}),
       syncIntervalMs: interval,
       nextSyncDueAt: Date.now() + interval,
       syncAttemptId: undefined,
       syncLeaseExpiresAt: undefined,
     });
+    // A grant the provider keeps refusing won't start working on its own;
+    // retrying it hourly forever only hammers the token endpoint and hides
+    // the one thing that fixes it. Park the connection until the user
+    // reconnects (setConnectionStatus back to active clears the way).
+    if (authFailureCount >= MAX_AUTH_FAILURES) {
+      const connection = await ctx.db.get(args.connectionId);
+      if (connection && connection.status === "active") {
+        await ctx.db.patch(connection._id, {
+          status: "error",
+          lastError: "Google no longer accepts this account's access. Reconnect it to resume syncing.",
+          updatedAt: Date.now(),
+        });
+      }
+    }
     return null;
   },
 });
@@ -1292,7 +1388,14 @@ export const upsertEventsPage = internalMutation({
       );
       if (current) await ctx.db.replace(current._id, doc);
       else await ctx.db.insert("events", doc);
-      harvested.push(...eventPeople(event));
+      // A truncated or very large guest list is a broadcast, not a meeting;
+      // its attendees don't belong in the user's directory.
+      if (
+        !event.attendeesOmitted &&
+        (event.attendees?.length ?? 0) <= MAX_HARVEST_ATTENDEES
+      ) {
+        harvested.push(...eventPeople(event));
+      }
     }
     await upsertPeople(ctx, state.userId, "attendee", harvested);
     return true;
@@ -2349,6 +2452,7 @@ export async function refreshConnectionCalendar(
       status: "error",
       active: false,
       lastError: error instanceof Error ? error.message : String(error),
+      authFailure: isCredentialFailure(error),
     });
     throw error;
   }

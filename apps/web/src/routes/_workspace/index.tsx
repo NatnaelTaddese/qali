@@ -30,6 +30,9 @@ function linkErrorMessage(code: string | undefined): string {
   if (code === "account_already_linked_to_different_user") {
     return "That Google account is already connected to a different user.";
   }
+  if (code === "link_session_mismatch") {
+    return "Sign in again, then connect the account from Settings.";
+  }
   return "Couldn't connect the account. Please try again.";
 }
 

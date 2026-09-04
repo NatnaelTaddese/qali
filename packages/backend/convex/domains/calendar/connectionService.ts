@@ -96,11 +96,39 @@ export const connectLinkedAccounts = action({
   },
 });
 
-/** Remove a linked account: revoke the Better Auth grant (so the reconcile
- * safety net can't resurrect the connection), take it out of the sync
- * fan-out, and purge everything it synced in the background. The sole
- * remaining account can only be paused, never disconnected — that would
- * strand the user's login. */
+/** Tell Google the grant is finished. Better Auth's unlink only deletes its
+ * own row; without this the refresh token stays valid at Google until the
+ * user finds it on their account page. Revoking the access token revokes the
+ * whole grant. Best-effort: a failure here is logged, not fatal — the local
+ * removal must go ahead regardless. */
+async function revokeGoogleGrant(
+  ctx: ActionCtx,
+  userId: string,
+  credentialRef: string,
+): Promise<void> {
+  try {
+    const accessToken = await getGoogleAccessToken(ctx, userId, credentialRef);
+    const response = await fetch("https://oauth2.googleapis.com/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token: accessToken }),
+    });
+    if (!response.ok) {
+      console.warn(`Google grant revoke returned ${response.status}`);
+    }
+  } catch (error) {
+    console.warn(
+      "Google grant revoke failed:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
+/** Remove a linked account: revoke the grant at Google, then the Better Auth
+ * account row (so the reconcile safety net can't resurrect the connection),
+ * take it out of the sync fan-out, and purge everything it synced in the
+ * background. The sole remaining account can only be paused, never
+ * disconnected — that would strand the user's login. */
 export const disconnectAccount = action({
   args: { connectionId: v.id("calendarConnections") },
   returns: v.null(),
@@ -128,6 +156,7 @@ export const disconnectAccount = action({
         "This account hasn't finished connecting — try again after a sync",
       );
     }
+    await revokeGoogleGrant(ctx, user._id, connection.credentialRef);
     const auth = createAuth(ctx);
     const headers = await authComponent.getHeaders(ctx);
     try {

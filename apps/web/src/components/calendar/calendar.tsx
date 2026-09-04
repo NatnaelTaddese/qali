@@ -471,12 +471,11 @@ function CalendarPicker({ calendars }: { calendars: CalendarListItem[] }) {
       triggerLabel="Choose calendars"
       menuLabel="Calendars"
       panelContent={
-        <div>
-          <p className="flex h-7 items-center px-1 text-xs font-medium opacity-70">
+        <div className="flex h-full flex-col">
+          <p className="flex h-7 shrink-0 items-center px-1 text-xs font-medium opacity-70">
             Calendars
           </p>
-          {/* Eight rows of `h-8`; past that the list scrolls under the header. */}
-          <div className="max-h-64 overflow-y-auto [scrollbar-width:thin]">
+          <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
             {grouped.map((group) => (
               <div key={group.key}>
                 {grouped.length > 1 && group.label && (
@@ -515,6 +514,11 @@ function CalendarPicker({ calendars }: { calendars: CalendarListItem[] }) {
             ))}
           </div>
         </div>
+      }
+      contentHeight={
+        28 +
+        Math.min(sorted.length, 8) * 32 +
+        (grouped.length > 1 ? grouped.filter((g) => g.label).length * 28 : 0)
       }
       triggerSound={false}
       align="end"

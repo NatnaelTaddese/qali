@@ -68,13 +68,10 @@ export type GooDropdownProps = {
   /** Accessible name for the trigger button (its text is otherwise the name). */
   triggerLabel?: string
   /** Render arbitrary content in the morphing panel instead of `items` (e.g. a
-   * picker). The panel sizes itself to the rendered content and follows it
-   * live; pass `contentHeight` for a fixed body instead. Pass a function to
+   * picker). Requires `contentHeight` to size the panel. Pass a function to
    * receive a `close` callback, so an action inside the panel can dismiss it. */
   panelContent?: ReactNode | ((close: () => void) => ReactNode)
-  /** Fixed body height in px for `panelContent` mode (padding is added on
-   * top). Omit to size the panel from the measured content — hand-computed
-   * pixel estimates drift from rem-based rows (the root font size is 14px). */
+  /** Body height in px for `panelContent` mode (padding is added on top). */
   contentHeight?: number
   /** Play a tick when the pointer enters the trigger. Default true. */
   triggerSound?: boolean
@@ -305,10 +302,6 @@ export const GooDropdown = forwardRef<GooDropdownHandle, GooDropdownProps>(
   const [geometry, setGeometry] = useState<Geometry | null>(null)
   const geometryRef = useRef<Geometry | null>(null)
   const resizeBodyRef = useRef<number | undefined>(undefined)
-  // Rendered body height in measured `panelContent` mode. Kept across closes
-  // so a re-open starts from the last known size instead of a zero-height
-  // panel that snaps once the content mounts.
-  const [measuredBody, setMeasuredBody] = useState<number | undefined>(undefined)
   const shouldReduceMotion = useReducedMotion()
   const filterId = useId().replace(/[:]/g, '')
   const menuId = useId()
@@ -317,7 +310,6 @@ export const GooDropdown = forwardRef<GooDropdownHandle, GooDropdownProps>(
   const panelRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
-  const bodyRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
@@ -378,40 +370,28 @@ export const GooDropdown = forwardRef<GooDropdownHandle, GooDropdownProps>(
     geometryRef.current = geometry
   }, [geometry])
 
+  // After the open morph, a change to `contentHeight` (e.g. a list item removed)
+  // animates the panel from its current size to the newly measured one.
   const panelContentMode = panelContent != null
-  const measured = panelContentMode && contentHeight == null
-
-  // Measured panels watch their rendered body and feed its height back into the
-  // geometry: read synchronously on mount so the first frame is already right,
-  // then via ResizeObserver so content that grows or shrinks (a dismissed
-  // notification, a month with six weeks) resizes the panel live.
-  const mounted = geometry !== null
-  useLayoutEffect(() => {
-    if (!measured || !mounted) return
-    const node = bodyRef.current
-    if (!node) return
-    const read = () => setMeasuredBody(node.getBoundingClientRect().height)
-    read()
-    const observer = new ResizeObserver(read)
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [measured, mounted])
-
-  // A change to the body height after opening (a list item removed, or the
-  // first measurement of a measured panel) resizes the panel from the geometry
-  // it was built with (`resizeBodyRef`, seeded by `openMenu`) to the new one.
-  useLayoutEffect(() => {
-    const body = panelContentMode ? (contentHeight ?? measuredBody) : undefined
-    if (!open || body === undefined || body === resizeBodyRef.current) return
-    // A fixed height does not consume a change while the opening morph is
-    // still using the previous geometry; once settled, the difference animates.
-    // A measured panel only learns its true height once the content has
-    // rendered, so it adopts that in place mid-morph — the clip is still near
-    // the trigger shape, so the correction is invisible.
-    if (!settled && !measured) return
+  useEffect(() => {
+    const body = panelContentMode ? (contentHeight ?? 0) : undefined
+    if (!open) {
+      resizeBodyRef.current = body
+      return
+    }
+    // Do not consume a height change while the opening morph is still using the
+    // previous geometry. Once settled, the difference triggers a real resize.
+    if (!settled || body === undefined) return
+    if (resizeBodyRef.current === undefined || resizeBodyRef.current === body) {
+      resizeBodyRef.current = body
+      return
+    }
     const rect = triggerRef.current?.getBoundingClientRect()
     const from = geometryRef.current
-    if (!rect || !from) return
+    if (!rect || !from) {
+      resizeBodyRef.current = body
+      return
+    }
     resizeBodyRef.current = body
     const target = menuGeometry(
       rect,
@@ -424,7 +404,7 @@ export const GooDropdown = forwardRef<GooDropdownHandle, GooDropdownProps>(
       panelRadius,
       maxHeight,
     )
-    if (shouldReduceMotion || !settled) {
+    if (shouldReduceMotion) {
       setGeometry(target)
       return
     }
@@ -437,8 +417,6 @@ export const GooDropdown = forwardRef<GooDropdownHandle, GooDropdownProps>(
     return () => animation.stop()
   }, [
     contentHeight,
-    measuredBody,
-    measured,
     open,
     settled,
     panelContentMode,
@@ -566,9 +544,8 @@ export const GooDropdown = forwardRef<GooDropdownHandle, GooDropdownProps>(
     const rect = triggerRef.current?.getBoundingClientRect()
     if (!rect || disabled || (!panelContent && items.length === 0)) return
     const bodyHeight = panelContent
-      ? (contentHeight ?? measuredBody ?? 0)
+      ? (contentHeight ?? 0)
       : items.length * itemHeight
-    resizeBodyRef.current = panelContent ? bodyHeight : undefined
     progress.set(0)
     setActiveIndex(targetIndex)
     setGeometry(
@@ -767,9 +744,7 @@ export const GooDropdown = forwardRef<GooDropdownHandle, GooDropdownProps>(
                     padding: PANEL_PADDING,
                     color: effForeground,
                     transition: colorTransition,
-                    // A capped list scrolls inside the panel; a fixed-height
-                    // body owns its own scrolling instead.
-                    overflowY: maxHeight && (!panelContent || measured) ? 'auto' : undefined,
+                    overflowY: !panelContent && maxHeight ? 'auto' : undefined,
                     scrollbarWidth: 'thin',
                     '--goo-fill': effFill,
                     '--goo-foreground': effForeground,
@@ -781,13 +756,9 @@ export const GooDropdown = forwardRef<GooDropdownHandle, GooDropdownProps>(
                   }
                 }
               >
-                {panelContent && (
-                  <div ref={bodyRef} className={measured ? undefined : 'h-full'}>
-                    {typeof panelContent === 'function'
-                      ? panelContent(() => closeMenu())
-                      : panelContent}
-                  </div>
-                )}
+                {typeof panelContent === 'function'
+                  ? panelContent(() => closeMenu())
+                  : panelContent}
                 {!panelContent &&
                   items.map((item, index) => (
                   <button

@@ -59,7 +59,7 @@ export function MonthPicker({ selectedWeekStart, onSelect, children }: MonthPick
       triggerLabel={`Choose week of ${format(selectedWeekStart, "MMMM d, yyyy")}`}
       menuLabel="Choose a calendar week"
       panelContent={(close) => (
-        <div className="p-1.5">
+        <div className="h-full p-1.5">
           <div className="mb-2 flex items-center justify-between gap-4 px-1">
             <span className="text-sm font-semibold">{format(viewMonth, "MMMM yyyy")}</span>
             <div className="flex items-center gap-1">
@@ -111,6 +111,7 @@ export function MonthPicker({ selectedWeekStart, onSelect, children }: MonthPick
           </div>
         </div>
       )}
+      contentHeight={40 + (days.length / 7 + 1) * 32}
       onOpenChange={resetViewMonth}
       triggerSound={false}
       align="start"

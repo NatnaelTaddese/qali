@@ -105,7 +105,7 @@ export function TimeField({
     onChange(partsToMinutes({ ...parts, [key]: part }, mode, use24h));
 
   const wheels = (
-    <div className="flex items-center justify-center gap-1 py-0.5">
+    <div className="flex h-full items-center justify-center gap-1">
       <WheelPicker
         options={use24h ? HOURS_24 : HOURS}
         value={parts.hour}
@@ -146,6 +146,7 @@ export function TimeField({
       trigger={formatLabel(value, use24h)}
       triggerLabel={ariaLabel}
       panelContent={wheels}
+      contentHeight={132}
       triggerSound={false}
       disabled={disabled}
       menuLabel={ariaLabel ?? "Select a time"}

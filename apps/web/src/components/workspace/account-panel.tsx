@@ -97,7 +97,7 @@ export function AccountPanel({
         <button
           type="button"
           onClick={onOpenSettings}
-          className="group flex items-center gap-3 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          className="flex items-center gap-3 px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
         >
           <HugeiconsIcon
             icon={Settings01Icon}
@@ -108,7 +108,7 @@ export function AccountPanel({
           <HugeiconsIcon
             icon={ArrowRight01Icon}
             strokeWidth={2}
-            className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+            className="size-4 shrink-0 text-muted-foreground"
           />
         </button>
         <div className="mx-3 h-px bg-border" />

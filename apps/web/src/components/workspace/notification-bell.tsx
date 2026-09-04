@@ -22,16 +22,9 @@ type NotificationRow = Doc<"notifications"> & { booking: Booking | null };
 // Panel geometry. The panel body is sized at open time from the current list, so
 // a short feed opens compact and a long one caps and scrolls.
 const PANEL_WIDTH = 360;
-const HEADER_HEIGHT = 40;
 const ITEM_HEIGHT = 76;
 const EMPTY_HEIGHT = 92;
 const MAX_VISIBLE = 4;
-
-function panelBodyHeight(count: number): number {
-  const listHeight =
-    count === 0 ? EMPTY_HEIGHT : Math.min(count, MAX_VISIBLE) * ITEM_HEIGHT;
-  return HEADER_HEIGHT + listHeight;
-}
 
 export function notificationTriggerLabel(unread: number): string {
   if (unread > 9) return "Notifications, 10 or more unread";
@@ -109,7 +102,7 @@ export function NotificationBell() {
   };
 
   const panelContent = (close: () => void) => (
-    <div className="flex h-full flex-col">
+    <div className="flex flex-col">
       <div className="flex items-center justify-between px-1 pb-1.5">
         <span className="text-sm font-semibold">Notifications</span>
         {notifications.length > 0 && (
@@ -140,7 +133,10 @@ export function NotificationBell() {
       </div>
 
       {notifications.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-1 text-center">
+        <div
+          className="flex flex-col items-center justify-center gap-1 text-center"
+          style={{ height: EMPTY_HEIGHT }}
+        >
           <HugeiconsIcon
             icon={Notification01Icon}
             strokeWidth={2}
@@ -150,8 +146,11 @@ export function NotificationBell() {
         </div>
       ) : (
         <div
-          className="flex-1 overflow-y-auto"
-          style={{ scrollbarWidth: "thin" }}
+          className="overflow-y-auto"
+          style={{
+            maxHeight: MAX_VISIBLE * ITEM_HEIGHT,
+            scrollbarWidth: "thin",
+          }}
         >
           <AnimatePresence initial={false}>
             {notifications.map((notification) => (
@@ -174,7 +173,6 @@ export function NotificationBell() {
       triggerLabel={notificationTriggerLabel(unread)}
       menuLabel="Notifications"
       panelContent={panelContent}
-      contentHeight={panelBodyHeight(notifications.length)}
       onOpenChange={setMenuOpen}
       triggerSound={false}
       align="end"

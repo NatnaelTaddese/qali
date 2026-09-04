@@ -19,11 +19,13 @@ import {
 } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import { consumeRateLimit } from "../../infrastructure/rateLimit";
+import type { EventCreate } from "../../integrations/calendar/types";
 import {
   ensureDefaultPrimaryCalendar,
   ensureGoogleConnection,
   preferredConnection,
 } from "../calendar/connections";
+import { hostEmailForTarget } from "../calendar/hostAttendee";
 import { calendarRequestFingerprint } from "../calendar/operationIdentity";
 import { clearBookingNotifications } from "../notifications/model";
 import {
@@ -157,12 +159,18 @@ async function operationForBooking(
     .unique();
 }
 
-function bookingAcceptanceFingerprint(
-  booking: Doc<"bookings">,
-  page: Doc<"bookingPages">,
-): string {
+/** The provider event a booking becomes. The requester is its only guest here;
+ * the acceptance action appends the host's own entry, which is derived from the
+ * validated target rather than the request. */
+export function bookingEventCreate(
+  booking: Pick<
+    Doc<"bookings">,
+    "requesterName" | "requesterEmail" | "note" | "startMs" | "endMs"
+  >,
+  page: Pick<Doc<"bookingPages">, "title" | "timeZone">,
+): EventCreate {
   const label = page.title?.trim() || "Meeting";
-  return calendarRequestFingerprint({
+  return {
     summary: `${label} with ${booking.requesterName}`,
     description: booking.note
       ? `Booked via qali.\n\n${booking.note}`
@@ -174,6 +182,18 @@ function bookingAcceptanceFingerprint(
     attendees: [
       { email: booking.requesterEmail, displayName: booking.requesterName },
     ],
+  };
+}
+
+/** Deliberately excludes the host attendee: it is not part of the request, and
+ * keeping the hash stable lets ledger rows claimed before the host entry
+ * existed still reconcile instead of tripping the reused-key check. */
+function bookingAcceptanceFingerprint(
+  booking: Doc<"bookings">,
+  page: Doc<"bookingPages">,
+): string {
+  return calendarRequestFingerprint({
+    ...bookingEventCreate(booking, page),
     notify: "all",
   });
 }
@@ -803,6 +823,9 @@ export async function claimBookingAcceptanceHandler(
     connectionId: target.connection._id,
     localCalendarId: target.calendar._id,
     providerCalendarId: target.providerCalendarId,
+    // The host's organizer email; absent when the target is not a primary
+    // calendar with a known identity, in which case the event has no host entry.
+    accountEmail: hostEmailForTarget(target.calendar, target.connection),
     reconcileOnly,
     reconcileGeneration,
     reconcileAttemptCount,

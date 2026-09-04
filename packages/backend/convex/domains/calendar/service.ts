@@ -26,9 +26,10 @@ import type {
   EventPatch,
   ProviderEvent,
 } from "../../integrations/calendar/types";
+import { hostEmailForTarget, withHostAttendee } from "./hostAttendee";
 import { shiftRecurringMasterRange } from "./recurrence";
 import { calendarRequestFingerprint } from "./operationIdentity";
-import { eventIdArg } from "./validators";
+import { eventIdArg, responseStatusValidator } from "./validators";
 
 export type EventCapabilityName =
   | "canEdit"
@@ -73,6 +74,8 @@ type CreateTarget = {
   connectionId: Id<"calendarConnections">;
   localCalendarId: Id<"calendars">;
   providerCalendarId: string;
+  /** The owner's email when known; see resolveCreateTargetHandler. */
+  accountEmail?: string;
 };
 
 function validateTimePair(
@@ -423,7 +426,11 @@ export async function createEventOp(
           visibility: args.visibility,
           busy: args.busy,
           recurrence: args.recurrence,
-          attendees: args.attendees,
+          // The host joins a guest list as the accepted organizer; the
+          // fingerprint above hashes the request as sent, without that entry.
+          attendees: withHostAttendee(args.attendees, {
+            email: target.accountEmail,
+          }),
           timeZone: args.timeZone,
           conference: args.addConference ? "add" : undefined,
         },
@@ -492,7 +499,10 @@ export interface UpdateEventArgs {
   expectedSeriesUpdatedMs?: number;
 }
 
-function basePatch(args: UpdateEventArgs): EventPatch {
+function basePatch(
+  args: UpdateEventArgs,
+  attendees: readonly EventAttendeeInput[] | undefined = args.attendees,
+): EventPatch {
   return {
     summary: args.summary,
     description: args.description,
@@ -500,7 +510,7 @@ function basePatch(args: UpdateEventArgs): EventPatch {
     color: args.color,
     visibility: args.visibility,
     busy: args.busy,
-    attendees: args.attendees,
+    attendees,
     conference: conferencePatch(args.conference),
   };
 }
@@ -574,6 +584,12 @@ export async function updateEventOp(
       "This calendar provider cannot replace attendee membership",
     );
   }
+  // The host joins a guest list as the accepted organizer on edits too, so an
+  // event that gains its first guest here matches one created with guests.
+  // The fingerprint below hashes the request as sent, without that entry.
+  const attendees = withHostAttendee(args.attendees, {
+    email: hostEmailForTarget(target.calendar),
+  });
   if (args.recurrence !== undefined) {
     if (args.recurrence.length === 0) {
       throw new Error("A recurring event needs a recurrence rule");
@@ -659,7 +675,7 @@ export async function updateEventOp(
           eventId: target.providerEventId,
         },
         patch: {
-          ...basePatch(args),
+          ...basePatch(args, attendees),
           startMs: hasTimeChange ? args.startMs : row.startMs,
           endMs: hasTimeChange ? args.endMs : row.endMs,
           allDay,
@@ -688,7 +704,7 @@ export async function updateEventOp(
           eventId: target.providerEventId,
         },
         patch: {
-          ...basePatch(args),
+          ...basePatch(args, attendees),
           ...(hasTimeChange
             ? {
                 startMs: args.startMs,
@@ -741,7 +757,7 @@ export async function updateEventOp(
     if (scope === "allEvents" || isSeriesHead) {
       const event = await adapter.updateEvent({
         ref: { calendarId: target.providerCalendarId, eventId: masterId },
-        patch: { ...basePatch(args), ...shifted },
+        patch: { ...basePatch(args, attendees), ...shifted },
         notify,
         idempotencyKey: operation.idempotencyKey,
         expectedUpdatedMs:
@@ -779,9 +795,7 @@ export async function updateEventOp(
     const carried = <T>(edited: T | null | undefined, current: T | undefined) =>
       edited === undefined ? current : (edited ?? undefined);
     const tailAttendees =
-      args.attendees === undefined
-        ? eventAttendees(master.attendees)
-        : args.attendees;
+      attendees === undefined ? eventAttendees(master.attendees) : attendees;
     const addConference =
       args.conference === null
         ? false
@@ -1375,7 +1389,7 @@ export const updateEvent = action({
         v.object({
           email: v.string(),
           displayName: v.optional(v.string()),
-          responseStatus: v.optional(v.string()),
+          responseStatus: v.optional(responseStatusValidator),
           optional: v.optional(v.boolean()),
         }),
       ),

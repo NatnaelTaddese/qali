@@ -146,6 +146,7 @@ function createContext() {
           connectionId: "connection-1",
           localCalendarId: "local-calendar-1",
           providerCalendarId: "primary@example.com",
+          accountEmail: "owner@example.com",
         };
       }
       if ("kind" in args && "idempotencyKey" in args) {
@@ -260,8 +261,10 @@ describe("event creation", () => {
   test("emails invitations only when the event has guests", async () => {
     const withGuests = createContext();
     let url = "";
-    globalThis.fetch = (async (input) => {
+    let body: Record<string, unknown> = {};
+    globalThis.fetch = (async (input, init) => {
       url = String(input);
+      body = JSON.parse(String(init?.body));
       return Response.json(createdGoogleEvent());
     }) as typeof fetch;
     const event = await createEventOp(withGuests.ctx, "user-1", "token", {
@@ -270,16 +273,26 @@ describe("event creation", () => {
     });
     expect(url).toContain("sendUpdates=all");
     expect(event.id).toBe("new-google-id");
+    // The owner rides along as an accepted guest so Google lists them as the
+    // organizer in the guest list, the way its own UI does.
+    expect(body.attendees).toEqual([
+      { email: "guest@example.com" },
+      { email: "owner@example.com", responseStatus: "accepted" },
+    ]);
     // The freshly created event is mirrored into the local table right away.
     expect(withGuests.mutations.length).toBeGreaterThan(0);
 
     const soloUrls: string[] = [];
-    globalThis.fetch = (async (input) => {
+    let soloBody: Record<string, unknown> = {};
+    globalThis.fetch = (async (input, init) => {
       soloUrls.push(String(input));
+      soloBody = JSON.parse(String(init?.body));
       return Response.json(createdGoogleEvent());
     }) as typeof fetch;
     await createEventOp(createContext().ctx, "user-1", "token", CREATE_ARGS);
     expect(soloUrls[0]).not.toContain("sendUpdates");
+    // A guest-less event stays guest-less: no lone organizer entry.
+    expect(soloBody.attendees).toBeUndefined();
   });
 
   test("treats a duplicate-id 409 as confirmation and re-reads the event", async () => {

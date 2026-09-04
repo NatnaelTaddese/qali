@@ -26,6 +26,7 @@ import type * as domains_booking_tables from "../domains/booking/tables.js";
 import type * as domains_calendar_connectionService from "../domains/calendar/connectionService.js";
 import type * as domains_calendar_connectionTables from "../domains/calendar/connectionTables.js";
 import type * as domains_calendar_connections from "../domains/calendar/connections.js";
+import type * as domains_calendar_hostAttendee from "../domains/calendar/hostAttendee.js";
 import type * as domains_calendar_model from "../domains/calendar/model.js";
 import type * as domains_calendar_mutations from "../domains/calendar/mutations.js";
 import type * as domains_calendar_operationIdentity from "../domains/calendar/operationIdentity.js";
@@ -93,6 +94,7 @@ declare const fullApi: ApiFromModules<{
   "domains/calendar/connectionService": typeof domains_calendar_connectionService;
   "domains/calendar/connectionTables": typeof domains_calendar_connectionTables;
   "domains/calendar/connections": typeof domains_calendar_connections;
+  "domains/calendar/hostAttendee": typeof domains_calendar_hostAttendee;
   "domains/calendar/model": typeof domains_calendar_model;
   "domains/calendar/mutations": typeof domains_calendar_mutations;
   "domains/calendar/operationIdentity": typeof domains_calendar_operationIdentity;

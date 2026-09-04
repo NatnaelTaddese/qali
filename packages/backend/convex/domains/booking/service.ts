@@ -28,7 +28,8 @@ import {
 import { getCalendarAdapter } from "../../integrations/calendar/registry";
 import { createEventReconciling } from "../../integrations/calendar/service";
 import type { CalendarProviderAdapter } from "../../integrations/calendar/types";
-import type { claimBookingAcceptanceHandler } from "./mutations";
+import { withHostAttendee } from "../calendar/hostAttendee";
+import { bookingEventCreate, type claimBookingAcceptanceHandler } from "./mutations";
 
 type AcceptanceClaim = NonNullable<
   Awaited<ReturnType<typeof claimBookingAcceptanceHandler>>
@@ -49,9 +50,9 @@ async function executeAcceptanceClaim(
     connectionId,
     localCalendarId,
     providerCalendarId,
+    accountEmail,
     reconcileOnly,
   } = claimed;
-  const label = page.title?.trim() || "Meeting";
   let event;
   try {
     if (reconcileOnly) {
@@ -76,20 +77,17 @@ async function executeAcceptanceClaim(
     // A scheduled reconciliation that proves the first create did not land may
     // safely retry with the same provider idempotency key. This cannot send a
     // duplicate invitation even if a delayed provider write appears later.
+    // The host joins the guest list as an accepted organizer so the event
+    // shows them alongside the requester (see withHostAttendee).
+    const base = bookingEventCreate(booking, page);
     event ??= await createEventReconciling(adapter, {
       calendarId: providerCalendarId,
       event: {
-        summary: `${label} with ${booking.requesterName}`,
-        description: booking.note
-          ? `Booked via qali.\n\n${booking.note}`
-          : "Booked via qali.",
-        startMs: booking.startMs,
-        endMs: booking.endMs,
-        allDay: false,
-        timeZone: page.timeZone,
-        attendees: [
-          { email: booking.requesterEmail, displayName: booking.requesterName },
-        ],
+        ...base,
+        attendees: withHostAttendee(base.attendees, {
+          email: accountEmail,
+          displayName: page.displayName,
+        }),
       },
       idempotencyKey: operationId,
       notify: "all",

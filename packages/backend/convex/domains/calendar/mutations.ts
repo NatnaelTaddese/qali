@@ -18,6 +18,7 @@ import {
   ensureGoogleConnection,
   preferredConnection,
 } from "./connections";
+import { hostEmailForTarget } from "./hostAttendee";
 import { providerEventValidator } from "./validators";
 
 /** Access roles that allow writing events. The single backend source — the
@@ -94,6 +95,9 @@ export async function resolveCreateTargetHandler(
     connectionId,
     localCalendarId: calendar._id,
     providerCalendarId,
+    // The owner's email, so a create with guests can list the host as the
+    // accepted organizer. Absent until a link or sync stamps the identity.
+    accountEmail: hostEmailForTarget(calendar, connection),
   };
 }
 

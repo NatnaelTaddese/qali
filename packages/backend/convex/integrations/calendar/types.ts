@@ -100,6 +100,8 @@ export interface EventAttendeeInput {
   readonly email: string;
   readonly displayName?: string;
   readonly optional?: boolean;
+  /** Pre-set RSVP, used for the host's own entry so it lands as accepted. */
+  readonly responseStatus?: ProviderAttendee["responseStatus"];
 }
 
 /** Fields accepted when creating an event. Create has no clearing semantics. */

@@ -12,19 +12,20 @@ import { v } from "convex/values";
  * narrow to `v.id("events")` because shared events are never editable. */
 export const eventIdArg = v.union(v.id("events"), v.id("sharedEvents"));
 
+/** A guest's RSVP, as the provider reports it. */
+export const responseStatusValidator = v.union(
+  v.literal("needsAction"),
+  v.literal("accepted"),
+  v.literal("tentative"),
+  v.literal("declined"),
+);
+
 /** A guest on an event. Shared by the `events` table and the mutation
  * validators that write to it. */
 export const attendeeValidator = v.object({
   email: v.string(),
   displayName: v.optional(v.string()),
-  responseStatus: v.optional(
-    v.union(
-      v.literal("needsAction"),
-      v.literal("accepted"),
-      v.literal("tentative"),
-      v.literal("declined"),
-    ),
-  ),
+  responseStatus: v.optional(responseStatusValidator),
   organizer: v.optional(v.boolean()),
   self: v.optional(v.boolean()),
   optional: v.optional(v.boolean()),
@@ -42,14 +43,7 @@ export const personValidator = v.object({
 });
 
 const providerAttendeeValidator = personValidator.extend({
-  responseStatus: v.optional(
-    v.union(
-      v.literal("needsAction"),
-      v.literal("accepted"),
-      v.literal("tentative"),
-      v.literal("declined"),
-    ),
-  ),
+  responseStatus: v.optional(responseStatusValidator),
   organizer: v.optional(v.boolean()),
   optional: v.optional(v.boolean()),
 });

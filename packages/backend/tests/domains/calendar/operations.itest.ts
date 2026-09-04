@@ -90,9 +90,11 @@ describe("calendar operations", () => {
   test("claims and settles one authoritative calendar operation per assistant key", async () => {
     const t = convexTest(schema, modules);
     await preparePrimaryCalendar(t);
-    const target = await t.mutation(internal.domains.calendar.mutations.resolveCreateTarget, {
-      userId: USER,
-    });
+    // `accountEmail` is not a claim field; spread only the target rows.
+    const { accountEmail: _accountEmail, ...target } = await t.mutation(
+      internal.domains.calendar.mutations.resolveCreateTarget,
+      { userId: USER },
+    );
     const claim = await t.mutation(internal.domains.calendar.mutations.claimCalendarOperation, {
       userId: USER,
       ...target,
@@ -130,9 +132,11 @@ describe("calendar operations", () => {
   test("rejects idempotency-key reuse for a changed target or payload", async () => {
     const t = convexTest(schema, modules);
     await preparePrimaryCalendar(t);
-    const target = await t.mutation(internal.domains.calendar.mutations.resolveCreateTarget, {
-      userId: USER,
-    });
+    // `accountEmail` is not a claim field; spread only the target rows.
+    const { accountEmail: _accountEmail, ...target } = await t.mutation(
+      internal.domains.calendar.mutations.resolveCreateTarget,
+      { userId: USER },
+    );
     await t.mutation(internal.domains.calendar.mutations.claimCalendarOperation, {
       userId: USER,
       ...target,
@@ -182,9 +186,11 @@ describe("calendar operations", () => {
   test("adopts the caller's local refs when the stored operation's were nulled by the cutover", async () => {
     const t = convexTest(schema, modules);
     await preparePrimaryCalendar(t);
-    const target = await t.mutation(internal.domains.calendar.mutations.resolveCreateTarget, {
-      userId: USER,
-    });
+    // `accountEmail` is not a claim field; spread only the target rows.
+    const { accountEmail: _accountEmail, ...target } = await t.mutation(
+      internal.domains.calendar.mutations.resolveCreateTarget,
+      { userId: USER },
+    );
     await t.mutation(internal.domains.calendar.mutations.claimCalendarOperation, {
       userId: USER,
       ...target,

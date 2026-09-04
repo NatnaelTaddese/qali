@@ -20,6 +20,7 @@ import { z } from "zod";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { ActionCtx } from "../../_generated/server";
+import { bookingEventCreate } from "../booking/mutations";
 import { acceptBookingForHost } from "../booking/service";
 import {
   type CalendarServiceDependencies,
@@ -917,9 +918,8 @@ const decideBookingRequest = writeTool({
     if (args.decision === "reject") {
       return `Reject ${who}'s booking request for ${when}`;
     }
-    const label = page.title?.trim() || "Meeting";
     const note = booking.note ? ` · include note “${previewValue(booking.note)}”` : "";
-    return `Accept ${who} for ${when} · create “${label} with ${booking.requesterName}” · invite ${booking.requesterEmail}${note}`;
+    return `Accept ${who} for ${when} · create “${bookingEventCreate(booking, page).summary}” · invite ${booking.requesterEmail}${note}`;
   },
 });
 

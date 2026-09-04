@@ -24,6 +24,7 @@ import type {
   CreateEventRequest,
   EventCreate,
   EventPatch,
+  EventAttendeeInput,
   EventRef,
   PageCursor,
   ProviderCalendar,
@@ -100,7 +101,7 @@ function conferenceChange(
 
 function preserveConcurrentAttendees(
   live: NonNullable<RawEvent["attendees"]>,
-  requested: { email: string; displayName?: string; optional?: boolean }[],
+  requested: EventAttendeeInput[],
   knownAttendeeEmails: readonly string[] | undefined,
 ): void {
   if (!knownAttendeeEmails) return;

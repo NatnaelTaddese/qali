@@ -86,7 +86,11 @@ function eventDoc(
 }
 
 /** Seed a host page + a selected calendar so collectBusy can resolve visibility. */
-async function seedHost(t: ReturnType<typeof convexTest>, userId = HOST) {
+async function seedHost(
+  t: ReturnType<typeof convexTest>,
+  userId = HOST,
+  connection: { providerAccountId?: string } = {},
+) {
   return await t.run(async (ctx) => {
     const now = Date.now();
     const connectionId = await ctx.db.insert("calendarConnections", {
@@ -95,6 +99,7 @@ async function seedHost(t: ReturnType<typeof convexTest>, userId = HOST) {
       status: "active",
       createdAt: now,
       updatedAt: now,
+      ...connection,
     });
     const calendarId = await ctx.db.insert("calendars", {
       userId,
@@ -143,6 +148,7 @@ class BookingAdapter implements CalendarProviderAdapter {
     idempotentDelete: true,
   };
   readonly createKeys: (string | undefined)[] = [];
+  readonly createRequests: CreateEventRequest[] = [];
   reconcileCalls = 0;
 
   constructor(
@@ -155,6 +161,7 @@ class BookingAdapter implements CalendarProviderAdapter {
   async getEvent(): Promise<never> { throw new Error("not used"); }
   async createEvent(request: CreateEventRequest): Promise<ProviderEvent> {
     this.createKeys.push(request.idempotencyKey);
+    this.createRequests.push(request);
     if (this.created instanceof Error) throw this.created;
     return this.created;
   }
@@ -175,8 +182,11 @@ function testActionCtx(t: ReturnType<typeof convexTest>): ActionCtx {
   } as ActionCtx;
 }
 
-async function ambiguousBooking(t: ReturnType<typeof convexTest>) {
-  await seedHost(t);
+async function ambiguousBooking(
+  t: ReturnType<typeof convexTest>,
+  connection: { providerAccountId?: string } = {},
+) {
+  await seedHost(t, HOST, connection);
   const start = future();
   const bookingId = await t.run((ctx) =>
     ctx.db.insert("bookings", bookingDoc(HOST, start, start + 30 * 60_000)),
@@ -447,6 +457,42 @@ describe("scheduled booking acceptance reconciliation", () => {
     expect((await t.run((ctx) => ctx.db.get(bookingId)))?.status).toBe("accepted");
     expect(adapter.reconcileCalls).toBe(1);
     expect(adapter.createKeys).toEqual([]);
+  });
+
+  test("lists the host as an accepted guest on the created event", async () => {
+    const t = convexTest(schema, modules);
+    const { bookingId, claim } = await ambiguousBooking(t, {
+      providerAccountId: "host@example.com",
+    });
+    const adapter = new BookingAdapter(null, acceptedEvent("with-host"));
+    await reconcileBookingAcceptanceWithAdapter(
+      testActionCtx(t),
+      { bookingId, expectedGeneration: claim.reconcileGeneration },
+      adapter,
+    );
+    expect((await t.run((ctx) => ctx.db.get(bookingId)))?.status).toBe("accepted");
+    expect(adapter.createRequests).toHaveLength(1);
+    // Google only lists the calendar owner under attendees when asked; the
+    // pre-accepted entry is what it flags organizer/self on the way back.
+    expect(adapter.createRequests[0]!.event.attendees).toEqual([
+      { email: "req@example.com", displayName: "Requester" },
+      { email: "host@example.com", displayName: "Host", responseStatus: "accepted" },
+    ]);
+  });
+
+  test("invites only the requester when the host's account email is unknown", async () => {
+    const t = convexTest(schema, modules);
+    // No stamped account id, and the calendar id is the literal "primary".
+    const { bookingId, claim } = await ambiguousBooking(t);
+    const adapter = new BookingAdapter(null, acceptedEvent("without-host"));
+    await reconcileBookingAcceptanceWithAdapter(
+      testActionCtx(t),
+      { bookingId, expectedGeneration: claim.reconcileGeneration },
+      adapter,
+    );
+    expect(adapter.createRequests[0]!.event.attendees).toEqual([
+      { email: "req@example.com", displayName: "Requester" },
+    ]);
   });
 
   test("retries a confirmed not-landed create once with the same key", async () => {

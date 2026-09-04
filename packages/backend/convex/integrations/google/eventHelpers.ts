@@ -1,3 +1,4 @@
+import type { EventAttendeeInput } from "../calendar/types";
 import type {
   CalendarEventPatchBody,
   RawCalendarDateTime,
@@ -16,18 +17,16 @@ export interface LiveAttendee {
   resource?: boolean;
 }
 
-export interface RequestedAttendee {
-  email: string;
-  displayName?: string;
-  optional?: boolean;
-}
+export type RequestedAttendee = EventAttendeeInput;
 
 /** Google PATCH replaces attendees wholesale. Start from the latest full
  * Google objects, retain the organizer/self entries, and preserve every live
- * RSVP/resource field for requested attendees. */
+ * RSVP/resource field for requested attendees. A requested `responseStatus`
+ * only seeds an attendee Google does not know yet (the host's own entry); a
+ * live RSVP is never overwritten. */
 export function mergeLiveAttendees(
   live: LiveAttendee[],
-  requested: RequestedAttendee[],
+  requested: readonly RequestedAttendee[],
 ): LiveAttendee[] {
   const byEmail = new Map(
     live
@@ -50,6 +49,9 @@ export function mergeLiveAttendees(
     if (included.has(key)) continue;
     const current = byEmail.get(key);
     result.push({
+      ...(attendee.responseStatus !== undefined && !current
+        ? { responseStatus: attendee.responseStatus }
+        : {}),
       ...current,
       email: attendee.email,
       ...(attendee.displayName !== undefined

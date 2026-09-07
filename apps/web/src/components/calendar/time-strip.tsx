@@ -1,6 +1,7 @@
 import { api } from "@qali/backend/convex/_generated/api";
 import { useQuery } from "convex/react";
 import {
+  type CSSProperties,
   forwardRef,
   useCallback,
   useEffect,
@@ -19,6 +20,7 @@ import {
   bucketDayEvents,
   dayColsTemplate,
   GUTTER_TOTAL,
+  HEADER_DATE_HEIGHT,
   layoutAllDayEvents,
   MIN_DAY_HEIGHT,
   MS_PER_DAY,
@@ -579,14 +581,21 @@ export const TimeStrip = forwardRef<TimeStripHandle, TimeStripProps>(
             data-time-grid
             ref={bodyRef}
             className="relative grid flex-1 bg-background"
-            style={{
-              gridTemplateColumns: dayColsTemplate(days.length),
-              gridTemplateRows: "minmax(0, 1fr)",
-              minHeight: MIN_DAY_HEIGHT,
-              backgroundImage:
-                "linear-gradient(to bottom, color-mix(in oklab, var(--border) 55%, transparent) 0 1px, transparent 1px)",
-              backgroundSize: "100% calc(100% / 24)",
-            }}
+            style={
+              {
+                // The sticky header's live height, for anything in a column
+                // that wants to pin itself just underneath it (the "Use
+                // weekly" rail in DayColumn). A variable rather than a prop so
+                // an all-day toggle doesn't re-render every memoized column.
+                "--calendar-header-height": `${HEADER_DATE_HEIGHT + allDayHeight}px`,
+                gridTemplateColumns: dayColsTemplate(days.length),
+                gridTemplateRows: "minmax(0, 1fr)",
+                minHeight: MIN_DAY_HEIGHT,
+                backgroundImage:
+                  "linear-gradient(to bottom, color-mix(in oklab, var(--border) 55%, transparent) 0 1px, transparent 1px)",
+                backgroundSize: "100% calc(100% / 24)",
+              } as CSSProperties
+            }
           >
             {days.map((day, i) => (
               <DayColumn

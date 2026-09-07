@@ -8,6 +8,7 @@ import {
   addMonths,
   addWeeks,
   format,
+  isSameDay,
   isSameMonth,
   isSameYear,
   startOfDay,
@@ -23,6 +24,51 @@ import {
 // propagates a TZDate's zone through its functions, so the discipline is
 // simple: every Date that enters calendar math is created by `zoned`/
 // `zonedNow` below, and everything derived from it stays in the working zone.
+
+/** A working-zone instant on the calendar date of an all-day boundary (which
+ * Google stores as UTC midnight), so day labels show the day Google meant.
+ * Noon, so no DST shift can tip it into a neighbouring day. */
+export function fromUtcMidnight(ms: number, timeZone: string): number {
+  const d = new Date(ms);
+  return new TZDate(
+    d.getUTCFullYear(),
+    d.getUTCMonth(),
+    d.getUTCDate(),
+    12,
+    timeZone,
+  ).getTime();
+}
+
+/** The zone-correct bounds of an event for display. All-day bounds are UTC
+ * midnights (endMs exclusive) read back through fromUtcMidnight so the working
+ * zone can't shift the day; timed bounds are the instants viewed in the zone,
+ * with `endText` already spelling out the day when the end crosses one. The
+ * detail card and the search row compose their own strings from these so the
+ * zone handling lives once. */
+export function eventTimeParts(
+  event: Pick<EventView, "allDay" | "startMs" | "endMs">,
+  use24h: boolean,
+  timeZone: string,
+):
+  | { allDay: true; start: TZDate; lastDay: TZDate }
+  | { allDay: false; start: TZDate; end: TZDate; time: string; endText: string } {
+  if (event.allDay) {
+    const start = zoned(fromUtcMidnight(event.startMs, timeZone), timeZone);
+    const lastDay = zoned(
+      fromUtcMidnight(event.endMs - MS_PER_DAY, timeZone),
+      timeZone,
+    );
+    return { allDay: true, start, lastDay };
+  }
+  const start = zoned(event.startMs, timeZone);
+  const end = zoned(event.endMs, timeZone);
+  const time = timePattern(use24h);
+  const endText = format(
+    end,
+    isSameDay(start, end) ? time : `EEE d MMM, ${time}`,
+  );
+  return { allDay: false, start, end, time, endText };
+}
 
 /** An instant viewed in the working zone. */
 export function zoned(ms: number, timeZone: string): TZDate {

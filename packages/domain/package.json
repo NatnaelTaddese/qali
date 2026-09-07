@@ -6,6 +6,7 @@
   "exports": {
     "./availability": "./src/availability.ts",
     "./permissions": "./src/permissions.ts",
+    "./search": "./src/search.ts",
     "./slug": "./src/slug.ts"
   },
   "scripts": {

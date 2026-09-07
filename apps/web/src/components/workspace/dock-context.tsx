@@ -29,6 +29,7 @@ export type DockView =
   | { kind: "edit"; event: CalendarEvent }
   | { kind: "create"; startMs: number; endMs: number; prefill?: EventPrefill }
   | { kind: "account" }
+  | { kind: "search" }
   | { kind: "availability" }
   | { kind: "booking"; booking: Booking }
   // `section` only seeds where the panel opens; it stays out of dockViewId so

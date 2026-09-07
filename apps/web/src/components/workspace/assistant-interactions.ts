@@ -1,3 +1,5 @@
+import { type ChordEvent, isCommandChord } from "./shortcuts";
+
 const SCROLL_FOLLOW_THRESHOLD_PX = 48;
 
 export function isNearScrollBottom({
@@ -21,29 +23,11 @@ export function shouldSendAssistantMessage({
 }
 
 export function shouldOpenAssistantShortcut(
-  event: Pick<
-    KeyboardEvent,
-    "key" | "metaKey" | "ctrlKey" | "defaultPrevented"
-  >,
+  event: ChordEvent,
   options: { blocked: boolean; editableTarget: boolean },
 ): boolean {
   return (
-    !event.defaultPrevented &&
-    !options.blocked &&
-    !options.editableTarget &&
-    (event.metaKey || event.ctrlKey) &&
-    event.key.toLowerCase() === "j"
-  );
-}
-
-export function isEditableAssistantShortcutTarget(
-  target: EventTarget | null,
-): boolean {
-  return (
-    target instanceof Element &&
-    target.closest(
-      "input, textarea, select, [contenteditable]:not([contenteditable='false'])",
-    ) !== null
+    isCommandChord(event, "j") && !options.blocked && !options.editableTarget
   );
 }
 

@@ -254,14 +254,24 @@ function DayColumnImpl({
         ))}
       </div>
       {availability?.isOverride && (
-        <button
-          type="button"
-          data-availability
-          onClick={() => resetDay(day)}
-          className="absolute top-1 right-1 z-40 rounded-md bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shadow-sm ring-1 ring-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          Use weekly
-        </button>
+        // An in-flow sticky rail (the column's only in-flow child; everything
+        // else is absolute) pins the pill just under the day header as the
+        // grid scrolls and lets go at the column's bottom edge. Its `top`
+        // transitions on the header's own 200ms clock so the pill rides the
+        // all-day band as it expands or collapses, and it sits *below* the
+        // header (z-30) so any drift between the two hides under the header
+        // instead of painting over it. Click-through except for the pill
+        // itself, so a paint drag can still start beside it.
+        <div className="pointer-events-none sticky top-[var(--calendar-header-height)] z-[25] flex justify-end px-1 pt-1 transition-[top] duration-200 motion-reduce:transition-none">
+          <button
+            type="button"
+            data-availability
+            onClick={() => resetDay(day)}
+            className="pointer-events-auto rounded-md bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shadow-sm ring-1 ring-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Use weekly
+          </button>
+        </div>
       )}
       {availability?.intervals.map((interval, index) => (
         <AvailabilityBlock

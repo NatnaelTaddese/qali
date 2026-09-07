@@ -1,6 +1,7 @@
 /** Read side of the calendar domain. Registration is canonical here, under
  * `api.domains.calendar.queries.*` / `internal.domains.calendar.queries.*`. */
 
+import { SEARCH_QUERY_MAX_LENGTH } from "@qali/domain/search";
 import { v } from "convex/values";
 
 import type { Doc, Id } from "../../_generated/dataModel";
@@ -421,14 +422,11 @@ export const getEventContext = internalQuery({
 // Title search (the dock's search panel)
 // ---------------------------------------------------------------------------
 
-/** Longest query the search accepts. Convex tokenizes up to 16 terms; anything
- * past this is noise, and bounding it keeps a forged query from being costly. */
-export const SEARCH_QUERY_MAX_LENGTH = 120;
-
-/** Personal rows fetched per search, before series collapsing. Search results
- * come back by relevance, and a weekly series matching the query contributes
- * one row per expanded instance, so the scan must run well past the number of
- * results we show or a busy series would crowd every other match out. */
+/** Personal rows fetched per calendar per search, before series collapsing.
+ * Search results come back by relevance, and a weekly series matching the
+ * query contributes one row per expanded instance, so the scan must run well
+ * past the number of results we show or a busy series would crowd every other
+ * match on its calendar out. */
 const SEARCH_PERSONAL_SCAN_LIMIT = 256;
 
 /** Public calendars are small and repeat little, so a flat cap per calendar. */
@@ -493,23 +491,24 @@ export async function searchEventsHandler(
   if (query.length === 0) return [];
 
   const selected = await selectedCalendars(ctx, args.userId);
-  const personalIds = new Set(
-    selected.filter((c) => !c.isShared).map((c) => c._id),
-  );
 
-  const personal = (
-    await ctx.db
+  // One search per selected calendar, so only eligible rows spend the budget.
+  const personal: EventView[] = [];
+  for (const calendar of selected) {
+    if (calendar.isShared) continue;
+    const rows = await ctx.db
       .query("events")
       .withSearchIndex("search_summary", (q) =>
-        q.search("summary", query).eq("userId", args.userId),
+        q
+          .search("summary", query)
+          .eq("userId", args.userId)
+          .eq("localCalendarId", calendar._id),
       )
-      .take(SEARCH_PERSONAL_SCAN_LIMIT)
-  ).filter(
-    (event) =>
-      event.status !== "cancelled" &&
-      event.localCalendarId !== undefined &&
-      personalIds.has(event.localCalendarId),
-  );
+      .take(SEARCH_PERSONAL_SCAN_LIMIT);
+    for (const event of rows) {
+      if (event.status !== "cancelled") personal.push(event);
+    }
+  }
 
   const shared: EventView[] = [];
   for (const calendar of selected) {
@@ -535,15 +534,18 @@ export async function searchEventsHandler(
     .slice(0, SEARCH_RESULT_LIMIT);
 }
 
+/** `nowMs` comes from the client rather than the wall clock: a query is not
+ * re-run as time passes, so a clock read here would freeze the upcoming/past
+ * split at subscription time. */
 export const searchEvents = query({
-  args: { query: v.string() },
+  args: { query: v.string(), nowMs: v.number() },
   handler: async (ctx, args) => {
     const user = await authComponent.safeGetAuthUser(ctx);
     if (!user) return [];
     return searchEventsHandler(ctx, {
       userId: user._id,
       query: args.query,
-      nowMs: Date.now(),
+      nowMs: args.nowMs,
     });
   },
 });

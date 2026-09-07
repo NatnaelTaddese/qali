@@ -29,13 +29,20 @@ describe("search interactions", () => {
         editableTarget: true,
       }),
     ).toBe(false);
-    // Once open, the chord closes it from its own input.
+    // Once open, ⌘K closes it from its own input…
     expect(
       shouldToggleSearchShortcut(chord, {
         searchOpen: true,
         editableTarget: true,
       }),
     ).toBe(true);
+    // …but Ctrl+K in a text field is left to the field (macOS kill-line).
+    expect(
+      shouldToggleSearchShortcut(
+        { ...chord, metaKey: false, ctrlKey: true },
+        { searchOpen: true, editableTarget: true },
+      ),
+    ).toBe(false);
   });
 
   test("ignores consumed, alt-modified, and unmodified K", () => {

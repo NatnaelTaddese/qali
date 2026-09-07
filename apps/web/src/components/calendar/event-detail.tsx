@@ -34,7 +34,6 @@ import { Avatar } from "./avatar";
 import { calendarColorVar, useEventColor } from "./colors";
 import { buttonClass } from "./event-controls";
 import type { EventPrefill } from "./event-create";
-import { fromUtcMidnight } from "./event-form";
 import { GoogleMeetIcon } from "./google-meet-icon";
 import {
   GuestRow,
@@ -47,9 +46,9 @@ import { usePreferences } from "@/components/workspace/preferences-context";
 import {
   calendarDisplayName,
   editableEventId,
+  eventTimeParts,
+  fromUtcMidnight,
   MS_PER_DAY,
-  timePattern,
-  zoned,
   type CalendarEvent,
 } from "./lib";
 import { dockVariants, dockVariantsReduced, press, SPRING_DOCK } from "./motion";
@@ -75,26 +74,14 @@ function timeText(
   use24h: boolean,
   timeZone: string,
 ): string {
-  if (event.allDay) {
-    // All-day boundaries are UTC midnights (endMs exclusive); read them back
-    // through fromUtcMidnight so the working zone can't shift the day.
-    const start = zoned(fromUtcMidnight(event.startMs, timeZone), timeZone);
-    const lastDay = zoned(
-      fromUtcMidnight(event.endMs - MS_PER_DAY, timeZone),
-      timeZone,
-    );
+  const parts = eventTimeParts(event, use24h, timeZone);
+  if (parts.allDay) {
+    const { start, lastDay } = parts;
     return isSameDay(start, lastDay)
       ? format(start, "EEE d MMM")
       : `${format(start, "EEE d MMM")} – ${format(lastDay, "EEE d MMM")}`;
   }
-  const start = zoned(event.startMs, timeZone);
-  const end = zoned(event.endMs, timeZone);
-  const time = timePattern(use24h);
-  const endText = format(
-    end,
-    isSameDay(start, end) ? time : `EEE d MMM, ${time}`,
-  );
-  return `${format(start, `EEE d MMM, ${time}`)} – ${endText}`;
+  return `${format(parts.start, `EEE d MMM, ${parts.time}`)} – ${parts.endText}`;
 }
 
 function DetailRow({

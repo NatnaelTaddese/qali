@@ -21,10 +21,8 @@ import {
 } from "react";
 
 import { useStableQuery } from "@/components/calendar/use-stable-query";
-import {
-  isEditableAssistantShortcutTarget,
-  shouldOpenAssistantShortcut,
-} from "./assistant-interactions";
+import { shouldOpenAssistantShortcut } from "./assistant-interactions";
+import { isEditableShortcutTarget } from "./shortcuts";
 import { MascotGlyph } from "./mascot-glyph";
 
 type Threads = FunctionReturnType<typeof api.domains.assistant.data.listThreads>;
@@ -133,7 +131,7 @@ export function AssistantDock() {
           // Only guard against hijacking ⌘J from a text field while the panel is
           // closed; once open, ⌘J closes it from anywhere, its composer included.
           editableTarget:
-            !menuOpenRef.current && isEditableAssistantShortcutTarget(e.target),
+            !menuOpenRef.current && isEditableShortcutTarget(e.target),
         })
       ) {
         e.preventDefault();

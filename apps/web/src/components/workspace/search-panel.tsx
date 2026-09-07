@@ -5,6 +5,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { api } from "@qali/backend/convex/_generated/api";
+import { SEARCH_QUERY_MAX_LENGTH } from "@qali/domain/search";
 import { Spinner } from "@qali/ui/components/spinner";
 import { cn } from "@qali/ui/lib/utils";
 import { useQuery } from "convex/react";
@@ -12,16 +13,14 @@ import { addDays, format, isSameDay, isSameYear, startOfDay } from "date-fns";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { useEventColor } from "@/components/calendar/colors";
-import { fromUtcMidnight } from "@/components/calendar/event-form";
 import {
   calendarDisplayName,
-  MS_PER_DAY,
-  timePattern,
+  eventTimeParts,
+  fromUtcMidnight,
   zoned,
   zonedNow,
   type CalendarEvent,
 } from "@/components/calendar/lib";
-import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { useDock, type RevealInput } from "./dock-context";
 import { usePreferences } from "./preferences-context";
 import { stepActiveResult } from "./search-interactions";
@@ -30,8 +29,9 @@ import { stepActiveResult } from "./search-interactions";
  * to feel live, long enough that a burst of keystrokes is one subscription. */
 const SEARCH_DEBOUNCE_MS = 120;
 
-/** Mirrors the server's cap so the input can't outrun it. */
-const SEARCH_QUERY_MAX_LENGTH = 120;
+/** The upcoming/past split is anchored to a minute, not the exact instant, so
+ * one client's subscriptions can share the server's cache within that minute. */
+const NOW_GRANULARITY_MS = 60_000;
 
 function dayLabel(date: Date, now: Date): string {
   if (isSameDay(date, now)) return "Today";
@@ -41,33 +41,22 @@ function dayLabel(date: Date, now: Date): string {
 }
 
 /** One line of when: "Tomorrow · 9:00 – 9:30 AM", "Fri 12 Dec · All day",
- * or a day span for a multi-day all-day event. Same zone handling as the
- * detail panel: all-day bounds are UTC midnights read back through
- * fromUtcMidnight so the working zone can't shift the day. */
+ * or a day span for a multi-day all-day event. The zone-correct bounds come
+ * from the same helper the detail card composes its line from. */
 function whenText(
   event: CalendarEvent,
   use24h: boolean,
   timeZone: string,
 ): string {
   const now = zonedNow(timeZone);
-  if (event.allDay) {
-    const start = zoned(fromUtcMidnight(event.startMs, timeZone), timeZone);
-    const lastDay = zoned(
-      fromUtcMidnight(event.endMs - MS_PER_DAY, timeZone),
-      timeZone,
-    );
+  const parts = eventTimeParts(event, use24h, timeZone);
+  if (parts.allDay) {
+    const { start, lastDay } = parts;
     return isSameDay(start, lastDay)
       ? `${dayLabel(start, now)} · All day`
       : `${dayLabel(start, now)} – ${dayLabel(lastDay, now)}`;
   }
-  const start = zoned(event.startMs, timeZone);
-  const end = zoned(event.endMs, timeZone);
-  const time = timePattern(use24h);
-  const endText = format(
-    end,
-    isSameDay(start, end) ? time : `EEE d MMM, ${time}`,
-  );
-  return `${dayLabel(start, now)} · ${format(start, time)} – ${endText}`;
+  return `${dayLabel(parts.start, now)} · ${format(parts.start, parts.time)} – ${parts.endText}`;
 }
 
 /** Where the calendar should scroll for a result. A timed event lands on its
@@ -102,10 +91,15 @@ export function SearchPanel({ onClose }: { onClose: () => void }) {
 
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
+  // The last list to arrive, held while the next query loads so the card
+  // never collapses to empty between two sets of results. Cleared when the
+  // box is emptied: a fresh query starts from nothing, not from an old list.
+  const lastResults = useRef<CalendarEvent[] | undefined>(undefined);
   useEffect(() => {
     const trimmed = query.trim();
     // An emptied box clears at once; only new text waits for the pause.
     if (!trimmed) {
+      lastResults.current = undefined;
       setDebounced("");
       return;
     }
@@ -113,32 +107,32 @@ export function SearchPanel({ onClose }: { onClose: () => void }) {
     return () => clearTimeout(timeout);
   }, [query]);
 
-  // Stable across keystrokes: the last list stays up while the next loads, so
-  // the card never collapses to empty between two sets of results.
-  const stored = useStableQuery(
-    api.domains.calendar.queries.searchEvents,
-    debounced ? { query: debounced } : "skip",
+  // Anchored per query rather than per render, so the subscription's args
+  // hold still while the results are on screen.
+  const nowMs = useMemo(
+    () => Math.floor(Date.now() / NOW_GRANULARITY_MS) * NOW_GRANULARITY_MS,
+    [debounced],
   );
-  const results = debounced ? stored : undefined;
-  const loading = debounced !== "" && stored === undefined;
-  // The list still shows the previous query's matches until the new ones
-  // land, so the empty state must key off what was actually searched for.
-  const [searchedFor, setSearchedFor] = useState("");
-  useEffect(() => {
-    if (debounced && stored !== undefined) setSearchedFor(debounced);
-  }, [debounced, stored]);
+  const fresh = useQuery(
+    api.domains.calendar.queries.searchEvents,
+    debounced ? { query: debounced, nowMs } : "skip",
+  );
+  if (fresh !== undefined) lastResults.current = fresh;
+  const loading = debounced !== "" && fresh === undefined;
+  const results = debounced ? (fresh ?? lastResults.current) : undefined;
 
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
   const count = results?.length ?? 0;
-  // A fresh result set restarts the highlight at the top.
-  useEffect(() => setActive(0), [results]);
+  // A live update can shrink the list under the highlight; clamp rather than
+  // reset, so a background sync never yanks the selection back to the top.
+  const activeIndex = Math.min(active, Math.max(count - 1, 0));
   useEffect(() => {
     listRef.current
-      ?.querySelector<HTMLElement>(`[data-index="${active}"]`)
+      ?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [active]);
+  }, [activeIndex]);
 
   const pick = (event: CalendarEvent) => {
     open({ kind: "event", event });
@@ -149,9 +143,12 @@ export function SearchPanel({ onClose }: { onClose: () => void }) {
     if (e.nativeEvent.isComposing) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      setActive((i) => stepActiveResult(i, count, e.key === "ArrowDown" ? 1 : -1));
+      setActive(
+        stepActiveResult(activeIndex, count, e.key === "ArrowDown" ? 1 : -1),
+      );
     } else if (e.key === "Enter") {
-      const event = results?.[active];
+      // While a new query loads the rows on screen belong to the old one.
+      const event = loading ? undefined : results?.[activeIndex];
       if (event) {
         e.preventDefault();
         pick(event);
@@ -172,14 +169,20 @@ export function SearchPanel({ onClose }: { onClose: () => void }) {
           type="text"
           value={query}
           maxLength={SEARCH_QUERY_MAX_LENGTH}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            // Typing restarts the highlight at the top of whatever arrives.
+            setActive(0);
+          }}
           onKeyDown={onKeyDown}
           placeholder="Search events"
           aria-label="Search events"
           role="combobox"
           aria-expanded={count > 0}
           aria-controls={listId}
-          aria-activedescendant={count > 0 ? `${listId}-${active}` : undefined}
+          aria-activedescendant={
+            count > 0 ? `${listId}-${activeIndex}` : undefined
+          }
           aria-autocomplete="list"
           autoComplete="off"
           spellCheck={false}
@@ -202,7 +205,12 @@ export function SearchPanel({ onClose }: { onClose: () => void }) {
           id={listId}
           role="listbox"
           aria-label="Matching events"
-          className="-mx-2 mt-3 max-h-[min(24rem,55vh)] overflow-y-auto overscroll-contain"
+          aria-busy={loading || undefined}
+          className={cn(
+            "-mx-2 mt-3 max-h-[min(24rem,55vh)] overflow-y-auto overscroll-contain",
+            // The held list dims while its replacement loads.
+            loading && "opacity-60",
+          )}
         >
           {results.map((event, index) => {
             const colorVar = colorFor(event);
@@ -216,13 +224,13 @@ export function SearchPanel({ onClose }: { onClose: () => void }) {
                 id={`${listId}-${index}`}
                 data-index={index}
                 role="option"
-                aria-selected={index === active}
+                aria-selected={index === activeIndex}
                 tabIndex={-1}
                 onMouseEnter={() => setActive(index)}
                 onClick={() => pick(event)}
                 className={cn(
                   "flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left outline-none",
-                  index === active && "bg-accent",
+                  index === activeIndex && "bg-accent",
                 )}
               >
                 <span
@@ -255,8 +263,8 @@ export function SearchPanel({ onClose }: { onClose: () => void }) {
         </div>
       ) : (
         <p className="mt-3 px-0.5 text-sm text-muted-foreground">
-          {results && searchedFor
-            ? `No events match “${searchedFor}”`
+          {results && !loading
+            ? `No events match “${debounced}”`
             : "Find an event by its title"}
         </p>
       )}

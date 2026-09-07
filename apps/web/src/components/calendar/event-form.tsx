@@ -26,12 +26,12 @@ import { EventControls } from "./event-controls";
 import { FreeBusyToggle } from "./free-busy-toggle";
 import { GuestPicker, type Guest } from "./guest-picker";
 import { GoogleMeetIcon } from "./google-meet-icon";
-import { TZDate } from "@date-fns/tz";
 
 import { usePreferences } from "@/components/workspace/preferences-context";
 import {
   type CalendarEvent,
   type CalendarListItem,
+  fromUtcMidnight,
   MS_PER_DAY,
   SNAP_MS,
   timePattern,
@@ -120,19 +120,8 @@ function toUtcMidnight(ms: number, timeZone: string): number {
   return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-/** The inverse: a working-zone instant on the same calendar date, so the day
- * pickers show the day Google meant. Noon, so no DST shift can tip it into a
- * neighbouring day. */
-export function fromUtcMidnight(ms: number, timeZone: string): number {
-  const d = new Date(ms);
-  return new TZDate(
-    d.getUTCFullYear(),
-    d.getUTCMonth(),
-    d.getUTCDate(),
-    12,
-    timeZone,
-  ).getTime();
-}
+/** The inverse of toUtcMidnight, shared with the detail card and search row. */
+export { fromUtcMidnight };
 
 /** Everything the form edits. Times are always *working* values — local and
  * timed even for an all-day event — so the editors and the grid ghost keep

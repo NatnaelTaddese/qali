@@ -63,12 +63,13 @@ export const calendarTables = {
       "localCalendarId",
       "endMs",
     ])
-    // Title search for the dock's search panel. Scoped by user only; the
-    // query post-filters to selected calendars (a per-calendar filter field
-    // would cost one search per calendar for no ranking benefit).
+    // Title search for the dock's search panel. Filtered per calendar so a
+    // deselected calendar's rows never spend the scan budget (search results
+    // come back by relevance, so a user-wide scan lets a dense hidden series
+    // crowd out every visible match). One search per selected calendar.
     .searchIndex("search_summary", {
       searchField: "summary",
-      filterFields: ["userId"],
+      filterFields: ["userId", "localCalendarId"],
     }),
 
   // One physical copy of a *public* calendar's events (holidays, birthdays),

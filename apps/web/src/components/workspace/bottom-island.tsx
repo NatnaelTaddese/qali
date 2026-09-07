@@ -35,9 +35,9 @@ import { useAvailabilityEdit } from "./availability-edit-context";
 import { AvailabilityPanel } from "./availability-panel";
 import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
-import { isEditableAssistantShortcutTarget } from "./assistant-interactions";
 import { shouldToggleSearchShortcut } from "./search-interactions";
 import { SearchPanel } from "./search-panel";
+import { isEditableShortcutTarget } from "./shortcuts";
 import { UserAvatar } from "./user-avatar";
 import { useSyncNow } from "./use-sync-now";
 import { SettingsPanelSkeleton } from "./settings-skeleton";
@@ -259,15 +259,18 @@ export function BottomIsland() {
 
   // ⌘K toggles search from anywhere on the page (see shouldToggleSearchShortcut
   // for the text-field rule). Availability painting keeps the dock as its
-  // heads-up bar, so the chord stays quiet there.
+  // heads-up bar, so the chord stays quiet there — as it does over a create or
+  // edit form, whose half-filled draft only Escape or Cancel may discard (the
+  // same rule the outside-pointer handler above follows).
   const searchOpen = view?.kind === "search";
+  const draftOpen = view?.kind === "create" || view?.kind === "edit";
   useEffect(() => {
-    if (editing) return;
+    if (editing || draftOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (
         !shouldToggleSearchShortcut(e, {
           searchOpen,
-          editableTarget: isEditableAssistantShortcutTarget(e.target),
+          editableTarget: isEditableShortcutTarget(e.target),
         })
       )
         return;
@@ -277,7 +280,7 @@ export function BottomIsland() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editing, searchOpen, open, close]);
+  }, [editing, draftOpen, searchOpen, open, close]);
 
   const variants = reduce ? dockVariantsReduced : dockVariants;
   const timed = (transition: typeof SCRIM_ENTER) =>

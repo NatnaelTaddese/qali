@@ -1,21 +1,18 @@
-/** ⌘K / Ctrl+K toggles the dock's search panel. Mirrors the assistant's ⌘J
- * rule: never steal the chord from a text field while the panel is closed
- * (an editor may bind it), but once search is open it toggles from anywhere,
- * its own input included. */
+import { type ChordEvent, isCommandChord } from "./shortcuts";
+
+/** ⌘K / Ctrl+K toggles the dock's search panel. Like the assistant's ⌘J, it
+ * never steals the chord from a text field while the panel is closed (an
+ * editor may bind it). Once search is open it toggles from anywhere, its own
+ * input included — but from a text field only via ⌘: Ctrl+K in a macOS text
+ * field is the native kill-to-end-of-line binding, which a person editing
+ * their query may well be reaching for. */
 export function shouldToggleSearchShortcut(
-  event: Pick<
-    KeyboardEvent,
-    "key" | "metaKey" | "ctrlKey" | "altKey" | "defaultPrevented"
-  >,
+  event: ChordEvent,
   options: { searchOpen: boolean; editableTarget: boolean },
 ): boolean {
-  return (
-    !event.defaultPrevented &&
-    !event.altKey &&
-    (event.metaKey || event.ctrlKey) &&
-    event.key.toLowerCase() === "k" &&
-    (options.searchOpen || !options.editableTarget)
-  );
+  if (!isCommandChord(event, "k")) return false;
+  if (!options.editableTarget) return true;
+  return options.searchOpen && event.metaKey;
 }
 
 /** Where the highlighted result lands after an arrow key. Wraps at both ends

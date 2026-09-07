@@ -62,7 +62,14 @@ export const calendarTables = {
       "connectionId",
       "localCalendarId",
       "endMs",
-    ]),
+    ])
+    // Title search for the dock's search panel. Scoped by user only; the
+    // query post-filters to selected calendars (a per-calendar filter field
+    // would cost one search per calendar for no ranking benefit).
+    .searchIndex("search_summary", {
+      searchField: "summary",
+      filterFields: ["userId"],
+    }),
 
   // One physical copy of a *public* calendar's events (holidays, birthdays),
   // shared across every user who selects that calendar. Stored once rather
@@ -83,7 +90,13 @@ export const calendarTables = {
       "provider",
       "providerCalendarId",
       "endMs",
-    ]),
+    ])
+    // Same title search for public calendars, scoped by calendar identity
+    // (there is no user on these rows — see searchEvents).
+    .searchIndex("search_summary", {
+      searchField: "summary",
+      filterFields: ["provider", "providerCalendarId"],
+    }),
 
   // One row per shared public calendar: its user-independent sync cursor plus a
   // lease so exactly one user's sync refreshes it at a time.

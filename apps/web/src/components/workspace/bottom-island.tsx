@@ -35,6 +35,9 @@ import { useAvailabilityEdit } from "./availability-edit-context";
 import { AvailabilityPanel } from "./availability-panel";
 import { BookingRequestPanel } from "./booking-request-panel";
 import { useDock, type DockView } from "./dock-context";
+import { isEditableAssistantShortcutTarget } from "./assistant-interactions";
+import { shouldToggleSearchShortcut } from "./search-interactions";
+import { SearchPanel } from "./search-panel";
 import { UserAvatar } from "./user-avatar";
 import { useSyncNow } from "./use-sync-now";
 import { SettingsPanelSkeleton } from "./settings-skeleton";
@@ -254,6 +257,28 @@ export function BottomIsland() {
     };
   }, [expanded, view?.kind, close, closeCurrent, editing, setEditing]);
 
+  // ⌘K toggles search from anywhere on the page (see shouldToggleSearchShortcut
+  // for the text-field rule). Availability painting keeps the dock as its
+  // heads-up bar, so the chord stays quiet there.
+  const searchOpen = view?.kind === "search";
+  useEffect(() => {
+    if (editing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        !shouldToggleSearchShortcut(e, {
+          searchOpen,
+          editableTarget: isEditableAssistantShortcutTarget(e.target),
+        })
+      )
+        return;
+      e.preventDefault();
+      if (searchOpen) close();
+      else open({ kind: "search" });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editing, searchOpen, open, close]);
+
   const variants = reduce ? dockVariantsReduced : dockVariants;
   const timed = (transition: typeof SCRIM_ENTER) =>
     reduce ? { duration: 0 } : transition;
@@ -379,10 +404,13 @@ export function BottomIsland() {
                   booking={view.booking}
                   onClose={closeCurrent}
                 />
+              ) : view?.kind === "search" ? (
+                <SearchPanel onClose={closeCurrent} />
               ) : (
                 <NavRow
                   pendingCount={activePendingBookings?.length ?? 0}
                   onOpenAccount={() => open({ kind: "account" })}
+                  onOpenSearch={() => open({ kind: "search" })}
                   onCreate={openCreate}
                   availabilityLoading={availabilityRequested}
                   onPrepareAvailability={prepareAvailability}
@@ -445,6 +473,7 @@ function NavRow({
   pendingCount,
   availabilityLoading,
   onOpenAccount,
+  onOpenSearch,
   onCreate,
   onPrepareAvailability,
   onOpenAvailability,
@@ -452,6 +481,7 @@ function NavRow({
   pendingCount: number;
   availabilityLoading: boolean;
   onOpenAccount: () => void;
+  onOpenSearch: () => void;
   onCreate: () => void;
   onPrepareAvailability: () => void;
   onOpenAvailability: () => void;
@@ -469,7 +499,7 @@ function NavRow({
         busy={isSyncing}
         onClick={sync}
       />
-      <NavButton icon={Search01Icon} label="Search" />
+      <NavButton icon={Search01Icon} label="Search" onClick={onOpenSearch} />
       <NavButton icon={PlusSignIcon} label="Create" onClick={onCreate} />
       <NavButton
         icon={TimeScheduleIcon}

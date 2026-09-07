@@ -416,3 +416,134 @@ export const getEventContext = internalQuery({
   args: { eventId: eventIdArg, userId: v.string() },
   handler: (ctx, args) => getEventContextHandler(ctx, args),
 });
+
+// ---------------------------------------------------------------------------
+// Title search (the dock's search panel)
+// ---------------------------------------------------------------------------
+
+/** Longest query the search accepts. Convex tokenizes up to 16 terms; anything
+ * past this is noise, and bounding it keeps a forged query from being costly. */
+export const SEARCH_QUERY_MAX_LENGTH = 120;
+
+/** Personal rows fetched per search, before series collapsing. Search results
+ * come back by relevance, and a weekly series matching the query contributes
+ * one row per expanded instance, so the scan must run well past the number of
+ * results we show or a busy series would crowd every other match out. */
+const SEARCH_PERSONAL_SCAN_LIMIT = 256;
+
+/** Public calendars are small and repeat little, so a flat cap per calendar. */
+const SEARCH_SHARED_SCAN_LIMIT = 32;
+
+/** Results returned after collapsing and ordering. */
+export const SEARCH_RESULT_LIMIT = 40;
+
+/** Stable key for the instances of one recurring series. Two calendars may
+ * hold series with the same provider id, so calendar identity is part of it. */
+function seriesKey(event: EventView): string | null {
+  if (!event.providerSeriesId) return null;
+  return `${event.connectionId}:${event.localCalendarId}:${event.providerSeriesId}`;
+}
+
+/** Search-result order: what is coming up first (soonest first), then what
+ * has passed (most recent first). Relevance already picked the rows; when a
+ * person types "dentist" they want the next appointment, not the best-scored
+ * one from four months ago. */
+export function compareSearchResults(
+  nowMs: number,
+): (a: EventView, b: EventView) => number {
+  return (a, b) => {
+    const aUpcoming = a.endMs > nowMs;
+    const bUpcoming = b.endMs > nowMs;
+    if (aUpcoming !== bUpcoming) return aUpcoming ? -1 : 1;
+    return aUpcoming ? a.startMs - b.startMs : b.startMs - a.startMs;
+  };
+}
+
+/** Collapse each recurring series to a single representative instance: the
+ * next one still to run, or failing that the most recent one. One-off events
+ * pass through untouched. */
+export function collapseSeries(
+  events: EventView[],
+  nowMs: number,
+): EventView[] {
+  const closer = compareSearchResults(nowMs);
+  const bySeries = new Map<string, EventView>();
+  const singles: EventView[] = [];
+  for (const event of events) {
+    const key = seriesKey(event);
+    if (key === null) {
+      singles.push(event);
+      continue;
+    }
+    const held = bySeries.get(key);
+    if (!held || closer(event, held) < 0) bySeries.set(key, event);
+  }
+  return [...singles, ...bySeries.values()];
+}
+
+/** Title search across the user's selected calendars (personal and public).
+ * Convex search matches whole terms plus a prefix on the last one, so it works
+ * as the person types. Takes `userId` and `nowMs` explicitly so the ordering is
+ * testable without an auth context. */
+export async function searchEventsHandler(
+  ctx: QueryCtx,
+  args: { userId: string; query: string; nowMs: number },
+): Promise<EventView[]> {
+  const query = args.query.trim().slice(0, SEARCH_QUERY_MAX_LENGTH);
+  if (query.length === 0) return [];
+
+  const selected = await selectedCalendars(ctx, args.userId);
+  const personalIds = new Set(
+    selected.filter((c) => !c.isShared).map((c) => c._id),
+  );
+
+  const personal = (
+    await ctx.db
+      .query("events")
+      .withSearchIndex("search_summary", (q) =>
+        q.search("summary", query).eq("userId", args.userId),
+      )
+      .take(SEARCH_PERSONAL_SCAN_LIMIT)
+  ).filter(
+    (event) =>
+      event.status !== "cancelled" &&
+      event.localCalendarId !== undefined &&
+      personalIds.has(event.localCalendarId),
+  );
+
+  const shared: EventView[] = [];
+  for (const calendar of selected) {
+    if (!calendar.isShared) continue;
+    const connection = await ctx.db.get(calendar.connectionId);
+    if (!connection) continue;
+    const rows = await ctx.db
+      .query("sharedEvents")
+      .withSearchIndex("search_summary", (q) =>
+        q
+          .search("summary", query)
+          .eq("provider", connection.provider)
+          .eq("providerCalendarId", calendar.providerCalendarId),
+      )
+      .take(SEARCH_SHARED_SCAN_LIMIT);
+    for (const row of rows) {
+      shared.push(sharedAsEvent(row, args.userId, calendar));
+    }
+  }
+
+  return collapseSeries([...personal, ...shared], args.nowMs)
+    .sort(compareSearchResults(args.nowMs))
+    .slice(0, SEARCH_RESULT_LIMIT);
+}
+
+export const searchEvents = query({
+  args: { query: v.string() },
+  handler: async (ctx, args) => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    if (!user) return [];
+    return searchEventsHandler(ctx, {
+      userId: user._id,
+      query: args.query,
+      nowMs: Date.now(),
+    });
+  },
+});

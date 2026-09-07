@@ -562,6 +562,19 @@ export async function setConnectionStatusCore(
     ...(args.status === "active" ? { lastError: undefined } : {}),
     updatedAt: Date.now(),
   });
+  if (args.status === "active") {
+    // The credential strikes that parked it are spent too; otherwise the
+    // first hiccup after a reconnect would park it again on the spot.
+    const state = await ctx.db
+      .query("connectionSyncState")
+      .withIndex("by_connection", (q) =>
+        q.eq("connectionId", args.connectionId),
+      )
+      .unique();
+    if (state?.authFailureCount) {
+      await ctx.db.patch(state._id, { authFailureCount: undefined });
+    }
+  }
   return null;
 }
 

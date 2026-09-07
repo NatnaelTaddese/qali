@@ -18,6 +18,9 @@ const MAX_JOINS_GLOBAL = 600;
 // Per-address ceiling, mostly to serialize concurrent submits of the same new
 // email so they can't slip past the dedupe check and create duplicate rows.
 const MAX_JOINS_PER_EMAIL = 3;
+// `source` is a short label ("www"), not free text. Anonymous callers could
+// otherwise attach megabytes to each of the hourly quota's rows.
+const MAX_SOURCE_LENGTH = 64;
 
 /** Add an email to the waitlist. Idempotent by email: an address already on the
  * list is treated as success without inserting again, so double-submits and
@@ -30,6 +33,10 @@ export async function joinHandler(
   const email = args.email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) {
     throw new Error("Please enter a valid email address");
+  }
+  const source = args.source?.trim() || undefined;
+  if (source && source.length > MAX_SOURCE_LENGTH) {
+    throw new Error("Invalid signup source");
   }
 
   // Global cap FIRST, so a flood is throttled before it can create either a
@@ -66,7 +73,7 @@ export async function joinHandler(
 
   await ctx.db.insert("waitlist", {
     email,
-    source: args.source,
+    source,
     createdAt: Date.now(),
   });
   return null;

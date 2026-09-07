@@ -27,6 +27,40 @@ import type {
 
 const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
 
+// Provider text is authored by whoever created the event, which for an invite
+// is a stranger. These caps keep one pathological event from dominating a
+// synced page's write budget; they are far above anything a real event holds.
+const MAX_SUMMARY_CHARS = 1_024;
+export const MAX_LOCATION_CHARS = 1_024;
+export const MAX_DESCRIPTION_CHARS = 16_000;
+
+function clip(value: string | undefined, max: number): string | undefined {
+  if (value === undefined) return undefined;
+  return value.length <= max ? value : value.slice(0, max);
+}
+
+/** Whether a stored field may be a clipped copy of the provider's value. A
+ * clipped field must never be written back as if it were whole; the check is
+ * by length, so a value that is exactly at the cap counts too. */
+export function mayBeClipped(value: string | undefined, max: number): boolean {
+  return value !== undefined && value.length >= max;
+}
+
+/** A provider-supplied URL the UI may put in an `href`, or undefined. Google
+ * only issues http(s) links today; the check is here so the invariant holds
+ * for every adapter rather than being re-derived at each render site. */
+export function safeHttpUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? url.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function toProviderCalendar(cal: MappedCalendar): ProviderCalendar {
   return {
     id: cal.googleCalendarId,
@@ -70,7 +104,7 @@ export function toProviderEvent(
   const conference =
     event.conferenceUrl || event.conferenceName || event.conferenceType || event.hangoutLink
       ? {
-          url: event.conferenceUrl ?? event.hangoutLink,
+          url: safeHttpUrl(event.conferenceUrl ?? event.hangoutLink),
           name: event.conferenceName,
           type: event.conferenceType,
         }
@@ -79,16 +113,16 @@ export function toProviderEvent(
   return {
     id: event.googleEventId,
     calendarId: event.calendarId,
-    summary: event.summary,
-    description: event.description,
-    location: event.location,
+    summary: clip(event.summary, MAX_SUMMARY_CHARS),
+    description: clip(event.description, MAX_DESCRIPTION_CHARS),
+    location: clip(event.location, MAX_LOCATION_CHARS),
     startMs: event.startMs,
     endMs: event.endMs,
     allDay: event.allDay,
     timeZone: raw?.start?.timeZone ?? raw?.originalStartTime?.timeZone,
     status: normalizeStatus(event.status),
     updatedMs: event.googleUpdatedMs,
-    htmlLink: event.htmlLink,
+    htmlLink: safeHttpUrl(event.htmlLink),
     color: event.colorId,
     visibility: event.visibility,
     // Google omits transparency at its "busy" default; only "transparent" is a

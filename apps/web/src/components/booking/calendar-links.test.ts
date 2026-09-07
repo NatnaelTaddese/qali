@@ -4,6 +4,8 @@ import { describe, expect, test } from "bun:test";
 
 import { buildGoogleUrl, buildIcs } from "./calendar-links";
 
+
+
 // A fixed instant so the UTC stamps are stable regardless of the test host's
 // zone: 2026-08-05T03:30:00Z for 30 minutes.
 const startMs = Date.UTC(2026, 7, 5, 3, 30, 0);
@@ -49,5 +51,19 @@ describe("buildIcs", () => {
       title: "Chat; about, compilers\nand more",
     });
     expect(ics).toContain("SUMMARY:Chat\\; about\\, compilers\\nand more");
+  });
+});
+
+describe("buildIcs escaping", () => {
+  test("escapes every line-break flavour in text values", () => {
+    const ics = buildIcs({
+      title: "one\rtwo\nthree\r\nfour",
+      startMs,
+      endMs,
+    });
+    expect(ics).toContain("SUMMARY:one\\ntwo\\nthree\\nfour");
+    // No bare CR or LF may survive inside a property value.
+    const summary = ics.split("\r\n").find((line) => line.startsWith("SUMMARY:"));
+    expect(summary).toBe("SUMMARY:one\\ntwo\\nthree\\nfour");
   });
 });

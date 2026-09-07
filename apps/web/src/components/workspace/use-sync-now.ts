@@ -1,4 +1,5 @@
 import { api } from "@qali/backend/convex/_generated/api";
+import { ConvexError } from "convex/values";
 import { useAction } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -15,6 +16,15 @@ export function useSyncNow() {
     try {
       await syncNow();
     } catch (error: unknown) {
+      if (
+        error instanceof ConvexError &&
+        (error.data as { code?: string } | undefined)?.code === "SYNC_RATE_LIMIT"
+      ) {
+        toast("Your calendar was synced very recently", {
+          description: "It keeps syncing in the background — try again in a few minutes.",
+        });
+        return;
+      }
       toast.error("Couldn't sync calendar", {
         description: error instanceof Error ? error.message : undefined,
       });

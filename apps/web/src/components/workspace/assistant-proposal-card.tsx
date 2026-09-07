@@ -22,17 +22,75 @@ export type AssistantAction = Doc<"assistantActions">;
  * (update / move / delete). create_event has no id yet, so it returns null and
  * the card falls back to the neutral accent. */
 function targetEventId(action: AssistantAction): Id<"events"> | null {
-  let input: unknown;
-  try {
-    input = JSON.parse(action.input);
-  } catch {
-    return null;
-  }
-  if (input && typeof input === "object" && "eventId" in input) {
-    const id = (input as { eventId?: unknown }).eventId;
+  const input = parsedInput(action);
+  if (input && "eventId" in input) {
+    const id = input.eventId;
     if (typeof id === "string") return id as Id<"events">;
   }
   return null;
+}
+
+function parsedInput(action: AssistantAction): Record<string, unknown> | null {
+  try {
+    const input: unknown = JSON.parse(action.input);
+    return input && typeof input === "object"
+      ? (input as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The parts of a proposal the one-line preview can't carry in full. The
+ * preview clips long descriptions and locations, and a guest list has to be
+ * read address by address — the confirm button approves every one of them,
+ * and Google emails each the moment it's pressed. Everything the model put in
+ * the proposal is shown here verbatim, so nothing a stranger slipped into a
+ * booking note or an event title can ride through unseen.
+ */
+function proposalDetails(
+  action: AssistantAction,
+): { label: string; value: string }[] {
+  const input = parsedInput(action);
+  if (!input) return [];
+  const rows: { label: string; value: string }[] = [];
+  const guests = input.guestEmails;
+  if (Array.isArray(guests) && guests.length > 0) {
+    rows.push({
+      label: `Guests (${guests.length})`,
+      value: guests.filter((g) => typeof g === "string").join("\n"),
+    });
+  }
+  if (typeof input.description === "string" && input.description) {
+    rows.push({ label: "Description", value: input.description });
+  }
+  if (typeof input.location === "string" && input.location) {
+    rows.push({ label: "Location", value: input.location });
+  }
+  return rows;
+}
+
+function ProposalDetails({ action }: { action: AssistantAction }) {
+  const rows = proposalDetails(action);
+  if (rows.length === 0) return null;
+  return (
+    <details className="mt-2 text-xs">
+      <summary className="cursor-pointer text-muted-foreground outline-none select-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        Details
+      </summary>
+      <dl className="mt-1.5 flex flex-col gap-1.5">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <dt className="font-medium text-muted-foreground">{row.label}</dt>
+            <dd className="max-h-40 overflow-y-auto break-words whitespace-pre-wrap">
+              {row.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
 }
 
 /**
@@ -112,6 +170,7 @@ export function AssistantProposalCard({ action }: { action: AssistantAction }) {
         style={{ backgroundColor: `var(${colorVar})` }}
       />
       <p className="text-sm leading-5">{action.preview}</p>
+      {pending && <ProposalDetails action={action} />}
 
       {pending && !applying && (
         <div

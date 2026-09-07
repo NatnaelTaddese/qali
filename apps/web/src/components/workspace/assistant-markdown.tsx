@@ -61,6 +61,8 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           ),
           // Never let untrusted model output trigger a request on render.
           img: () => null,
+          // The link text is the model's; the host is shown beside it so a
+          // reply can't dress an outbound URL up as something it isn't.
           a: ({ href, children }) => {
             const safeHref = safeAssistantLink(href);
             return safeHref ? (
@@ -71,6 +73,9 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
                 className="underline underline-offset-2"
               >
                 {children}
+                <span className="ml-1 text-muted-foreground no-underline">
+                  ({new URL(safeHref).hostname})
+                </span>
               </a>
             ) : (
               <span>{children}</span>

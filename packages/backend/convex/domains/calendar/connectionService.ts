@@ -96,11 +96,55 @@ export const connectLinkedAccounts = action({
   },
 });
 
-/** Remove a linked account: revoke the Better Auth grant (so the reconcile
- * safety net can't resurrect the connection), take it out of the sync
- * fan-out, and purge everything it synced in the background. The sole
- * remaining account can only be paused, never disconnected — that would
- * strand the user's login. */
+/** A live access token for the grant about to be removed, or undefined when
+ * Google won't issue one (the grant is already dead, so there is nothing to
+ * revoke). Read before the Better Auth row goes: the broker needs that row. */
+async function accessTokenForRevoke(
+  ctx: ActionCtx,
+  userId: string,
+  credentialRef: string,
+): Promise<string | undefined> {
+  try {
+    return await getGoogleAccessToken(ctx, userId, credentialRef);
+  } catch (error) {
+    console.warn(
+      "Google grant revoke skipped, no token:",
+      error instanceof Error ? error.message : error,
+    );
+    return undefined;
+  }
+}
+
+/** Tell Google the grant is finished. Better Auth's unlink only deletes its
+ * own row; without this the refresh token stays valid at Google until the
+ * user finds it on their account page. Revoking the access token revokes the
+ * whole grant. Best-effort: a failure here is logged, not fatal — the local
+ * removal must go ahead regardless. Irreversible, so it runs only once the
+ * local unlink has succeeded; revoking first would leave a connection that
+ * still looks active but can never sync again if the unlink then fails. */
+async function revokeGoogleGrant(accessToken: string): Promise<void> {
+  try {
+    const response = await fetch("https://oauth2.googleapis.com/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token: accessToken }),
+    });
+    if (!response.ok) {
+      console.warn(`Google grant revoke returned ${response.status}`);
+    }
+  } catch (error) {
+    console.warn(
+      "Google grant revoke failed:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
+/** Remove a linked account: delete the Better Auth account row (so the
+ * reconcile safety net can't resurrect the connection), then revoke the grant
+ * at Google, take it out of the sync fan-out, and purge everything it synced
+ * in the background. The sole remaining account can only be paused, never
+ * disconnected — that would strand the user's login. */
 export const disconnectAccount = action({
   args: { connectionId: v.id("calendarConnections") },
   returns: v.null(),
@@ -128,6 +172,11 @@ export const disconnectAccount = action({
         "This account hasn't finished connecting — try again after a sync",
       );
     }
+    const accessToken = await accessTokenForRevoke(
+      ctx,
+      user._id,
+      connection.credentialRef,
+    );
     const auth = createAuth(ctx);
     const headers = await authComponent.getHeaders(ctx);
     try {
@@ -145,6 +194,7 @@ export const disconnectAccount = action({
       const message = error instanceof Error ? error.message : String(error);
       if (!/account.*not.*found/i.test(message)) throw error;
     }
+    if (accessToken) await revokeGoogleGrant(accessToken);
     await ctx.runMutation(
       internal.domains.calendar.mutations.pauseConnectionForRemoval,
       { connectionId: args.connectionId, userId: user._id },

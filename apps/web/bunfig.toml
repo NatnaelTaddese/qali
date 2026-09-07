@@ -1,0 +1,4 @@
+[test]
+# Register a DOM before the unit tests run: the rich-text helpers are exercised
+# against a real parser rather than a regex stand-in.
+preload = ["./test-setup.ts"]

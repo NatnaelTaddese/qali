@@ -32,17 +32,33 @@ import {
   ACCEPT_LEASE_MS,
   ACCEPT_RECONCILE_BASE_DELAY_MS,
   ACCEPT_RECONCILE_MAX_ATTEMPTS,
+  bookingExpiresAt,
   bookingNotificationBody,
   collectBusy,
   EXPIRATION_BATCH_SIZE,
+  isValidTimeZone,
+  MAX_PENDING_PER_PAGE,
+  MAX_REQUESTS_GLOBAL,
   MAX_REQUESTS_PER_EMAIL,
   MAX_REQUESTS_PER_PAGE,
   pageBySlug,
   pageByUser,
+  PENDING_TTL_MS,
   RATE_WINDOW_MS,
   slotGrid,
   slotSettingsValidator,
 } from "./model";
+
+/** A visitor's note is plain text, but it becomes the description of the
+ * event Google creates on acceptance, and Google reads descriptions as HTML.
+ * Escaping at that one boundary keeps whatever they typed — "<jane@acme.com>",
+ * "3 < 5", a pasted tag — as literal text in the host's calendar instead of
+ * markup, without mangling the stored note. */
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>]/g, (char) =>
+    char === "&" ? "&amp;" : char === "<" ? "&lt;" : "&gt;",
+  );
+}
 
 async function primaryLocalCalendar(
   ctx: MutationCtx,
@@ -126,10 +142,45 @@ async function primaryGoogleBookingTarget(
   return await validateBookingTarget(ctx, userId, connectionId, calendar._id);
 }
 
+/** The primary target resolved from rows that already exist — no connection or
+ * calendar is created on the way. This is the only resolution the anonymous
+ * request path may use: a stranger's form submission must not be able to
+ * insert into the host's connection tables, however benign the defaults.
+ * Null when those rows aren't there yet (the host's first calendar sync has
+ * not stored a primary calendar): the request is still taken, and acceptance
+ * resolves the target host-side, creating what is missing then. */
+async function existingPrimaryBookingTarget(
+  ctx: MutationCtx,
+  userId: string,
+): Promise<BookingTarget | null> {
+  const connections = await ctx.db
+    .query("calendarConnections")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .take(101);
+  if (connections.length > 100) {
+    throw new Error("Too many connections to choose a booking target safely");
+  }
+  const connection = preferredConnection(connections);
+  if (!connection) return null;
+  const calendar = await primaryLocalCalendar(ctx, userId, connection._id);
+  if (!calendar) return null;
+  return await validateBookingTarget(ctx, userId, connection._id, calendar._id);
+}
+
 async function bookingPageTarget(
   ctx: MutationCtx,
   page: Doc<"bookingPages">,
-): Promise<BookingTarget> {
+): Promise<BookingTarget>;
+async function bookingPageTarget(
+  ctx: MutationCtx,
+  page: Doc<"bookingPages">,
+  options: { createMissing: false },
+): Promise<BookingTarget | null>;
+async function bookingPageTarget(
+  ctx: MutationCtx,
+  page: Doc<"bookingPages">,
+  options: { createMissing: boolean } = { createMissing: true },
+): Promise<BookingTarget | null> {
   if (page.targetConnectionId && page.targetCalendarId) {
     return await validateBookingTarget(
       ctx,
@@ -140,6 +191,13 @@ async function bookingPageTarget(
   }
   if (page.targetConnectionId || page.targetCalendarId) {
     throw new Error("Booking calendar target is unavailable");
+  }
+  // A page saved before targets were stored (the provider cutover nulled the
+  // pair) self-heals from the host's primary calendar. Host-initiated paths
+  // may create the rows that need to exist; the anonymous request path only
+  // reads what is already there and persists nothing on the page.
+  if (!options.createMissing) {
+    return await existingPrimaryBookingTarget(ctx, page.userId);
   }
   const target = await primaryGoogleBookingTarget(ctx, page.userId);
   await ctx.db.patch(page._id, {
@@ -173,7 +231,7 @@ export function bookingEventCreate(
   return {
     summary: `${label} with ${booking.requesterName}`,
     description: booking.note
-      ? `Booked via qali.\n\n${booking.note}`
+      ? `Booked via qali.\n\n${escapeHtml(booking.note)}`
       : "Booked via qali.",
     startMs: booking.startMs,
     endMs: booking.endMs,
@@ -314,6 +372,11 @@ export async function upsertBookingPageHandler(
   if (args.horizonDays < 1 || args.horizonDays > 365) {
     throw new Error("Booking window must be between 1 and 365 days");
   }
+  // Every slot computation for this page runs through Intl with this zone; an
+  // unresolvable one would make the public page throw for every visitor.
+  if (!isValidTimeZone(args.timeZone)) {
+    throw new Error("Please choose a valid time zone");
+  }
 
   const existing = await pageByUser(ctx, user._id);
   const target =
@@ -327,7 +390,9 @@ export async function upsertBookingPageHandler(
       : await primaryGoogleBookingTarget(ctx, user._id);
   const value = {
     slug,
-    displayName: user.name || user.email || "qali user",
+    // The public page renders this to strangers. Never fall through to the
+    // email: a host whose profile has no name would otherwise publish it.
+    displayName: user.name?.trim() || slug,
     imageUrl: user.image ?? undefined,
     timeZone: args.timeZone,
     title: args.title,
@@ -446,11 +511,64 @@ export async function requestBookingHandler(
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) {
     throw new Error("Please enter a valid email address");
   }
-  const note = args.note?.trim();
-  if (note && note.length > 2000) {
+  const rawNote = args.note?.trim();
+  if (rawNote && rawNote.length > 2000) {
     throw new Error("Please shorten your message");
   }
+  const note = rawNote || undefined;
+  // Display only, but stored and later shown to the host and fed to the
+  // assistant; an unbounded or unresolvable string has no business here.
+  if (!isValidTimeZone(args.timeZone)) {
+    throw new Error("Invalid time zone");
+  }
 
+  // Ask for a window just wide enough to contain the requested slot, so the
+  // check is cheap but still runs the same rules as the listing. This runs
+  // before the page-scoped limits below are spent: an invalid or already-taken
+  // slot must not count against the page, or junk submissions could exhaust
+  // its hourly allowance and turn every real visitor away.
+  const now = Date.now();
+  const endMs = args.startMs + page.slotMinutes * 60_000;
+  const slots = await slotGrid(
+    ctx,
+    page,
+    args.startMs - MS_PER_DAY,
+    endMs + MS_PER_DAY,
+    now,
+  );
+  const slot = slots.find((s) => s.startMs === args.startMs);
+  if (!slot?.available) {
+    throw new Error("That time is no longer available");
+  }
+
+  // Undecided requests withhold their slots; cap how many may pile up so a
+  // run of throwaway addresses can't hold the whole horizon hostage.
+  const pending = await ctx.db
+    .query("bookings")
+    .withIndex("by_host_and_status_and_start", (q) =>
+      q.eq("hostUserId", page.userId).eq("status", "pending"),
+    )
+    .take(MAX_PENDING_PER_PAGE);
+  if (pending.length >= MAX_PENDING_PER_PAGE) {
+    throw new ConvexError({ code: "PAGE_RATE_LIMIT" });
+  }
+
+  // Every counter below is a write in this transaction, so a request that
+  // fails a later check rolls its increments back: the caps bound accepted
+  // requests, not attempts, and nothing here is cheaper for running earlier.
+  // The global key is shared by every page, so tripping it can't single one
+  // host out — and it carries its own code so the client and the logs can
+  // tell a deployment-wide ceiling from one busy page.
+  if (
+    !(await consumeRateLimit(
+      ctx,
+      "booking:global",
+      MAX_REQUESTS_GLOBAL,
+      RATE_WINDOW_MS,
+    ))
+  ) {
+    throw new ConvexError({ code: "GLOBAL_RATE_LIMIT" });
+  }
   if (
     !(await consumeRateLimit(
       ctx,
@@ -472,23 +590,13 @@ export async function requestBookingHandler(
     throw new ConvexError({ code: "EMAIL_RATE_LIMIT" });
   }
 
-  // Ask for a window just wide enough to contain the requested slot, so the
-  // check is cheap but still runs the same rules as the listing.
-  const endMs = args.startMs + page.slotMinutes * 60_000;
-  const slots = await slotGrid(
-    ctx,
-    page,
-    args.startMs - MS_PER_DAY,
-    endMs + MS_PER_DAY,
-    Date.now(),
-  );
-  const slot = slots.find((s) => s.startMs === args.startMs);
-  if (!slot?.available) {
-    throw new Error("That time is no longer available");
-  }
-
   const token = crypto.randomUUID();
-  const target = await bookingPageTarget(ctx, page);
+  // Read-only: an anonymous request never creates rows in the host's
+  // connection tables or rewrites their page. A target that can't be resolved
+  // from existing rows yet is left unset, as purge does; acceptance
+  // re-resolves it.
+  const target = await bookingPageTarget(ctx, page, { createMissing: false });
+  const expiresAt = Math.min(endMs, now + PENDING_TTL_MS);
   const bookingId = await ctx.db.insert("bookings", {
     hostUserId: page.userId,
     startMs: args.startMs,
@@ -499,10 +607,11 @@ export async function requestBookingHandler(
     note: note || undefined,
     status: "pending",
     token,
-    connectionId: target.connection._id,
-    targetConnectionId: target.connection._id,
-    targetCalendarId: target.calendar._id,
-    createdAt: Date.now(),
+    connectionId: target?.connection._id,
+    targetConnectionId: target?.connection._id,
+    targetCalendarId: target?.calendar._id,
+    expiresAt,
+    createdAt: now,
   });
   // Surface the request in the host's notification bell. Times render in the
   // host's page zone so the body reads the same as the booking panel.
@@ -516,7 +625,7 @@ export async function requestBookingHandler(
     createdAt: Date.now(),
   });
   await ctx.scheduler.runAt(
-    endMs,
+    expiresAt,
     internal.domains.booking.mutations.expireBooking,
     { bookingId },
   );
@@ -537,6 +646,8 @@ export const requestBooking = mutation({
   handler: (ctx, args) => requestBookingHandler(ctx, args),
 });
 
+export { bookingExpiresAt };
+
 /** Expire one request at its scheduled end. A decision that won the race first
  * is left untouched. */
 export async function expireBookingHandler(
@@ -544,7 +655,11 @@ export async function expireBookingHandler(
   args: { bookingId: Id<"bookings"> },
 ): Promise<null> {
   const booking = await ctx.db.get(args.bookingId);
-  if (!booking || booking.status !== "pending" || booking.endMs > Date.now()) {
+  if (
+    !booking ||
+    booking.status !== "pending" ||
+    bookingExpiresAt(booking) > Date.now()
+  ) {
     return null;
   }
   const now = Date.now();
@@ -580,16 +695,34 @@ export const expireBooking = internalMutation({
 });
 
 /** Backfill requests created before per-booking expiration was introduced and
- * recover in bounded batches if scheduled work was ever missed. */
+ * recover in bounded batches if scheduled work was ever missed. A request is
+ * due when either clock has run out: its slot's end (every row) or its TTL
+ * (rows that have one — the gte(0) bound keeps the TTL-less rows, which sort
+ * first as undefined, out of that scan). */
 export async function expirePastBookingsHandler(
   ctx: MutationCtx,
 ): Promise<null> {
-  const rows = await ctx.db
-    .query("bookings")
-    .withIndex("by_status_and_end", (q) =>
-      q.eq("status", "pending").lte("endMs", Date.now()),
-    )
-    .take(EXPIRATION_BATCH_SIZE);
+  const now = Date.now();
+  const [pastEnd, pastTtl] = await Promise.all([
+    ctx.db
+      .query("bookings")
+      .withIndex("by_status_and_end", (q) =>
+        q.eq("status", "pending").lte("endMs", now),
+      )
+      .take(EXPIRATION_BATCH_SIZE),
+    ctx.db
+      .query("bookings")
+      .withIndex("by_status_and_expiresAt", (q) =>
+        q.eq("status", "pending").gte("expiresAt", 0).lte("expiresAt", now),
+      )
+      .take(EXPIRATION_BATCH_SIZE),
+  ]);
+  const seen = new Set<Id<"bookings">>();
+  const rows = [...pastEnd, ...pastTtl].filter((booking) => {
+    if (seen.has(booking._id)) return false;
+    seen.add(booking._id);
+    return true;
+  });
 
   for (const booking of rows) {
     const operation = await operationForBooking(ctx, booking._id);
@@ -611,7 +744,10 @@ export async function expirePastBookingsHandler(
     await ctx.db.patch(booking._id, { status: "expired" });
     await clearBookingNotifications(ctx, booking._id);
   }
-  if (rows.length === EXPIRATION_BATCH_SIZE) {
+  if (
+    pastEnd.length === EXPIRATION_BATCH_SIZE ||
+    pastTtl.length === EXPIRATION_BATCH_SIZE
+  ) {
     await ctx.scheduler.runAfter(
       0,
       internal.domains.booking.mutations.expirePastBookings,
@@ -755,12 +891,13 @@ export async function claimBookingAcceptanceHandler(
   const reconcileOnly =
     operation !== null &&
     (operation.status === "ambiguous" || operation.mayHaveSucceeded === true);
-  if (booking.endMs <= now && !reconcileOnly) return null;
+  if (bookingExpiresAt(booking) <= now && !reconcileOnly) return null;
   const busy = await collectBusy(
     ctx,
     page,
     booking.startMs,
     booking.endMs,
+    now,
     booking._id,
     operation?.providerEventId,
   );
@@ -932,7 +1069,7 @@ export async function releaseBookingAcceptanceHandler(
         expectedGeneration: operation.reconcileGeneration ?? 0,
       },
     );
-  } else if (!args.mayHaveSucceeded && booking.endMs <= now) {
+  } else if (!args.mayHaveSucceeded && bookingExpiresAt(booking) <= now) {
     await ctx.scheduler.runAfter(
       0,
       internal.domains.booking.mutations.expireBooking,
@@ -1011,7 +1148,7 @@ export async function rejectBookingForHostHandler(
       "A previous acceptance may have reached the calendar provider. Retry acceptance to reconcile it before rejecting.",
     );
   }
-  if (booking.endMs <= Date.now()) {
+  if (bookingExpiresAt(booking) <= Date.now()) {
     throw new Error("This request has expired");
   }
   await ctx.db.patch(args.bookingId, {

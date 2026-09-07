@@ -132,9 +132,14 @@ export function BookingRequestPanel({
       </div>
 
       {booking.note && (
-        <p className="rounded-2xl bg-muted px-3 py-2 text-sm whitespace-pre-wrap">
-          {booking.note}
-        </p>
+        <div className="flex flex-col gap-1">
+          <p className="text-[11px] text-muted-foreground">
+            Their message — written by the visitor, not verified
+          </p>
+          <p className="rounded-2xl bg-muted px-3 py-2 text-sm whitespace-pre-wrap">
+            {booking.note}
+          </p>
+        </div>
       )}
 
       <p className="text-xs text-muted-foreground">
@@ -326,6 +331,9 @@ function RequestCard({
       <div className="mt-2 pl-1">
         {booking.note ? (
           <>
+            <p className="mb-1 text-[11px] text-muted-foreground">
+              Their message — written by the visitor, not verified
+            </p>
             <motion.div
               initial={false}
               animate={{

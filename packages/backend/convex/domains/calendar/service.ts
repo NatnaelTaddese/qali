@@ -19,6 +19,11 @@ import {
 } from "../../integrations/calendar/errors";
 import { refreshConnectionCalendar } from "../sync/engine";
 import { getCalendarAdapter } from "../../integrations/calendar/registry";
+import {
+  MAX_DESCRIPTION_CHARS,
+  MAX_LOCATION_CHARS,
+  mayBeClipped,
+} from "../../integrations/google/mappers";
 import { createEventReconciling } from "../../integrations/calendar/service";
 import type {
   CalendarProviderAdapter,
@@ -794,6 +799,18 @@ export async function updateEventOp(
 
     const carried = <T>(edited: T | null | undefined, current: T | undefined) =>
       edited === undefined ? current : (edited ?? undefined);
+    // The local row holds provider text clipped at ingest; a field carried
+    // from it into the new series would reach the provider silently shortened.
+    if (
+      (args.description === undefined &&
+        mayBeClipped(row.description, MAX_DESCRIPTION_CHARS)) ||
+      (args.location === undefined &&
+        mayBeClipped(row.location, MAX_LOCATION_CHARS))
+    ) {
+      throw new Error(
+        "This event's description or location is too long to carry into a new series. Shorten it in the calendar first, then try again.",
+      );
+    }
     const tailAttendees =
       attendees === undefined ? eventAttendees(master.attendees) : attendees;
     const addConference =

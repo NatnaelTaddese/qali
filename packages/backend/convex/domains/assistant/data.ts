@@ -22,6 +22,7 @@ import {
   type QueryCtx,
 } from "../../_generated/server";
 import { authComponent } from "../../auth";
+import { consumeRateLimit } from "../../infrastructure/rateLimit";
 import { assistantBlockValidator } from "./validators";
 
 /** How much of the opening message becomes the thread's title. */
@@ -37,6 +38,11 @@ const RATE_WINDOW_MS = 5 * 60 * 1000;
 const MAX_TURNS_PER_WINDOW = 20;
 const MONTH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // rolling 30 days
 const MAX_TURNS_PER_MONTH = 10;
+// A deployment-wide ceiling on model calls per day. The per-user quotas bound
+// one account; this bounds the bill when many accounts are minted at once.
+const GLOBAL_TURN_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_TURNS_GLOBAL_PER_DAY = 2_000;
+const PREVIEW_MAX = 2_000;
 const TURN_LEASE_MS = 10 * 60 * 1000;
 const MAX_ACTION_ATTEMPTS = 5;
 const ACTION_LEASE_MS = 12 * 60 * 1000;
@@ -247,6 +253,16 @@ export const startTurn = internalMutation({
     const monthCount = inMonthWindow ? (state.monthCount ?? 0) : 0;
     if (monthCount >= MAX_TURNS_PER_MONTH) {
       throw new ConvexError({ code: "ASSISTANT_MONTHLY_LIMIT" });
+    }
+    if (
+      !(await consumeRateLimit(
+        ctx,
+        "assistant:global",
+        MAX_TURNS_GLOBAL_PER_DAY,
+        GLOBAL_TURN_WINDOW_MS,
+      ))
+    ) {
+      throw new ConvexError({ code: "ASSISTANT_RATE_LIMIT" });
     }
 
     let threadId = args.threadId;
@@ -653,7 +669,12 @@ export const recordProposal = internalMutation({
       toolCallId: args.toolCallId,
       tool: args.tool,
       input: args.input,
-      preview: args.preview.slice(0, 2_000),
+      // A cut preview must read as cut: the card is what the user confirms,
+      // and a silent slice would let the tail of a change go unread.
+      preview:
+        args.preview.length <= PREVIEW_MAX
+          ? args.preview
+          : `${args.preview.slice(0, PREVIEW_MAX - 1)}… (truncated — open Details for the full change)`,
       operationId: crypto.randomUUID(),
       attemptCount: 0,
       status: "pending",

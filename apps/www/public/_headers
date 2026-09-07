@@ -1,0 +1,15 @@
+# Cloudflare Workers static-assets headers. Applied to every path the site
+# serves; the dev server ignores this file.
+#
+# The CSP allows no inline or third-party script: the theme bootstrap is the
+# external /theme-init.js for exactly that reason. Inline *styles* stay allowed
+# because React style props and the UI libraries' injected stylesheets need
+# them. connect-src covers the Convex deployment (queries over WebSocket, auth
+# over the .site domain); img-src covers Google profile photos.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.googleusercontent.com; font-src 'self' data:; connect-src 'self' https://*.convex.cloud wss://*.convex.cloud https://*.convex.site; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; manifest-src 'self'; worker-src 'self' blob:
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Permissions-Policy: camera=(), microphone=(), geolocation=()

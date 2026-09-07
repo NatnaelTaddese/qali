@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id, TableNames } from "../_generated/dataModel";
 import { internalMutation } from "../_generated/server";
+import { releasePersonSource } from "../domains/sync/engine";
 
 /**
  * Recurring storage maintenance + the account-deletion purge. All internal,
@@ -407,14 +408,26 @@ export const purgeConnectionData = internalMutation({
         )
         .take(PURGE_BATCH),
     );
-    await drain(
-      await ctx.db
-        .query("personSourceClaims")
-        .withIndex("by_connection_and_source_and_email", (q) =>
-          q.eq("connectionId", connectionId),
-        )
-        .take(PURGE_BATCH),
-    );
+    // Contact claims go through the same release the contacts sync uses, so a
+    // person whose only source was this connection is removed outright rather
+    // than deleted from the claims and left in the directory.
+    const claims = await ctx.db
+      .query("personSourceClaims")
+      .withIndex("by_connection_and_source_and_email", (q) =>
+        q.eq("connectionId", connectionId),
+      )
+      .take(PURGE_BATCH);
+    for (const claim of claims) {
+      await releasePersonSource(
+        ctx,
+        args.userId,
+        connectionId,
+        claim.source,
+        claim.providerContactId,
+        claim.email,
+      );
+    }
+    if (claims.length === PURGE_BATCH) more = true;
     await drain(
       await ctx.db
         .query("events")
@@ -496,8 +509,9 @@ export const purgeConnectionData = internalMutation({
         targetCalendarId: undefined,
       });
     }
-    // People rows may keep a stale source entry pointing at the removed feed;
-    // the next contacts sync re-ranks them, so they're deliberately left alone.
+    // People harvested from this connection's events keep their "attendee"
+    // source (it isn't connection-scoped); the next engagement refresh re-ranks
+    // them against whatever events remain.
     const connection = await ctx.db.get(connectionId);
     if (connection && connection.userId === args.userId) {
       await ctx.db.delete(connectionId);

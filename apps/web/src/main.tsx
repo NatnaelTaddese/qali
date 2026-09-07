@@ -1,4 +1,7 @@
-import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
+import {
+  type AuthClient,
+  ConvexBetterAuthProvider,
+} from "@convex-dev/better-auth/react";
 import { env } from "@qali/env/web";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { ConvexReactClient } from "convex/react";
@@ -18,7 +21,15 @@ const router = createRouter({
   context: {},
   Wrap: function WrapComponent({ children }: { children: React.ReactNode }) {
     return (
-      <ConvexBetterAuthProvider client={convex} authClient={authClient}>
+      <ConvexBetterAuthProvider
+        client={convex}
+        // @convex-dev/better-auth 0.12.5 was typed against better-auth
+        // 1.6.15; against any later 1.6.x its `AuthClient` alias collapses
+        // the session type to `never`, so the (runtime-compatible, peer-range
+        // allowed) client fails to assign. Drop the cast once the plugin
+        // ships types for the patched better-auth line.
+        authClient={authClient as unknown as AuthClient}
+      >
         {children}
       </ConvexBetterAuthProvider>
     );

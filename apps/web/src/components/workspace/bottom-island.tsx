@@ -16,7 +16,13 @@ import {
 } from "@qali/ui/components/tooltip";
 import { cn } from "@qali/ui/lib/utils";
 import { useQuery } from "convex/react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import {
+  addScaleCorrector,
+  AnimatePresence,
+  motion,
+  type MotionStyle,
+  useReducedMotion,
+} from "motion/react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { EventCreate } from "@/components/calendar/event-create";
@@ -41,6 +47,27 @@ import { SettingsPanelSkeleton } from "./settings-skeleton";
 
 const MAX_TIMEOUT_MS = 2_147_000_000;
 const AVAILABILITY_PREFETCH_GRACE_MS = 10_000;
+
+/** The dock's hairline is a ring (box-shadow), not a border. Motion's layout
+ * spring transform-scales the box each frame and corrects `borderRadius` to
+ * compensate, but it has no border-width corrector, so a real border visibly
+ * thickens and thins as the spring settles. A ring's spread can be corrected:
+ * divide it back out of the frame's scale. Tailwind's `ring` utility still
+ * supplies the composed `box-shadow` and `--tw-ring-color`; the nav passes
+ * this one var through `style` so motion owns it and rewrites it per frame. */
+const RING_SHADOW_REST = "0 0 0 1px var(--tw-ring-color)";
+addScaleCorrector({
+  "--tw-ring-shadow": {
+    correct: (_latest, { treeScale, projectionDelta }) => {
+      if (!treeScale || !projectionDelta) return RING_SHADOW_REST;
+      const scale =
+        (projectionDelta.x.scale * treeScale.x +
+          projectionDelta.y.scale * treeScale.y) /
+        2;
+      return `0 0 0 ${1 / scale}px var(--tw-ring-color)`;
+    },
+  },
+});
 
 /** Settings is the dock's heaviest panel by far, so it loads as its own chunk
  * instead of riding in the dock's synchronous module graph (the assistant
@@ -290,12 +317,17 @@ export function BottomIsland() {
         data-dock-view-transition="bottom-island"
         // Plain style, not `animate` — `layout` rewrites borderRadius each frame
         // to correct for the box scaling, and an animated value fights that.
-        style={{
-          borderRadius: editing ? 28 : cornerRadius(view),
-          willChange: "transform",
-        }}
+        style={
+          {
+            borderRadius: editing ? 28 : cornerRadius(view),
+            "--tw-ring-shadow": RING_SHADOW_REST,
+            willChange: "transform",
+            // MotionStyle doesn't type custom properties, but motion does
+            // forward them (and scale-corrects this one; see the corrector).
+          } as MotionStyle
+        }
         className={cn(
-          "pointer-events-auto overflow-hidden border border-black/20 bg-white shadow-lg dark:border-border dark:bg-popover",
+          "pointer-events-auto overflow-hidden bg-white shadow-lg ring ring-black/20 dark:bg-popover dark:ring-white/15",
           // The edit bar is a pill sized to its own content, like the nav row.
           // Settings carries its own inset so its two-tone sidebar can run
           // edge to edge (the panel restores the padding on small screens).

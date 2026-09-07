@@ -25,6 +25,7 @@ import {
   isEditableAssistantShortcutTarget,
   shouldOpenAssistantShortcut,
 } from "./assistant-interactions";
+import { useTheme } from "@/components/theme-provider";
 import { MascotGlyph } from "./mascot-glyph";
 
 type Threads = FunctionReturnType<typeof api.domains.assistant.data.listThreads>;
@@ -161,6 +162,12 @@ export function AssistantDock() {
     }
   }, [threadId, deleteThread]);
 
+  // The FAB shares the bottom dock's surface: opaque white in light, the
+  // popover surface in dark. The goo fill is one CSS string, so the theme is
+  // resolved here rather than via `dark:` classes.
+  const { resolvedTheme } = useTheme();
+  const restingFill = resolvedTheme === "light" ? "#fff" : "var(--popover)";
+
   if (!assistantAvailable) return null;
 
   const trigger = <MascotGlyph className="size-6" active={menuOpen} />;
@@ -215,13 +222,13 @@ export function AssistantDock() {
         panelRadius={20}
         // Resting: a neutral FAB on the app surface. Open: it morphs into the
         // inverted primary surface, matching the notification panel's flip.
-        fill="var(--popover)"
+        fill={restingFill}
         foreground="var(--popover-foreground)"
         hoverFill="var(--accent)"
         activeFill="var(--primary)"
         activeForeground="var(--primary-foreground)"
         activeHoverFill="color-mix(in oklch, var(--primary-foreground) 14%, var(--primary))"
-        triggerClassName="mascot-trigger !size-12 !px-0 rounded-full border border-border shadow-lg"
+        triggerClassName="mascot-trigger !size-12 !px-0 rounded-full shadow-lg ring ring-black/20 dark:ring-white/15"
       />
     </div>
   );

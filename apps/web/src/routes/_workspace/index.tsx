@@ -1,6 +1,7 @@
 import { api } from "@qali/backend/convex/_generated/api";
 import { createFileRoute } from "@tanstack/react-router";
 import { useAction } from "convex/react";
+import { ConvexError } from "convex/values";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 
@@ -51,7 +52,18 @@ function HomeComponent() {
   useEffect(() => {
     if (didSeed.current) return;
     didSeed.current = true;
-    void syncNow();
+    // The seed shares the manual "sync now" budget. A reload streak that
+    // exhausts it is not worth a toast: the background schedule carries on,
+    // and the buttons explain the limit when the user presses them.
+    void syncNow().catch((error: unknown) => {
+      if (
+        error instanceof ConvexError &&
+        (error.data as { code?: string } | undefined)?.code === "SYNC_RATE_LIMIT"
+      ) {
+        return;
+      }
+      console.warn("Initial sync failed:", error);
+    });
   }, [syncNow]);
 
   // Landing back from a linkSocial redirect: materialize the new grant as a

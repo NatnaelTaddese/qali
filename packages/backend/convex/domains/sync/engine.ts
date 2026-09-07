@@ -228,11 +228,16 @@ export function eventBatches<T>(events: T[]): T[][] {
 }
 
 /** Whether a sync failed because the provider no longer honours the stored
- * credential (a revoked or expired grant), as opposed to anything transient. */
+ * credential (a revoked or expired grant), as opposed to anything transient.
+ * Only a provider 401 on the token or Google's own `invalid_grant` qualifies.
+ * Better Auth's token broker wraps every refresh failure — a token-endpoint
+ * 5xx, a timeout, a dead grant alike — in one fixed "Failed to get a valid
+ * access token" error, so that message says nothing about the grant and must
+ * not count, or an outage would park every healthy connection. */
 function isCredentialFailure(error: unknown): boolean {
   if (error instanceof ProviderError) return error.kind === "authentication";
   const message = error instanceof Error ? error.message : String(error);
-  return /access token|invalid_grant|FAILED_TO_GET_ACCESS_TOKEN/i.test(message);
+  return /invalid_grant/i.test(message);
 }
 
 async function upsertPeople(

@@ -10,6 +10,7 @@ import type {
   CreateEventRequest,
   ProviderEvent,
 } from "../../../convex/integrations/calendar/types";
+import { bookingEventCreate } from "../../../convex/domains/booking/mutations";
 import { reconcileBookingAcceptanceWithAdapter } from "../../../convex/domains/booking/service";
 import schema from "../../../convex/schema";
 
@@ -1142,14 +1143,17 @@ describe("anonymous request hardening", () => {
     );
   }
 
-  test("strips markup from the visitor's note", async () => {
+  test("stores the visitor's note verbatim and escapes it for the calendar", async () => {
     const t = convexTest(schema, modules);
     await seedPage(t, "note-host");
-    await request(t, "note-host", {
-      note: '<img src=x onerror="alert(1)">Hi <b>there</b>, 3 < 5 and <3',
-    });
+    const note = 'cc <jane@acme.com>, <b>3 < 5</b> & <3';
+    await request(t, "note-host", { note });
     const booking = await storedBooking(t);
-    expect(booking?.note).toBe("Hi there, 3 < 5 and <3");
+    expect(booking?.note).toBe(note);
+    const event = bookingEventCreate(booking!, { title: "Chat", timeZone: "UTC" });
+    expect(event.description).toBe(
+      "Booked via qali.\n\ncc &lt;jane@acme.com&gt;, &lt;b&gt;3 &lt; 5&lt;/b&gt; &amp; &lt;3",
+    );
   });
 
   test("rejects an unresolvable time zone", async () => {
@@ -1224,11 +1228,21 @@ describe("anonymous request hardening", () => {
   test("a page without a stored target creates nothing for an anonymous request", async () => {
     const t = convexTest(schema, modules);
     // A page whose host has no connection at all: the host-facing paths would
-    // materialize one, the anonymous path must fail closed instead.
+    // materialize one; the anonymous path takes the request with its target
+    // unset (acceptance resolves it host-side) and creates nothing.
     await t.run((ctx) =>
       ctx.db.insert("bookingPages", { ...pageDoc(HOST), slug: "bare-host" }),
     );
-    await expect(request(t, "bare-host")).rejects.toThrow("unavailable");
+    await request(t, "bare-host");
+    const booking = await t.run((ctx) =>
+      ctx.db
+        .query("bookings")
+        .withIndex("by_host_and_start", (q) => q.eq("hostUserId", HOST))
+        .unique(),
+    );
+    expect(booking?.status).toBe("pending");
+    expect(booking?.targetConnectionId).toBeUndefined();
+    expect(booking?.targetCalendarId).toBeUndefined();
     const connections = await t.run((ctx) =>
       ctx.db.query("calendarConnections").collect(),
     );

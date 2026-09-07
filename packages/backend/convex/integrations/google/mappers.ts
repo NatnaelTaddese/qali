@@ -31,12 +31,19 @@ const WRITABLE_ACCESS_ROLES = new Set(["owner", "writer"]);
 // is a stranger. These caps keep one pathological event from dominating a
 // synced page's write budget; they are far above anything a real event holds.
 const MAX_SUMMARY_CHARS = 1_024;
-const MAX_LOCATION_CHARS = 1_024;
-const MAX_DESCRIPTION_CHARS = 16_000;
+export const MAX_LOCATION_CHARS = 1_024;
+export const MAX_DESCRIPTION_CHARS = 16_000;
 
 function clip(value: string | undefined, max: number): string | undefined {
   if (value === undefined) return undefined;
   return value.length <= max ? value : value.slice(0, max);
+}
+
+/** Whether a stored field may be a clipped copy of the provider's value. A
+ * clipped field must never be written back as if it were whole; the check is
+ * by length, so a value that is exactly at the cap counts too. */
+export function mayBeClipped(value: string | undefined, max: number): boolean {
+  return value !== undefined && value.length >= max;
 }
 
 /** A provider-supplied URL the UI may put in an `href`, or undefined. Google

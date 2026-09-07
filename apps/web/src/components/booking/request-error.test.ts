@@ -33,6 +33,13 @@ describe("bookingRequestErrorMessage", () => {
     });
   });
 
+  test("maps the site-wide request limit apart from a busy page", () => {
+    expect(
+      bookingRequestErrorMessage(new ConvexError({ code: "GLOBAL_RATE_LIMIT" }))
+        .title,
+    ).toBe("Booking is busy right now");
+  });
+
   test("does not expose unknown server details", () => {
     const result = bookingRequestErrorMessage(
       new Error("[Request ID: secret] Internal server details"),

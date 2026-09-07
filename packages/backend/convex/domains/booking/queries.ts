@@ -325,6 +325,7 @@ export async function getBookingContextHandler(
     page,
     booking.startMs,
     booking.endMs,
+    undefined,
     booking._id,
   );
   const conflict = busy.some(

@@ -106,6 +106,7 @@ export const bookingTables = {
     .index("by_host_and_end", ["hostUserId", "endMs"])
     .index("by_host_and_status_and_start", ["hostUserId", "status", "startMs"])
     .index("by_status_and_end", ["status", "endMs"])
+    .index("by_status_and_expiresAt", ["status", "expiresAt"])
     .index("by_token", ["token"])
     .index("by_targetConnectionId_and_targetCalendarId_and_startMs", [
       "targetConnectionId",

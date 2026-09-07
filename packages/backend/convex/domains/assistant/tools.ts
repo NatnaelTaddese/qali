@@ -85,15 +85,6 @@ const MAX_TOOL_RESULT_CHARS = 8_000;
  * scrolls off the card is a list the user didn't read. */
 export const MAX_PROPOSAL_GUESTS = 20;
 
-/** Tool results are data the model reads, never instructions it follows. Event
- * titles, contact names and booking notes are all written by other people —
- * some of them strangers on a public booking page — so every result is
- * wrapped in an envelope that names it as such, and the system prompt tells
- * the model what the envelope means. */
-function untrustedResult(value: unknown): string {
-  return JSON.stringify({ untrusted_data: value });
-}
-
 function jsonSchema(schema: z.ZodType): Record<string, unknown> {
   const generated = z.toJSONSchema(schema, { io: "input" }) as Record<
     string,
@@ -128,8 +119,9 @@ function readTool<S extends z.ZodType>(spec: {
         };
       }
       try {
-        const value = await spec.run(tc, parsed.data);
-        const content = untrustedResult(value);
+        // Bare JSON: the loop puts every outcome, this one included, inside
+        // the untrusted_data envelope before the model sees it.
+        const content = JSON.stringify(await spec.run(tc, parsed.data)) ?? "null";
         if (content.length > MAX_TOOL_RESULT_CHARS) {
           return {
             kind: "result",
@@ -212,14 +204,10 @@ function writeTool<S extends z.ZodType>(spec: {
         },
       );
 
-      return {
-        kind: "proposal",
-        actionId,
-        content:
-          `Proposed: ${preview}. This has NOT happened yet — it is waiting for the ` +
-          `user to confirm it on a card in the app. Tell them what you proposed and ` +
-          `ask them to confirm; do not claim it is done, and do not propose it again.`,
-      };
+      // The preview quotes calendar and booking text, so it travels as data;
+      // the envelope's status field and the system prompt carry the "not yet
+      // confirmed" meaning.
+      return { kind: "proposal", actionId, content: preview };
     },
   };
 }

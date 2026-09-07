@@ -30,6 +30,14 @@ export function bookingRequestErrorMessage(
     };
   }
 
+  if (code === "GLOBAL_RATE_LIMIT") {
+    return {
+      title: "Booking is busy right now",
+      description:
+        "Booking requests are temporarily paused across the site. Please try again in an hour.",
+    };
+  }
+
   if (
     code === "PAGE_RATE_LIMIT" ||
     (error instanceof Error &&

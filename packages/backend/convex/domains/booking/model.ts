@@ -50,7 +50,7 @@ export const RATE_WINDOW_MS = 60 * 60 * 1000;
 // inbox — deliberately loose, because it is also the easiest lever for locking
 // a page: once it trips, every real visitor is turned away for the rest of the
 // hour. The global key bounds total write volume the way the waitlist's does.
-// Both page-scoped limits are consumed only after the request has passed slot
+// All three counters are consumed only after the request has passed slot
 // validation, so a flood of junk can't spend them.
 export const MAX_REQUESTS_PER_EMAIL = 3;
 export const MAX_REQUESTS_PER_PAGE = 60;
@@ -123,11 +123,23 @@ export async function pageBySlug(
  * `excludeBookingId` lets the accept path ask "is this slot free apart from the
  * request I am about to accept?".
  */
+/** When a pending request stops holding its slot: its TTL when it has one,
+ * otherwise (rows from before the TTL existed) the slot's end. */
+export function bookingExpiresAt(
+  booking: Pick<Doc<"bookings">, "endMs" | "expiresAt">,
+): number {
+  return booking.expiresAt ?? booking.endMs;
+}
+
+/** `nowMs` lets a pending request whose TTL has passed stop withholding its
+ * slot even before the expiry job lands; callers without a clock to offer
+ * (an internal query) pass undefined and keep every pending hold. */
 export async function collectBusy(
   ctx: QueryCtx,
   page: Doc<"bookingPages">,
   fromMs: number,
   toMs: number,
+  nowMs: number | undefined,
   excludeBookingId?: Id<"bookings">,
   excludeProviderEventId?: string,
 ): Promise<Interval[]> {
@@ -184,6 +196,13 @@ export async function collectBusy(
   for (const booking of bookings) {
     if (booking.startMs >= toMs) continue;
     if (booking.status === "rejected" || booking.status === "expired") continue;
+    if (
+      booking.status === "pending" &&
+      nowMs !== undefined &&
+      bookingExpiresAt(booking) <= nowMs
+    ) {
+      continue;
+    }
     if (booking._id === excludeBookingId) continue;
     busy.push({ startMs: booking.startMs, endMs: booking.endMs });
   }
@@ -224,7 +243,7 @@ export async function slotGrid(
       dateKey: o.dateKey,
       intervals: o.intervals,
     })),
-    busy: await collectBusy(ctx, page, fromMs, toMs),
+    busy: await collectBusy(ctx, page, fromMs, toMs, nowMs),
     slotMinutes: page.slotMinutes,
     bufferMinutes: page.bufferMinutes,
     minNoticeMinutes: page.minNoticeMinutes,

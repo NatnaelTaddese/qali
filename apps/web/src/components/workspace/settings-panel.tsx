@@ -1261,7 +1261,7 @@ function NotificationsCard() {
         )}
         <SettingRow
           title="Notification sounds"
-          description="Play a sound for reminders, new booking requests, and sync results on this device"
+          description="Play a sound for reminders, new booking requests, and sync results on this device, even while qali is in the background"
           control={
             <Switch
               checked={soundsOn}

@@ -134,6 +134,9 @@ export function ReminderScheduler() {
       const body = r.allDay
         ? "All day"
         : `Starts at ${format(zoned(r.startMs, timeZone), timePattern(use24h))}`;
+      // The chime plays whether or not the tab is visible, so a reminder is
+      // heard while qali sits in the background.
+      const chimed = playNotificationSound("reminder");
       const visible = document.visibilityState === "visible";
       if (!visible && "Notification" in window && Notification.permission === "granted") {
         const tag = `reminder:${r.eventId}:${r.minutes}`;
@@ -141,7 +144,10 @@ export function ReminderScheduler() {
           body,
           tag,
           icon: "/icon-192.png",
+          badge: "/icon-192.png",
           data: { url: `/?event=${r.eventId}`, eventId: r.eventId },
+          // Our chime already sounded; don't let the OS stack its own on top.
+          silent: chimed,
         };
         try {
           const registration = await getPushRegistration();
@@ -163,7 +169,6 @@ export function ReminderScheduler() {
           // already claimed, so the toast below is the reminder now.
         }
       }
-      playNotificationSound("reminder");
       toast(title, {
         description: body,
         duration: TOAST_MS,

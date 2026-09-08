@@ -6,6 +6,7 @@ import { sounds } from "cuelume";
 import {
   SOUND_FOR_KIND,
   isNotificationSoundsEnabled,
+  playNotificationSound,
   setNotificationSoundsEnabled,
   subscribeNotificationSounds,
 } from "./notification-sounds";
@@ -49,5 +50,18 @@ describe("notification sounds preference", () => {
     unsubscribe();
     setNotificationSoundsEnabled(true);
     expect(calls).toBe(1);
+  });
+});
+
+describe("playNotificationSound", () => {
+  test("reports that nothing played while sounds are off", () => {
+    setNotificationSoundsEnabled(false);
+    expect(playNotificationSound("reminder")).toBe(false);
+    setNotificationSoundsEnabled(true);
+  });
+
+  test("reports that nothing played without Web Audio", () => {
+    // jsdom has no AudioContext, so the OS notification must keep its sound.
+    expect(playNotificationSound("reminder")).toBe(false);
   });
 });

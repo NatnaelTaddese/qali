@@ -91,15 +91,22 @@ export function useNotificationSoundsEnabled(): boolean {
   );
 }
 
-/** Plays the sound for a notification kind. Best effort: silent when sounds
- * are off, before the page has had a user gesture, or when Web Audio is
- * unavailable. */
-export function playNotificationSound(kind: NotificationSoundKind): void {
-  if (typeof window === "undefined" || !enabled) return;
+/** Plays the sound for a notification kind and reports whether it did.
+ * Best effort: silent (and `false`) when sounds are off, before the page has
+ * had a user gesture, or when Web Audio is unavailable. Callers showing an OS
+ * notification use the result to decide whether the OS should stay quiet. */
+export function playNotificationSound(kind: NotificationSoundKind): boolean {
+  if (typeof window === "undefined" || !enabled) return false;
+  if (!("AudioContext" in window)) return false;
+  // Sticky activation: once the user has interacted with this page load,
+  // audio may play from a background tab too. Before that, browsers block it.
+  if (navigator.userActivation?.hasBeenActive === false) return false;
   try {
     play(SOUND_FOR_KIND[kind]);
+    return true;
   } catch {
     // Audio is never worth an error.
+    return false;
   }
 }
 

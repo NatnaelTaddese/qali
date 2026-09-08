@@ -262,7 +262,8 @@ export const purgeUserData = internalMutation({
         | "personSourceClaims"
         | "people"
         | "assistantUserState"
-        | "assistantMessages",
+        | "assistantMessages"
+        | "pushSubscriptions",
     ) =>
       ctx.db
         .query(table)
@@ -315,6 +316,13 @@ export const purgeUserData = internalMutation({
         .withIndex("by_user_and_created", (q) => q.eq("userId", userId))
         .take(PURGE_BATCH),
     );
+    await drain(
+      await ctx.db
+        .query("reminderDeliveries")
+        .withIndex("by_user_and_status_and_fireAt", (q) => q.eq("userId", userId))
+        .take(PURGE_BATCH),
+    );
+    await drain(await byUser("pushSubscriptions"));
     await drain(
       await ctx.db
         .query("assistantThreads")

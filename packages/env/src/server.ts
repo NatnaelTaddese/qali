@@ -17,6 +17,16 @@ export const env = createEnv({
     // `auth.ts` imports this module, so a failed validation would take down
     // every backend function rather than just the assistant.
     DEEPSEEK_API_KEY: z.string().min(1).optional(),
+    // Web Push (VAPID). Optional for the same reason: without them reminders
+    // still fire in-app and in an open tab, and the push toggle stays hidden.
+    // Generate once with `bunx web-push generate-vapid-keys`; the pair must
+    // be set on every deployment that should push.
+    VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+    VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+    VAPID_SUBJECT: z
+      .string()
+      .regex(/^(mailto:|https:)/, "VAPID_SUBJECT must be a mailto: or https: URL")
+      .optional(),
   },
   runtimeEnv: process.env,
   skipValidation: !!process.env.SKIP_ENV_VALIDATION,

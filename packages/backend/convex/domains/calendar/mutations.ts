@@ -5,6 +5,7 @@
 
 import { ConvexError, v, type Infer } from "convex/values";
 
+import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import {
   internalMutation,
@@ -12,6 +13,11 @@ import {
   type MutationCtx,
 } from "../../_generated/server";
 import { authComponent } from "../../auth";
+import {
+  deleteRemindersForEvent,
+  loadReminderContext,
+  reconcileEventReminders,
+} from "../reminders/model";
 import {
   ensureConnectionSyncState,
   ensureDefaultPrimaryCalendar,
@@ -532,6 +538,14 @@ export async function setCalendarSelectedHandler(
     throw new Error("Calendar not found");
   }
   await ctx.db.patch(args.calendarId, { selected: args.selected });
+  // Visibility decides which events get reminders; re-plan the user's ledger.
+  if (cal.selected !== args.selected) {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.domains.reminders.jobs.materializeUserReminders,
+      { userId: user._id },
+    );
+  }
   return null;
 }
 
@@ -740,8 +754,18 @@ export async function mirrorProviderEventHandler(
         .eq("providerEventId", event.id),
     )
     .unique();
-  if (existing) await ctx.db.replace(existing._id, doc);
-  else await ctx.db.insert("events", doc);
+  let eventId: Id<"events">;
+  if (existing) {
+    await ctx.db.replace(existing._id, doc);
+    eventId = existing._id;
+  } else {
+    eventId = await ctx.db.insert("events", doc);
+  }
+  await reconcileEventReminders(
+    ctx,
+    { ...doc, _id: eventId, _creationTime: existing?._creationTime ?? Date.now() },
+    await loadReminderContext(ctx, args.userId),
+  );
   return null;
 }
 
@@ -772,6 +796,7 @@ export async function deleteProviderEventMirrorHandler(
     row.connectionId === args.connectionId &&
     row.localCalendarId === args.localCalendarId
   ) {
+    await deleteRemindersForEvent(ctx, row._id);
     await ctx.db.delete(row._id);
   }
   if (args.providerSeriesId) {

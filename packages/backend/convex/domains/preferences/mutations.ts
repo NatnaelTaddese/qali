@@ -4,6 +4,7 @@
 import { normalizeReminderMinutes } from "@qali/domain/reminders";
 import { v, type Infer } from "convex/values";
 
+import { internal } from "../../_generated/api";
 import { mutation, type MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import { WRITABLE_ACCESS_ROLES } from "../calendar/mutations";
@@ -96,6 +97,18 @@ export async function updatePreferencesCore(
       ...patch,
       updatedAt: Date.now(),
     });
+  }
+  // A default-reminder or zone change moves every "use default" fire time.
+  if (
+    "defaultReminderMinutes" in patch ||
+    "defaultAllDayReminderMinutes" in patch ||
+    "timeZone" in patch
+  ) {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.domains.reminders.jobs.materializeUserReminders,
+      { userId },
+    );
   }
   return null;
 }

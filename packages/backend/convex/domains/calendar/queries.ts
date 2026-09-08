@@ -348,6 +348,18 @@ export const getEventById = query({
   handler: (ctx, args) => getEventByIdHandler(ctx, args),
 });
 
+/** `getEventById` for an id that came in off a URL (`/?event=<id>` from a
+ * notification click). A malformed id is `null`, never a thrown validation
+ * error the client would have to catch out of `useQuery`. */
+export const findEventForDeepLink = query({
+  args: { id: v.string() },
+  handler: async (ctx, args) => {
+    const eventId = ctx.db.normalizeId("events", args.id);
+    if (!eventId) return null;
+    return getEventByIdHandler(ctx, { eventId });
+  },
+});
+
 /** The cached rule for an expanded recurring instance. `null` is a cache miss. */
 export async function getEventRecurrenceHandler(
   ctx: QueryCtx,

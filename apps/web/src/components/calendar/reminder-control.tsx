@@ -1,6 +1,7 @@
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { reminderRulesFor, type ReminderRules } from "@qali/domain/reminders";
+import { Button } from "@qali/ui/components/button";
 import { WheelPicker } from "@qali/ui/components/motion/wheel-picker";
 import {
   Popover,
@@ -333,14 +334,9 @@ function AllDayComposer({
 
 function AddButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className="h-8 shrink-0 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground outline-none hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-    >
+    <Button type="button" size="sm" disabled={disabled} onClick={onClick}>
       Add
-    </button>
+    </Button>
   );
 }
 

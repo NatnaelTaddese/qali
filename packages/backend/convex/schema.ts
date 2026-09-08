@@ -11,6 +11,8 @@ import { marketingTables } from "./domains/marketing/tables";
 import { notificationTables } from "./domains/notifications/tables";
 import { peopleTables } from "./domains/people/tables";
 import { preferencesTables } from "./domains/preferences/tables";
+import { pushTables } from "./domains/push/tables";
+import { reminderTables } from "./domains/reminders/tables";
 import { connectionSyncTables } from "./domains/sync/tables";
 import { infrastructureTables } from "./infrastructure/tables";
 
@@ -26,4 +28,6 @@ export default defineSchema({
   ...calendarConnectionTables,
   ...connectionSyncTables,
   ...calendarOperationTables,
+  ...pushTables,
+  ...reminderTables,
 });

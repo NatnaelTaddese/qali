@@ -5,17 +5,22 @@ import { v } from "convex/values";
  * schema. Kept beside the domain's logic so the whole feature reads in one place. */
 export const notificationTables = {
   // One row per in-app notification for a host. Written by the events that a
-  // host should hear about (currently a new booking request) and read by the
+  // host should hear about (a new booking request, an event reminder) and read by the
   // header notification bell. Dismissing a notification hard-deletes its row, so
   // the feed and this table never drift apart.
   notifications: defineTable({
     // Recipient. Matches `bookings.hostUserId` / the auth user's `_id`.
     userId: v.string(),
-    type: v.union(v.literal("booking_requested")),
+    type: v.union(
+      v.literal("booking_requested"),
+      v.literal("event_reminder"),
+    ),
     title: v.string(),
     body: v.optional(v.string()),
     // The booking this notification points at, so a click can open its panel.
     bookingId: v.optional(v.id("bookings")),
+    // The event a reminder points at, so a click can open it.
+    eventId: v.optional(v.id("events")),
     read: v.boolean(),
     createdAt: v.number(),
   })

@@ -47,6 +47,8 @@ import type * as domains_people_tables from "../domains/people/tables.js";
 import type * as domains_preferences_mutations from "../domains/preferences/mutations.js";
 import type * as domains_preferences_queries from "../domains/preferences/queries.js";
 import type * as domains_preferences_tables from "../domains/preferences/tables.js";
+import type * as domains_push_tables from "../domains/push/tables.js";
+import type * as domains_reminders_tables from "../domains/reminders/tables.js";
 import type * as domains_sync_engine from "../domains/sync/engine.js";
 import type * as domains_sync_tables from "../domains/sync/tables.js";
 import type * as healthCheck from "../healthCheck.js";
@@ -115,6 +117,8 @@ declare const fullApi: ApiFromModules<{
   "domains/preferences/mutations": typeof domains_preferences_mutations;
   "domains/preferences/queries": typeof domains_preferences_queries;
   "domains/preferences/tables": typeof domains_preferences_tables;
+  "domains/push/tables": typeof domains_push_tables;
+  "domains/reminders/tables": typeof domains_reminders_tables;
   "domains/sync/engine": typeof domains_sync_engine;
   "domains/sync/tables": typeof domains_sync_tables;
   healthCheck: typeof healthCheck;

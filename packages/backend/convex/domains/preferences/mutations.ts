@@ -1,6 +1,7 @@
 /** Write side of the preferences domain. Registration is canonical here, under
  * `api.domains.preferences.mutations.*`. */
 
+import { normalizeReminderMinutes } from "@qali/domain/reminders";
 import { v, type Infer } from "convex/values";
 
 import { mutation, type MutationCtx } from "../../_generated/server";
@@ -14,6 +15,8 @@ const resettableField = v.union(
   v.literal("timeFormat"),
   v.literal("defaultView"),
   v.literal("defaultCalendarId"),
+  v.literal("defaultReminderMinutes"),
+  v.literal("defaultAllDayReminderMinutes"),
 );
 
 const updateArgs = v.object({
@@ -49,6 +52,24 @@ export async function updatePreferencesCore(
     ) {
       throw new Error("Calendar not found or read-only");
     }
+  }
+
+  // Throws on a non-integer, out-of-range, or over-long list.
+  if (args.defaultReminderMinutes !== undefined) {
+    args = {
+      ...args,
+      defaultReminderMinutes: normalizeReminderMinutes(
+        args.defaultReminderMinutes,
+      ),
+    };
+  }
+  if (args.defaultAllDayReminderMinutes !== undefined) {
+    args = {
+      ...args,
+      defaultAllDayReminderMinutes: normalizeReminderMinutes(
+        args.defaultAllDayReminderMinutes,
+      ),
+    };
   }
 
   const patch: Record<string, unknown> = {};

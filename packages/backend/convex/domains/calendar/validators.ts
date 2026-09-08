@@ -48,6 +48,15 @@ const providerAttendeeValidator = personValidator.extend({
   optional: v.optional(v.boolean()),
 });
 
+/** One reminder exactly as every provider can model it: minutes before the
+ * event's anchor (start, or local midnight for all-day). `email` entries are
+ * stored so a write-back never erases them; only `popup` ones fire here. See
+ * @qali/domain/reminders for the shared semantics. */
+export const reminderValidator = v.object({
+  method: v.union(v.literal("popup"), v.literal("email")),
+  minutes: v.number(),
+});
+
 /** Provider-neutral event returned by a calendar adapter. */
 export const providerEventValidator = v.object({
   id: v.string(),
@@ -88,6 +97,8 @@ export const providerEventValidator = v.object({
       type: v.optional(v.string()),
     }),
   ),
+  // Absent = the provider's "use calendar default"; [] = explicitly none.
+  reminders: v.optional(v.array(reminderValidator)),
 });
 
 /** Provider-neutral stored event fields shared by the personal `events` table
@@ -142,6 +153,9 @@ export const storedEventBaseValidator = v.object({
   conferenceUrl: v.optional(v.string()),
   conferenceName: v.optional(v.string()),
   conferenceType: v.optional(v.string()),
+  // The event's own reminder list. Absent = the calendar's default applies
+  // (see calendars.defaultReminders and the user's preferences); [] = none.
+  reminders: v.optional(v.array(reminderValidator)),
 });
 
 /** The stored personal-event row: the neutral base plus the local identity it

@@ -25,6 +25,8 @@ export async function getMyPreferencesHandler(ctx: QueryCtx) {
     timeFormat: prefs?.timeFormat,
     defaultView: prefs?.defaultView,
     defaultCalendarId: prefs?.defaultCalendarId,
+    defaultReminderMinutes: prefs?.defaultReminderMinutes,
+    defaultAllDayReminderMinutes: prefs?.defaultAllDayReminderMinutes,
   };
 }
 

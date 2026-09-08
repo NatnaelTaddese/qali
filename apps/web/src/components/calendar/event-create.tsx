@@ -14,6 +14,7 @@ import {
   toEventTimes,
   type EventFormValue,
 } from "./event-form";
+import { normalizeReminders } from "./reminders";
 import { isWritableCalendar, pickPrimaryCalendar } from "./lib";
 import { toRRule } from "./rrule";
 
@@ -78,6 +79,8 @@ export function EventCreate({
     calendarId: undefined,
     guests: [],
     recurrence: null,
+    // The calendar's default reminders until the user picks otherwise.
+    reminders: null,
     ...prefill,
   });
 
@@ -138,6 +141,8 @@ export function EventCreate({
             displayName: g.displayName,
           }))
         : undefined,
+      // Absent = the calendar's default; an explicit list (even empty) is sent.
+      reminders: value.reminders === null ? undefined : normalizeReminders(value.reminders),
       // The working zone: the grid renders in it and the wheels compose in
       // it, so it is the honest recurrence anchor for this event's times.
       timeZone,

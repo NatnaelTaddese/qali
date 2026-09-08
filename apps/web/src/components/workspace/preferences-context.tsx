@@ -32,6 +32,12 @@ interface PreferencesValue {
    * browser's zone when no preference is stored. */
   timeZone: string;
   defaultCalendarId: RawPreferences["defaultCalendarId"];
+  /** Popup offsets (minutes before) for events using the default; absent =
+   * automatic (the calendar's provider default, else 10 minutes). */
+  defaultReminderMinutes: RawPreferences["defaultReminderMinutes"];
+  /** Same for all-day events, before local midnight; absent = 09:00 the day
+   * before. */
+  defaultAllDayReminderMinutes: RawPreferences["defaultAllDayReminderMinutes"];
   /** The stored fields as-is, for UI that distinguishes "automatic" from set. */
   raw: RawPreferences;
 }
@@ -45,6 +51,8 @@ function resolve(raw: RawPreferences): PreferencesValue {
     defaultView: raw.defaultView ?? "week",
     timeZone: raw.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
     defaultCalendarId: raw.defaultCalendarId,
+    defaultReminderMinutes: raw.defaultReminderMinutes,
+    defaultAllDayReminderMinutes: raw.defaultAllDayReminderMinutes,
     raw,
   };
 }

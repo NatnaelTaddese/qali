@@ -15,6 +15,7 @@ import {
   toEventTimes,
   type EventFormValue,
 } from "./event-form";
+import { normalizeReminders, sameReminders } from "./reminders";
 import { usePreferences } from "@/components/workspace/preferences-context";
 import { editableEventId, type CalendarEvent } from "./lib";
 import { useEventCapabilities } from "./permissions";
@@ -93,6 +94,12 @@ export function diffEvent(
     JSON.stringify(next.recurrence) !== JSON.stringify(initial.recurrence)
   ) {
     patch.recurrence = toRRule(next.recurrence, timeZone);
+  }
+
+  if (!sameReminders(next.reminders, initial.reminders)) {
+    // null = back to the calendar's default; [] = none.
+    patch.reminders =
+      next.reminders === null ? null : normalizeReminders(next.reminders);
   }
 
   const guestsChanged =

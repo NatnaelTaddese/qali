@@ -2,6 +2,7 @@ import {
   ArrowLeft01Icon,
   Calendar03Icon,
   Location01Icon,
+  Notification03Icon,
   RepeatIcon,
   SquareLock01Icon,
   SquareUnlock01Icon,
@@ -44,6 +45,8 @@ import {
   SPRING_DOCK,
 } from "./motion";
 import { RepeatControl } from "./repeat-control";
+import { ReminderControl } from "./reminder-control";
+import { summarizeReminders, type Reminder } from "./reminders";
 import { RichTextEditor } from "./rich-text/rich-text-editor";
 import { RichTextView } from "./rich-text/rich-text-view";
 import { htmlToPreviewText } from "./rich-text/text";
@@ -150,6 +153,8 @@ export interface EventFormValue {
   guests: Guest[];
   /** null = does not repeat. */
   recurrence: Recurrence | null;
+  /** null = the calendar's default reminders; [] = none. */
+  reminders: Reminder[] | null;
 }
 
 export function isEventFormValid(value: EventFormValue): boolean {
@@ -209,6 +214,7 @@ export function formValueFromEvent(
     // We sync expanded instances, so an event never carries its own rule.
     // `canChangeRecurrence` is false whenever this matters.
     recurrence: null,
+    reminders: event.reminders ? [...event.reminders] : null,
   };
 }
 
@@ -535,12 +541,34 @@ export function EventForm({
             <ToggleSwitch
               checked={value.allDay}
               disabled={!canEdit}
-              onChange={(allDay) => onChange({ allDay })}
+              // All-day offsets count from midnight, timed ones from the start,
+              // so an explicit list can't carry across; the default can.
+              onChange={(allDay) =>
+                onChange({
+                  allDay,
+                  reminders: value.reminders === null ? null : [],
+                })
+              }
               label="All day"
             />
           </SettingRow>
 
-
+          <SettingRow icon={Notification03Icon} label="Reminder">
+            {canEdit ? (
+              <ReminderControl
+                value={value.reminders}
+                allDay={value.allDay}
+                provider={
+                  calendars.find((c) => c._id === value.calendarId)?.provider
+                }
+                onChange={(reminders) => onChange({ reminders })}
+              />
+            ) : (
+              <span className="px-2 py-1 text-sm text-muted-foreground">
+                {summarizeReminders(value.reminders, value.allDay, use24h)}
+              </span>
+            )}
+          </SettingRow>
 
           <SettingRow icon={RepeatIcon} label="Repeat">
             {capabilities.canChangeRecurrence ? (

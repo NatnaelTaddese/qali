@@ -9,15 +9,20 @@ import type { Doc, Id } from "@qali/backend/convex/_generated/dataModel";
 import { GooDropdown } from "@qali/ui/components/ui/goo-dropdown";
 import { cn } from "@qali/ui/lib/utils";
 import { useMutation } from "convex/react";
-import { formatDistanceToNowStrict } from "date-fns";
+import { format, formatDistanceToNowStrict } from "date-fns";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
 
+import { timePattern, zoned, type CalendarEvent } from "@/components/calendar/lib";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
 import type { Booking } from "@/components/workspace/booking-request-panel";
 import { useDock } from "@/components/workspace/dock-context";
+import { usePreferences } from "@/components/workspace/preferences-context";
 
-type NotificationRow = Doc<"notifications"> & { booking: Booking | null };
+type NotificationRow = Doc<"notifications"> & {
+  booking: Booking | null;
+  event: CalendarEvent | null;
+};
 
 // Panel geometry. The panel body is sized at open time from the current list, so
 // a short feed opens compact and a long one caps and scrolls.
@@ -101,6 +106,13 @@ export function NotificationBell() {
       open({ kind: "booking", booking });
       // Reach for the request on the grid so it's clear which slot this is.
       reveal({ startMs: booking.startMs, flashId: booking._id });
+      return;
+    }
+    const event = notification.event;
+    if (notification.type === "event_reminder" && event) {
+      close();
+      open({ kind: "event", event });
+      reveal({ startMs: event.startMs, flashId: event._id });
     }
   };
 
@@ -204,8 +216,21 @@ function NotificationItem({
   onDismiss: () => void;
 }) {
   const reduce = useReducedMotion();
+  const { timeZone, use24h } = usePreferences();
   const actionable =
-    notification.booking != null && notification.booking.status === "pending";
+    (notification.booking != null && notification.booking.status === "pending") ||
+    (notification.type === "event_reminder" && notification.event != null);
+  // The stored body is zone-free ("Starts in 10 min"); with the event in
+  // hand, the reader's clock is the better line.
+  const body =
+    notification.type === "event_reminder" && notification.event
+      ? notification.event.allDay
+        ? "All day"
+        : `Starts at ${format(
+            zoned(notification.event.startMs, timeZone),
+            timePattern(use24h),
+          )}`
+      : notification.body;
   return (
     <motion.div
       layout
@@ -251,9 +276,7 @@ function NotificationItem({
         />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{notification.title}</p>
-          {notification.body && (
-            <p className="truncate text-xs opacity-70">{notification.body}</p>
-          )}
+          {body && <p className="truncate text-xs opacity-70">{body}</p>}
           <p className="mt-0.5 text-[11px] opacity-50">
             {formatDistanceToNowStrict(notification.createdAt, {
               addSuffix: true,

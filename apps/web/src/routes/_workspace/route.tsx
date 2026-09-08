@@ -6,6 +6,7 @@ import { AvailabilityEditProvider } from "@/components/workspace/availability-ed
 import { BottomIsland } from "@/components/workspace/bottom-island";
 import { DockProvider } from "@/components/workspace/dock-context";
 import { PreferencesProvider } from "@/components/workspace/preferences-context";
+import { ReminderScheduler } from "@/components/workspace/reminder-scheduler";
 import { WorkspaceSkeleton } from "@/components/workspace/workspace-skeleton";
 
 export const Route = createFileRoute("/_workspace")({
@@ -25,6 +26,7 @@ function WorkspaceLayout() {
                 </main>
                 <BottomIsland />
                 <AssistantDock />
+                <ReminderScheduler />
               </div>
             </AvailabilityEditProvider>
           </DockProvider>

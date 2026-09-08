@@ -77,9 +77,20 @@ export async function listCalendarsHandler(ctx: QueryCtx) {
     .query("calendars")
     .withIndex("by_user", (q) => q.eq("userId", user._id))
     .collect();
+  const connections = await ctx.db
+    .query("calendarConnections")
+    .withIndex("by_user", (q) => q.eq("userId", user._id))
+    .collect();
+  const providerByConnection = new Map(
+    connections.map((row) => [row._id, row.provider]),
+  );
   return calendars.map((calendar) => ({
     _id: calendar._id,
     connectionId: calendar.connectionId,
+    // Which provider's rules apply (e.g. how many reminders an event may carry).
+    provider: calendar.connectionId
+      ? providerByConnection.get(calendar.connectionId)
+      : undefined,
     providerCalendarId: calendar.providerCalendarId,
     summary: calendar.summary,
     summaryOverride: calendar.summaryOverride,

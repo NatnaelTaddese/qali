@@ -1,7 +1,6 @@
 import { api } from "@qali/backend/convex/_generated/api";
 import { useMutation, useQuery } from "convex/react";
 import { useCallback, useEffect, useState } from "react";
-import { toast } from "sonner";
 
 import {
   getPushSubscription,
@@ -10,6 +9,7 @@ import {
   subscriptionInput,
   unsubscribeFromPush,
 } from "./push";
+import { toast } from "./toast";
 
 export type BrowserNotificationStatus =
   | "unsupported"

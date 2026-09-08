@@ -12,10 +12,10 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { format, formatDistanceToNowStrict } from "date-fns";
 
 import { timePattern, zoned } from "@/components/calendar/lib";
+import { toast } from "@/lib/toast";
 import { usePreferences } from "./preferences-context";
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 
 import { SPRING_DOCK } from "@/components/calendar/motion";
 

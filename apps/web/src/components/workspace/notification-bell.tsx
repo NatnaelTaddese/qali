@@ -11,13 +11,14 @@ import { cn } from "@qali/ui/lib/utils";
 import { useMutation } from "convex/react";
 import { format, formatDistanceToNowStrict } from "date-fns";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { timePattern, zoned, type CalendarEvent } from "@/components/calendar/lib";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
 import type { Booking } from "@/components/workspace/booking-request-panel";
 import { useDock } from "@/components/workspace/dock-context";
 import { usePreferences } from "@/components/workspace/preferences-context";
+import { playNotificationSound } from "@/lib/notification-sounds";
 
 type NotificationRow = Doc<"notifications"> & {
   booking: Booking | null;
@@ -50,11 +51,71 @@ export function shouldActivateNotificationRow(
   return eventStartedOnRow && (key === "Enter" || key === " ");
 }
 
+/** What the bell has already shown: every id in the last result plus the
+ * newest `createdAt` it has ever seen. */
+export type SeenNotifications = {
+  ids: ReadonlySet<string>;
+  maxCreatedAt: number;
+};
+
+export const EMPTY_SEEN: SeenNotifications = {
+  ids: new Set(),
+  maxCreatedAt: -Infinity,
+};
+
+type FeedRow = {
+  _id: string;
+  type: "booking_requested" | "event_reminder";
+  createdAt: number;
+};
+
+/** Whether a result carries a booking request the bell hasn't shown before.
+ * Read and dismiss churn keeps the same ids, so it never chimes; an old row
+ * re-entering the feed window after a dismiss sits under the high-water mark,
+ * so it doesn't either. Reminder rows never chime here: the scheduler or the
+ * push already sounded for them. */
+export function newBookingRequests(
+  rows: readonly FeedRow[],
+  seen: SeenNotifications,
+): { chime: boolean; next: SeenNotifications } {
+  let chime = false;
+  let maxCreatedAt = seen.maxCreatedAt;
+  const ids = new Set<string>();
+  for (const row of rows) {
+    ids.add(row._id);
+    if (row.createdAt > maxCreatedAt) maxCreatedAt = row.createdAt;
+    if (
+      row.type === "booking_requested" &&
+      !seen.ids.has(row._id) &&
+      row.createdAt > seen.maxCreatedAt
+    ) {
+      chime = true;
+    }
+  }
+  return { chime, next: { ids, maxCreatedAt } };
+}
+
 export function NotificationBell() {
-  const notifications =
-    (useStableQuery(api.domains.notifications.queries.list) as NotificationRow[] | undefined) ??
-    [];
+  // Kept raw so "not loaded yet" is distinguishable below.
+  const feed = useStableQuery(api.domains.notifications.queries.list) as
+    | NotificationRow[]
+    | undefined;
+  const notifications = feed ?? [];
   const unread = useStableQuery(api.domains.notifications.queries.unreadCount) ?? 0;
+
+  // Chime once for each booking request that lands while the app is open. The
+  // first result is the baseline, so a reload with unread rows stays quiet.
+  const seen = useRef<SeenNotifications | null>(null);
+  useEffect(() => {
+    if (!feed) return;
+    if (seen.current === null) {
+      seen.current = newBookingRequests(feed, EMPTY_SEEN).next;
+      return;
+    }
+    const { chime, next } = newBookingRequests(feed, seen.current);
+    seen.current = next;
+    if (chime) playNotificationSound("booking");
+  }, [feed]);
 
   const markRead = useMutation(api.domains.notifications.mutations.markRead);
   const markAllRead = useMutation(api.domains.notifications.mutations.markAllRead);

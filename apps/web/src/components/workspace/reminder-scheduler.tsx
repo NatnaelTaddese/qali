@@ -6,9 +6,13 @@ import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { format } from "date-fns";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 
 import { timePattern, zoned } from "@/components/calendar/lib";
+import {
+  playNotificationSound,
+  primeNotificationSounds,
+} from "@/lib/notification-sounds";
+import { toast } from "@/lib/toast";
 import {
   getPushRegistration,
   getPushSubscription,
@@ -100,6 +104,10 @@ export function ReminderScheduler() {
     };
   }, []);
 
+  // Unlock audio inside the first gesture so a reminder that fires from a
+  // timer later on this page load is audible.
+  useEffect(() => primeNotificationSounds(), []);
+
   const upcoming = useQuery(api.domains.reminders.queries.upcoming, {
     fromMs,
     horizonMs: HORIZON_MS,
@@ -155,6 +163,7 @@ export function ReminderScheduler() {
           // already claimed, so the toast below is the reminder now.
         }
       }
+      playNotificationSound("reminder");
       toast(title, {
         description: body,
         duration: TOAST_MS,

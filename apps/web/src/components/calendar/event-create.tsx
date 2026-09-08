@@ -4,9 +4,9 @@ import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useQuery } from "convex/react";
 import { useRef, useState } from "react";
-import { toast } from "sonner";
 
 import { usePreferences } from "@/components/workspace/preferences-context";
+import { toast } from "@/lib/toast";
 
 import {
   EventForm,

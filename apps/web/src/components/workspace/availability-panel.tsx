@@ -25,7 +25,6 @@ import type { FunctionReturnType } from "convex/server";
 import { useMutation, useQuery } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
 
 import {
   dockVariants,
@@ -36,6 +35,8 @@ import { useAvailabilityEdit } from "./availability-edit-context";
 import { usePreferences } from "./preferences-context";
 import { PendingRequestsList, type Booking } from "./booking-request-panel";
 import { TimeField } from "./time-field";
+
+import { toast } from "@/lib/toast";
 
 /** Weekdays in display order, matching the grid's Monday-first week. */
 const WEEKDAYS = [

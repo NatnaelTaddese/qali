@@ -2,10 +2,10 @@ import { api } from "@qali/backend/convex/_generated/api";
 import { useAction } from "convex/react";
 import { startOfDay } from "date-fns";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
 
 import { useDock } from "@/components/workspace/dock-context";
 import { usePreferences } from "@/components/workspace/preferences-context";
+import { toast } from "@/lib/toast";
 
 import {
   type CalendarEvent,

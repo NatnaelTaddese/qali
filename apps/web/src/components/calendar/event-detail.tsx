@@ -29,7 +29,6 @@ import { useAction, useQuery } from "convex/react";
 import { format, formatDistanceToNowStrict, isSameDay } from "date-fns";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { toast } from "sonner";
 
 import { Avatar } from "./avatar";
 import { calendarColorVar, useEventColor } from "./colors";
@@ -44,6 +43,7 @@ import {
   type Guest,
 } from "./guest-picker";
 import { usePreferences } from "@/components/workspace/preferences-context";
+import { toast } from "@/lib/toast";
 import {
   calendarDisplayName,
   editableEventId,

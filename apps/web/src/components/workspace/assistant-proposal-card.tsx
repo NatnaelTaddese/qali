@@ -10,11 +10,12 @@ import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 
 import { useEventColor } from "../calendar/colors";
 import { revealTargetForAction } from "./assistant-interactions";
 import { useDock } from "./dock-context";
+
+import { toast } from "@/lib/toast";
 
 export type AssistantAction = Doc<"assistantActions">;
 

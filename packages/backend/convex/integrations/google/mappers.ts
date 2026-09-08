@@ -70,6 +70,7 @@ export function toProviderCalendar(cal: MappedCalendar): ProviderCalendar {
     color: cal.backgroundColor,
     writable: WRITABLE_ACCESS_ROLES.has(cal.accessRole ?? ""),
     selected: cal.googleSelected,
+    defaultReminders: cal.defaultReminders,
   };
 }
 
@@ -152,6 +153,7 @@ export function toProviderEvent(
     seriesId: event.recurringEventId,
     originalOccurrenceStartMs: googleTimeMs(raw?.originalStartTime),
     conference,
+    reminders: event.reminders,
   };
 }
 

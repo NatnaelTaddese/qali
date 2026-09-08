@@ -17,7 +17,10 @@ import {
   type CalendarEventPatchBody,
   type CalendarEventCreateBody,
   type RawEvent,
+  type RawReminders,
 } from "./client";
+import { REMINDER_RULES } from "@qali/domain/reminders";
+
 import { ProviderError } from "../calendar/errors";
 import type {
   CalendarProviderAdapter,
@@ -56,6 +59,7 @@ const GOOGLE_CAPABILITIES: ProviderCapabilities = {
   idempotentUpdate: true,
   idempotentResponse: true,
   idempotentDelete: true,
+  reminders: REMINDER_RULES.google,
 };
 
 function providerEvent(raw: RawEvent, calendarId: string): ProviderEvent {
@@ -91,6 +95,20 @@ function writeTimes(write: EventCreate | EventPatch) {
 function transparencyFor(write: EventCreate | EventPatch): string | undefined {
   if (write.busy === undefined) return undefined;
   return write.busy ? "opaque" : "transparent";
+}
+
+/** Neutral reminders → Google's `reminders` object. Absent = leave the field
+ * alone (create: Google applies the calendar default); `null` = back to the
+ * default; a list = explicit overrides (an empty list is "none"). */
+export function remindersBody(
+  write: EventCreate | EventPatch,
+): RawReminders | undefined {
+  if (write.reminders === undefined) return undefined;
+  if (write.reminders === null) return { useDefault: true };
+  return {
+    useDefault: false,
+    overrides: write.reminders.map((r) => ({ method: r.method, minutes: r.minutes })),
+  };
 }
 
 function conferenceChange(
@@ -229,6 +247,7 @@ export class GoogleCalendarAdapter implements CalendarProviderAdapter {
       transparency: transparencyFor(event),
       attendees,
       recurrence: event.recurrence ? [...event.recurrence] : undefined,
+      reminders: remindersBody(event),
     };
     try {
       const raw = await insertRawCalendarEvent(
@@ -298,6 +317,7 @@ export class GoogleCalendarAdapter implements CalendarProviderAdapter {
       transparency: transparencyFor(patch),
       attendees,
       recurrence: patch.recurrence ? [...patch.recurrence] : undefined,
+      reminders: remindersBody(patch),
     };
     const conference = conferenceChange(patch.conference);
 

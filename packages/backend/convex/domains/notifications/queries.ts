@@ -39,10 +39,14 @@ export async function listHandler(
       : [];
   const rows = selectVisibleNotifications(unread, recent, MAX_NOTIFICATIONS);
   return Promise.all(
-    rows.map(async (row) => ({
-      ...row,
-      booking: row.bookingId ? await ctx.db.get(row.bookingId) : null,
-    })),
+    rows.map(async (row) => {
+      const event = row.eventId ? await ctx.db.get(row.eventId) : null;
+      return {
+        ...row,
+        booking: row.bookingId ? await ctx.db.get(row.bookingId) : null,
+        event: event && event.userId === user._id ? event : null,
+      };
+    }),
   );
 }
 

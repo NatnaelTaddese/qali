@@ -1,7 +1,11 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
 
-import { eventDocValidator, sharedEventDocValidator } from "./validators";
+import {
+  eventDocValidator,
+  reminderValidator,
+  sharedEventDocValidator,
+} from "./validators";
 
 /** Table definitions owned by the calendar domain, composed into schema.ts. */
 export const calendarTables = {
@@ -17,6 +21,10 @@ export const calendarTables = {
     primary: v.optional(v.boolean()),
     accessRole: v.optional(v.string()),
     timeZone: v.optional(v.string()),
+    // What an event's "use default" reminders resolve to on this calendar
+    // (Google calendarList `defaultReminders`). Absent when the provider has no
+    // such concept or never sent it.
+    defaultReminders: v.optional(v.array(reminderValidator)),
     // The provider's own calendar-UI visibility. This only seeds the local
     // choice when a calendar is first discovered; later local toggles are
     // preserved.

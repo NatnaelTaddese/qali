@@ -1,8 +1,10 @@
 /** Write side of the preferences domain. Registration is canonical here, under
  * `api.domains.preferences.mutations.*`. */
 
+import { normalizeReminderMinutes } from "@qali/domain/reminders";
 import { v, type Infer } from "convex/values";
 
+import { internal } from "../../_generated/api";
 import { mutation, type MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import { WRITABLE_ACCESS_ROLES } from "../calendar/mutations";
@@ -14,6 +16,8 @@ const resettableField = v.union(
   v.literal("timeFormat"),
   v.literal("defaultView"),
   v.literal("defaultCalendarId"),
+  v.literal("defaultReminderMinutes"),
+  v.literal("defaultAllDayReminderMinutes"),
 );
 
 const updateArgs = v.object({
@@ -51,6 +55,24 @@ export async function updatePreferencesCore(
     }
   }
 
+  // Throws on a non-integer, out-of-range, or over-long list.
+  if (args.defaultReminderMinutes !== undefined) {
+    args = {
+      ...args,
+      defaultReminderMinutes: normalizeReminderMinutes(
+        args.defaultReminderMinutes,
+      ),
+    };
+  }
+  if (args.defaultAllDayReminderMinutes !== undefined) {
+    args = {
+      ...args,
+      defaultAllDayReminderMinutes: normalizeReminderMinutes(
+        args.defaultAllDayReminderMinutes,
+      ),
+    };
+  }
+
   const patch: Record<string, unknown> = {};
   for (const field of Object.keys(preferenceFields) as (keyof Omit<
     UpdateArgs,
@@ -75,6 +97,18 @@ export async function updatePreferencesCore(
       ...patch,
       updatedAt: Date.now(),
     });
+  }
+  // A default-reminder or zone change moves every "use default" fire time.
+  if (
+    "defaultReminderMinutes" in patch ||
+    "defaultAllDayReminderMinutes" in patch ||
+    "timeZone" in patch
+  ) {
+    await ctx.scheduler.runAfter(
+      0,
+      internal.domains.reminders.jobs.materializeUserReminders,
+      { userId },
+    );
   }
   return null;
 }

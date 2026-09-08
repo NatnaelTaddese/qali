@@ -1,4 +1,5 @@
 import {
+  AlarmClockIcon,
   ArrowLeft01Icon,
   Cancel01Icon,
   Clock01Icon,
@@ -55,6 +56,7 @@ import { dockVariants, dockVariantsReduced, press, SPRING_DOCK } from "./motion"
 import { useEventCapabilities } from "./permissions";
 import { RichTextView } from "./rich-text/rich-text-view";
 import { htmlToPreviewText } from "./rich-text/text";
+import { labelFor } from "./reminders";
 import { parseRRule, summarize } from "./rrule";
 
 /** How many avatars to show before collapsing the rest into a "+N" bubble. */
@@ -579,6 +581,7 @@ export function EventDetail({
           email: g.email,
           displayName: g.displayName,
         })),
+        reminders: event.reminders ? [...event.reminders] : null,
       },
       // The form works in working values; undo the all-day UTC-midnight
       // conversion (as formValueFromEvent does) or submit re-applies it and
@@ -712,6 +715,17 @@ export function EventDetail({
               {formatDistanceToNowStrict(event.startMs, { addSuffix: true })}
             </p>
           </DetailRow>
+
+          {"userId" in event && event.reminders !== undefined && (
+            <DetailRow icon={AlarmClockIcon}>
+              {event.reminders.filter((r) => r.method === "popup").length === 0
+                ? "No reminders"
+                : event.reminders
+                    .filter((r) => r.method === "popup")
+                    .map((r) => labelFor(r.minutes, event.allDay, use24h))
+                    .join(" · ")}
+            </DetailRow>
+          )}
 
           {event.providerSeriesId && (
             <DetailRow icon={RepeatIcon}>

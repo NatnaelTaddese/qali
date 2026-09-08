@@ -72,4 +72,29 @@ crons.interval(
   {},
 );
 
+// Event reminders. The materialiser walks each user's events inside the
+// ledger window and (re)plans their reminder rows; the write-path hooks keep
+// the ledger fresh in between, so 6h only has to catch events that merely
+// aged into the window. The sweep fires whatever is due.
+crons.interval(
+  "materialize event reminders",
+  { hours: 6 },
+  internal.domains.reminders.jobs.enqueueReminderMaterialize,
+  {},
+);
+
+crons.interval(
+  "fire due event reminders",
+  { minutes: 1 },
+  internal.domains.reminders.jobs.sweepDueReminders,
+  {},
+);
+
+crons.interval(
+  "prune settled reminder deliveries",
+  { hours: 24 },
+  internal.domains.reminders.jobs.pruneReminderDeliveries,
+  {},
+);
+
 export default crons;

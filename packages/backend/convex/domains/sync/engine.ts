@@ -16,7 +16,15 @@ import {
   ensureGoogleConnection,
   preferredConnection,
 } from "../calendar/connections";
-import { providerEventValidator } from "../calendar/validators";
+import {
+  providerEventValidator,
+  reminderValidator,
+} from "../calendar/validators";
+import {
+  deleteRemindersForEvent,
+  loadReminderContext,
+  reconcileEventReminders,
+} from "../reminders/model";
 import type {
   ContactsProviderAdapter,
   ProviderContact,
@@ -79,6 +87,7 @@ const providerCalendarValidator = v.object({
   writable: v.boolean(),
   selected: v.optional(v.boolean()),
   shared: v.optional(v.boolean()),
+  defaultReminders: v.optional(v.array(reminderValidator)),
 });
 const providerContactValidator = v.object({
   id: v.string(),
@@ -129,6 +138,7 @@ function valueEvent(event: ProviderEvent) {
     creator: event.creator ? { ...event.creator } : undefined,
     recurrence: event.recurrence ? [...event.recurrence] : undefined,
     conference: event.conference ? { ...event.conference } : undefined,
+    reminders: event.reminders?.map((row) => ({ ...row })),
   };
 }
 
@@ -165,6 +175,7 @@ function storedEventBase(event: ProviderEvent, generation?: number) {
     conferenceUrl: event.conference?.url,
     conferenceName: event.conference?.name,
     conferenceType: event.conference?.type,
+    reminders: event.reminders?.map((row) => ({ ...row })),
     syncGeneration: generation,
   };
 }
@@ -635,7 +646,10 @@ async function syncCalendars(
   }[] = await ctx.runMutation(internal.domains.sync.engine.reconcileCalendars, {
     connectionId,
     attemptId,
-    calendars: listed.map((row) => ({ ...row })),
+    calendars: listed.map((row) => ({
+      ...row,
+      defaultReminders: row.defaultReminders?.map((r) => ({ ...r })),
+    })),
   });
   let changed = false;
   for (const calendar of calendars) {
@@ -1195,6 +1209,7 @@ export const reconcileCalendars = internalMutation({
         primary: calendar.primary,
         accessRole: calendar.writable ? "writer" : "reader",
         timeZone: calendar.timeZone,
+        defaultReminders: calendar.defaultReminders,
         providerSelected: calendar.selected,
         connectionId: args.connectionId,
         providerCalendarId: calendar.id,
@@ -1303,7 +1318,10 @@ export const cleanupRemovedCalendarEvents = internalMutation({
           .eq("localCalendarId", args.localCalendarId),
       )
       .take(BATCH_SIZE);
-    for (const row of events) await ctx.db.delete(row._id);
+    for (const row of events) {
+      await deleteRemindersForEvent(ctx, row._id);
+      await ctx.db.delete(row._id);
+    }
     const series = await ctx.db
       .query("recurringSeries")
       .withIndex("by_connection_and_localCalendarId_and_providerEventId", (q) =>
@@ -1364,6 +1382,8 @@ export const upsertEventsPage = internalMutation({
         calendar.syncGenerationAttemptId !== args.attemptId)
     ) return false;
     const harvested: PersonInput[] = [];
+    const reminderContext = await loadReminderContext(ctx, state.userId);
+    const reminderNow = Date.now();
     for (const event of args.events) {
       if (event.calendarId !== calendar.providerCalendarId) return false;
       const current = await ctx.db
@@ -1379,8 +1399,10 @@ export const upsertEventsPage = internalMutation({
         // A full pass swaps generations only after every page is durable. Leave
         // the old row visible until the final sweep; incremental tombstones can
         // remove immediately because their cursor still commits last.
-        if (current && args.syncGeneration === undefined) {
-          await ctx.db.delete(current._id);
+        if (current) {
+          // Whatever happens to the row, nothing may fire for it any more.
+          await deleteRemindersForEvent(ctx, current._id);
+          if (args.syncGeneration === undefined) await ctx.db.delete(current._id);
         }
         continue;
       }
@@ -1391,8 +1413,19 @@ export const upsertEventsPage = internalMutation({
         event,
         args.syncGeneration,
       );
-      if (current) await ctx.db.replace(current._id, doc);
-      else await ctx.db.insert("events", doc);
+      let eventId: Id<"events">;
+      if (current) {
+        await ctx.db.replace(current._id, doc);
+        eventId = current._id;
+      } else {
+        eventId = await ctx.db.insert("events", doc);
+      }
+      await reconcileEventReminders(
+        ctx,
+        { ...doc, _id: eventId, _creationTime: current?._creationTime ?? reminderNow },
+        reminderContext,
+        reminderNow,
+      );
       // A truncated or very large guest list is a broadcast, not a meeting;
       // its attendees don't belong in the user's directory.
       if (
@@ -1438,6 +1471,7 @@ export const sweepStaleCalendarEventsBatch = internalMutation({
     let deleted = 0;
     for (const row of page.page) {
       if (row.syncGeneration !== args.keepGeneration) {
+        await deleteRemindersForEvent(ctx, row._id);
         await ctx.db.delete(row._id);
         deleted++;
       }

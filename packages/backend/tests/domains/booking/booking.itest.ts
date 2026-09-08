@@ -1,3 +1,4 @@
+import { REMINDER_RULES } from "@qali/domain/reminders";
 import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 
@@ -147,6 +148,7 @@ class BookingAdapter implements CalendarProviderAdapter {
     idempotentUpdate: true,
     idempotentResponse: true,
     idempotentDelete: true,
+    reminders: REMINDER_RULES.microsoft,
   };
   readonly createKeys: (string | undefined)[] = [];
   readonly createRequests: CreateEventRequest[] = [];

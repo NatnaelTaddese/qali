@@ -16,6 +16,8 @@ export const BULK_BATCH_SIZE = 100;
 
 export type NotificationWithBooking = Doc<"notifications"> & {
   booking: Doc<"bookings"> | null;
+  /** The reminded event for `event_reminder` rows; null once it is gone. */
+  event: Doc<"events"> | null;
 };
 
 /** Keep unread rows reachable while filling the rest of a bounded feed with

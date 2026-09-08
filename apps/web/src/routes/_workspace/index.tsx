@@ -1,6 +1,6 @@
 import { api } from "@qali/backend/convex/_generated/api";
 import { createFileRoute } from "@tanstack/react-router";
-import { useAction } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { ConvexError } from "convex/values";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
@@ -12,6 +12,8 @@ type LinkReturnSearch = {
   linked?: string;
   linkError?: string;
   error?: string;
+  /** `/?event=<id>`: open this event (a reminder notification was clicked). */
+  event?: string;
 };
 
 export const Route = createFileRoute("/_workspace/")({
@@ -22,6 +24,7 @@ export const Route = createFileRoute("/_workspace/")({
     if (typeof search.linked === "string") out.linked = search.linked;
     if (typeof search.linkError === "string") out.linkError = search.linkError;
     if (typeof search.error === "string") out.error = search.error;
+    if (typeof search.event === "string") out.event = search.event;
     return out;
   },
   component: HomeComponent,
@@ -42,9 +45,9 @@ function HomeComponent() {
   const connectLinkedAccounts = useAction(
     api.domains.calendar.connectionService.connectLinkedAccounts,
   );
-  const { linked, linkError, error } = Route.useSearch();
+  const { linked, linkError, error, event: eventParam } = Route.useSearch();
   const navigate = Route.useNavigate();
-  const { open } = useDock();
+  const { open, reveal } = useDock();
 
   // Register the user for background sync and pull an initial snapshot of their
   // Google calendar + contacts on first load.
@@ -88,6 +91,32 @@ function HomeComponent() {
     }
     void navigate({ search: {}, replace: true });
   }, [linked, linkError, error, open, connectLinkedAccounts, navigate]);
+
+  // A reminder notification (OS or in-app toast) lands here with the event
+  // to open: show it in the dock, scroll the grid to it, and clean the URL.
+  const deepLinked = useQuery(
+    api.domains.calendar.queries.findEventForDeepLink,
+    eventParam ? { id: eventParam } : "skip",
+  );
+  const handledEvent = useRef<string | null>(null);
+  useEffect(() => {
+    // Once the URL is clean the guard resets, so the same event can be
+    // opened again by its next reminder.
+    if (!eventParam) {
+      handledEvent.current = null;
+      return;
+    }
+    if (deepLinked === undefined) return;
+    if (handledEvent.current === eventParam) return;
+    handledEvent.current = eventParam;
+    if (deepLinked) {
+      open({ kind: "event", event: deepLinked });
+      reveal({ startMs: deepLinked.startMs, flashId: deepLinked._id });
+    } else {
+      toast.error("That event is no longer on your calendar.");
+    }
+    void navigate({ search: {}, replace: true });
+  }, [eventParam, deepLinked, open, reveal, navigate]);
 
   return <CalendarWeekView />;
 }

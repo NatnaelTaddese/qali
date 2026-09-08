@@ -77,9 +77,20 @@ export async function listCalendarsHandler(ctx: QueryCtx) {
     .query("calendars")
     .withIndex("by_user", (q) => q.eq("userId", user._id))
     .collect();
+  const connections = await ctx.db
+    .query("calendarConnections")
+    .withIndex("by_user", (q) => q.eq("userId", user._id))
+    .collect();
+  const providerByConnection = new Map(
+    connections.map((row) => [row._id, row.provider]),
+  );
   return calendars.map((calendar) => ({
     _id: calendar._id,
     connectionId: calendar.connectionId,
+    // Which provider's rules apply (e.g. how many reminders an event may carry).
+    provider: calendar.connectionId
+      ? providerByConnection.get(calendar.connectionId)
+      : undefined,
     providerCalendarId: calendar.providerCalendarId,
     summary: calendar.summary,
     summaryOverride: calendar.summaryOverride,
@@ -346,6 +357,18 @@ export async function getEventByIdHandler(
 export const getEventById = query({
   args: { eventId: eventIdArg },
   handler: (ctx, args) => getEventByIdHandler(ctx, args),
+});
+
+/** `getEventById` for an id that came in off a URL (`/?event=<id>` from a
+ * notification click). A malformed id is `null`, never a thrown validation
+ * error the client would have to catch out of `useQuery`. */
+export const findEventForDeepLink = query({
+  args: { id: v.string() },
+  handler: async (ctx, args) => {
+    const eventId = ctx.db.normalizeId("events", args.id);
+    if (!eventId) return null;
+    return getEventByIdHandler(ctx, { eventId });
+  },
 });
 
 /** The cached rule for an expanded recurring instance. `null` is a cache miss. */

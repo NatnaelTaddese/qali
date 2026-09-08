@@ -50,8 +50,13 @@ import {
   dockVariantsReduced,
   SPRING_DOCK,
 } from "@/components/calendar/motion";
+import { ALL_DAY_PRESETS, labelFor } from "@/components/calendar/reminders";
 import { useStableQuery } from "@/components/calendar/use-stable-query";
 import { authClient } from "@/lib/auth-client";
+import {
+  useBrowserNotifications,
+  type BrowserNotificationStatus,
+} from "@/lib/use-browser-notifications";
 import { useScrollFadeFallback } from "@/lib/use-scroll-fade";
 import { UserAvatar } from "./user-avatar";
 import {
@@ -983,6 +988,7 @@ function PreferencesSection() {
     );
 
   return (
+    <>
     <SettingCard>
       <SettingRow
         title="Week starts on"
@@ -1092,7 +1098,161 @@ function PreferencesSection() {
           />
         }
       />
+      <SettingRow
+        title="Default reminder"
+        description="For timed events that don't set their own"
+        control={
+          <ReminderDefaultPicker
+            ariaLabel="Default reminder for timed events"
+            value={prefs.defaultReminderMinutes}
+            allDay={false}
+            use24h={prefs.timeFormat === "24h"}
+            presets={TIMED_DEFAULT_PRESETS}
+            automaticLabel="Automatic · calendar default"
+            onSelect={(minutes) =>
+              minutes === null
+                ? save({ reset: ["defaultReminderMinutes"] })
+                : save({ defaultReminderMinutes: minutes })
+            }
+          />
+        }
+      />
+      <SettingRow
+        title="All-day reminder"
+        description="For all-day events that don't set their own"
+        control={
+          <ReminderDefaultPicker
+            ariaLabel="Default reminder for all-day events"
+            value={prefs.defaultAllDayReminderMinutes}
+            allDay
+            use24h={prefs.timeFormat === "24h"}
+            presets={ALL_DAY_PRESETS}
+            automaticLabel="Automatic · the day before at 9:00"
+            onSelect={(minutes) =>
+              minutes === null
+                ? save({ reset: ["defaultAllDayReminderMinutes"] })
+                : save({ defaultAllDayReminderMinutes: minutes })
+            }
+          />
+        }
+      />
     </SettingCard>
+    <NotificationsCard />
+    </>
+  );
+}
+
+const TIMED_DEFAULT_PRESETS: readonly number[] = [5, 10, 15, 30, 60, 1440];
+
+/** Automatic / None / one preset, saved as a one-element list. */
+function ReminderDefaultPicker({
+  ariaLabel,
+  value,
+  allDay,
+  use24h,
+  presets,
+  automaticLabel,
+  onSelect,
+}: {
+  ariaLabel: string;
+  value: number[] | undefined;
+  allDay: boolean;
+  use24h: boolean;
+  presets: readonly number[];
+  automaticLabel: string;
+  onSelect: (minutes: number[] | null) => void;
+}) {
+  const label =
+    value === undefined
+      ? "Automatic"
+      : value.length === 0
+        ? "None"
+        : value.length === 1
+          ? labelFor(value[0]!, allDay, use24h)
+          : `${value.length} reminders`;
+  const is = (minutes: number) => value?.length === 1 && value[0] === minutes;
+  return (
+    <PickerRow label={label} ariaLabel={ariaLabel}>
+      {(close) => (
+        <div className="flex flex-col gap-0.5">
+          <PickerOption
+            label={automaticLabel}
+            selected={value === undefined}
+            onSelect={() => {
+              close();
+              onSelect(null);
+            }}
+          />
+          <PickerOption
+            label="None"
+            selected={value !== undefined && value.length === 0}
+            onSelect={() => {
+              close();
+              onSelect([]);
+            }}
+          />
+          {presets.map((minutes) => (
+            <PickerOption
+              key={minutes}
+              label={labelFor(minutes, allDay, use24h)}
+              selected={is(minutes)}
+              onSelect={() => {
+                close();
+                onSelect([minutes]);
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </PickerRow>
+  );
+}
+
+function notificationStatusLine(status: BrowserNotificationStatus): string {
+  switch (status) {
+    case "on":
+      // A browser cannot tell when the OS itself is muting it; say so.
+      return "Enabled on this device. If nothing shows, allow this browser in your system's notification settings.";
+    case "blocked":
+      return "Blocked in your browser's site settings";
+    case "ios-needs-install":
+      return "Add qali to your Home Screen to enable on iOS";
+    case "unsupported":
+      return "Not supported in this browser";
+    case "off":
+      return "Reminders arrive even when qali is closed";
+  }
+}
+
+/** The browser-notifications switch. Hidden entirely when the deployment has
+ * no push keys, since the toggle could do nothing. */
+function NotificationsCard() {
+  const { status, busy, configured, enable, disable } = useBrowserNotifications();
+  if (!configured) return null;
+  const toggleable = status === "on" || status === "off";
+  return (
+    <>
+      <p className="mt-4 px-4 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
+        Notifications
+      </p>
+      <SettingCard className="mt-2">
+        <SettingRow
+          title="Browser notifications"
+          description={notificationStatusLine(status)}
+          destructiveDescription={status === "blocked"}
+          control={
+            <Switch
+              checked={status === "on"}
+              disabled={busy || !toggleable}
+              onCheckedChange={(checked) =>
+                void (checked === true ? enable() : disable())
+              }
+              aria-label="Browser notifications"
+            />
+          }
+        />
+      </SettingCard>
+    </>
   );
 }
 

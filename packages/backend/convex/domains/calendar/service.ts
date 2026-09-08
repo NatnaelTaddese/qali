@@ -6,6 +6,10 @@ import {
   eventCapabilities,
   type EventCapabilities,
 } from "@qali/domain/permissions";
+import {
+  resolvePopupMinutes,
+  type Reminder,
+} from "@qali/domain/reminders";
 import { v } from "convex/values";
 
 import { internal } from "../../_generated/api";
@@ -34,7 +38,12 @@ import type {
 import { hostEmailForTarget, withHostAttendee } from "./hostAttendee";
 import { shiftRecurringMasterRange } from "./recurrence";
 import { calendarRequestFingerprint } from "./operationIdentity";
-import { eventIdArg, responseStatusValidator } from "./validators";
+import {
+  eventIdArg,
+  reminderValidator,
+  responseStatusValidator,
+} from "./validators";
+import { fitReminderWrite } from "../../integrations/calendar/reminders";
 
 export type EventCapabilityName =
   | "canEdit"
@@ -109,6 +118,7 @@ function providerEventValue(event: ProviderEvent) {
     organizer: event.organizer ? { ...event.organizer } : undefined,
     creator: event.creator ? { ...event.creator } : undefined,
     conference: event.conference ? { ...event.conference } : undefined,
+    reminders: event.reminders?.map((reminder) => ({ ...reminder })),
   };
 }
 
@@ -285,6 +295,38 @@ async function providerFailure(
   throw error;
 }
 
+/**
+ * Shape a requested reminder write to what this adapter can hold. When the
+ * provider has no "use default" concept, `null` becomes the explicit list we
+ * would fire — resolved exactly as the ledger resolves it — so the provider
+ * sees the same reminders the user will get.
+ */
+async function fitReminders(
+  ctx: ActionCtx,
+  userId: string,
+  adapter: CalendarProviderAdapter,
+  calendar: Pick<Doc<"calendars">, "defaultReminders"> | undefined,
+  allDay: boolean,
+  reminders: Reminder[] | null | undefined,
+): Promise<Reminder[] | null | undefined> {
+  if (reminders === undefined) return undefined;
+  const rules = adapter.capabilities.reminders;
+  let resolvedDefault: number[] = [];
+  if (reminders === null && !rules.providerDefault) {
+    const prefs = await ctx.runQuery(
+      internal.domains.preferences.queries.getPreferencesForUser,
+      { userId },
+    );
+    resolvedDefault = resolvePopupMinutes({
+      allDay,
+      calendarDefaults: calendar?.defaultReminders,
+      preferredMinutes: prefs?.defaultReminderMinutes,
+      preferredAllDayMinutes: prefs?.defaultAllDayReminderMinutes,
+    });
+  }
+  return fitReminderWrite(reminders, rules, resolvedDefault);
+}
+
 function requireCapability(value: boolean, message: string): void {
   if (!value) throw new Error(message);
 }
@@ -356,6 +398,8 @@ export interface CreateEventArgs {
   attendees?: { email: string; displayName?: string }[];
   timeZone?: string;
   addConference?: boolean;
+  /** Absent = the calendar's default reminders; [] = none. */
+  reminders?: Reminder[];
   operationId?: string;
 }
 
@@ -377,6 +421,14 @@ export async function createEventOp(
       "This calendar provider does not support recurring events",
     );
   }
+  const reminders = (await fitReminders(
+    ctx,
+    userId,
+    adapter,
+    undefined,
+    args.allDay ?? false,
+    args.reminders,
+  )) ?? undefined;
   if (args.addConference) {
     requireCapability(
       adapter.capabilities.conference.create,
@@ -405,6 +457,7 @@ export async function createEventOp(
       attendees: args.attendees,
       timeZone: args.timeZone,
       addConference: args.addConference,
+      reminders: args.reminders,
     }),
   );
   let event: ProviderEvent;
@@ -438,6 +491,7 @@ export async function createEventOp(
           }),
           timeZone: args.timeZone,
           conference: args.addConference ? "add" : undefined,
+          reminders,
         },
         notify: args.attendees?.length ? "all" : undefined,
         idempotencyKey: operation.idempotencyKey,
@@ -498,6 +552,8 @@ export interface UpdateEventArgs {
   recurrence?: string[];
   timeZone?: string;
   conference?: "meet" | null;
+  /** `null` = back to the calendar's default; [] = none; absent = unchanged. */
+  reminders?: Reminder[] | null;
   scope?: UpdateEventScope;
   operationId?: string;
   expectedProviderUpdatedMs?: number;
@@ -507,6 +563,7 @@ export interface UpdateEventArgs {
 function basePatch(
   args: UpdateEventArgs,
   attendees: readonly EventAttendeeInput[] | undefined = args.attendees,
+  reminders: readonly Reminder[] | null | undefined = args.reminders,
 ): EventPatch {
   return {
     summary: args.summary,
@@ -517,6 +574,7 @@ function basePatch(
     busy: args.busy,
     attendees,
     conference: conferencePatch(args.conference),
+    reminders,
   };
 }
 
@@ -622,6 +680,14 @@ export async function updateEventOp(
       "This calendar provider cannot remove conferences",
     );
   }
+  const reminders = await fitReminders(
+    ctx,
+    userId,
+    adapter,
+    target.calendar,
+    allDay,
+    args.reminders,
+  );
 
   const scope = target.providerSeriesId
     ? (args.scope ?? "thisEvent")
@@ -649,6 +715,7 @@ export async function updateEventOp(
       recurrence: args.recurrence,
       timeZone: args.timeZone,
       conference: args.conference,
+      reminders: args.reminders,
       scope,
       expectedProviderUpdatedMs: expectedUpdatedMs,
       expectedSeriesUpdatedMs: args.expectedSeriesUpdatedMs,
@@ -680,7 +747,7 @@ export async function updateEventOp(
           eventId: target.providerEventId,
         },
         patch: {
-          ...basePatch(args, attendees),
+          ...basePatch(args, attendees, reminders),
           startMs: hasTimeChange ? args.startMs : row.startMs,
           endMs: hasTimeChange ? args.endMs : row.endMs,
           allDay,
@@ -709,7 +776,7 @@ export async function updateEventOp(
           eventId: target.providerEventId,
         },
         patch: {
-          ...basePatch(args, attendees),
+          ...basePatch(args, attendees, reminders),
           ...(hasTimeChange
             ? {
                 startMs: args.startMs,
@@ -762,7 +829,7 @@ export async function updateEventOp(
     if (scope === "allEvents" || isSeriesHead) {
       const event = await adapter.updateEvent({
         ref: { calendarId: target.providerCalendarId, eventId: masterId },
-        patch: { ...basePatch(args, attendees), ...shifted },
+        patch: { ...basePatch(args, attendees, reminders), ...shifted },
         notify,
         idempotencyKey: operation.idempotencyKey,
         expectedUpdatedMs:
@@ -1247,6 +1314,7 @@ export function calendarActionEvent(event: ProviderEvent) {
     conferenceUrl: event.conference?.url,
     conferenceName: event.conference?.name,
     conferenceType: event.conference?.type,
+    reminders: event.reminders?.map((reminder) => ({ ...reminder })),
   };
 }
 
@@ -1359,6 +1427,9 @@ export const createEvent = action({
     timeZone: v.optional(v.string()),
     /** Ask Google to mint a Google Meet link; the URL comes back as `conferenceUrl`. */
     addConference: v.optional(v.boolean()),
+    /** Reminders, minutes before start (all-day: before local midnight of
+     * the date). Absent = the calendar's default; [] = none. */
+    reminders: v.optional(v.array(reminderValidator)),
     /** Idempotency key, stable across retries of the same user intent. */
     operationId: v.optional(v.string()),
   },
@@ -1419,6 +1490,9 @@ export const updateEvent = action({
     /** `"meet"` mints a Google Meet link, `null` clears the existing one, and
      * absent leaves conferencing untouched. */
     conference: v.optional(v.union(v.literal("meet"), v.null())),
+    /** Reminders: a list replaces them ([] = none), `null` reverts to the
+     * calendar's default, absent leaves them unchanged. */
+    reminders: v.optional(v.union(v.array(reminderValidator), v.null())),
     /** How far the edit reaches on a recurring event. Absent = `"thisEvent"`.
      * Ignored (forced to `"thisEvent"`) for a non-recurring event. */
     scope: v.optional(

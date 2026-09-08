@@ -51,48 +51,44 @@ export function shouldActivateNotificationRow(
   return eventStartedOnRow && (key === "Enter" || key === " ");
 }
 
-/** What the bell has already shown: every id in the last result plus the
- * newest `createdAt` it has ever seen. */
-export type SeenNotifications = {
-  ids: ReadonlySet<string>;
-  maxCreatedAt: number;
-};
-
-export const EMPTY_SEEN: SeenNotifications = {
-  ids: new Set(),
-  maxCreatedAt: -Infinity,
-};
-
 type FeedRow = {
-  _id: string;
   type: "booking_requested" | "event_reminder";
   createdAt: number;
 };
 
-/** Whether a result carries a booking request the bell hasn't shown before.
- * Read and dismiss churn keeps the same ids, so it never chimes; an old row
- * re-entering the feed window after a dismiss sits under the high-water mark,
- * so it doesn't either. Reminder rows never chime here: the scheduler or the
- * push already sounded for them. */
+/** Whether a result carries a booking request newer than `mark`, the newest
+ * booking request `createdAt` the bell has shown (`null` before the first
+ * result, which only sets the baseline). Read and dismiss churn keeps the
+ * same rows, so it never chimes; an old row re-entering the feed window after
+ * a dismiss sits under the mark, so it doesn't either. Only booking requests
+ * move the mark: reminder rows are stamped by a different writer and never
+ * chime here — the scheduler or the push already sounded for them. */
 export function newBookingRequests(
   rows: readonly FeedRow[],
-  seen: SeenNotifications,
-): { chime: boolean; next: SeenNotifications } {
+  mark: number | null,
+): { chime: boolean; next: number } {
   let chime = false;
-  let maxCreatedAt = seen.maxCreatedAt;
-  const ids = new Set<string>();
+  let next = mark ?? -Infinity;
   for (const row of rows) {
-    ids.add(row._id);
-    if (row.createdAt > maxCreatedAt) maxCreatedAt = row.createdAt;
-    if (
-      row.type === "booking_requested" &&
-      !seen.ids.has(row._id) &&
-      row.createdAt > seen.maxCreatedAt
-    ) {
-      chime = true;
-    }
+    if (row.type !== "booking_requested") continue;
+    if (mark !== null && row.createdAt > mark) chime = true;
+    if (row.createdAt > next) next = row.createdAt;
   }
-  return { chime, next: { ids, maxCreatedAt } };
+  return { chime, next };
+}
+
+const CHIME_CLAIM_KEY = "notification-chime-claim";
+
+/** One chime per booking request across open tabs: the first tab to record
+ * the new mark plays it, the others see it already recorded and stay quiet. */
+function claimBookingChime(mark: number): boolean {
+  try {
+    if (localStorage.getItem(CHIME_CLAIM_KEY) === String(mark)) return false;
+    localStorage.setItem(CHIME_CLAIM_KEY, String(mark));
+    return true;
+  } catch {
+    return true;
+  }
 }
 
 export function NotificationBell() {
@@ -105,16 +101,12 @@ export function NotificationBell() {
 
   // Chime once for each booking request that lands while the app is open. The
   // first result is the baseline, so a reload with unread rows stays quiet.
-  const seen = useRef<SeenNotifications | null>(null);
+  const mark = useRef<number | null>(null);
   useEffect(() => {
     if (!feed) return;
-    if (seen.current === null) {
-      seen.current = newBookingRequests(feed, EMPTY_SEEN).next;
-      return;
-    }
-    const { chime, next } = newBookingRequests(feed, seen.current);
-    seen.current = next;
-    if (chime) playNotificationSound("booking");
+    const { chime, next } = newBookingRequests(feed, mark.current);
+    mark.current = next;
+    if (chime && claimBookingChime(next)) playNotificationSound("booking");
   }, [feed]);
 
   const markRead = useMutation(api.domains.notifications.mutations.markRead);

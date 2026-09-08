@@ -3,11 +3,11 @@ import { Spinner } from "@qali/ui/components/spinner";
 import { cn } from "@qali/ui/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
+import { toast } from "sonner";
 import { svg as googleSvg } from "thesvg/google";
 
 import { CalendarBackdrop } from "@/components/booking/calendar-backdrop";
 import { authClient } from "@/lib/auth-client";
-import { toast } from "@/lib/toast";
 
 export const Route = createFileRoute("/_auth/login")({
   component: LoginComponent,

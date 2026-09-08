@@ -12,18 +12,13 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// A tab to hand the reminder to: one the user is looking at shows a toast;
-// a background one shows the OS notification itself and plays the app's
-// chime, which a worker cannot. Only with no tab at all does the worker show
-// the notification.
-async function reminderClient() {
-  const windows = await self.clients.matchAll({
-    type: "window",
-    includeUncontrolled: true,
-  });
-  return (
-    windows.find((w) => w.visibilityState === "visible") ?? windows[0] ?? null
-  );
+async function windowClients() {
+  return self.clients.matchAll({ type: "window", includeUncontrolled: true });
+}
+
+async function visibleClient() {
+  const windows = await windowClients();
+  return windows.find((w) => w.visibilityState === "visible") ?? null;
 }
 
 self.addEventListener("push", (event) => {
@@ -37,15 +32,19 @@ self.addEventListener("push", (event) => {
 
   event.waitUntil(
     (async () => {
-      // An open tab shows the reminder itself: a toast when visible, otherwise
-      // an OS notification plus the app's chime. Chrome only insists on a
-      // notification from the worker when no client exists at all.
-      const tab = await reminderClient();
+      // A tab the user is looking at shows the reminder itself (a toast), so
+      // no OS notification competes with it. Chrome only insists on a visible
+      // notification when no focused client exists — a hidden tab doesn't
+      // count, and it may be frozen or on a route with no listener, so the
+      // worker keeps showing the notification itself. Hidden tabs get a
+      // lightweight nudge to play the app's chime, which a worker cannot.
+      const tab = await visibleClient();
       if (tab) {
-        console.log("[qali sw] push → tab", tab.visibilityState, data.tag);
+        console.log("[qali sw] push → visible tab", data.tag);
         tab.postMessage({ type: "reminder", payload: data });
         return;
       }
+      for (const w of await windowClients()) w.postMessage({ type: "reminder-sound" });
       try {
         await self.registration.showNotification(data.title, {
           body: data.body,
@@ -63,11 +62,9 @@ self.addEventListener("push", (event) => {
         // Shown nowhere yet: hand it to any open tab so a toast is waiting
         // when the user comes back.
         console.error("[qali sw] showNotification failed", error);
-        const windows = await self.clients.matchAll({
-          type: "window",
-          includeUncontrolled: true,
-        });
-        for (const w of windows) w.postMessage({ type: "reminder", payload: data });
+        for (const w of await windowClients()) {
+          w.postMessage({ type: "reminder", payload: data });
+        }
       }
     })(),
   );

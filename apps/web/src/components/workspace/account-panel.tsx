@@ -11,10 +11,10 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { useTheme } from "@/components/theme-provider";
 import { authClient } from "@/lib/auth-client";
-import { toast } from "@/lib/toast";
 import { UserAvatar } from "./user-avatar";
 
 const themeOptions = [

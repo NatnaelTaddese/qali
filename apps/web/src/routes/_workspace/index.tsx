@@ -3,10 +3,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useAction, useQuery } from "convex/react";
 import { ConvexError } from "convex/values";
 import { useEffect, useRef } from "react";
+import { toast } from "sonner";
 
 import { CalendarWeekView } from "@/components/calendar/calendar";
 import { useDock } from "@/components/workspace/dock-context";
-import { toast } from "@/lib/toast";
 
 type LinkReturnSearch = {
   linked?: string;

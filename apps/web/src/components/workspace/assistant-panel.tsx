@@ -28,6 +28,7 @@ import type { FunctionReturnType } from "convex/server";
 import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { toast } from "sonner";
 
 import {
   acknowledgedAssistantUserMessageId,
@@ -40,8 +41,6 @@ import {
   type AssistantAction,
 } from "./assistant-proposal-card";
 import { usePreferences } from "./preferences-context";
-
-import { toast } from "@/lib/toast";
 
 type AssistantMessage = Doc<"assistantMessages">;
 

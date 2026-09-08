@@ -4,9 +4,9 @@ import { useSyncExternalStore } from "react";
 /** Notification sounds, synthesized by cuelume. This is the only module that
  * imports the library; everything else goes through `playNotificationSound`.
  *
- * The on/off preference is per device (localStorage), like the theme, and is
- * deliberately separate from `@qali/ui`'s `sound-muted` flag: that one silences
- * UI interaction ticks and has the inverted polarity. */
+ * The on/off preference is per device (localStorage), like the theme. The
+ * settings switch also drives `@qali/ui`'s `sound-muted` flag so one control
+ * covers notification chimes and UI interaction ticks alike. */
 
 export type NotificationSoundKind =
   | "reminder"
@@ -30,21 +30,32 @@ export const SOUND_FOR_KIND: Record<NotificationSoundKind, SoundName> = {
 const STORAGE_KEY = "notification-sounds";
 const DEFAULT_ENABLED = true;
 
-let enabled = DEFAULT_ENABLED;
-if (typeof window !== "undefined") {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === "0") enabled = false;
-    else if (stored === "1") enabled = true;
-  } catch {
-    // A private-mode localStorage throw keeps the default.
-  }
+function readStored(value: string | null): boolean {
+  if (value === "0") return false;
+  if (value === "1") return true;
+  return DEFAULT_ENABLED;
 }
 
+let enabled = DEFAULT_ENABLED;
 const listeners = new Set<() => void>();
 
 function notify() {
   for (const listener of listeners) listener();
+}
+
+if (typeof window !== "undefined") {
+  try {
+    enabled = readStored(localStorage.getItem(STORAGE_KEY));
+  } catch {
+    // A private-mode localStorage throw keeps the default.
+  }
+  // One listener for the page's lifetime, so a change made in another tab
+  // reaches this one whether or not anything is subscribed here.
+  window.addEventListener("storage", (event) => {
+    if (event.key !== STORAGE_KEY) return;
+    enabled = readStored(event.newValue);
+    notify();
+  });
 }
 
 export function isNotificationSoundsEnabled(): boolean {
@@ -63,23 +74,11 @@ export function setNotificationSoundsEnabled(value: boolean): void {
   notify();
 }
 
-/** Notifies on changes from this tab and, via `storage`, from other tabs. */
+/** Notifies on changes from this tab and from other tabs. */
 export function subscribeNotificationSounds(callback: () => void): () => void {
   listeners.add(callback);
-  if (typeof window === "undefined") {
-    return () => {
-      listeners.delete(callback);
-    };
-  }
-  const onStorage = (event: StorageEvent) => {
-    if (event.key !== STORAGE_KEY) return;
-    enabled = event.newValue === null ? DEFAULT_ENABLED : event.newValue !== "0";
-    callback();
-  };
-  window.addEventListener("storage", onStorage);
   return () => {
     listeners.delete(callback);
-    window.removeEventListener("storage", onStorage);
   };
 }
 
@@ -91,10 +90,16 @@ export function useNotificationSoundsEnabled(): boolean {
   );
 }
 
-/** Plays the sound for a notification kind and reports whether it did.
- * Best effort: silent (and `false`) when sounds are off, before the page has
- * had a user gesture, or when Web Audio is unavailable. Callers showing an OS
- * notification use the result to decide whether the OS should stay quiet. */
+// cuelume can't report whether audio actually rendered: its `play` returns
+// nothing and swallows a refused `resume()`. The one thing we can know is that
+// the context was created or resumed inside a user gesture on this page load,
+// which is what browsers require; only then do we claim a sound played.
+let unlocked = false;
+
+/** Plays the sound for a notification kind and reports whether it can be
+ * relied on to have sounded. Callers showing an OS notification use the
+ * result to decide whether the OS should stay quiet: `false` means "let the
+ * OS make its own sound", never "stay silent". */
 export function playNotificationSound(kind: NotificationSoundKind): boolean {
   if (typeof window === "undefined" || !enabled) return false;
   if (!("AudioContext" in window)) return false;
@@ -103,11 +108,14 @@ export function playNotificationSound(kind: NotificationSoundKind): boolean {
   if (navigator.userActivation?.hasBeenActive === false) return false;
   try {
     play(SOUND_FOR_KIND[kind]);
-    return true;
   } catch {
     // Audio is never worth an error.
     return false;
   }
+  // Inside a gesture right now (a click on the settings switch, say) the
+  // context is unlocked by this very play.
+  if (navigator.userActivation?.isActive === true) unlocked = true;
+  return unlocked;
 }
 
 // cuelume refuses a volume of exactly 0, so priming plays at the quietest
@@ -116,13 +124,15 @@ const PRIME_VOLUME = 0.001;
 
 /** Creates and unlocks cuelume's AudioContext inside the first user gesture,
  * so a timer-driven reminder that fires later isn't blocked by the browser's
- * autoplay policy. Idempotent; a no-op when sounds are off. */
+ * autoplay policy. Returns a teardown; a no-op when sounds are off, so key
+ * the caller on the preference to re-arm after it turns on. */
 export function primeNotificationSounds(): () => void {
-  if (typeof window === "undefined" || !enabled) return () => {};
+  if (typeof window === "undefined" || !enabled || unlocked) return () => {};
   const unlock = () => {
     remove();
     try {
       play("tick", { volume: PRIME_VOLUME });
+      unlocked = true;
     } catch {
       // Nothing to do; the next real play will try again.
     }

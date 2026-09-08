@@ -6,6 +6,7 @@ import { GooDropdown } from "@qali/ui/components/ui/goo-dropdown";
 import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useQuery } from "convex/react";
 import { useRef, useState } from "react";
+import { toast } from "sonner";
 
 import {
   EventForm,
@@ -16,7 +17,6 @@ import {
 } from "./event-form";
 import { normalizeReminders, sameReminders } from "./reminders";
 import { usePreferences } from "@/components/workspace/preferences-context";
-import { toast } from "@/lib/toast";
 import { editableEventId, type CalendarEvent } from "./lib";
 import { useEventCapabilities } from "./permissions";
 import { toRRule } from "./rrule";

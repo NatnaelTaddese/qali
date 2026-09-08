@@ -6,13 +6,14 @@ import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery } from "convex/react";
 import { format } from "date-fns";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { timePattern, zoned } from "@/components/calendar/lib";
 import {
   playNotificationSound,
   primeNotificationSounds,
+  useNotificationSoundsEnabled,
 } from "@/lib/notification-sounds";
-import { toast } from "@/lib/toast";
 import {
   getPushRegistration,
   getPushSubscription,
@@ -50,7 +51,9 @@ type WorkerMessage =
         minutes: number;
       };
     }
-  | { type: "open-event"; eventId: string };
+  | { type: "open-event"; eventId: string }
+  // The worker showed an OS notification for a hidden tab; play the chime.
+  | { type: "reminder-sound" };
 
 /**
  * Fires reminders in an open tab. Subscribes to the ledger's pending rows for
@@ -105,8 +108,10 @@ export function ReminderScheduler() {
   }, []);
 
   // Unlock audio inside the first gesture so a reminder that fires from a
-  // timer later on this page load is audible.
-  useEffect(() => primeNotificationSounds(), []);
+  // timer later on this page load is audible. Keyed on the preference so a
+  // tab loaded with sounds off still primes once they are turned on.
+  const soundsOn = useNotificationSoundsEnabled();
+  useEffect(() => (soundsOn ? primeNotificationSounds() : undefined), [soundsOn]);
 
   const upcoming = useQuery(api.domains.reminders.queries.upcoming, {
     fromMs,
@@ -286,6 +291,8 @@ export function ReminderScheduler() {
           },
           true,
         );
+      } else if (message.type === "reminder-sound") {
+        playNotificationSound("reminder");
       } else if (message.type === "open-event") {
         openEvent(message.eventId);
       }

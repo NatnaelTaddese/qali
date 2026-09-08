@@ -22,6 +22,7 @@ import {
 import { Skeleton } from "@qali/ui/components/skeleton";
 import { Spinner } from "@qali/ui/components/spinner";
 import { Switch } from "@qali/ui/components/switch";
+import { setSoundMuted } from "@qali/ui/lib/sound";
 import { cn } from "@qali/ui/lib/utils";
 import type { FunctionReturnType } from "convex/server";
 import { useAction, useMutation, useQuery } from "convex/react";
@@ -36,6 +37,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 
 import {
   calendarDisplayName,
@@ -49,7 +51,6 @@ import {
   setNotificationSoundsEnabled,
   useNotificationSoundsEnabled,
 } from "@/lib/notification-sounds";
-import { toast } from "@/lib/toast";
 import {
   dockVariants,
   dockVariantsReduced,
@@ -1260,18 +1261,21 @@ function NotificationsCard() {
           />
         )}
         <SettingRow
-          title="Notification sounds"
-          description="Play a sound for reminders, new booking requests, and sync results on this device, even while qali is in the background"
+          title="Sounds"
+          description="Chimes for reminders, new booking requests, sync results and toasts on this device, even while qali is in the background, plus the clicks in menus and pickers"
           control={
             <Switch
               checked={soundsOn}
               onCheckedChange={(checked) => {
                 const on = checked === true;
                 setNotificationSoundsEnabled(on);
+                // One switch for both sound systems: the UI ticks have their
+                // own (inverted) flag in @qali/ui.
+                setSoundMuted(!on);
                 // A preview, and it runs inside the click so it also unlocks audio.
                 if (on) playNotificationSound("reminder");
               }}
-              aria-label="Notification sounds"
+              aria-label="Sounds"
             />
           }
         />

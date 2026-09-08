@@ -15,9 +15,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 
 import { MS_PER_MINUTE } from "@/components/calendar/lib";
-import { toast } from "@/lib/toast";
 import { usePreferences } from "./preferences-context";
 
 /** A day's availability span with its live save state, so the grid can shimmer a

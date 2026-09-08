@@ -2,9 +2,9 @@ import { api } from "@qali/backend/convex/_generated/api";
 import { ConvexError } from "convex/values";
 import { useAction } from "convex/react";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { playNotificationSound } from "@/lib/notification-sounds";
-import { toast } from "@/lib/toast";
 
 /** Manual "sync now", shared by the dock's nav row and the settings panel.
  * Each caller gets its own in-flight flag; the action itself is idempotent. */

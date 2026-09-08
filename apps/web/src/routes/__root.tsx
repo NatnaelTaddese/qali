@@ -6,6 +6,7 @@ import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { useEffect } from "react";
 
 import { ThemeProvider, useTheme } from "@/components/theme-provider";
+import { ToastSounds } from "@/components/toast-sounds";
 import { renderDateFavicon } from "@/lib/date-favicon";
 
 import "../index.css";
@@ -70,6 +71,7 @@ function RootComponent() {
         </TooltipProvider>
         <LoadingScreen />
         <Toaster position="top-right" />
+        <ToastSounds />
       </ThemeProvider>
       {/* Dev only: the booking page is public, and the devtools panel has no
           business rendering on a link a host hands to someone else. */}

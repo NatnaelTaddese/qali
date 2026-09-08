@@ -1211,7 +1211,8 @@ function ReminderDefaultPicker({
 function notificationStatusLine(status: BrowserNotificationStatus): string {
   switch (status) {
     case "on":
-      return "Enabled on this device";
+      // A browser cannot tell when the OS itself is muting it; say so.
+      return "Enabled on this device. If nothing shows, allow this browser in your system's notification settings.";
     case "blocked":
       return "Blocked in your browser's site settings";
     case "ios-needs-install":

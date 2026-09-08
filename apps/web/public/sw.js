@@ -36,20 +36,33 @@ self.addEventListener("push", (event) => {
       // notification when no focused client exists.
       const tab = await visibleClient();
       if (tab) {
+        console.log("[qali sw] push → visible tab", data.tag);
         tab.postMessage({ type: "reminder", payload: data });
         return;
       }
-      await self.registration.showNotification(data.title, {
-        body: data.body,
-        // The open tab uses the same tag when it fires locally, so a rare
-        // double fire replaces rather than stacks.
-        tag: data.tag,
-        renotify: false,
-        icon: "/icon-192.png",
-        badge: "/icon-192.png",
-        timestamp: data.startMs,
-        data: { url: data.url, eventId: data.eventId },
-      });
+      try {
+        await self.registration.showNotification(data.title, {
+          body: data.body,
+          // The open tab uses the same tag when it fires locally, so a rare
+          // double fire replaces rather than stacks.
+          tag: data.tag,
+          renotify: false,
+          icon: "/icon-192.png",
+          badge: "/icon-192.png",
+          timestamp: data.startMs,
+          data: { url: data.url, eventId: data.eventId },
+        });
+        console.log("[qali sw] push → OS notification", data.tag);
+      } catch (error) {
+        // Shown nowhere yet: hand it to any open tab so a toast is waiting
+        // when the user comes back.
+        console.error("[qali sw] showNotification failed", error);
+        const windows = await self.clients.matchAll({
+          type: "window",
+          includeUncontrolled: true,
+        });
+        for (const w of windows) w.postMessage({ type: "reminder", payload: data });
+      }
     })(),
   );
 });

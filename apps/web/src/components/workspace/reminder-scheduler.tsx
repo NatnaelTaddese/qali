@@ -10,6 +10,11 @@ import { toast } from "sonner";
 
 import { timePattern, zoned } from "@/components/calendar/lib";
 import {
+  playNotificationSound,
+  primeNotificationSounds,
+  useNotificationSoundsEnabled,
+} from "@/lib/notification-sounds";
+import {
   getPushRegistration,
   getPushSubscription,
   subscribeToPush,
@@ -46,7 +51,9 @@ type WorkerMessage =
         minutes: number;
       };
     }
-  | { type: "open-event"; eventId: string };
+  | { type: "open-event"; eventId: string }
+  // The worker showed an OS notification for a hidden tab; play the chime.
+  | { type: "reminder-sound" };
 
 /**
  * Fires reminders in an open tab. Subscribes to the ledger's pending rows for
@@ -100,6 +107,12 @@ export function ReminderScheduler() {
     };
   }, []);
 
+  // Unlock audio inside the first gesture so a reminder that fires from a
+  // timer later on this page load is audible. Keyed on the preference so a
+  // tab loaded with sounds off still primes once they are turned on.
+  const soundsOn = useNotificationSoundsEnabled();
+  useEffect(() => (soundsOn ? primeNotificationSounds() : undefined), [soundsOn]);
+
   const upcoming = useQuery(api.domains.reminders.queries.upcoming, {
     fromMs,
     horizonMs: HORIZON_MS,
@@ -126,6 +139,9 @@ export function ReminderScheduler() {
       const body = r.allDay
         ? "All day"
         : `Starts at ${format(zoned(r.startMs, timeZone), timePattern(use24h))}`;
+      // The chime plays whether or not the tab is visible, so a reminder is
+      // heard while qali sits in the background.
+      const chimed = playNotificationSound("reminder");
       const visible = document.visibilityState === "visible";
       if (!visible && "Notification" in window && Notification.permission === "granted") {
         const tag = `reminder:${r.eventId}:${r.minutes}`;
@@ -133,7 +149,10 @@ export function ReminderScheduler() {
           body,
           tag,
           icon: "/icon-192.png",
+          badge: "/icon-192.png",
           data: { url: `/?event=${r.eventId}`, eventId: r.eventId },
+          // Our chime already sounded; don't let the OS stack its own on top.
+          silent: chimed,
         };
         try {
           const registration = await getPushRegistration();
@@ -272,6 +291,8 @@ export function ReminderScheduler() {
           },
           true,
         );
+      } else if (message.type === "reminder-sound") {
+        playNotificationSound("reminder");
       } else if (message.type === "open-event") {
         openEvent(message.eventId);
       }

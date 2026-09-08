@@ -32,6 +32,7 @@
     "@tiptap/starter-kit": "^3.31.2",
     "better-auth": "catalog:",
     "convex": "catalog:",
+    "cuelume": "^0.2.2",
     "date-fns": "^4.4.0",
     "dompurify": "^3.4.14",
     "dotenv": "catalog:",

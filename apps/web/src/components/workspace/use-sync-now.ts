@@ -4,6 +4,8 @@ import { useAction } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { playNotificationSound } from "@/lib/notification-sounds";
+
 /** Manual "sync now", shared by the dock's nav row and the settings panel.
  * Each caller gets its own in-flight flag; the action itself is idempotent. */
 export function useSyncNow() {
@@ -15,6 +17,7 @@ export function useSyncNow() {
     setIsSyncing(true);
     try {
       await syncNow();
+      playNotificationSound("sync");
     } catch (error: unknown) {
       if (
         error instanceof ConvexError &&

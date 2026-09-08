@@ -22,6 +22,7 @@ import {
 import { Skeleton } from "@qali/ui/components/skeleton";
 import { Spinner } from "@qali/ui/components/spinner";
 import { Switch } from "@qali/ui/components/switch";
+import { setSoundMuted } from "@qali/ui/lib/sound";
 import { cn } from "@qali/ui/lib/utils";
 import type { FunctionReturnType } from "convex/server";
 import { useAction, useMutation, useQuery } from "convex/react";
@@ -45,6 +46,11 @@ import {
   type CalendarListItem,
 } from "@/components/calendar/lib";
 import { calendarColorVar } from "@/components/calendar/colors";
+import {
+  playNotificationSound,
+  setNotificationSoundsEnabled,
+  useNotificationSoundsEnabled,
+} from "@/lib/notification-sounds";
 import {
   dockVariants,
   dockVariantsReduced,
@@ -1224,11 +1230,12 @@ function notificationStatusLine(status: BrowserNotificationStatus): string {
   }
 }
 
-/** The browser-notifications switch. Hidden entirely when the deployment has
- * no push keys, since the toggle could do nothing. */
+/** Browser notifications and notification sounds. The push switch is hidden
+ * when the deployment has no push keys, since it could do nothing; the sounds
+ * switch is per device and always available. */
 function NotificationsCard() {
   const { status, busy, configured, enable, disable } = useBrowserNotifications();
-  if (!configured) return null;
+  const soundsOn = useNotificationSoundsEnabled();
   const toggleable = status === "on" || status === "off";
   return (
     <>
@@ -1236,18 +1243,39 @@ function NotificationsCard() {
         Notifications
       </p>
       <SettingCard className="mt-2">
+        {configured && (
+          <SettingRow
+            title="Browser notifications"
+            description={notificationStatusLine(status)}
+            destructiveDescription={status === "blocked"}
+            control={
+              <Switch
+                checked={status === "on"}
+                disabled={busy || !toggleable}
+                onCheckedChange={(checked) =>
+                  void (checked === true ? enable() : disable())
+                }
+                aria-label="Browser notifications"
+              />
+            }
+          />
+        )}
         <SettingRow
-          title="Browser notifications"
-          description={notificationStatusLine(status)}
-          destructiveDescription={status === "blocked"}
+          title="Sounds"
+          description="Chimes for reminders, new booking requests, sync results and toasts on this device, even while qali is in the background, plus the clicks in menus and pickers"
           control={
             <Switch
-              checked={status === "on"}
-              disabled={busy || !toggleable}
-              onCheckedChange={(checked) =>
-                void (checked === true ? enable() : disable())
-              }
-              aria-label="Browser notifications"
+              checked={soundsOn}
+              onCheckedChange={(checked) => {
+                const on = checked === true;
+                setNotificationSoundsEnabled(on);
+                // One switch for both sound systems: the UI ticks have their
+                // own (inverted) flag in @qali/ui.
+                setSoundMuted(!on);
+                // A preview, and it runs inside the click so it also unlocks audio.
+                if (on) playNotificationSound("reminder");
+              }}
+              aria-label="Sounds"
             />
           }
         />

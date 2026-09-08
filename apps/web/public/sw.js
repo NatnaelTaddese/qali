@@ -12,11 +12,12 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+async function windowClients() {
+  return self.clients.matchAll({ type: "window", includeUncontrolled: true });
+}
+
 async function visibleClient() {
-  const windows = await self.clients.matchAll({
-    type: "window",
-    includeUncontrolled: true,
-  });
+  const windows = await windowClients();
   return windows.find((w) => w.visibilityState === "visible") ?? null;
 }
 
@@ -33,13 +34,17 @@ self.addEventListener("push", (event) => {
     (async () => {
       // A tab the user is looking at shows the reminder itself (a toast), so
       // no OS notification competes with it. Chrome only insists on a visible
-      // notification when no focused client exists.
+      // notification when no focused client exists — a hidden tab doesn't
+      // count, and it may be frozen or on a route with no listener, so the
+      // worker keeps showing the notification itself. Hidden tabs get a
+      // lightweight nudge to play the app's chime, which a worker cannot.
       const tab = await visibleClient();
       if (tab) {
         console.log("[qali sw] push → visible tab", data.tag);
         tab.postMessage({ type: "reminder", payload: data });
         return;
       }
+      for (const w of await windowClients()) w.postMessage({ type: "reminder-sound" });
       try {
         await self.registration.showNotification(data.title, {
           body: data.body,
@@ -57,11 +62,9 @@ self.addEventListener("push", (event) => {
         // Shown nowhere yet: hand it to any open tab so a toast is waiting
         // when the user comes back.
         console.error("[qali sw] showNotification failed", error);
-        const windows = await self.clients.matchAll({
-          type: "window",
-          includeUncontrolled: true,
-        });
-        for (const w of windows) w.postMessage({ type: "reminder", payload: data });
+        for (const w of await windowClients()) {
+          w.postMessage({ type: "reminder", payload: data });
+        }
       }
     })(),
   );

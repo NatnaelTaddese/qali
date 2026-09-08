@@ -223,8 +223,8 @@ function TimedComposer({
     if (!AMOUNTS[next].includes(amount)) setAmount(AMOUNTS[next][0]!);
   };
   return (
-    <div className="flex items-center gap-3">
-      <div className="flex min-w-0 flex-1 gap-2">
+    <div className="flex flex-col gap-2">
+      <div className="flex gap-2">
         <WheelPicker
           options={AMOUNTS[unit]}
           value={amount}
@@ -246,13 +246,11 @@ function TimedComposer({
           aria-label="Unit"
         />
       </div>
-      <div className="flex shrink-0 flex-col items-end gap-1.5">
-        <span className="text-xs text-muted-foreground">before</span>
-        <AddButton
-          disabled={disabled}
-          label={labelFor(minutes, false, true)}
-          onClick={() => onAdd(minutes)}
-        />
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-xs text-muted-foreground">
+          {labelFor(minutes, false, true)}
+        </span>
+        <AddButton disabled={disabled} onClick={() => onAdd(minutes)} />
       </div>
     </div>
   );
@@ -333,21 +331,11 @@ function AllDayComposer({
   );
 }
 
-function AddButton({
-  disabled,
-  label,
-  onClick,
-}: {
-  disabled: boolean;
-  /** What the button will add, as its tooltip. */
-  label?: string;
-  onClick: () => void;
-}) {
+function AddButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
       disabled={disabled}
-      title={label}
       onClick={onClick}
       className="h-8 shrink-0 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground outline-none hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
     >

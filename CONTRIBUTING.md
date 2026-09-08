@@ -94,7 +94,27 @@ cd ../..
 The assistant never writes to your calendar on its own — it proposes a change
 and waits for you to confirm it in the dock.
 
-## 5. Run, verify, and open a PR
+## 5. Configure Web Push for reminders (optional)
+
+Event reminders work without any extra setup: they show as in-app
+notifications and, while a qali tab is open, as browser notifications. Web
+Push — reminders arriving when qali is closed — needs a VAPID key pair on the
+deployment. Without one, the "Browser notifications" switch in Preferences is
+simply hidden and everything else works.
+
+```bash
+cd packages/backend
+bunx web-push generate-vapid-keys     # prints a public and a private key
+bunx convex env set VAPID_PUBLIC_KEY "<public-key>"
+bunx convex env set VAPID_PRIVATE_KEY "<private-key>"
+bunx convex env set VAPID_SUBJECT "mailto:<your-email>"   # or an https: URL
+cd ../..
+```
+
+Each deployment needs its own pair; rotating a key invalidates every browser
+subscription made against it (they re-subscribe on their next visit).
+
+## 6. Run, verify, and open a PR
 
 ```bash
 bun run dev          # start everything; open http://localhost:3001

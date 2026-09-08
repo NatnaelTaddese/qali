@@ -26,8 +26,9 @@ import {
 
 const NUDGE_DISMISSED_KEY = "qali.reminder-nudge-dismissed";
 
-const WHEEL_ROWS = 3;
-const WHEEL_ROW_PX = 30;
+// Same drum size as the form's time wheels, so the two read as one control.
+const WHEEL_ROWS = 5;
+const WHEEL_ROW_PX = 32;
 
 // One wheel of amounts per unit, so the wheel never offers "0 weeks".
 const AMOUNTS: Record<CustomUnit, string[]> = {
@@ -81,6 +82,9 @@ export function ReminderControl({
   const { use24h, raw } = usePreferences();
   const rules: ReminderRules = reminderRulesFor(provider ?? "google");
   const [open, setOpen] = useState(false);
+  // "Custom" with nothing added yet is a UI state, not a value: the value
+  // stays as it was until the first Add, but the composer is showing.
+  const [composing, setComposing] = useState(false);
   const defaultMinutes = allDay
     ? raw.defaultAllDayReminderMinutes
     : raw.defaultReminderMinutes;
@@ -95,6 +99,12 @@ export function ReminderControl({
   const cap = Math.min(rules.maxPerEvent, MAX_REMINDERS_PER_EVENT);
   const popups = (value ?? []).filter((r) => r.method === "popup");
   const full = popups.length >= cap;
+  const mode: "default" | "none" | "custom" =
+    popups.length > 0 || composing
+      ? "custom"
+      : value === null
+        ? "default"
+        : "none";
 
   const add = (minutes: number) => {
     // Adding from "default" starts from an empty list, never from the
@@ -115,21 +125,30 @@ export function ReminderControl({
       <PopoverTrigger className="flex-1 truncate rounded-lg px-2 py-1 text-right text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
         {summary}
       </PopoverTrigger>
-      <PopoverContent side="top" align="end" className="w-[19rem] p-2">
+      <PopoverContent side="top" align="end" className="w-[21rem] p-2">
         {/* Default / None — the two states that aren't a list. */}
         <div className="flex gap-1 rounded-xl bg-muted p-1">
           {rules.providerDefault && (
-            <Segment active={value === null} onClick={() => onChange(null)}>
+            <Segment
+              active={mode === "default"}
+              onClick={() => {
+                setComposing(false);
+                onChange(null);
+              }}
+            >
               Default
             </Segment>
           )}
           <Segment
-            active={value !== null && popups.length === 0}
-            onClick={() => onChange([])}
+            active={mode === "none"}
+            onClick={() => {
+              setComposing(false);
+              onChange([]);
+            }}
           >
             None
           </Segment>
-          <Segment active={popups.length > 0} onClick={() => {}} passive>
+          <Segment active={mode === "custom"} onClick={() => setComposing(true)}>
             {popups.length === 0
               ? "Custom"
               : popups.length === 1
@@ -161,22 +180,26 @@ export function ReminderControl({
           </div>
         )}
 
-        <div className="mt-2 border-t pt-2">
-          {allDay ? (
-            <AllDayComposer
-              use24h={use24h}
-              disabled={full && cap > 1}
-              onAdd={add}
-            />
-          ) : (
-            <TimedComposer disabled={full && cap > 1} onAdd={add} />
-          )}
-          {cap > 1 && full && (
+        {mode === "custom" && (
+          <div className="mt-2 border-t pt-2">
+            {allDay ? (
+              <AllDayComposer
+                use24h={use24h}
+                disabled={full && cap > 1}
+                onAdd={add}
+              />
+            ) : (
+              <TimedComposer disabled={full && cap > 1} onAdd={add} />
+            )}
             <p className="mt-1.5 px-1 text-[11px] text-muted-foreground">
-              Up to {cap} reminders
+              {cap > 1 && full
+                ? `Up to ${cap} reminders`
+                : cap === 1
+                  ? "This calendar keeps one reminder per event"
+                  : "Pick an offset and add it"}
             </p>
-          )}
-        </div>
+          </div>
+        )}
 
         <NotificationsNudge />
       </PopoverContent>
@@ -200,8 +223,8 @@ function TimedComposer({
     if (!AMOUNTS[next].includes(amount)) setAmount(AMOUNTS[next][0]!);
   };
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex flex-1 gap-1 rounded-xl bg-muted/60 px-1">
+    <div className="flex items-center gap-3">
+      <div className="flex min-w-0 flex-1 gap-2">
         <WheelPicker
           options={AMOUNTS[unit]}
           value={amount}
@@ -222,9 +245,15 @@ function TimedComposer({
           className="flex-1"
           aria-label="Unit"
         />
-        <span className="self-center text-sm text-muted-foreground">before</span>
       </div>
-      <AddButton disabled={disabled} onClick={() => onAdd(minutes)} />
+      <div className="flex shrink-0 flex-col items-end gap-1.5">
+        <span className="text-xs text-muted-foreground">before</span>
+        <AddButton
+          disabled={disabled}
+          label={labelFor(minutes, false, true)}
+          onClick={() => onAdd(minutes)}
+        />
+      </div>
     </div>
   );
 }
@@ -248,8 +277,8 @@ function AllDayComposer({
     : (Number(hour) % 12) + (meridiem === "PM" ? 12 : 0);
   const minutes = allDayMinutes(Number(days), hour24 * 60 + Number(minute));
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex flex-1 gap-1 rounded-xl bg-muted/60 px-1">
+    <div className="flex flex-col gap-2">
+      <div className="flex gap-2">
         <WheelPicker
           options={DAYS_BEFORE}
           value={days}
@@ -260,7 +289,7 @@ function AllDayComposer({
           className="flex-[1.3]"
           aria-label="Days before"
         />
-        <span className="self-center text-xs text-muted-foreground">at</span>
+        <span className="self-center text-sm text-muted-foreground">at</span>
         <WheelPicker
           options={use24h ? HOURS_24 : HOURS_12}
           value={hour}
@@ -294,16 +323,31 @@ function AllDayComposer({
           />
         )}
       </div>
-      <AddButton disabled={disabled} onClick={() => onAdd(minutes)} />
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-xs text-muted-foreground">
+          {labelFor(minutes, true, use24h)}
+        </span>
+        <AddButton disabled={disabled} onClick={() => onAdd(minutes)} />
+      </div>
     </div>
   );
 }
 
-function AddButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
+function AddButton({
+  disabled,
+  label,
+  onClick,
+}: {
+  disabled: boolean;
+  /** What the button will add, as its tooltip. */
+  label?: string;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       disabled={disabled}
+      title={label}
       onClick={onClick}
       className="h-8 shrink-0 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground outline-none hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
     >
@@ -314,13 +358,10 @@ function AddButton({ disabled, onClick }: { disabled: boolean; onClick: () => vo
 
 function Segment({
   active,
-  passive,
   onClick,
   children,
 }: {
   active: boolean;
-  /** A label that reflects state rather than sets it. */
-  passive?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -328,15 +369,12 @@ function Segment({
     <button
       type="button"
       aria-pressed={active}
-      tabIndex={passive ? -1 : undefined}
       onClick={onClick}
       className={cn(
         "flex-1 truncate rounded-lg px-2 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
         active
           ? "bg-background font-medium shadow-sm"
-          : "text-muted-foreground",
-        !active && !passive && "hover:text-foreground",
-        passive && "cursor-default",
+          : "text-muted-foreground hover:text-foreground",
       )}
     >
       {children}

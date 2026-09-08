@@ -34,6 +34,11 @@ export const MAX_REMINDERS_PER_EVENT = 5;
 /** A reminder that is late still fires while the event has not started yet
  * (plus this grace); once the event is under way it is noise. */
 export const LATE_GRACE_MS = 5 * MS_PER_MINUTE;
+/** When (re)planning, an offset whose fire instant is already further past
+ * than this is not planned at all. A row that merely missed a sweep still
+ * fires (see reminderStillUseful); a default changed to "1 day before" at
+ * noon must not fire for everything happening this afternoon. */
+export const PLAN_LATE_GRACE_MS = 15 * MS_PER_MINUTE;
 
 export type ReminderMethod = "popup" | "email";
 
@@ -319,7 +324,8 @@ export interface PlannedReminder {
 }
 
 /** Everything the ledger needs for one event: each fireable offset with its
- * instant, dropping offsets we never fire and ones already past their use. */
+ * instant, dropping offsets we never fire and ones whose instant is already
+ * more than PLAN_LATE_GRACE_MS gone. */
 export function plannedReminders(args: {
   readonly startMs: number;
   readonly allDay: boolean;
@@ -333,7 +339,8 @@ export function plannedReminders(args: {
     .map((m) => ({ minutes: m, fireAtMs: anchor - m * MS_PER_MINUTE }))
     .filter(
       (r) =>
-        r.fireAtMs >= args.nowMs || anchor + LATE_GRACE_MS > args.nowMs,
+        r.fireAtMs >= args.nowMs - PLAN_LATE_GRACE_MS &&
+        anchor + LATE_GRACE_MS > args.nowMs,
     );
 }
 

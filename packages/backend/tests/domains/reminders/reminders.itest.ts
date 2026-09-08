@@ -160,7 +160,7 @@ describe("reconcileEventReminders", () => {
     expect(await ledger(t, eventId)).toEqual([]);
   });
 
-  test("a moved event re-times pending rows; removed offsets are deleted; sent rows never resurrect", async () => {
+  test("a moved event re-times pending rows, re-plans fired ones, and deletes removed offsets", async () => {
     const t = convexTest(schema, modules);
     const target = await seedCalendar(t);
     const startMs = Date.now() + 2 * HOUR;
@@ -188,9 +188,25 @@ describe("reconcileEventReminders", () => {
     await reconcile(t, eventId);
     const rows = await ledger(t, eventId);
     expect(rows.map((r) => [r.minutes, r.status, r.fireAtMs])).toEqual([
-      [10, "sent", startMs - 10 * MINUTE], // untouched: already fired
+      [10, "pending", moved - 10 * MINUTE], // fired for the old start; re-planned
       [30, "pending", moved - 30 * MINUTE], // new offset
     ]);
+    // Reconciling again without a move leaves a fired row alone.
+    await t.run((ctx) => ctx.db.patch(rows[0]!._id, { status: "sent" }));
+    await reconcile(t, eventId);
+    expect((await ledger(t, eventId))[0]).toMatchObject({ minutes: 10, status: "sent" });
+  });
+
+  test("an event that moves out of the window drops its pending rows", async () => {
+    const t = convexTest(schema, modules);
+    const target = await seedCalendar(t);
+    const now = Date.now();
+    const eventId = await seedEvent(t, target, { startMs: now + 2 * HOUR });
+    await reconcile(t, eventId, now);
+    expect(await ledger(t, eventId)).toHaveLength(1);
+    await t.run((ctx) => ctx.db.patch(eventId, { startMs: now + 30 * DAY }));
+    await reconcile(t, eventId, now);
+    expect(await ledger(t, eventId)).toEqual([]);
   });
 
   test("preferences and calendar defaults resolve in order", async () => {

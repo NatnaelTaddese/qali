@@ -84,11 +84,33 @@ export async function subscribeToPush(vapidPublicKey: string): Promise<PushSubsc
   if (!registration) throw new Error("Push notifications are not supported here");
   await navigator.serviceWorker.ready;
   const existing = await registration.pushManager.getSubscription();
-  if (existing) return existing;
+  if (existing) {
+    // A subscription made under a previous VAPID key would be signed with
+    // the wrong private key from now on; replace it.
+    if (sameServerKey(existing, vapidPublicKey)) return existing;
+    await existing.unsubscribe();
+  }
   return registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
   });
+}
+
+/** Whether a subscription was created for this VAPID public key. A
+ * subscription that reports no key (older browsers) is trusted. */
+export function sameServerKey(
+  subscription: PushSubscription,
+  vapidPublicKey: string,
+): boolean {
+  const key = subscription.options?.applicationServerKey;
+  if (!key) return true;
+  const actual = new Uint8Array(key);
+  const expected = urlBase64ToUint8Array(vapidPublicKey);
+  if (actual.length !== expected.length) return false;
+  for (let i = 0; i < actual.length; i++) {
+    if (actual[i] !== expected[i]) return false;
+  }
+  return true;
 }
 
 /** Unsubscribe locally; returns the endpoint so the backend row can go too. */

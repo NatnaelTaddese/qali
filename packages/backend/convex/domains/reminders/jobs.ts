@@ -9,7 +9,6 @@
  * Same enqueue → fan-out → self-reschedule shape as the other crons.
  */
 
-import { reminderStillUseful } from "@qali/domain/reminders";
 import { v } from "convex/values";
 
 import { internal } from "../../_generated/api";
@@ -20,7 +19,7 @@ import {
   loadReminderContext,
   reconcileEventReminders,
   reminderPayload,
-  reminderTimeZone,
+  reminderRowIsStale,
   type PushPayload,
 } from "./model";
 
@@ -121,26 +120,34 @@ export const sweepDueReminders = internalMutation({
       if (!calendars.has(id)) calendars.set(id, await ctx.db.get(id));
       return calendars.get(id) ?? null;
     };
+    // The all-day anchor zone falls back to the user's working zone, exactly
+    // as the reconcile planned it; judging in UTC would skip real rows.
+    const prefs = new Map<string, Doc<"userPreferences"> | null>();
+    const prefsFor = async (userId: string) => {
+      if (!prefs.has(userId)) {
+        prefs.set(
+          userId,
+          await ctx.db
+            .query("userPreferences")
+            .withIndex("by_user", (q) => q.eq("userId", userId))
+            .unique(),
+        );
+      }
+      return prefs.get(userId) ?? null;
+    };
     const byUser = new Map<string, PushPayload[]>();
 
     for (const row of due) {
       const event = await ctx.db.get(row.eventId);
       const calendar = event ? await calendarFor(event.localCalendarId) : null;
-      const stale =
-        !event ||
-        event.userId !== row.userId ||
-        event.status === "cancelled" ||
-        !calendar?.selected ||
-        calendar.isShared ||
-        event.startMs !== row.eventStartMs ||
-        !reminderStillUseful({
-          fireAtMs: row.fireAtMs,
-          eventStartMs: event.startMs,
-          allDay: event.allDay,
-          timeZone: reminderTimeZone(calendar, null),
-          nowMs: now,
-        });
-      if (stale) {
+      const stale = reminderRowIsStale({
+        row,
+        event,
+        calendar,
+        prefs: await prefsFor(row.userId),
+        nowMs: now,
+      });
+      if (stale || !event) {
         await ctx.db.patch(row._id, { status: "skipped" });
         continue;
       }

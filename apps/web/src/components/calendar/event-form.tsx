@@ -541,14 +541,10 @@ export function EventForm({
             <ToggleSwitch
               checked={value.allDay}
               disabled={!canEdit}
-              // All-day offsets count from midnight, timed ones from the start,
-              // so an explicit list can't carry across; the default can.
-              onChange={(allDay) =>
-                onChange({
-                  allDay,
-                  reminders: value.reminders === null ? null : [],
-                })
-              }
+              // Reminders ride along untouched: an explicit list reads oddly
+              // across the switch, but wiping it would delete the event's
+              // reminders on a mis-tap that is flipped straight back.
+              onChange={(allDay) => onChange({ allDay })}
               label="All day"
             />
           </SettingRow>

@@ -9,6 +9,7 @@ import {
   MATERIALIZE_LOOKAHEAD_MS,
   MATERIALIZE_LOOKBACK_MS,
   plannedReminders,
+  reminderStillUseful,
   resolvePopupMinutes,
 } from "@qali/domain/reminders";
 import type { Infer } from "convex/values";
@@ -66,12 +67,11 @@ export function reminderTimeZone(
  * Idempotent and cheap (one prefix read, a handful of writes), so it is safe
  * to call on every sync page. Rules:
  *  - An event outside the window, cancelled, or on a deselected/shared
- *    calendar keeps no pending rows. The window check happens before the
- *    read so far-off rows cost nothing; a row that drifts out of the window
- *    is caught by the sweep's staleness check instead.
- *  - A `sent` row never fires again for that (event, offset), even if the
- *    event moves afterwards — matches what Google does and avoids
- *    re-notifying an edit.
+ *    calendar keeps no pending rows; it is planned afresh when it ages
+ *    back into the window.
+ *  - A `sent` row stays sent for the start it fired for. If the event
+ *    then moves, that (event, offset) is re-planned for the new start, as
+ *    Google re-fires after a move.
  *  - Anything else is (re)planned: fireAt patched when the event moved,
  *    offsets no longer wanted deleted, new ones inserted.
  */
@@ -87,8 +87,10 @@ export async function reconcileEventReminders(
     calendar.selected &&
     !calendar.isShared &&
     event.status !== "cancelled";
+  // Outside the window nothing may stay pending either: an event that moved
+  // far out would otherwise keep rows timed for where it used to be, and be
+  // re-planned fresh when it ages back in.
   if (!eligible || !inReminderWindow(event.startMs, nowMs)) {
-    if (eligible) return;
     await clearPendingRemindersForEvent(ctx, event._id);
     return;
   }
@@ -122,7 +124,9 @@ export async function reconcileEventReminders(
       continue;
     }
     planned.delete(row.minutes);
-    if (row.status === "sent") continue;
+    // A fired row stays fired for the start it fired for; a later move
+    // re-plans it, so the rescheduled time gets its own reminder.
+    if (row.status === "sent" && row.eventStartMs === event.startMs) continue;
     if (
       row.status !== "pending" ||
       row.fireAtMs !== want.fireAtMs ||
@@ -146,6 +150,38 @@ export async function reconcileEventReminders(
       createdAt: nowMs,
     });
   }
+}
+
+/** The same eligibility the sweep and an open tab must agree on before a
+ * row fires: the event is still there, still on a visible calendar, still
+ * starts when the row was planned for, and its fire time is still worth
+ * acting on. Anything else is stale and must not be delivered. */
+export function reminderRowIsStale(args: {
+  readonly row: Pick<
+    Doc<"reminderDeliveries">,
+    "userId" | "eventStartMs" | "fireAtMs"
+  >;
+  readonly event: Doc<"events"> | null;
+  readonly calendar: Doc<"calendars"> | null;
+  readonly prefs: Pick<Doc<"userPreferences">, "timeZone"> | null;
+  readonly nowMs: number;
+}): boolean {
+  const { row, event, calendar } = args;
+  return (
+    !event ||
+    event.userId !== row.userId ||
+    event.status === "cancelled" ||
+    !calendar?.selected ||
+    calendar.isShared ||
+    event.startMs !== row.eventStartMs ||
+    !reminderStillUseful({
+      fireAtMs: row.fireAtMs,
+      eventStartMs: event.startMs,
+      allDay: event.allDay,
+      timeZone: reminderTimeZone(calendar, args.prefs),
+      nowMs: args.nowMs,
+    })
+  );
 }
 
 /** Drop the rows that have not fired for an event that is going away (or

@@ -1399,9 +1399,10 @@ export const upsertEventsPage = internalMutation({
         // A full pass swaps generations only after every page is durable. Leave
         // the old row visible until the final sweep; incremental tombstones can
         // remove immediately because their cursor still commits last.
-        if (current && args.syncGeneration === undefined) {
+        if (current) {
+          // Whatever happens to the row, nothing may fire for it any more.
           await deleteRemindersForEvent(ctx, current._id);
-          await ctx.db.delete(current._id);
+          if (args.syncGeneration === undefined) await ctx.db.delete(current._id);
         }
         continue;
       }

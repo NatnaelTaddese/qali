@@ -9,7 +9,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { timePattern, zoned } from "@/components/calendar/lib";
-import { getPushRegistration, getPushSubscription, subscriptionInput } from "@/lib/push";
+import {
+  getPushRegistration,
+  getPushSubscription,
+  subscribeToPush,
+  subscriptionInput,
+} from "@/lib/push";
 import { usePreferences } from "./preferences-context";
 import {
   BUCKET_MS,
@@ -55,6 +60,7 @@ export function ReminderScheduler() {
   const navigate = useNavigate();
   const markFired = useMutation(api.domains.reminders.mutations.markFired);
   const resubscribe = useMutation(api.domains.push.mutations.subscribe);
+  const vapidPublicKey = useQuery(api.domains.push.queries.vapidPublicKey);
 
   // The query key advances every few minutes so the window keeps sliding;
   // Convex re-runs queries on writes, not on the clock.
@@ -129,20 +135,25 @@ export function ReminderScheduler() {
           icon: "/icon-192.png",
           data: { url: `/?event=${r.eventId}`, eventId: r.eventId },
         };
-        const registration = await getPushRegistration();
-        if (registration) {
-          // Same tag as the push path, so a rare double fire replaces
-          // rather than stacks; also the only form Android Chrome allows.
-          await registration.showNotification(title, options);
+        try {
+          const registration = await getPushRegistration();
+          if (registration) {
+            // Same tag as the push path, so a rare double fire replaces
+            // rather than stacks; also the only form Android Chrome allows.
+            await registration.showNotification(title, options);
+            return;
+          }
+          const notification = new Notification(title, options);
+          notification.onclick = () => {
+            window.focus();
+            openEvent(r.eventId);
+            notification.close();
+          };
           return;
+        } catch {
+          // Android Chrome rejects the page-level constructor; the row is
+          // already claimed, so the toast below is the reminder now.
         }
-        const notification = new Notification(title, options);
-        notification.onclick = () => {
-          window.focus();
-          openEvent(r.eventId);
-          notification.close();
-        };
-        return;
       }
       toast(title, {
         description: body,
@@ -269,18 +280,24 @@ export function ReminderScheduler() {
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
   }, [fire, openEvent]);
 
-  // A browser that already subscribed re-registers on load so the backend
-  // row follows key rotations and account switches.
+  // A browser that already subscribed re-subscribes on load so the backend
+  // row follows key rotations (a fresh subscription under the current key)
+  // and account switches.
   const didResubscribe = useRef(false);
   useEffect(() => {
-    if (didResubscribe.current) return;
-    didResubscribe.current = true;
+    if (didResubscribe.current || !vapidPublicKey) return;
     if (!("Notification" in window) || Notification.permission !== "granted") return;
-    void getPushSubscription().then((subscription) => {
-      if (!subscription) return;
-      void resubscribe(subscriptionInput(subscription)).catch(() => {});
-    });
-  }, [resubscribe]);
+    didResubscribe.current = true;
+    void (async () => {
+      try {
+        if (!(await getPushSubscription())) return;
+        const subscription = await subscribeToPush(vapidPublicKey);
+        await resubscribe(subscriptionInput(subscription));
+      } catch {
+        // Best effort: the settings switch is the deliberate path.
+      }
+    })();
+  }, [resubscribe, vapidPublicKey]);
 
   useEffect(
     () => () => {

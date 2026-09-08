@@ -51,7 +51,14 @@ export async function upcomingHandler(
   const out = [];
   for (const row of rows) {
     const event = await ctx.db.get(row.eventId);
-    if (!event || event.userId !== user._id || event.status === "cancelled") {
+    if (
+      !event ||
+      event.userId !== user._id ||
+      event.status === "cancelled" ||
+      // Planned for a start the event no longer has: the reconcile will
+      // re-time it, and a tab must not arm a timer for the old instant.
+      event.startMs !== row.eventStartMs
+    ) {
       continue;
     }
     out.push({

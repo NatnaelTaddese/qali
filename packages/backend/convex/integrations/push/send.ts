@@ -69,7 +69,10 @@ export const sendToUser = internalAction({
         } catch (error) {
           const status =
             error instanceof WebPushError ? error.statusCode : undefined;
-          if (status === 404 || status === 410) {
+          // 404/410: the browser dropped it. 401/403: the push service
+          // rejects our VAPID signature for it (a key rotation); the browser
+          // re-subscribes under the current key on its next load.
+          if (status === 404 || status === 410 || status === 401 || status === 403) {
             gone.push(subscription.endpoint);
             break;
           }

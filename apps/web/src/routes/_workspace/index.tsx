@@ -100,7 +100,13 @@ function HomeComponent() {
   );
   const handledEvent = useRef<string | null>(null);
   useEffect(() => {
-    if (!eventParam || deepLinked === undefined) return;
+    // Once the URL is clean the guard resets, so the same event can be
+    // opened again by its next reminder.
+    if (!eventParam) {
+      handledEvent.current = null;
+      return;
+    }
+    if (deepLinked === undefined) return;
     if (handledEvent.current === eventParam) return;
     handledEvent.current = eventParam;
     if (deepLinked) {

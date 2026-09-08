@@ -7,6 +7,7 @@ import {
   DEFAULT_TIMED_REMINDER_MINUTES,
   LATE_GRACE_MS,
   MS_PER_MINUTE,
+  PLAN_LATE_GRACE_MS,
   REMINDER_RULES,
   ReminderRulesError,
   allDayDateKey,
@@ -273,7 +274,7 @@ describe("reminderStillUseful / plannedReminders", () => {
     ).toBe(false);
   });
 
-  test("plannedReminders drops beyond-a-week offsets and dead ones", () => {
+  test("plannedReminders drops beyond-a-week offsets, long-past ones, and dead ones", () => {
     const startMs = Date.UTC(2026, 8, 10, 14, 0);
     const nowMs = startMs - 30 * MS_PER_MINUTE;
     expect(
@@ -281,14 +282,25 @@ describe("reminderStillUseful / plannedReminders", () => {
         startMs,
         allDay: false,
         timeZone,
-        minutes: [10, 60, 10_080, 20_160],
+        minutes: [10, 40, 60, 10_080, 20_160],
         nowMs,
       }),
     ).toEqual([
       { minutes: 10, fireAtMs: startMs - 10 * MS_PER_MINUTE },
-      { minutes: 60, fireAtMs: startMs - 60 * MS_PER_MINUTE },
-      { minutes: 10_080, fireAtMs: startMs - 10_080 * MS_PER_MINUTE },
+      // 10 minutes past its instant: still within the planning grace.
+      { minutes: 40, fireAtMs: startMs - 40 * MS_PER_MINUTE },
+      // 30 minutes past (60) and a week past (10_080): not planned, so a
+      // default change never fires a burst for what is already under way.
     ]);
+    expect(
+      plannedReminders({
+        startMs,
+        allDay: false,
+        timeZone,
+        minutes: [60],
+        nowMs: startMs - 60 * MS_PER_MINUTE - PLAN_LATE_GRACE_MS,
+      }),
+    ).toHaveLength(1);
     // Event already under way past the grace: nothing is planned.
     expect(
       plannedReminders({

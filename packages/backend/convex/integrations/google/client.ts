@@ -225,7 +225,38 @@ export type MappedEvent = {
   conferenceUrl?: string;
   conferenceName?: string;
   conferenceType?: string;
+  /** Absent = `reminders.useDefault: true`; otherwise the overrides. */
+  reminders?: MappedReminder[];
 };
+
+export type MappedReminder = { method: "popup" | "email"; minutes: number };
+
+/** One `reminders.overrides[]` / calendarList `defaultReminders[]` entry. */
+export type RawReminder = {
+  method?: string;
+  minutes?: number;
+};
+
+/** Google's per-event reminder object: `useDefault` toggles between the
+ * calendar's defaults and the explicit `overrides` list. */
+export type RawReminders = {
+  useDefault?: boolean;
+  overrides?: RawReminder[];
+};
+
+/** Only the entries we can represent, with a real offset. Google's methods are
+ * "popup" and "email"; anything else is dropped. */
+export function mapRawReminders(
+  list: RawReminder[] | undefined,
+): MappedReminder[] {
+  return (list ?? []).flatMap((entry) =>
+    (entry.method === "popup" || entry.method === "email") &&
+    typeof entry.minutes === "number" &&
+    Number.isFinite(entry.minutes)
+      ? [{ method: entry.method, minutes: entry.minutes }]
+      : [],
+  );
+}
 
 export type RawCalendarDateTime = {
   dateTime?: string;
@@ -308,6 +339,7 @@ export type RawEvent = {
   originalStartTime?: RawCalendarDateTime;
   hangoutLink?: string;
   conferenceData?: RawConferenceData;
+  reminders?: RawReminders;
 };
 
 export type RawCalendarPage = {
@@ -344,6 +376,8 @@ export type MappedCalendar = {
   accessRole?: string;
   timeZone?: string;
   googleSelected?: boolean;
+  /** calendarList `defaultReminders`: what `useDefault` resolves to here. */
+  defaultReminders?: MappedReminder[];
 };
 
 type RawCalendarListEntry = {
@@ -358,6 +392,7 @@ type RawCalendarListEntry = {
   selected?: boolean;
   hidden?: boolean;
   deleted?: boolean;
+  defaultReminders?: RawReminder[];
 };
 
 /** Enumerate every calendar in the user's CalendarList (paginated). */
@@ -394,6 +429,10 @@ export async function fetchCalendarList(
         accessRole: item.accessRole,
         timeZone: item.timeZone,
         googleSelected: item.selected,
+        defaultReminders:
+          item.defaultReminders === undefined
+            ? undefined
+            : mapRawReminders(item.defaultReminders),
       });
     }
     pageToken = data.nextPageToken;
@@ -464,6 +503,12 @@ export function mapGoogleEvent(raw: RawEvent, calendarId: string): MappedEvent {
     conferenceType:
       raw.conferenceData?.conferenceSolution?.key?.type ??
       (raw.hangoutLink ? "hangoutsMeet" : undefined),
+    // useDefault:false with no overrides is Google's "no reminders" — keep the
+    // empty list so it is distinguishable from "use the calendar default".
+    reminders:
+      raw.reminders?.useDefault === false
+        ? mapRawReminders(raw.reminders.overrides)
+        : undefined,
   };
 }
 
@@ -573,6 +618,7 @@ export type CalendarEventCreateBody = {
   transparency?: string;
   attendees?: RawAttendee[];
   recurrence?: string[];
+  reminders?: RawReminders;
 };
 
 export async function insertRawCalendarEvent(
@@ -688,6 +734,7 @@ export type CalendarEventPatchBody = {
   transparency?: string;
   attendees?: RawAttendee[];
   recurrence?: string[];
+  reminders?: RawReminders;
 };
 
 export async function patchRawCalendarEvent(

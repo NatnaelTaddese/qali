@@ -1,3 +1,4 @@
+import { REMINDER_RULES } from "@qali/domain/reminders";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 
@@ -55,6 +56,7 @@ class FakeCalendarAdapter implements CalendarProviderAdapter {
     idempotentUpdate: true,
     idempotentResponse: true,
     idempotentDelete: true,
+    reminders: REMINDER_RULES.microsoft,
   };
   readonly calls: { syncCursor: SyncCursor | null; pageCursor?: PageCursor | null }[] = [];
 

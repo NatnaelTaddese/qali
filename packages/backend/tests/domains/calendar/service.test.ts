@@ -1,6 +1,8 @@
 // @ts-expect-error Bun supplies its test module at runtime.
 import { afterEach, describe, expect, test } from "bun:test";
 
+import { REMINDER_RULES } from "@qali/domain/reminders";
+
 import type { Doc, Id } from "../../../convex/_generated/dataModel";
 import type { ActionCtx } from "../../../convex/_generated/server";
 import { GoogleCalendarAdapter } from "../../../convex/integrations/google/adapter";
@@ -1039,5 +1041,143 @@ describe("scoped recurring deletion", () => {
         scope: "thisAndFollowing",
       }),
     ).rejects.toThrow("no recurrence rule");
+  });
+});
+
+describe("reminder writes are fitted to the adapter's rules", () => {
+  const baseCapabilities = {
+    contacts: false,
+    recurringEvents: true,
+    attendeeMembershipUpdates: true,
+    rsvp: true,
+    removeSelf: true,
+    conference: { create: true, add: true, remove: true },
+    idempotentCreate: true,
+    idempotentUpdate: true,
+    idempotentResponse: true,
+    idempotentDelete: true,
+  };
+
+  function recordingAdapter(reminders: (typeof REMINDER_RULES)["google"]) {
+    const patches: UpdateEventRequest[] = [];
+    const adapter = {
+      provider: "microsoft",
+      capabilities: { ...baseCapabilities, reminders },
+      async updateEvent(request: UpdateEventRequest) {
+        patches.push(request);
+        return {
+          id: request.ref.eventId,
+          calendarId: request.ref.calendarId,
+          startMs: 1,
+          endMs: 2,
+          allDay: false,
+          status: "confirmed",
+          updatedMs: 1,
+          reminders: request.patch.reminders ?? undefined,
+        };
+      },
+    } as unknown as CalendarProviderAdapter;
+    return { adapter, patches };
+  }
+
+  test("a single-reminder provider gets null materialised into the resolved default", async () => {
+    const row = eventRow();
+    const { ctx, mutations } = actionContext(row);
+    const { adapter, patches } = recordingAdapter(REMINDER_RULES.microsoft);
+    await service.updateEventOp(
+      ctx,
+      "user-1",
+      { eventId: row._id, reminders: null },
+      { getAdapter: async () => adapter, refreshCalendar: async () => {} },
+    );
+    // No preference, no calendar default → the domain's 10-minute default,
+    // written explicitly because Graph has no "use default" on the wire.
+    expect(patches[0]?.patch.reminders).toEqual([{ method: "popup", minutes: 10 }]);
+    expect(mutations[mutations.length - 1]).toMatchObject({
+      event: { reminders: [{ method: "popup", minutes: 10 }] },
+    });
+  });
+
+  test("a single-reminder provider rejects two popups before the provider is called", async () => {
+    const row = eventRow();
+    const { ctx } = actionContext(row);
+    const { adapter, patches } = recordingAdapter(REMINDER_RULES.microsoft);
+    await expect(
+      service.updateEventOp(
+        ctx,
+        "user-1",
+        {
+          eventId: row._id,
+          reminders: [
+            { method: "popup", minutes: 10 },
+            { method: "popup", minutes: 60 },
+          ],
+        },
+        { getAdapter: async () => adapter, refreshCalendar: async () => {} },
+      ),
+    ).rejects.toThrow("one reminder per event");
+    expect(patches).toEqual([]);
+  });
+
+  test("a read-only feed refuses every reminder write", async () => {
+    const row = eventRow();
+    const { ctx } = actionContext(row);
+    const { adapter, patches } = recordingAdapter(REMINDER_RULES.ical);
+    await expect(
+      service.updateEventOp(
+        ctx,
+        "user-1",
+        { eventId: row._id, reminders: [{ method: "popup", minutes: 10 }] },
+        { getAdapter: async () => adapter, refreshCalendar: async () => {} },
+      ),
+    ).rejects.toThrow("can't be changed");
+    expect(patches).toEqual([]);
+  });
+
+  test("Google receives useDefault/overrides and the mirror keeps the neutral list", async () => {
+    const row = eventRow();
+    const { ctx, mutations } = actionContext(row);
+    const bodies: Record<string, unknown>[] = [];
+    // Google always returns a `reminders` object; the stub keeps the last
+    // patched one so a later retry check sees the live state.
+    let liveReminders: unknown = { useDefault: true };
+    globalThis.fetch = (async (input, init) => {
+      if (init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        bodies.push(body);
+        if (body.reminders !== undefined) liveReminders = body.reminders;
+      }
+      return Response.json(liveGoogleEvent(row, { reminders: liveReminders }));
+    }) as typeof fetch;
+
+    await updateEventOp(ctx, "user-1", "token", {
+      eventId: row._id,
+      reminders: [
+        { method: "email", minutes: 1440 },
+        { method: "popup", minutes: 10 },
+      ],
+    });
+    expect(bodies[0]?.reminders).toEqual({
+      useDefault: false,
+      overrides: [
+        { method: "popup", minutes: 10 },
+        { method: "email", minutes: 1440 },
+      ],
+    });
+    expect(mutations[mutations.length - 1]).toMatchObject({
+      event: {
+        reminders: [
+          { method: "popup", minutes: 10 },
+          { method: "email", minutes: 1440 },
+        ],
+      },
+    });
+
+    // Back to the calendar default stays `null` for a provider that has one.
+    await updateEventOp(ctx, "user-1", "token", {
+      eventId: row._id,
+      reminders: null,
+    });
+    expect(bodies[1]?.reminders).toEqual({ useDefault: true });
   });
 });

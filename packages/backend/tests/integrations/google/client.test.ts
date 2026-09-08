@@ -191,6 +191,44 @@ describe("mapGoogleEvent", () => {
     expect(mapped.hangoutLink).toBeUndefined();
   });
 
+  test("keeps explicit reminders and reads useDefault as absent", () => {
+    const base = {
+      id: "r",
+      start: { dateTime: "2026-07-25T09:00:00.000Z" },
+      end: { dateTime: "2026-07-25T10:00:00.000Z" },
+    };
+    expect(
+      mapGoogleEvent({ ...base, reminders: { useDefault: true } }, "primary")
+        .reminders,
+    ).toBeUndefined();
+    expect(mapGoogleEvent(base, "primary").reminders).toBeUndefined();
+    // useDefault:false with no overrides is Google's "no reminders".
+    expect(
+      mapGoogleEvent({ ...base, reminders: { useDefault: false } }, "primary")
+        .reminders,
+    ).toEqual([]);
+    expect(
+      mapGoogleEvent(
+        {
+          ...base,
+          reminders: {
+            useDefault: false,
+            overrides: [
+              { method: "popup", minutes: 10 },
+              { method: "email", minutes: 30 },
+              { method: "sms", minutes: 5 },
+              { method: "popup" },
+            ],
+          },
+        },
+        "primary",
+      ).reminders,
+    ).toEqual([
+      { method: "popup", minutes: 10 },
+      { method: "email", minutes: 30 },
+    ]);
+  });
+
   test("treats a date-only start as all-day", () => {
     const mapped = mapGoogleEvent(
       { id: "evt-2", start: { date: "2026-07-25" }, end: { date: "2026-07-26" } },

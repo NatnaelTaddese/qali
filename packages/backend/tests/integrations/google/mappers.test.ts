@@ -12,6 +12,7 @@ import {
   decodeSyncCursor,
   encodePageCursor,
   encodeSyncCursor,
+  toProviderCalendar,
   toProviderError,
   toProviderEvent,
 } from "../../../convex/integrations/google/mappers";
@@ -64,6 +65,21 @@ describe("toProviderEvent", () => {
     // No Google-shaped keys survive on the neutral shape.
     expect("googleEventId" in event).toBe(false);
     expect("googleUpdatedMs" in event).toBe(false);
+  });
+
+  test("carries reminders through untouched, absent meaning default", () => {
+    expect(toProviderEvent(mappedEvent()).reminders).toBeUndefined();
+    expect(
+      toProviderEvent(
+        mappedEvent({ reminders: [{ method: "popup", minutes: 10 }] }),
+      ).reminders,
+    ).toEqual([{ method: "popup", minutes: 10 }]);
+    expect(
+      toProviderCalendar({
+        googleCalendarId: "primary",
+        defaultReminders: [{ method: "email", minutes: 60 }],
+      }).defaultReminders,
+    ).toEqual([{ method: "email", minutes: 60 }]);
   });
 
   test("leaves busy undefined when transparency is absent (Google's default)", () => {

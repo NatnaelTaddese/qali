@@ -1,3 +1,5 @@
+import type { ReminderRules } from "@qali/domain/reminders";
+
 /**
  * Provider-neutral calendar port. Provider identifiers and cursors are opaque;
  * callers persist and replay them without inspecting their contents.
@@ -30,6 +32,48 @@ export interface ProviderCalendar {
   readonly selected?: boolean;
   /** Safe to store once for every user. Providers must classify conservatively. */
   readonly shared?: boolean;
+  /** What an event's "use default" reminders resolve to on this calendar,
+   * when the provider exposes such a thing (Google's calendarList
+   * `defaultReminders`). Absent when it doesn't. */
+  readonly defaultReminders?: readonly ProviderReminder[];
+}
+
+// --- Reminders -------------------------------------------------------------
+//
+// One neutral model for every provider (see @qali/domain/reminders): a
+// reminder is `{ method, minutes }` where `minutes` counts back from the
+// event's anchor — its start for a timed event, local midnight of its date in
+// the calendar's zone for an all-day one. Google's `overrides[].minutes`,
+// Microsoft Graph's `reminderMinutesBeforeStart`, and an iCalendar
+// `TRIGGER;RELATED=START` all reduce to that unit.
+//
+// What an adapter owes the contract:
+//  - `listEvents` / `getEvent` fill `ProviderEvent.reminders`: `undefined`
+//    when the provider says "use the default", `[]` when explicitly none.
+//    `ProviderCalendar.defaultReminders` when the provider has a calendar-
+//    level default.
+//  - `createEvent` / `updateEvent` receive a list the service has already
+//    fitted to `capabilities.reminders` (see fitRemindersToRules) and only
+//    translate it to the wire. `undefined` on create = omit the field so the
+//    provider applies its own default; `null` on a patch (back to default)
+//    only reaches an adapter whose rules say `providerDefault: true`.
+//  - Idempotent no-op checks compare reminders with `sameReminderSets`.
+//
+// Expected mappings, so a new adapter is mechanical:
+//  - Google: `reminders.useDefault:true` ↔ undefined; `useDefault:false` +
+//    `overrides` ↔ the list (methods "popup" | "email").
+//  - Microsoft Graph: `isReminderOn:false` ↔ []; `isReminderOn:true,
+//    reminderMinutesBeforeStart:n` ↔ [{popup, n}]; fields omitted ↔ undefined.
+//  - iCalendar: each VALARM → one entry (`ACTION:DISPLAY|AUDIO` → popup,
+//    `ACTION:EMAIL` → email; a duration TRIGGER → minutes, an absolute or
+//    RELATED=END trigger converted relative to the start, "after start"
+//    triggers dropped); no VALARM ↔ []. Read-only feeds set `write: false`.
+
+export type ReminderMethod = "popup" | "email";
+
+export interface ProviderReminder {
+  readonly method: ReminderMethod;
+  readonly minutes: number;
 }
 
 export interface ProviderPerson {
@@ -94,6 +138,8 @@ export interface ProviderEvent {
   readonly seriesId?: string;
   readonly originalOccurrenceStartMs?: number;
   readonly conference?: ProviderConference;
+  /** Absent = the provider's "use default"; [] = explicitly none. */
+  readonly reminders?: readonly ProviderReminder[];
 }
 
 export interface EventAttendeeInput {
@@ -119,6 +165,8 @@ export interface EventCreate {
   readonly recurrence?: readonly string[];
   readonly conference?: "add";
   readonly timeZone?: string;
+  /** Absent = let the provider apply its default. */
+  readonly reminders?: readonly ProviderReminder[];
 }
 
 export type ConferenceChange = "add" | "remove" | "preserve";
@@ -144,6 +192,9 @@ export interface EventPatch {
   readonly recurrence?: readonly string[];
   readonly conference?: ConferenceChange;
   readonly timeZone?: string;
+  /** `null` = back to the provider's default (only for providers whose
+   * `capabilities.reminders.providerDefault` is true). */
+  readonly reminders?: readonly ProviderReminder[] | null;
 }
 
 export type NotifyScope = "all" | "none";
@@ -213,6 +264,8 @@ export interface ProviderCapabilities {
   readonly idempotentUpdate: boolean;
   readonly idempotentResponse: boolean;
   readonly idempotentDelete: boolean;
+  /** What this provider can hold per event; see the Reminders contract above. */
+  readonly reminders: ReminderRules;
 }
 
 export interface CalendarProviderAdapter {

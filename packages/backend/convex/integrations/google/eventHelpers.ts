@@ -1,8 +1,12 @@
+import { sameReminderSets } from "@qali/domain/reminders";
+
 import type { EventAttendeeInput } from "../calendar/types";
-import type {
-  CalendarEventPatchBody,
-  RawCalendarDateTime,
-  RawEvent,
+import {
+  mapRawReminders,
+  type CalendarEventPatchBody,
+  type RawCalendarDateTime,
+  type RawEvent,
+  type RawReminders,
 } from "./client";
 
 export interface LiveAttendee {
@@ -84,6 +88,21 @@ function attendeeKeys(attendees: LiveAttendee[] | undefined): string[] {
     .sort();
 }
 
+function sameGoogleReminders(
+  actual: RawReminders | undefined,
+  expected: RawReminders | undefined,
+): boolean {
+  if (!expected) return true;
+  // Google always returns a `reminders` object; a missing one reads as default.
+  const actualDefault = actual?.useDefault !== false;
+  if (expected.useDefault !== false) return actualDefault;
+  if (actualDefault) return false;
+  return sameReminderSets(
+    mapRawReminders(actual?.overrides),
+    mapRawReminders(expected.overrides),
+  );
+}
+
 /** Whether a retry-safe patch is already visible in Google's live event. */
 export function googleEventMatchesPatch(
   event: RawEvent,
@@ -117,6 +136,7 @@ export function googleEventMatchesPatch(
   ) {
     return false;
   }
+  if (!sameGoogleReminders(event.reminders, patch.reminders)) return false;
   const hasConference = Boolean(event.hangoutLink || event.conferenceData);
   if (conference === "add" && !hasConference) return false;
   if (conference === "remove" && hasConference) return false;

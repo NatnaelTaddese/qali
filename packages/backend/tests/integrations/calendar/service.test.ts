@@ -1,6 +1,8 @@
 // @ts-expect-error Bun supplies its test module at runtime.
 import { describe, expect, test } from "bun:test";
 
+import { REMINDER_RULES } from "@qali/domain/reminders";
+
 import { ProviderError } from "../../../convex/integrations/calendar/errors";
 import { createEventReconciling } from "../../../convex/integrations/calendar/service";
 import type {
@@ -36,6 +38,7 @@ class FakeCalendarAdapter implements CalendarProviderAdapter {
     idempotentUpdate: true,
     idempotentResponse: true,
     idempotentDelete: true,
+    reminders: REMINDER_RULES.microsoft,
   };
 
   private seq = 0;

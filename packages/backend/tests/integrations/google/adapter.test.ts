@@ -1,7 +1,12 @@
 // @ts-expect-error Bun supplies its test module at runtime.
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { GoogleCalendarAdapter } from "../../../convex/integrations/google/adapter";
+import { REMINDER_RULES } from "@qali/domain/reminders";
+
+import {
+  GoogleCalendarAdapter,
+  remindersBody,
+} from "../../../convex/integrations/google/adapter";
 import { encodePageCursor, encodeSyncCursor } from "../../../convex/integrations/google/mappers";
 
 const originalFetch = globalThis.fetch;
@@ -210,6 +215,78 @@ describe("GoogleCalendarAdapter create and patch", () => {
         .conferenceData?.createRequest?.requestId,
     ).toBe("conference-operation");
     expect((patches[1]?.body as { conferenceData?: unknown }).conferenceData).toBeNull();
+  });
+
+  test("translates neutral reminders to Google's useDefault/overrides object", async () => {
+    expect(remindersBody({ summary: "x" })).toBeUndefined();
+    expect(remindersBody({ reminders: null })).toEqual({ useDefault: true });
+    expect(remindersBody({ reminders: [] })).toEqual({
+      useDefault: false,
+      overrides: [],
+    });
+    expect(
+      remindersBody({
+        reminders: [
+          { method: "popup", minutes: 10 },
+          { method: "email", minutes: 1440 },
+        ],
+      }),
+    ).toEqual({
+      useDefault: false,
+      overrides: [
+        { method: "popup", minutes: 10 },
+        { method: "email", minutes: 1440 },
+      ],
+    });
+    expect(new GoogleCalendarAdapter("token").capabilities.reminders).toBe(
+      REMINDER_RULES.google,
+    );
+
+    const requests = requestLog(() => Response.json(rawEvent()));
+    await new GoogleCalendarAdapter("token").updateEvent({
+      ref: { calendarId: "primary@example.com", eventId: "event-1" },
+      patch: { reminders: [{ method: "popup", minutes: 5 }] },
+    });
+    expect(requests[0]?.body).toMatchObject({
+      reminders: { useDefault: false, overrides: [{ method: "popup", minutes: 5 }] },
+    });
+  });
+
+  test("an operation-key retry no-ops when a reminder patch already landed", async () => {
+    const live = rawEvent({
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: "email", minutes: 30 },
+          { method: "popup", minutes: 10 },
+        ],
+      },
+    });
+    const requests = requestLog(() => Response.json(live));
+    const adapter = new GoogleCalendarAdapter("token");
+    // Same set, different order: already landed.
+    await adapter.updateEvent({
+      ref: { calendarId: "primary@example.com", eventId: "event-1" },
+      patch: {
+        reminders: [
+          { method: "popup", minutes: 10 },
+          { method: "email", minutes: 30 },
+        ],
+      },
+      idempotencyKey: "reminders-op",
+    });
+    // Back to default while the live event is explicit: must patch.
+    await adapter.updateEvent({
+      ref: { calendarId: "primary@example.com", eventId: "event-1" },
+      patch: { reminders: null },
+      idempotencyKey: "reminders-op-2",
+    });
+    expect(requests.map((request) => request.method)).toEqual([
+      "GET",
+      "GET",
+      "PATCH",
+    ]);
+    expect(requests[2]?.body).toMatchObject({ reminders: { useDefault: true } });
   });
 
   test("an operation-key retry no-ops when its semantic patch already landed", async () => {

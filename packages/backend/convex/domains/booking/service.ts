@@ -133,6 +133,7 @@ async function executeAcceptanceClaim(
           organizer: event.organizer ? { ...event.organizer } : undefined,
           creator: event.creator ? { ...event.creator } : undefined,
           conference: event.conference ? { ...event.conference } : undefined,
+          reminders: event.reminders?.map((reminder) => ({ ...reminder })),
         },
       },
     );

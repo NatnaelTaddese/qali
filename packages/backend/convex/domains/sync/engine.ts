@@ -16,7 +16,10 @@ import {
   ensureGoogleConnection,
   preferredConnection,
 } from "../calendar/connections";
-import { providerEventValidator } from "../calendar/validators";
+import {
+  providerEventValidator,
+  reminderValidator,
+} from "../calendar/validators";
 import type {
   ContactsProviderAdapter,
   ProviderContact,
@@ -79,6 +82,7 @@ const providerCalendarValidator = v.object({
   writable: v.boolean(),
   selected: v.optional(v.boolean()),
   shared: v.optional(v.boolean()),
+  defaultReminders: v.optional(v.array(reminderValidator)),
 });
 const providerContactValidator = v.object({
   id: v.string(),
@@ -129,6 +133,7 @@ function valueEvent(event: ProviderEvent) {
     creator: event.creator ? { ...event.creator } : undefined,
     recurrence: event.recurrence ? [...event.recurrence] : undefined,
     conference: event.conference ? { ...event.conference } : undefined,
+    reminders: event.reminders?.map((row) => ({ ...row })),
   };
 }
 
@@ -165,6 +170,7 @@ function storedEventBase(event: ProviderEvent, generation?: number) {
     conferenceUrl: event.conference?.url,
     conferenceName: event.conference?.name,
     conferenceType: event.conference?.type,
+    reminders: event.reminders?.map((row) => ({ ...row })),
     syncGeneration: generation,
   };
 }
@@ -635,7 +641,10 @@ async function syncCalendars(
   }[] = await ctx.runMutation(internal.domains.sync.engine.reconcileCalendars, {
     connectionId,
     attemptId,
-    calendars: listed.map((row) => ({ ...row })),
+    calendars: listed.map((row) => ({
+      ...row,
+      defaultReminders: row.defaultReminders?.map((r) => ({ ...r })),
+    })),
   });
   let changed = false;
   for (const calendar of calendars) {
@@ -1195,6 +1204,7 @@ export const reconcileCalendars = internalMutation({
         primary: calendar.primary,
         accessRole: calendar.writable ? "writer" : "reader",
         timeZone: calendar.timeZone,
+        defaultReminders: calendar.defaultReminders,
         providerSelected: calendar.selected,
         connectionId: args.connectionId,
         providerCalendarId: calendar.id,

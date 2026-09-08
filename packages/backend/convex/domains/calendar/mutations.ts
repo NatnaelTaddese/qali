@@ -729,6 +729,7 @@ export async function mirrorProviderEventHandler(
     conferenceUrl: event.conference?.url,
     conferenceName: event.conference?.name,
     conferenceType: event.conference?.type,
+    reminders: event.reminders,
   };
   const existing = await ctx.db
     .query("events")

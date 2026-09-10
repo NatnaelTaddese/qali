@@ -51,7 +51,7 @@
     "@tanstack/react-router-devtools": "^1.167.0",
     "@tanstack/router-plugin": "^1.168.19",
     "@types/jsdom": "^30.0.0",
-    "@types/node": "^22.13.14",
+    "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "^6.0.3",

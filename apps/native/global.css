@@ -1,0 +1,194 @@
+@import "tailwindcss";
+@import "uniwind";
+@import "heroui-native/styles";
+
+/*
+ * qali theme for the native app.
+ *
+ * Mirrors packages/ui/src/styles/globals.css (the web design system) on top of
+ * heroui-native's token names. Two consumer sets share this file:
+ *
+ *  - heroui-native components read their own tokens (surface, default, accent,
+ *    muted, danger, field, …). Those are re-pointed at the web palette below,
+ *    so a heroui `Button` renders like the web `default` button, a `Surface`
+ *    like the web `Card`, and `text-muted` like the web `text-muted-foreground`.
+ *  - Screens written against the web vocabulary can use the web class names
+ *    directly: bg-card, bg-primary, text-muted-foreground, text-destructive,
+ *    border-border, text-link, bg-event-6, …
+ *
+ * Two names mean different things on web and in heroui and keep the heroui
+ * meaning here: `accent` is the brand accent (web `primary`; the web's subtle
+ * `accent` hover fill is `surface-tertiary`), and `muted` is the muted text
+ * colour (web `muted-foreground`; the web's `bg-muted` fill is `secondary`).
+ *
+ * Colours are written as oklch like the web file; uniwind converts them to hex
+ * at build time and evaluates color-mix() at runtime.
+ */
+
+@theme {
+  /* Static instances cut from the same variable fonts the web loads; see
+   * assets/fonts and the expo-font plugin in app.json. Each face carries the
+   * bare family name so `font-medium` etc. resolve within the family. */
+  --font-sans: "Lexend";
+  --font-heading: "Lexend";
+  --font-display: "Fraunces";
+
+  /* Web radius scale (--radius: 0.625rem, additive steps). Overrides heroui's
+   * multiplicative scale so rounded-* matches the web pixel for pixel. */
+  --radius: 0.625rem;
+  --radius-xs: 0.25rem;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+
+  /* Chroma band — identical in both themes on web. */
+  --color-chroma-1: #c679c4;
+  --color-chroma-2: #fa3d1d;
+  --color-chroma-3: #ffb005;
+  --color-chroma-4: #e1e1fe;
+  --color-chroma-5: #0358f7;
+}
+
+@layer theme {
+  :root {
+    @variant light {
+      /* --- web tokens (packages/ui globals.css :root) --- */
+      --background: oklch(99% 0 0);
+      --foreground: oklch(13% 0 0);
+      --card: oklch(97% 0 0);
+      --card-foreground: oklch(13% 0 0);
+      --popover: oklch(97% 0 0);
+      --popover-foreground: oklch(13% 0 0);
+      --primary: oklch(13% 0 0);
+      --primary-foreground: oklch(99% 0 0);
+      --secondary: oklch(97% 0 0);
+      --secondary-foreground: oklch(13% 0 0);
+      --muted-foreground: oklch(47% 0 0);
+      --calendar-header: oklch(98.2% 0 0);
+      --destructive: oklch(62% 0.22 25);
+      --input: oklch(13% 0 0 / 0.06);
+      --ring: oklch(13% 0 0 / 0.12);
+      --event-neutral: oklch(0.68 0.02 250);
+      --event-1: oklch(0.72 0.15 20);
+      --event-2: oklch(0.74 0.15 50);
+      --event-3: oklch(0.8 0.13 90);
+      --event-4: oklch(0.75 0.15 150);
+      --event-5: oklch(0.76 0.12 195);
+      --event-6: oklch(0.72 0.14 240);
+      --event-7: oklch(0.7 0.15 285);
+      --event-8: oklch(0.7 0.16 325);
+
+      /* --- heroui tokens re-pointed at the web palette --- */
+      --surface: oklch(97% 0 0);
+      --surface-foreground: oklch(13% 0 0);
+      --surface-secondary: oklch(97% 0 0);
+      --surface-secondary-foreground: oklch(13% 0 0);
+      --surface-tertiary: oklch(94% 0 0);
+      --surface-tertiary-foreground: oklch(13% 0 0);
+      --overlay: oklch(97% 0 0);
+      --overlay-foreground: oklch(13% 0 0);
+      --backdrop: oklch(99% 0 0 / 0.4);
+      --muted: oklch(47% 0 0);
+      --default: oklch(97% 0 0);
+      --default-foreground: oklch(13% 0 0);
+      --accent: oklch(13% 0 0);
+      --accent-foreground: oklch(99% 0 0);
+      --field-background: oklch(13% 0 0 / 0.04);
+      --field-foreground: oklch(13% 0 0);
+      --field-placeholder: oklch(47% 0 0);
+      --danger: oklch(62% 0.22 25);
+      --danger-foreground: oklch(99% 0 0);
+      --segment: oklch(99% 0 0);
+      --segment-foreground: oklch(13% 0 0);
+      --border: oklch(13% 0 0 / 0.06);
+      --separator: oklch(13% 0 0 / 0.12);
+      --focus: oklch(13% 0 0 / 0.12);
+      --link: oklch(0.52 0.17 255);
+    }
+
+    @variant dark {
+      /* --- web tokens (packages/ui globals.css .dark) --- */
+      --background: #111111;
+      --foreground: oklch(96% 0 0);
+      --card: #1b1b1b;
+      --card-foreground: oklch(96% 0 0);
+      --popover: #1b1b1b;
+      --popover-foreground: oklch(96% 0 0);
+      --primary: oklch(96% 0 0);
+      --primary-foreground: #111111;
+      --secondary: #1b1b1b;
+      --secondary-foreground: oklch(96% 0 0);
+      --muted-foreground: oklch(62% 0 0);
+      --calendar-header: #0e0e0e;
+      --destructive: oklch(62% 0.22 25);
+      --input: rgb(255 255 255 / 0.05);
+      --ring: rgb(255 255 255 / 0.1);
+      --event-neutral: oklch(0.68 0.02 250);
+      --event-1: oklch(0.72 0.15 20);
+      --event-2: oklch(0.74 0.15 50);
+      --event-3: oklch(0.8 0.13 90);
+      --event-4: oklch(0.75 0.15 150);
+      --event-5: oklch(0.76 0.12 195);
+      --event-6: oklch(0.72 0.14 240);
+      --event-7: oklch(0.7 0.15 285);
+      --event-8: oklch(0.7 0.16 325);
+
+      /* --- heroui tokens re-pointed at the web palette --- */
+      --surface: #1b1b1b;
+      --surface-foreground: oklch(96% 0 0);
+      --surface-secondary: #1b1b1b;
+      --surface-secondary-foreground: oklch(96% 0 0);
+      --surface-tertiary: oklch(28% 0 0);
+      --surface-tertiary-foreground: oklch(96% 0 0);
+      --overlay: #1b1b1b;
+      --overlay-foreground: oklch(96% 0 0);
+      --backdrop: rgb(17 17 17 / 0.4);
+      --muted: oklch(62% 0 0);
+      --default: #1b1b1b;
+      --default-foreground: oklch(96% 0 0);
+      --accent: oklch(96% 0 0);
+      --accent-foreground: #111111;
+      --field-background: rgb(255 255 255 / 0.04);
+      --field-foreground: oklch(96% 0 0);
+      --field-placeholder: oklch(62% 0 0);
+      --danger: oklch(62% 0.22 25);
+      --danger-foreground: oklch(99% 0 0);
+      --segment: oklch(28% 0 0);
+      --segment-foreground: oklch(96% 0 0);
+      --border: rgb(255 255 255 / 0.05);
+      --separator: rgb(255 255 255 / 0.1);
+      --focus: rgb(255 255 255 / 0.1);
+      --link: oklch(0.72 0.15 255);
+    }
+  }
+}
+
+/* Web-vocabulary utilities (bg-card, text-muted-foreground, bg-event-6, …). */
+@theme inline static {
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-calendar-header: var(--calendar-header);
+  --color-destructive: var(--destructive);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-event-neutral: var(--event-neutral);
+  --color-event-1: var(--event-1);
+  --color-event-2: var(--event-2);
+  --color-event-3: var(--event-3);
+  --color-event-4: var(--event-4);
+  --color-event-5: var(--event-5);
+  --color-event-6: var(--event-6);
+  --color-event-7: var(--event-7);
+  --color-event-8: var(--event-8);
+}

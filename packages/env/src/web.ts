@@ -1,10 +1,6 @@
 import { createEnv } from "@t3-oss/env-core";
-import { z } from "zod";
 
-const convexUrlSchema = (exampleHost: string) =>
-  z.url().refine((url) => new URL(url).hostname !== exampleHost, {
-    message: `Replace the ${exampleHost} placeholder before running the app`,
-  });
+import { convexUrlSchema } from "./shared";
 
 export const env = createEnv({
   clientPrefix: "VITE_",

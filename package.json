@@ -19,12 +19,14 @@
       "@convex-dev/better-auth": "^0.12.5",
       "@types/react": "^19.2.17",
       "@types/react-dom": "^19.2.3",
-      "tailwindcss": "^4.3.2"
+      "tailwindcss": "^4.3.2",
+      "@better-auth/expo": "1.6.30",
+      "@types/node": "^22.13.14"
     }
   },
   "type": "module",
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --filter=!native",
     "build": "turbo run build",
     "check-types": "turbo run check-types",
     "test": "turbo run test",
@@ -33,7 +35,9 @@
     "dev:server": "turbo run dev -F @qali/backend",
     "dev:setup": "turbo run dev:setup -F @qali/backend",
     "build:cloudflare": "bun run build --filter=web && bun run --cwd packages/backend deploy:prod",
-    "build:cloudflare:www": "bun run build --filter=www"
+    "build:cloudflare:www": "bun run build --filter=www",
+    "dev:native": "bun run --cwd apps/native dev",
+    "ios": "bun run --cwd apps/native ios"
   },
   "dependencies": {
     "@qali/env": "workspace:*",
@@ -42,7 +46,7 @@
   },
   "devDependencies": {
     "@qali/config": "workspace:*",
-    "@types/node": "^22.13.14",
+    "@types/node": "catalog:",
     "turbo": "^2.10.2",
     "typescript": "catalog:",
     "wrangler": "^4.126.0"

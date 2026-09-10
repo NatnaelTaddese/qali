@@ -14,6 +14,7 @@
     "deploy:prod": "convex deploy"
   },
   "dependencies": {
+    "@better-auth/expo": "catalog:",
     "@convex-dev/better-auth": "catalog:",
     "@qali/domain": "workspace:*",
     "@qali/env": "workspace:*",

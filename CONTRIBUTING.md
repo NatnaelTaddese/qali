@@ -31,6 +31,19 @@ cp apps/web/.env.example apps/web/.env.local
 
 Never commit `.env` or `.env.local` files.
 
+### Native app (optional)
+
+`apps/native` is the Expo app. It needs the same two URLs, and a
+[development build](https://docs.expo.dev/develop/development-builds/introduction/)
+(Xcode with an iOS Simulator for `ios`, Android Studio for `android`) —
+Expo Go cannot load its native dependencies:
+
+```bash
+cp apps/native/.env.example apps/native/.env.local
+bun run ios          # builds the dev client into apps/native/ios (gitignored) and starts Metro
+bun run dev:native   # later runs: Metro only, then press i to open the installed build
+```
+
 ## 3. Configure Google OAuth
 
 qali signs in with Google and syncs Calendar and Contacts, so a plain sign-in
@@ -66,6 +79,11 @@ are hosted by Convex):
 ```text
 https://<deployment-name>.convex.site/api/auth/callback/google
 ```
+
+The native app reuses this same client and redirect URI: Better Auth opens the
+consent screen in the system browser and the callback still lands on Convex,
+which then deep-links back into the app (`qali://` is a trusted origin in
+`packages/backend/convex/auth.ts`). No iOS or Android OAuth client is needed.
 
 **Set the deployment variables** — from `packages/backend`:
 

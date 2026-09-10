@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Container } from "@/components/container";
 import { Button } from "@/components/button";
+import { CalendarBackdrop } from "@/components/calendar-backdrop";
 import { GoogleIcon } from "@/components/google-icon";
 import { Text } from "@/components/text";
 import { authClient } from "@/lib/auth-client";
@@ -40,6 +41,7 @@ export default function SignInScreen() {
 
   return (
     <Container isScrollable={false}>
+      <CalendarBackdrop />
       <View
         className="flex-1 items-center justify-center gap-3 px-4"
         style={{ paddingTop: insets.top }}

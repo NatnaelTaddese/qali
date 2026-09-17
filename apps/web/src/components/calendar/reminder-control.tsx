@@ -62,30 +62,24 @@ function readNudgeDismissed(): boolean {
   }
 }
 
-/**
- * The Reminder control: a trigger showing the current choice, opening a
- * compact popover — Default / None, the chosen reminders as removable chips,
- * and a wheel composer for adding one more. `null` means "the calendar's
- * default"; `[]` means none. The provider's rules shape it: one reminder on
- * Outlook, read-only on a subscribed feed.
- */
-export function ReminderControl({
-  value,
-  allDay,
-  provider,
-  onChange,
-}: {
+export interface ReminderPickerProps {
+  /** `null` = the calendar's default; `[]` = none. */
   value: Reminder[] | null;
   allDay: boolean;
   provider: string | undefined;
   onChange: (reminders: Reminder[] | null) => void;
-}) {
+}
+
+/**
+ * The form's Reminder control: a trigger reading the current choice, opening
+ * the picker in a compact popover. Read-only on a subscribed feed. The detail
+ * panel opens the same picker from its bell instead.
+ */
+export function ReminderControl(props: ReminderPickerProps) {
+  const { value, allDay, provider } = props;
   const { use24h, raw } = usePreferences();
   const rules: ReminderRules = reminderRulesFor(provider ?? "google");
   const [open, setOpen] = useState(false);
-  // "Custom" with nothing added yet is a UI state, not a value: the value
-  // stays as it was until the first Add, but the composer is showing.
-  const [composing, setComposing] = useState(false);
   const defaultMinutes = allDay
     ? raw.defaultAllDayReminderMinutes
     : raw.defaultReminderMinutes;
@@ -96,6 +90,37 @@ export function ReminderControl({
       <span className="px-2 py-1 text-sm text-muted-foreground">{summary}</span>
     );
   }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger className="flex-1 truncate rounded-lg px-2 py-1 text-right text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
+        {summary}
+      </PopoverTrigger>
+      <PopoverContent side="top" align="end" className="w-[21rem] p-2">
+        <ReminderPicker {...props} />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * The picker itself — Default / None, the chosen reminders as removable
+ * chips, and a wheel composer for adding one more — with no trigger of its
+ * own, so each panel can open it its own way. `null` means "the calendar's
+ * default"; `[]` means none. The provider's rules shape it: one reminder on
+ * Outlook.
+ */
+export function ReminderPicker({
+  value,
+  allDay,
+  provider,
+  onChange,
+}: ReminderPickerProps) {
+  const { use24h } = usePreferences();
+  const rules: ReminderRules = reminderRulesFor(provider ?? "google");
+  // "Custom" with nothing added yet is a UI state, not a value: the value
+  // stays as it was until the first Add, but the composer is showing.
+  const [composing, setComposing] = useState(false);
 
   const cap = Math.min(rules.maxPerEvent, MAX_REMINDERS_PER_EVENT);
   const popups = (value ?? []).filter((r) => r.method === "popup");
@@ -122,89 +147,84 @@ export function ReminderControl({
   const remove = (minutes: number) => onChange(togglePopup(value ?? [], minutes));
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger className="flex-1 truncate rounded-lg px-2 py-1 text-right text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
-        {summary}
-      </PopoverTrigger>
-      <PopoverContent side="top" align="end" className="w-[21rem] p-2">
-        {/* Default / None — the two states that aren't a list. */}
-        <div className="flex gap-1 rounded-xl bg-muted p-1">
-          {rules.providerDefault && (
-            <Segment
-              active={mode === "default"}
-              onClick={() => {
-                setComposing(false);
-                onChange(null);
-              }}
-            >
-              Default
-            </Segment>
-          )}
+    <>
+      {/* Default / None — the two states that aren't a list. */}
+      <div className="flex gap-1 rounded-xl bg-muted p-1">
+        {rules.providerDefault && (
           <Segment
-            active={mode === "none"}
+            active={mode === "default"}
             onClick={() => {
               setComposing(false);
-              onChange([]);
+              onChange(null);
             }}
           >
-            None
+            Default
           </Segment>
-          <Segment active={mode === "custom"} onClick={() => setComposing(true)}>
-            {popups.length === 0
-              ? "Custom"
-              : popups.length === 1
-                ? "1 reminder"
-                : `${popups.length} reminders`}
-          </Segment>
-        </div>
+        )}
+        <Segment
+          active={mode === "none"}
+          onClick={() => {
+            setComposing(false);
+            onChange([]);
+          }}
+        >
+          None
+        </Segment>
+        <Segment active={mode === "custom"} onClick={() => setComposing(true)}>
+          {popups.length === 0
+            ? "Custom"
+            : popups.length === 1
+              ? "1 reminder"
+              : `${popups.length} reminders`}
+        </Segment>
+      </div>
 
-        {popups.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1">
-            {[...popups]
-              .sort((a, b) => a.minutes - b.minutes)
-              .map((r) => (
-                <span
-                  key={r.minutes}
-                  className="flex h-7 items-center gap-1 rounded-full bg-accent pr-1 pl-2.5 text-xs font-medium"
+      {popups.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {[...popups]
+            .sort((a, b) => a.minutes - b.minutes)
+            .map((r) => (
+              <span
+                key={r.minutes}
+                className="flex h-7 items-center gap-1 rounded-full bg-accent pr-1 pl-2.5 text-xs font-medium"
+              >
+                {labelFor(r.minutes, allDay, use24h)}
+                <button
+                  type="button"
+                  aria-label={`Remove ${labelFor(r.minutes, allDay, use24h)}`}
+                  onClick={() => remove(r.minutes)}
+                  className="flex size-5 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  {labelFor(r.minutes, allDay, use24h)}
-                  <button
-                    type="button"
-                    aria-label={`Remove ${labelFor(r.minutes, allDay, use24h)}`}
-                    onClick={() => remove(r.minutes)}
-                    className="flex size-5 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="size-3" />
-                  </button>
-                </span>
-              ))}
-          </div>
-        )}
+                  <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="size-3" />
+                </button>
+              </span>
+            ))}
+        </div>
+      )}
 
-        {mode === "custom" && (
-          <div className="mt-2 border-t pt-2">
-            {allDay ? (
-              <AllDayComposer
-                use24h={use24h}
-                disabled={full && cap > 1}
-                onAdd={add}
-              />
-            ) : (
-              <TimedComposer disabled={full && cap > 1} onAdd={add} />
-            )}
-            <p className="mt-1.5 px-1 text-[11px] text-muted-foreground">
-              {cap > 1 && full
-                ? `Up to ${cap} reminders`
-                : cap === 1
-                  ? "This calendar keeps one reminder per event"
-                  : "Pick an offset and add it"}
-            </p>
-          </div>
-        )}
+      {mode === "custom" && (
+        <div className="mt-2 border-t pt-2">
+          {allDay ? (
+            <AllDayComposer
+              use24h={use24h}
+              disabled={full && cap > 1}
+              onAdd={add}
+            />
+          ) : (
+            <TimedComposer disabled={full && cap > 1} onAdd={add} />
+          )}
+          <p className="mt-1.5 px-1 text-[11px] text-muted-foreground">
+            {cap > 1 && full
+              ? `Up to ${cap} reminders`
+              : cap === 1
+                ? "This calendar keeps one reminder per event"
+                : "Pick an offset and add it"}
+          </p>
+        </div>
+      )}
 
-        <NotificationsNudge />
-      </PopoverContent>
-    </Popover>
+      <NotificationsNudge />
+    </>
   );
 }
 

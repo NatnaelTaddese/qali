@@ -49,13 +49,15 @@ export type EventCapabilityName =
   | "canEdit"
   | "canRespond"
   | "canDelete"
-  | "canRemoveSelf";
+  | "canRemoveSelf"
+  | "canSetReminders";
 
 const CAPABILITY_DENIAL: Record<EventCapabilityName, string> = {
   canEdit: "You can't edit this event",
   canRespond: "You're not a guest on this event",
   canDelete: "You can't delete this event",
   canRemoveSelf: "You can't remove this event",
+  canSetReminders: "You can't change reminders on this event",
 };
 
 export { ExternalWriteCommittedError, isDefinitiveProviderFailure };
@@ -1035,6 +1037,105 @@ export async function respondToEventOp(
   }
 }
 
+export type SetEventRemindersScope = "thisEvent" | "allEvents";
+
+export interface SetEventRemindersArgs {
+  eventId: Id<"events">;
+  /** A list replaces them ([] = none); `null` reverts to the calendar's
+   * default. */
+  reminders: Reminder[] | null;
+  /** Recurring rows only, forced to "thisEvent" otherwise. Absent =
+   * "thisEvent". */
+  scope?: SetEventRemindersScope;
+  operationId?: string;
+}
+
+/**
+ * Change only the reminders — the one edit a guest may make to an invitation
+ * they can't otherwise touch, since the provider keeps reminders on each copy.
+ * Deliberately not `updateEventOp` with a narrower capability: that op's
+ * "thisAndFollowing" branch mints a new series carrying the guest list and
+ * mails everyone, which a reminders-only caller must never be able to reach.
+ */
+export async function setEventRemindersOp(
+  ctx: ActionCtx,
+  userId: string,
+  args: SetEventRemindersArgs,
+  dependencies?: CalendarServiceDependencies,
+): Promise<ProviderEvent> {
+  const { row, target } = await resolveEventForWrite(
+    ctx,
+    userId,
+    args.eventId,
+    ["canSetReminders"],
+  );
+  const adapter = await adapterFor(ctx, userId, target.connectionId, dependencies);
+  const reminders = await fitReminders(
+    ctx,
+    userId,
+    adapter,
+    target.calendar,
+    row.allDay,
+    args.reminders,
+  );
+  const scope: SetEventRemindersScope = target.providerSeriesId
+    ? (args.scope ?? "thisEvent")
+    : "thisEvent";
+  // A series-wide write goes to the master, which is never a local row.
+  const ref = {
+    calendarId: target.providerCalendarId,
+    eventId:
+      scope === "allEvents" && target.providerSeriesId
+        ? target.providerSeriesId
+        : target.providerEventId,
+  };
+  const operation = await claimWrite(
+    ctx,
+    userId,
+    target,
+    "update",
+    args.operationId,
+    target.providerEventId,
+    target.event._id,
+    calendarRequestFingerprint({ reminders: args.reminders, scope }),
+  );
+  try {
+    const event =
+      operation.state === "succeeded"
+        ? await adapter.getEvent({
+            calendarId: ref.calendarId,
+            eventId: operation.providerEventId ?? ref.eventId,
+          })
+        : await adapter.updateEvent({
+            ref,
+            patch: { reminders },
+            idempotencyKey: operation.idempotencyKey,
+          });
+    if (operation.state !== "succeeded") {
+      await settleWrite(ctx, userId, target, operation, "succeeded", event.id);
+    }
+    if (scope === "allEvents") {
+      // The response is the master; its instances come back through a sync.
+      try {
+        await refreshTarget(ctx, userId, target, dependencies);
+      } catch (error) {
+        throw new ExternalWriteCommittedError("Reminders updated.", error);
+      }
+    } else {
+      await mirrorEvent(ctx, userId, target, event, "Reminders updated.");
+    }
+    return event;
+  } catch (error) {
+    if (error instanceof ExternalWriteCommittedError) {
+      throw error;
+    }
+    if (operation.state === "succeeded") {
+      throw new ExternalWriteCommittedError("Reminders updated.", error);
+    }
+    return await providerFailure(ctx, userId, target, operation, error);
+  }
+}
+
 export interface DeleteEventArgs {
   eventId: Id<"events">;
   scope?: DeleteEventScope;
@@ -1388,6 +1489,15 @@ export async function respondToEventHandler(
   );
 }
 
+export async function setEventRemindersHandler(
+  ctx: ActionCtx,
+  args: SetEventRemindersArgs,
+): Promise<ReturnType<typeof calendarActionEvent>> {
+  return calendarActionEvent(
+    await setEventRemindersOp(ctx, await authedUser(ctx), args),
+  );
+}
+
 export async function deleteEventHandler(
   ctx: ActionCtx,
   args: DeleteEventArgs,
@@ -1522,6 +1632,23 @@ export const respondToEvent = action({
     ),
   },
   handler: (ctx, args) => respondToEventHandler(ctx, args),
+});
+
+/** Reminders only, for the detail panel's bell. Unlike `updateEvent` this
+ * needs no edit rights: reminders live on your own copy of the event. */
+export const setEventReminders = action({
+  args: {
+    eventId: v.id("events"),
+    /** A list replaces them ([] = none); `null` reverts to the calendar's
+     * default. */
+    reminders: v.union(v.array(reminderValidator), v.null()),
+    /** Recurring rows only. Absent = `"thisEvent"`; the detail panel sends
+     * `"allEvents"` so the offset holds for the whole series. */
+    scope: v.optional(v.union(v.literal("thisEvent"), v.literal("allEvents"))),
+    /** Idempotency key, stable across retries of the same user intent. */
+    operationId: v.optional(v.string()),
+  },
+  handler: (ctx, args) => setEventRemindersHandler(ctx, args),
 });
 
 export const deleteEvent = action({

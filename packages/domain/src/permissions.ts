@@ -49,6 +49,10 @@ export interface EventCapabilities {
   /** Remove your own copy, leaving the organiser's untouched. */
   canRemoveSelf: boolean;
   canRespond: boolean;
+  /** Change the reminders on your own copy. Independent of `canEdit`: the
+   * provider keeps reminders per copy, so a guest may set them on an
+   * invitation they can't otherwise touch, locked or not. */
+  canSetReminders: boolean;
   canChangeRecurrence: boolean;
   isOrganizer: boolean;
   /** Your own RSVP: "needsAction" | "declined" | "tentative" | "accepted". */
@@ -108,6 +112,10 @@ export function eventCapabilities(
     // still works on an event locked against every other change. It does need
     // write access to the calendar holding the copy we would patch.
     canRespond: writableCalendar && selfAttendee !== undefined,
+    // Reminders sit on the copy in your own calendar, not on the shared
+    // event, so the organiser's flags don't apply — only the calendar's
+    // access role, and whether Google owns the event outright.
+    canSetReminders: writableCalendar && !googleManaged,
     // We sync with singleEvents=true, so a recurring row is one expanded
     // instance and never carries its own rule — there is nothing here to edit.
     canChangeRecurrence: canEdit && event.providerSeriesId === undefined,

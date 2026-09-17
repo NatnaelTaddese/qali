@@ -5,8 +5,8 @@ import {
   Clock01Icon,
   Copy01Icon,
   Link01Icon,
-  LinkSquare02Icon,
   Location01Icon,
+  Notification03Icon,
   PencilEdit02Icon,
   RepeatIcon,
   SquareLock01Icon,
@@ -19,6 +19,11 @@ import { api } from "@qali/backend/convex/_generated/api";
 import { Button } from "@qali/ui/components/button";
 import { Spinner } from "@qali/ui/components/spinner";
 import { GooDropdown } from "@qali/ui/components/ui/goo-dropdown";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@qali/ui/components/popover";
 import {
   Tooltip,
   TooltipContent,
@@ -54,9 +59,16 @@ import {
 } from "./lib";
 import { dockVariants, dockVariantsReduced, press, SPRING_DOCK } from "./motion";
 import { useEventCapabilities } from "./permissions";
+import { ReminderPicker, type ReminderPickerProps } from "./reminder-control";
 import { RichTextView } from "./rich-text/rich-text-view";
 import { htmlToPreviewText } from "./rich-text/text";
-import { labelFor } from "./reminders";
+import {
+  describeReminders,
+  normalizeReminders,
+  sameReminders,
+  summarizeReminders,
+  type Reminder,
+} from "./reminders";
 import { parseRRule, summarize } from "./rrule";
 
 /** How many avatars to show before collapsing the rest into a "+N" bubble. */
@@ -64,6 +76,10 @@ const MAX_AVATARS = 6;
 
 /** How long the delete button waits for its second click before reverting. */
 const CONFIRM_TIMEOUT_MS = 3000;
+
+/** The footer's icon buttons: round, like the close button above, rather than
+ * the form's rounded-square controls — the footer holds actions, not settings. */
+const footerButtonClass = cn(buttonClass, "rounded-full");
 
 const RSVP_CHOICES = [
   { status: "accepted", label: "Going" },
@@ -105,32 +121,29 @@ function DetailRow({
   );
 }
 
-/** A tooltipped icon button, matching the colour/calendar controls in the form
- * so the two panels' footers read as one row of the same thing. */
+/** A tooltipped icon button for one of the footer's actions. */
 function IconAction({
   icon,
   label,
   onClick,
-  href,
 }: {
   icon: IconSvgElement;
   label: string;
-  onClick?: () => void;
-  href?: string;
+  onClick: () => void;
 }) {
-  const content = <HugeiconsIcon icon={icon} strokeWidth={2} className="size-4.5" />;
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          href ? (
-            <a href={href} target="_blank" rel="noreferrer" aria-label={label} className={buttonClass} />
-          ) : (
-            <button type="button" onClick={onClick} aria-label={label} className={buttonClass} />
-          )
+          <button
+            type="button"
+            onClick={onClick}
+            aria-label={label}
+            className={footerButtonClass}
+          />
         }
       >
-        {content}
+        <HugeiconsIcon icon={icon} strokeWidth={2} className="size-4.5" />
       </TooltipTrigger>
       <TooltipContent side="top">{label}</TooltipContent>
     </Tooltip>
@@ -471,6 +484,84 @@ function RecurringDeleteControl({
   );
 }
 
+/**
+ * The reminders the panel shows and the bell edits, held optimistically until
+ * the synced row agrees — RsvpControl's override, for a value where `null`
+ * (the calendar's default) is itself an answer, hence the wrapper.
+ */
+function useEventReminders(event: CalendarEvent) {
+  const setEventReminders = useAction(
+    api.domains.calendar.service.setEventReminders,
+  );
+  const [optimistic, setOptimistic] = useState<{ value: Reminder[] | null }>();
+  const current = ("userId" in event ? event.reminders : undefined) ?? null;
+  const value = optimistic ? optimistic.value : current;
+
+  useEffect(() => {
+    if (optimistic && sameReminders(optimistic.value, current)) {
+      setOptimistic(undefined);
+    }
+  }, [current, optimistic]);
+
+  const change = (reminders: Reminder[] | null) => {
+    if (sameReminders(reminders, value)) return;
+    setOptimistic({ value: reminders });
+    setEventReminders({
+      eventId: editableEventId(event._id),
+      reminders: reminders === null ? null : normalizeReminders(reminders),
+      // A reminder is a standing preference: on a series it holds for every
+      // occurrence rather than turning this one into an exception.
+      scope: event.providerSeriesId ? "allEvents" : undefined,
+    }).catch((error: unknown) => {
+      setOptimistic(undefined);
+      toast.error("Couldn't update reminders", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    });
+  };
+
+  return { value, change };
+}
+
+/** The footer's "Set a reminder": the form's picker, opened from a bell that
+ * fills in once the event has a reminder of its own. */
+function ReminderBell({ value, allDay, provider, onChange }: ReminderPickerProps) {
+  const { use24h } = usePreferences();
+  const set = (value ?? []).some((r) => r.method === "popup");
+  const label = set
+    ? `Reminder · ${summarizeReminders(value, allDay, use24h)}`
+    : "Set a reminder";
+  return (
+    <Popover>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              aria-label={label}
+              className={cn(footerButtonClass, set && "bg-accent text-foreground")}
+            />
+          }
+        >
+          <HugeiconsIcon
+            icon={Notification03Icon}
+            strokeWidth={2}
+            className="size-4.5"
+          />
+        </TooltipTrigger>
+        <TooltipContent side="top">{label}</TooltipContent>
+      </Tooltip>
+      <PopoverContent side="top" align="start" className="w-[21rem] p-2">
+        <ReminderPicker
+          value={value}
+          allDay={allDay}
+          provider={provider}
+          onChange={onChange}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function EventDetail({
   event: snapshot,
   onClose,
@@ -483,7 +574,8 @@ export function EventDetail({
   onDuplicate: (prefill: EventPrefill, startMs: number, endMs: number) => void;
 }) {
   const reduce = useReducedMotion();
-  const { use24h, timeZone } = usePreferences();
+  const { use24h, timeZone, defaultReminderMinutes, defaultAllDayReminderMinutes } =
+    usePreferences();
   const deleteEvent = useAction(api.domains.calendar.service.deleteEvent);
   const refreshEventRecurrence = useAction(api.domains.calendar.service.refreshEventRecurrence);
   const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
@@ -500,6 +592,7 @@ export function EventDetail({
   const colorVar = useEventColor()(event);
   const capabilities = useEventCapabilities()(event);
   const calendar = calendars.find((c) => c._id === event.localCalendarId);
+  const reminders = useEventReminders(event);
 
   const [screen, setScreen] = useState<"main" | "description">("main");
   const mainRef = useRef<HTMLDivElement>(null);
@@ -716,14 +809,13 @@ export function EventDetail({
             </p>
           </DetailRow>
 
-          {"userId" in event && event.reminders !== undefined && (
+          {"userId" in event && (
             <DetailRow icon={AlarmClockIcon}>
-              {event.reminders.filter((r) => r.method === "popup").length === 0
-                ? "No reminders"
-                : event.reminders
-                    .filter((r) => r.method === "popup")
-                    .map((r) => labelFor(r.minutes, event.allDay, use24h))
-                    .join(" · ")}
+              {describeReminders(reminders.value, event.allDay, use24h, {
+                calendarDefaults: calendar?.defaultReminders,
+                preferredMinutes: defaultReminderMinutes,
+                preferredAllDayMinutes: defaultAllDayReminderMinutes,
+              })}
             </DetailRow>
           )}
 
@@ -825,22 +917,25 @@ export function EventDetail({
             <RsvpControl event={event} current={capabilities.selfResponse} />
           )}
 
-          <div className="flex items-center justify-between gap-2 -mb-2">
-            <div className="flex items-center gap-1 border-2 rounded-xl -ml-2">
+          {/* Full-bleed hairline, then round buttons whose glyphs sit on the
+              content's left edge; the card's own padding does the rest. */}
+          <div className="-mx-4 -mb-4 flex items-center justify-between gap-2 border-t px-2.5 py-2.5">
+            <div className="flex items-center gap-0.5">
               {event.htmlLink && (
                 <IconAction icon={Link01Icon} label="Copy link" onClick={copyLink} />
               )}
               <IconAction icon={Copy01Icon} label="Duplicate" onClick={duplicate} />
-              {event.htmlLink && (
-                <IconAction
-                  icon={LinkSquare02Icon}
-                  label="Open in Google Calendar"
-                  href={event.htmlLink}
+              {"userId" in event && capabilities.canSetReminders && (
+                <ReminderBell
+                  value={reminders.value}
+                  allDay={event.allDay}
+                  provider={calendar?.provider}
+                  onChange={reminders.change}
                 />
               )}
             </div>
 
-            <div className="flex items-center gap-2 -mr-2">
+            <div className="flex items-center gap-2">
               {(capabilities.canDelete || capabilities.canRemoveSelf) && (
                 event.providerSeriesId ? (
                   <RecurringDeleteControl

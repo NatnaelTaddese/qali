@@ -22,6 +22,7 @@ describe("eventCapabilities", () => {
     // No attendee marked `self`, so there is no invitation to answer.
     expect(caps.canRespond).toBe(false);
     expect(caps.canRemoveSelf).toBe(false);
+    expect(caps.canSetReminders).toBe(true);
   });
 
   test("a read-only calendar blocks everything", () => {
@@ -29,11 +30,13 @@ describe("eventCapabilities", () => {
 
     expect(caps.canEdit).toBe(false);
     expect(caps.canDelete).toBe(false);
+    expect(caps.canSetReminders).toBe(false);
     expect(caps.readOnlyReason).toBe("You have read-only access to this calendar");
   });
 
   test("an unsynced calendar fails closed", () => {
     expect(eventCapabilities(mine, undefined).canEdit).toBe(false);
+    expect(eventCapabilities(mine, undefined).canSetReminders).toBe(false);
   });
 
   test("a birthday on your own calendar is still not editable", () => {
@@ -47,6 +50,8 @@ describe("eventCapabilities", () => {
     expect(caps.canEdit).toBe(false);
     expect(caps.canDelete).toBe(false);
     expect(caps.canSeeGuests).toBe(false);
+    // Google rejects every write to its own events, reminders included.
+    expect(caps.canSetReminders).toBe(false);
     expect(caps.readOnlyReason).toBe("Google manages this event");
   });
 
@@ -59,10 +64,11 @@ describe("eventCapabilities", () => {
     const caps = eventCapabilities(invited, OWNED);
     expect(caps.canEdit).toBe(false);
     expect(caps.readOnlyReason).toBe("Only the organiser can edit this event");
-    // The two things a guest *can* do.
+    // What a guest *can* do: answer, leave, and set their own reminders.
     expect(caps.canRespond).toBe(true);
     expect(caps.selfResponse).toBe("needsAction");
     expect(caps.canRemoveSelf).toBe(true);
+    expect(caps.canSetReminders).toBe(true);
     expect(caps.canDelete).toBe(false);
 
     expect(
@@ -102,6 +108,8 @@ describe("eventCapabilities", () => {
     expect(caps.canEdit).toBe(false);
     expect(caps.readOnlyReason).toBe("The organiser locked this event");
     expect(caps.canRespond).toBe(true);
+    // A lock covers the shared fields; reminders are yours alone.
+    expect(caps.canSetReminders).toBe(true);
   });
 
   test("a recurring instance carries no rule to change", () => {
@@ -120,6 +128,7 @@ describe("eventCapabilities", () => {
 
     expect(eventCapabilities(legacy, OWNED).canEdit).toBe(true);
     expect(eventCapabilities(legacy, OWNED).isOrganizer).toBe(true);
+    expect(eventCapabilities(legacy, OWNED).canSetReminders).toBe(true);
     expect(eventCapabilities(legacy, SHARED_READ_ONLY).canEdit).toBe(false);
   });
 });

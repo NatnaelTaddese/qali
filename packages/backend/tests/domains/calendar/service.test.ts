@@ -81,6 +81,7 @@ function eventRow(overrides: Partial<Doc<"events">> = {}): Doc<"events"> {
 
 function actionContext(row: Doc<"events">, accessRole = "owner") {
   const mutations: Record<string, unknown>[] = [];
+  const settles: Record<string, unknown>[] = [];
   const ctx = {
     runQuery: async () => [],
     runMutation: async (_reference: unknown, args: Record<string, unknown>) => {
@@ -110,12 +111,15 @@ function actionContext(row: Doc<"events">, accessRole = "owner") {
       if ("kind" in args && "idempotencyKey" in args) {
         return { state: "claimed", reconcileOnly: false };
       }
-      if ("status" in args && "attemptId" in args) return true;
+      if ("status" in args && "attemptId" in args) {
+        settles.push(args);
+        return true;
+      }
       mutations.push(args);
       return null;
     },
   } as unknown as ActionCtx;
-  return { ctx, mutations };
+  return { ctx, mutations, settles };
 }
 
 function liveGoogleEvent(row: Doc<"events">, overrides: Record<string, unknown> = {}) {
@@ -1179,5 +1183,212 @@ describe("reminder writes are fitted to the adapter's rules", () => {
       reminders: null,
     });
     expect(bodies[1]?.reminders).toEqual({ useDefault: true });
+  });
+});
+
+describe("reminders from the detail panel", () => {
+  const TEN = [{ method: "popup" as const, minutes: 10 }];
+  const guestRow = () =>
+    eventRow({
+      organizer: { self: false },
+      attendees: [
+        { email: "me@example.com", self: true, responseStatus: "accepted" },
+      ],
+    });
+
+  /** Records what it is asked to write, under any provider's reminder rules. */
+  function fakeAdapter(reminders = REMINDER_RULES.google) {
+    const updates: UpdateEventRequest[] = [];
+    let failure: unknown;
+    const providerEvent = (
+      id: string,
+      eventReminders?: ProviderEvent["reminders"],
+    ): ProviderEvent => ({
+      id,
+      calendarId: PROVIDER_CALENDAR_ID,
+      startMs: 1,
+      endMs: 2,
+      allDay: false,
+      status: "confirmed",
+      updatedMs: 1,
+      reminders: eventReminders,
+    });
+    const adapter = {
+      provider: "google",
+      capabilities: {
+        contacts: false,
+        recurringEvents: true,
+        attendeeMembershipUpdates: true,
+        rsvp: true,
+        removeSelf: true,
+        conference: { create: true, add: true, remove: true },
+        idempotentCreate: true,
+        idempotentUpdate: true,
+        idempotentResponse: true,
+        idempotentDelete: true,
+        reminders,
+      },
+      async getEvent(ref: { eventId: string }) {
+        return providerEvent(ref.eventId);
+      },
+      async updateEvent(request: UpdateEventRequest) {
+        updates.push(request);
+        if (failure) throw failure;
+        return providerEvent(
+          request.ref.eventId,
+          request.patch.reminders ?? undefined,
+        );
+      },
+    } as unknown as CalendarProviderAdapter;
+    return {
+      adapter,
+      updates,
+      failWith(error: unknown) {
+        failure = error;
+      },
+    };
+  }
+
+  function deps(adapter: CalendarProviderAdapter) {
+    let refreshes = 0;
+    return {
+      dependencies: {
+        getAdapter: async () => adapter,
+        refreshCalendar: async () => {
+          refreshes += 1;
+        },
+      },
+      refreshCount: () => refreshes,
+    };
+  }
+
+  test("a guest sets reminders on an invitation they can't otherwise edit", async () => {
+    const row = guestRow();
+    const { ctx, mutations } = actionContext(row, "writer");
+    const { adapter, updates } = fakeAdapter();
+    const { dependencies } = deps(adapter);
+
+    // The general edit path still turns the guest away…
+    await expect(
+      service.updateEventOp(
+        ctx,
+        "user-1",
+        { eventId: row._id, reminders: TEN },
+        dependencies,
+      ),
+    ).rejects.toThrow(/only the organiser/i);
+    expect(updates).toEqual([]);
+
+    // …while the reminders-only path patches exactly the reminders, quietly.
+    await service.setEventRemindersOp(
+      ctx,
+      "user-1",
+      { eventId: row._id, reminders: TEN },
+      dependencies,
+    );
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.ref.eventId).toBe(row.providerEventId);
+    expect(updates[0]!.patch).toEqual({ reminders: TEN });
+    expect(updates[0]!.notify).toBeUndefined();
+    expect(mutations[mutations.length - 1]).toMatchObject({
+      event: { reminders: TEN },
+    });
+  });
+
+  test("a read-only calendar is refused before the provider is called", async () => {
+    const row = guestRow();
+    const { ctx } = actionContext(row, "reader");
+    const { adapter, updates } = fakeAdapter();
+    await expect(
+      service.setEventRemindersOp(
+        ctx,
+        "user-1",
+        { eventId: row._id, reminders: TEN },
+        deps(adapter).dependencies,
+      ),
+    ).rejects.toThrow(/can't change reminders/);
+    expect(updates).toEqual([]);
+  });
+
+  test("a Google-managed event is refused even on your own calendar", async () => {
+    const row = eventRow({ eventType: "birthday" });
+    const { ctx } = actionContext(row, "owner");
+    const { adapter, updates } = fakeAdapter();
+    await expect(
+      service.setEventRemindersOp(
+        ctx,
+        "user-1",
+        { eventId: row._id, reminders: TEN },
+        deps(adapter).dependencies,
+      ),
+    ).rejects.toThrow(/can't change reminders/);
+    expect(updates).toEqual([]);
+  });
+
+  test("a series-wide write goes to the master and comes back through a sync", async () => {
+    const row = eventRow({
+      providerSeriesId: "series-master",
+      providerEventId: "series-master_20260901T010000Z",
+    });
+    const { ctx, mutations } = actionContext(row, "owner");
+    const { adapter, updates } = fakeAdapter();
+    const { dependencies, refreshCount } = deps(adapter);
+
+    await service.setEventRemindersOp(
+      ctx,
+      "user-1",
+      { eventId: row._id, reminders: TEN, scope: "allEvents" },
+      dependencies,
+    );
+    expect(updates[0]!.ref.eventId).toBe("series-master");
+    expect(updates[0]!.patch).toEqual({ reminders: TEN });
+    // The response is the master, never a row: refresh, don't mirror.
+    expect(refreshCount()).toBe(1);
+    expect(mutations.some((m) => "event" in m)).toBe(false);
+
+    // Without a scope only this occurrence changes, and it is mirrored.
+    await service.setEventRemindersOp(
+      ctx,
+      "user-1",
+      { eventId: row._id, reminders: TEN },
+      dependencies,
+    );
+    expect(updates[1]!.ref.eventId).toBe(row.providerEventId);
+    expect(refreshCount()).toBe(1);
+    expect(mutations[mutations.length - 1]).toMatchObject({
+      event: { reminders: TEN },
+    });
+  });
+
+  test("the provider's reminder rules still apply", async () => {
+    const row = guestRow();
+    const { ctx } = actionContext(row, "writer");
+    const { adapter, updates } = fakeAdapter(REMINDER_RULES.microsoft);
+    await expect(
+      service.setEventRemindersOp(
+        ctx,
+        "user-1",
+        { eventId: row._id, reminders: [...TEN, { method: "popup", minutes: 60 }] },
+        deps(adapter).dependencies,
+      ),
+    ).rejects.toThrow("one reminder per event");
+    expect(updates).toEqual([]);
+  });
+
+  test("a provider refusal settles the attempt and surfaces the error", async () => {
+    const row = guestRow();
+    const { ctx, mutations, settles } = actionContext(row, "writer");
+    const { adapter, failWith } = fakeAdapter();
+    failWith(new ProviderError("validation", "Reminder offset out of range"));
+    await expect(
+      service.setEventRemindersOp(
+        ctx,
+        "user-1",
+        { eventId: row._id, reminders: TEN },
+        deps(adapter).dependencies,
+      ),
+    ).rejects.toMatchObject({ kind: "validation" });
+    expect(settles[settles.length - 1]).toMatchObject({ status: "failed" });
+    expect(mutations.some((m) => "event" in m)).toBe(false);
   });
 });

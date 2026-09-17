@@ -8,6 +8,7 @@ import {
 } from "@qali/domain/permissions";
 import {
   resolvePopupMinutes,
+  sameReminderSets,
   type Reminder,
 } from "@qali/domain/reminders";
 import { v } from "convex/values";
@@ -163,6 +164,22 @@ async function mirrorEvent(
       localCalendarId: target.localCalendarId,
       event: providerEventValue(event),
     });
+  } catch (error) {
+    throw new ExternalWriteCommittedError(successSummary, error);
+  }
+}
+
+/** `refreshTarget` for after the provider has accepted a write: a refresh that
+ * fails then is a lagging mirror, not a failed write — `mirrorEvent`'s contract. */
+async function refreshCommitted(
+  ctx: ActionCtx,
+  userId: string,
+  target: Pick<WriteTarget | CreateTarget, "connectionId" | "localCalendarId">,
+  dependencies: CalendarServiceDependencies | undefined,
+  successSummary: string,
+): Promise<void> {
+  try {
+    await refreshTarget(ctx, userId, target, dependencies);
   } catch (error) {
     throw new ExternalWriteCommittedError(successSummary, error);
   }
@@ -1056,6 +1073,11 @@ export interface SetEventRemindersArgs {
  * Deliberately not `updateEventOp` with a narrower capability: that op's
  * "thisAndFollowing" branch mints a new series carrying the guest list and
  * mails everyone, which a reminders-only caller must never be able to reach.
+ *
+ * Whatever the scope, the occurrence the user was looking at ends up with these
+ * reminders: a series-wide write goes to the master, then the occurrence is
+ * checked and written itself when it didn't inherit them — it carries its own
+ * override, or its master isn't on this calendar at all.
  */
 export async function setEventRemindersOp(
   ctx: ActionCtx,
@@ -1078,16 +1100,12 @@ export async function setEventRemindersOp(
     row.allDay,
     args.reminders,
   );
-  const scope: SetEventRemindersScope = target.providerSeriesId
-    ? (args.scope ?? "thisEvent")
-    : "thisEvent";
-  // A series-wide write goes to the master, which is never a local row.
-  const ref = {
+  // Series-wide only when asked for, and only for a row that has a series.
+  const masterId =
+    args.scope === "allEvents" ? target.providerSeriesId : undefined;
+  const occurrence = {
     calendarId: target.providerCalendarId,
-    eventId:
-      scope === "allEvents" && target.providerSeriesId
-        ? target.providerSeriesId
-        : target.providerEventId,
+    eventId: target.providerEventId,
   };
   const operation = await claimWrite(
     ctx,
@@ -1097,39 +1115,61 @@ export async function setEventRemindersOp(
     args.operationId,
     target.providerEventId,
     target.event._id,
-    calendarRequestFingerprint({ reminders: args.reminders, scope }),
+    calendarRequestFingerprint({
+      reminders: args.reminders,
+      scope: masterId ? "allEvents" : "thisEvent",
+    }),
   );
+  // No idempotency key on the provider call: a reminders-only patch is
+  // idempotent by nature, and the key buys a read-before-write whose stale
+  // answer can skip a write that a concurrent change still needs.
+  const write = (eventId: string) =>
+    adapter.updateEvent({ ref: { ...occurrence, eventId }, patch: { reminders } });
+
+  let committed = operation.state === "succeeded";
+  let seriesReached = committed && masterId !== undefined;
   try {
-    const event =
-      operation.state === "succeeded"
-        ? await adapter.getEvent({
-            calendarId: ref.calendarId,
-            eventId: operation.providerEventId ?? ref.eventId,
-          })
-        : await adapter.updateEvent({
-            ref,
-            patch: { reminders },
-            idempotencyKey: operation.idempotencyKey,
-          });
-    if (operation.state !== "succeeded") {
-      await settleWrite(ctx, userId, target, operation, "succeeded", event.id);
-    }
-    if (scope === "allEvents") {
-      // The response is the master; its instances come back through a sync.
+    if (!committed && masterId) {
       try {
-        await refreshTarget(ctx, userId, target, dependencies);
+        const master = await write(masterId);
+        committed = true;
+        seriesReached = true;
+        await finishUpdate(ctx, userId, target, operation, master);
       } catch (error) {
-        throw new ExternalWriteCommittedError("Reminders updated.", error);
+        // A guest invited to one occurrence holds a copy whose master isn't on
+        // their calendar; the occurrence itself is still theirs to change.
+        if (!(error instanceof ProviderError && error.kind === "not-found")) {
+          throw error;
+        }
       }
-    } else {
-      await mirrorEvent(ctx, userId, target, event, "Reminders updated.");
+    }
+    let event = committed ? await adapter.getEvent(occurrence) : undefined;
+    if (!event || !sameReminderSets(event.reminders ?? null, reminders ?? null)) {
+      event = await write(occurrence.eventId);
+    }
+    if (!committed) {
+      committed = true;
+      await finishUpdate(ctx, userId, target, operation, event);
+    }
+    // Mirror the occurrence itself rather than waiting on the refresh, which is
+    // skipped whenever a sync already holds the lease: this is the row the
+    // user is looking at, and the one whose reminder is due soonest.
+    await mirrorEvent(ctx, userId, target, event, "Reminders updated.");
+    if (seriesReached) {
+      await refreshCommitted(
+        ctx,
+        userId,
+        target,
+        dependencies,
+        "Reminders updated.",
+      );
     }
     return event;
   } catch (error) {
     if (error instanceof ExternalWriteCommittedError) {
       throw error;
     }
-    if (operation.state === "succeeded") {
+    if (committed) {
       throw new ExternalWriteCommittedError("Reminders updated.", error);
     }
     return await providerFailure(ctx, userId, target, operation, error);
@@ -1492,10 +1532,18 @@ export async function respondToEventHandler(
 export async function setEventRemindersHandler(
   ctx: ActionCtx,
   args: SetEventRemindersArgs,
-): Promise<ReturnType<typeof calendarActionEvent>> {
-  return calendarActionEvent(
-    await setEventRemindersOp(ctx, await authedUser(ctx), args),
-  );
+): Promise<ReturnType<typeof calendarActionEvent> | null> {
+  try {
+    return calendarActionEvent(
+      await setEventRemindersOp(ctx, await authedUser(ctx), args),
+    );
+  } catch (error) {
+    // The provider holds the new reminders and only our mirror lags, which the
+    // next sync closes. Rejecting would make the panel roll back, and report
+    // as failed, a change that landed. `null` = stored, not yet mirrored.
+    if (error instanceof ExternalWriteCommittedError) return null;
+    throw error;
+  }
 }
 
 export async function deleteEventHandler(

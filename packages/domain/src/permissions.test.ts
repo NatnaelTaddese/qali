@@ -50,8 +50,18 @@ describe("eventCapabilities", () => {
     expect(caps.canEdit).toBe(false);
     expect(caps.canDelete).toBe(false);
     expect(caps.canSeeGuests).toBe(false);
-    // Google rejects every write to its own events, reminders included.
-    expect(caps.canSetReminders).toBe(false);
+    // Reminders are the exception: Google's event-types guide lists them as
+    // updatable on birthdays and on events from Gmail.
+    expect(caps.canSetReminders).toBe(true);
+    expect(
+      eventCapabilities({ ...mine, eventType: "fromGmail" }, OWNED)
+        .canSetReminders,
+    ).toBe(true);
+    // A working location carries no reminders to set.
+    expect(
+      eventCapabilities({ ...mine, eventType: "workingLocation" }, OWNED)
+        .canSetReminders,
+    ).toBe(false);
     expect(caps.readOnlyReason).toBe("Google manages this event");
   });
 

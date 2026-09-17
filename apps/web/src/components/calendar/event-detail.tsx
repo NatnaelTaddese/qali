@@ -58,7 +58,7 @@ import {
   type CalendarEvent,
 } from "./lib";
 import { dockVariants, dockVariantsReduced, press, SPRING_DOCK } from "./motion";
-import { useEventCapabilities, type EventCapabilities } from "./permissions";
+import { useEventCapabilities } from "./permissions";
 import { ReminderPicker, type ReminderPickerProps } from "./reminder-control";
 import { RichTextView } from "./rich-text/rich-text-view";
 import { htmlToPreviewText } from "./rich-text/text";
@@ -357,18 +357,20 @@ function RsvpControl({
   );
 }
 
-/**
- * What the footer's delete control reads. An organiser deletes the event for
- * everyone; a guest only removes their own copy, and the label says so —
- * except beside Edit, where the long form overflows a phone-width dock, so it
- * shortens and the full wording moves to the tooltip and the menu's name.
- */
-export function removeControlLabels(
-  capabilities: Pick<EventCapabilities, "canDelete" | "canEdit">,
-): { label: string; fullLabel: string } {
-  if (capabilities.canDelete) return { label: "Delete", fullLabel: "Delete" };
-  const fullLabel = "Remove from my calendar";
-  return { label: capabilities.canEdit ? "Remove" : fullLabel, fullLabel };
+/** The part of a delete label the footer drops when it runs out of room: the
+ * container-query class measures the row itself, not a guess at who is looking. */
+interface LabelSuffix {
+  text: string;
+  className: string;
+}
+
+function DeleteLabel({ label, suffix }: { label: string; suffix?: LabelSuffix }) {
+  return (
+    <span>
+      {label}
+      {suffix && <span className={suffix.className}>{suffix.text}</span>}
+    </span>
+  );
 }
 
 /** Two-step delete. There is no dialog primitive here and the dock has no modal
@@ -376,13 +378,12 @@ export function removeControlLabels(
  * disarms on its own if the second never comes. */
 function DeleteButton({
   label,
-  tooltip,
+  labelSuffix,
   destructive,
   onConfirm,
 }: {
   label: string;
-  /** The full wording, when `label` had to be shortened. */
-  tooltip?: string;
+  labelSuffix?: LabelSuffix;
   destructive: boolean;
   /** Resolves when the delete lands; rejects so the button can re-arm. */
   onConfirm: () => Promise<unknown>;
@@ -398,53 +399,59 @@ function DeleteButton({
 
   const busyLabel = destructive ? "Deleting…" : "Removing…";
   const current = busy ? busyLabel : armed ? "Confirm?" : label;
-  const props = {
-    type: "button",
-    size: "sm",
-    // Arming has to show: red when the delete reaches every guest, a quiet
-    // fill when it only removes your own copy. Held through the request so
-    // the pill doesn't go blank mid-flight.
-    variant: !(armed || busy) ? "ghost" : destructive ? "destructive" : "secondary",
-    disabled: busy,
-    "aria-busy": busy,
-    onClick: () => {
-      if (!armed) {
-        setArmed(true);
-        return;
-      }
-      setBusy(true);
-      // A refused delete has to leave a usable button behind.
-      onConfirm().catch(() => {
-        setBusy(false);
-        setArmed(false);
-      });
-    },
-  } as const;
-  // Every state shares one grid cell, so the widest sets the width and the
-  // pill holds still under the pointer between the two clicks.
-  const content = (
-    <span className="grid justify-items-center">
-      {[label, "Confirm?", busyLabel].map((text) => (
-        <span
-          key={text}
-          className={cn(
-            "col-start-1 row-start-1 flex items-center gap-1",
-            text !== current && "invisible",
-          )}
-        >
-          {text === busyLabel && <Spinner />}
-          {text}
-        </span>
-      ))}
-    </span>
-  );
-
-  if (!tooltip) return <Button {...props}>{content}</Button>;
   return (
-    <Tooltip>
-      <TooltipTrigger render={<Button {...props} />}>{content}</TooltipTrigger>
-      <TooltipContent side="top">{tooltip}</TooltipContent>
-    </Tooltip>
+    <Button
+      type="button"
+      size="sm"
+      // Arming has to show: red when the delete reaches every guest, a quiet
+      // fill when it only removes your own copy. Held through the request so
+      // the pill doesn't go blank mid-flight.
+      variant={
+        !(armed || busy) ? "ghost" : destructive ? "destructive" : "secondary"
+      }
+      disabled={busy}
+      aria-busy={busy}
+      // The suffix can be hidden for width; the name a screen reader gets
+      // shouldn't depend on how wide the panel is.
+      aria-label={
+        current === label && labelSuffix
+          ? `${label}${labelSuffix.text}`
+          : undefined
+      }
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        setBusy(true);
+        // A refused delete has to leave a usable button behind.
+        onConfirm().catch(() => {
+          setBusy(false);
+          setArmed(false);
+        });
+      }}
+    >
+      {/* Every state shares one grid cell, so the widest sets the width and
+          the pill holds still under the pointer between the two clicks. */}
+      <span className="grid justify-items-center">
+        {[label, "Confirm?", busyLabel].map((text) => (
+          <span
+            key={text}
+            className={cn(
+              "col-start-1 row-start-1 flex items-center gap-1",
+              text !== current && "invisible",
+            )}
+          >
+            {text === busyLabel && <Spinner />}
+            {text === label ? (
+              <DeleteLabel label={label} suffix={labelSuffix} />
+            ) : (
+              text
+            )}
+          </span>
+        ))}
+      </span>
+    </Button>
   );
 }
 
@@ -473,14 +480,13 @@ export function recurringDeleteScopes(isOrganizer: boolean) {
 /** The scope menu itself is the recurring event's destructive confirmation. */
 function RecurringDeleteControl({
   label,
-  fullLabel,
+  labelSuffix,
   destructive,
   isOrganizer,
   onConfirm,
 }: {
   label: string;
-  /** The unshortened wording, for the menu's accessible name. */
-  fullLabel: string;
+  labelSuffix?: LabelSuffix;
   destructive: boolean;
   isOrganizer: boolean;
   onConfirm: (scope: DeleteScope) => Promise<unknown>;
@@ -492,7 +498,11 @@ function RecurringDeleteControl({
       trigger={
         <>
           {busy && <Spinner />}
-          {busy ? (destructive ? "Deleting…" : "Removing…") : label}
+          {busy ? (
+            destructive ? "Deleting…" : "Removing…"
+          ) : (
+            <DeleteLabel label={label} suffix={labelSuffix} />
+          )}
         </>
       }
       disabled={busy}
@@ -512,7 +522,7 @@ function RecurringDeleteControl({
           ? "color-mix(in oklch, var(--destructive) 20%, var(--popover))"
           : undefined
       }
-      menuLabel={`${fullLabel} recurring event`}
+      menuLabel={`${label}${labelSuffix?.text ?? ""} recurring event`}
       items={options.map((option) => ({
         label: option.label,
         onClick: () => {
@@ -524,55 +534,112 @@ function RecurringDeleteControl({
   );
 }
 
+type ReminderDraft = { value: Reminder[] | null };
+
 /**
- * The reminders the panel shows and the bell edits, held optimistically until
- * the synced row agrees — RsvpControl's override, for a value where `null`
- * (the calendar's default) is itself an answer, hence the wrapper.
+ * The reminders the panel shows and the bell edits. The picker's choices are
+ * held as a draft and written once, when the popover closes: a multi-step
+ * composer shouldn't cost a provider write per click, and writes that overlap
+ * can land out of order. The draft then stays until the synced row agrees —
+ * RsvpControl's override, wrapped because `null` (the calendar's default) is
+ * itself a value.
  */
 function useEventReminders(event: CalendarEvent) {
   const setEventReminders = useAction(
     api.domains.calendar.service.setEventReminders,
   );
-  const [optimistic, setOptimistic] = useState<{ value: Reminder[] | null }>();
-  const current = ("userId" in event ? event.reminders : undefined) ?? null;
-  const value = optimistic ? optimistic.value : current;
+  const [draft, setDraft] = useState<ReminderDraft>();
+  // One write in the air at a time; a draft flushed meanwhile waits its turn.
+  const sending = useRef<ReminderDraft | undefined>(undefined);
+  const queued = useRef<ReminderDraft | undefined>(undefined);
+  const current = event.reminders ?? null;
+  const value = draft ? draft.value : current;
 
   useEffect(() => {
-    if (optimistic && sameReminders(optimistic.value, current)) {
-      setOptimistic(undefined);
+    // Not while a write is in flight: the row is about to change under it.
+    if (draft && !sending.current && sameReminders(draft.value, current)) {
+      setDraft(undefined);
     }
-  }, [current, optimistic]);
+  }, [current, draft]);
 
   const change = (reminders: Reminder[] | null) => {
-    if (sameReminders(reminders, value)) return;
-    setOptimistic({ value: reminders });
-    setEventReminders({
-      eventId: editableEventId(event._id),
-      reminders: reminders === null ? null : normalizeReminders(reminders),
-      // A reminder is a standing preference: on a series it holds for every
-      // occurrence rather than turning this one into an exception.
-      scope: event.providerSeriesId ? "allEvents" : undefined,
-    }).catch((error: unknown) => {
-      setOptimistic(undefined);
-      toast.error("Couldn't update reminders", {
-        description: error instanceof Error ? error.message : undefined,
-      });
+    // Hold exactly what will be sent, so the draft can equal the row it becomes.
+    setDraft({
+      value: reminders === null ? null : normalizeReminders(reminders),
     });
   };
 
-  return { value, change };
+  const send = async (sent: ReminderDraft) => {
+    sending.current = sent;
+    try {
+      const result = await setEventReminders({
+        eventId: editableEventId(event._id),
+        reminders: sent.value,
+        // A reminder is a standing preference: on a series it holds for every
+        // occurrence rather than turning this one into an exception.
+        scope: event.providerSeriesId ? "allEvents" : undefined,
+      });
+      sending.current = undefined;
+      // Adopt what the provider stored, so a value it reshaped can't leave the
+      // draft waiting on a row that will never match. `null` = stored but not
+      // yet mirrored: keep showing what was sent until the sync catches up.
+      if (result) {
+        const stored: ReminderDraft = { value: result.reminders ?? null };
+        setDraft((d) => (d === sent ? stored : d));
+      }
+    } catch (error) {
+      sending.current = undefined;
+      // Only this write's own draft: a newer one is still the user's intent.
+      setDraft((d) => (d === sent ? undefined : d));
+      toast.error("Couldn't update reminders", {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    }
+    const next = queued.current;
+    queued.current = undefined;
+    if (next) void send(next);
+  };
+
+  /** Write the draft, if it says anything new. Called when the picker closes. */
+  const flush = () => {
+    if (!draft) return;
+    const base = sending.current ? sending.current.value : current;
+    if (sameReminders(draft.value, base)) {
+      // Back where the row (or the write in flight) already is.
+      queued.current = undefined;
+      return;
+    }
+    if (sending.current) queued.current = draft;
+    else void send(draft);
+  };
+
+  // A panel that goes away with the picker still open never sees it close.
+  const flushRef = useRef(flush);
+  useEffect(() => {
+    flushRef.current = flush;
+  });
+  useEffect(() => () => flushRef.current(), []);
+
+  return { value, change, flush };
 }
 
 /** The footer's "Set a reminder": the form's picker, opened from a bell that
  * fills in once the event has a reminder of its own. */
-function ReminderBell({ value, allDay, provider, onChange }: ReminderPickerProps) {
+function ReminderBell({
+  onClose,
+  ...picker
+}: ReminderPickerProps & { onClose: () => void }) {
   const { use24h } = usePreferences();
-  const set = (value ?? []).some((r) => r.method === "popup");
+  const set = (picker.value ?? []).some((r) => r.method === "popup");
   const label = set
-    ? `Reminder · ${summarizeReminders(value, allDay, use24h)}`
+    ? `Reminder · ${summarizeReminders(picker.value, picker.allDay, use24h)}`
     : "Set a reminder";
   return (
-    <Popover>
+    <Popover
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
       <Tooltip>
         <TooltipTrigger
           render={
@@ -591,12 +658,7 @@ function ReminderBell({ value, allDay, provider, onChange }: ReminderPickerProps
         <TooltipContent side="top">{label}</TooltipContent>
       </Tooltip>
       <PopoverContent side="top" align="start" className="w-[21rem] p-2">
-        <ReminderPicker
-          value={value}
-          allDay={allDay}
-          provider={provider}
-          onChange={onChange}
-        />
+        <ReminderPicker {...picker} />
       </PopoverContent>
     </Popover>
   );
@@ -610,7 +672,8 @@ export function EventDetail({
 }: {
   event: CalendarEvent;
   onClose: () => void;
-  onEdit: () => void;
+  /** Handed the row as the panel now shows it, not the snapshot it opened with. */
+  onEdit: (event: CalendarEvent) => void;
   onDuplicate: (prefill: EventPrefill, startMs: number, endMs: number) => void;
 }) {
   const reduce = useReducedMotion();
@@ -633,7 +696,16 @@ export function EventDetail({
   const capabilities = useEventCapabilities()(event);
   const calendar = calendars.find((c) => c._id === event.localCalendarId);
   const reminders = useEventReminders(event);
-  const removeLabels = removeControlLabels(capabilities);
+  // A guest removes only their own copy, and the label says so while the footer
+  // has room. The thresholds are the row's width with and without Edit in it.
+  const removeSuffix: LabelSuffix | undefined = capabilities.canDelete
+    ? undefined
+    : {
+        text: " from my calendar",
+        className: capabilities.canEdit
+          ? "@max-[25.4rem]:hidden"
+          : "@max-[19.9rem]:hidden",
+      };
 
   const [screen, setScreen] = useState<"main" | "description">("main");
   const mainRef = useRef<HTMLDivElement>(null);
@@ -850,7 +922,8 @@ export function EventDetail({
             </p>
           </DetailRow>
 
-          {"userId" in event && (
+          {/* Not on a shared public calendar: reminders never fire there. */}
+          {calendar && !calendar.isShared && (
             <DetailRow icon={AlarmClockIcon}>
               {describeReminders(reminders.value, event.allDay, use24h, {
                 calendarDefaults: calendar?.defaultReminders,
@@ -960,18 +1033,19 @@ export function EventDetail({
 
           {/* Full-bleed hairline, then round buttons whose glyphs sit on the
               content's left edge; the card's own padding does the rest. */}
-          <div className="-mx-4 -mb-4 flex items-center justify-between gap-2 border-t px-2.5 py-2.5">
+          <div className="@container -mx-4 -mb-4 flex items-center justify-between gap-2 border-t px-2.5 py-2.5">
             <div className="flex items-center gap-0.5">
               {event.htmlLink && (
                 <IconAction icon={Link01Icon} label="Copy link" onClick={copyLink} />
               )}
               <IconAction icon={Copy01Icon} label="Duplicate" onClick={duplicate} />
-              {"userId" in event && capabilities.canSetReminders && (
+              {capabilities.canSetReminders && (
                 <ReminderBell
                   value={reminders.value}
                   allDay={event.allDay}
                   provider={calendar?.provider}
                   onChange={reminders.change}
+                  onClose={reminders.flush}
                 />
               )}
             </div>
@@ -980,27 +1054,31 @@ export function EventDetail({
               {(capabilities.canDelete || capabilities.canRemoveSelf) && (
                 event.providerSeriesId ? (
                   <RecurringDeleteControl
-                    label={removeLabels.label}
-                    fullLabel={removeLabels.fullLabel}
+                    label={capabilities.canDelete ? "Delete" : "Remove"}
+                    labelSuffix={removeSuffix}
                     destructive={capabilities.canDelete}
                     isOrganizer={capabilities.isOrganizer}
                     onConfirm={remove}
                   />
                 ) : (
                   <DeleteButton
-                    label={removeLabels.label}
-                    tooltip={
-                      removeLabels.label === removeLabels.fullLabel
-                        ? undefined
-                        : removeLabels.fullLabel
-                    }
+                    label={capabilities.canDelete ? "Delete" : "Remove"}
+                    labelSuffix={removeSuffix}
                     destructive={capabilities.canDelete}
                     onConfirm={() => remove("thisEvent")}
                   />
                 )
               )}
               {capabilities.canEdit && (
-                <Button type="button" size="sm" onClick={onEdit}>
+                <Button
+                  type="button"
+                  size="sm"
+                  // With the reminders as shown: a change still being written
+                  // belongs in the form's baseline too.
+                  onClick={() =>
+                    onEdit({ ...event, reminders: reminders.value ?? undefined })
+                  }
+                >
                   <HugeiconsIcon
                     icon={PencilEdit02Icon}
                     strokeWidth={2}

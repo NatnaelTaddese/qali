@@ -113,9 +113,10 @@ export function summarizeReminders(
 
 /**
  * What the detail panel's reminder row reads: the explicit offsets, or the
- * ones the default resolves to. Unlike the picker's `summarizeReminders`, the
- * default is never the bare word "Default" — the row is there to say when
- * the alarm will actually go off.
+ * ones the default resolves to, so the default is never the bare word
+ * "Default" as in the picker's `summarizeReminders`. These are the offsets the
+ * event carries, not a promise that qali delivers each one: past
+ * MAX_FIRE_OFFSET_MINUTES (a week) only the provider's own reminder fires.
  */
 export function describeReminders(
   reminders: readonly Reminder[] | null,

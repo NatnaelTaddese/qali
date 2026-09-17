@@ -22,6 +22,11 @@ const GOOGLE_MANAGED_EVENT_TYPES = new Set([
   "fromGmail",
 ]);
 
+/** Managed types whose reminders Google still lets you change: its event-types
+ * guide lists `reminders` as updatable on both. A working location carries
+ * none, and a type added above later stays closed until it is listed here. */
+const REMINDER_WRITABLE_MANAGED_TYPES = new Set(["birthday", "fromGmail"]);
+
 /** The subset of an event this module reads. `Doc<"events">` satisfies it
  * structurally, so nothing here has to import the generated data model. */
 export interface EventLike {
@@ -114,8 +119,11 @@ export function eventCapabilities(
     canRespond: writableCalendar && selfAttendee !== undefined,
     // Reminders sit on the copy in your own calendar, not on the shared
     // event, so the organiser's flags don't apply — only the calendar's
-    // access role, and whether Google owns the event outright.
-    canSetReminders: writableCalendar && !googleManaged,
+    // access role, and whether Google takes reminder writes on this type.
+    canSetReminders:
+      writableCalendar &&
+      (!googleManaged ||
+        REMINDER_WRITABLE_MANAGED_TYPES.has(event.eventType ?? "")),
     // We sync with singleEvents=true, so a recurring row is one expanded
     // instance and never carries its own rule — there is nothing here to edit.
     canChangeRecurrence: canEdit && event.providerSeriesId === undefined,

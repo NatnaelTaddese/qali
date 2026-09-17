@@ -357,7 +357,9 @@ export function BottomIsland() {
                 <EventDetail
                   event={view.event}
                   onClose={closeCurrent}
-                  onEdit={() => open({ kind: "edit", event: view.event })}
+                  // The live row, not the snapshot the panel opened with:
+                  // the form diffs its save against what it was seeded from.
+                  onEdit={(live) => open({ kind: "edit", event: live })}
                   onDuplicate={(prefill, startMs, endMs) =>
                     open({ kind: "create", startMs, endMs, prefill })
                   }

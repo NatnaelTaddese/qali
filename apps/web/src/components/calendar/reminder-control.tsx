@@ -124,7 +124,10 @@ export function ReminderPicker({
 
   const cap = Math.min(rules.maxPerEvent, MAX_REMINDERS_PER_EVENT);
   const popups = (value ?? []).filter((r) => r.method === "popup");
-  const full = popups.length >= cap;
+  // The provider's cap counts every entry, the email reminders that don't
+  // show here included; counting popups alone lets an Add through that the
+  // write then has to drop.
+  const full = (value ?? []).length >= cap;
   const mode: "default" | "none" | "custom" =
     popups.length > 0 || composing
       ? "custom"
@@ -165,7 +168,9 @@ export function ReminderPicker({
           active={mode === "none"}
           onClick={() => {
             setComposing(false);
-            onChange([]);
+            // Silences the popups. An email reminder set elsewhere isn't shown
+            // here, so it isn't this control's to erase.
+            onChange((value ?? []).filter((r) => r.method !== "popup"));
           }}
         >
           None

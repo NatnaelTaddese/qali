@@ -58,7 +58,7 @@ import {
   type CalendarEvent,
 } from "./lib";
 import { dockVariants, dockVariantsReduced, press, SPRING_DOCK } from "./motion";
-import { useEventCapabilities } from "./permissions";
+import { useEventCapabilities, type EventCapabilities } from "./permissions";
 import { ReminderPicker, type ReminderPickerProps } from "./reminder-control";
 import { RichTextView } from "./rich-text/rich-text-view";
 import { htmlToPreviewText } from "./rich-text/text";
@@ -357,15 +357,32 @@ function RsvpControl({
   );
 }
 
+/**
+ * What the footer's delete control reads. An organiser deletes the event for
+ * everyone; a guest only removes their own copy, and the label says so —
+ * except beside Edit, where the long form overflows a phone-width dock, so it
+ * shortens and the full wording moves to the tooltip and the menu's name.
+ */
+export function removeControlLabels(
+  capabilities: Pick<EventCapabilities, "canDelete" | "canEdit">,
+): { label: string; fullLabel: string } {
+  if (capabilities.canDelete) return { label: "Delete", fullLabel: "Delete" };
+  const fullLabel = "Remove from my calendar";
+  return { label: capabilities.canEdit ? "Remove" : fullLabel, fullLabel };
+}
+
 /** Two-step delete. There is no dialog primitive here and the dock has no modal
  * layer, so the button confirms on itself: the first click arms it, and it
  * disarms on its own if the second never comes. */
 function DeleteButton({
   label,
+  tooltip,
   destructive,
   onConfirm,
 }: {
   label: string;
+  /** The full wording, when `label` had to be shortened. */
+  tooltip?: string;
   destructive: boolean;
   /** Resolves when the delete lands; rejects so the button can re-arm. */
   onConfirm: () => Promise<unknown>;
@@ -379,35 +396,55 @@ function DeleteButton({
     return () => clearTimeout(timer);
   }, [armed]);
 
+  const busyLabel = destructive ? "Deleting…" : "Removing…";
+  const current = busy ? busyLabel : armed ? "Confirm?" : label;
+  const props = {
+    type: "button",
+    size: "sm",
+    // Arming has to show: red when the delete reaches every guest, a quiet
+    // fill when it only removes your own copy. Held through the request so
+    // the pill doesn't go blank mid-flight.
+    variant: !(armed || busy) ? "ghost" : destructive ? "destructive" : "secondary",
+    disabled: busy,
+    "aria-busy": busy,
+    onClick: () => {
+      if (!armed) {
+        setArmed(true);
+        return;
+      }
+      setBusy(true);
+      // A refused delete has to leave a usable button behind.
+      onConfirm().catch(() => {
+        setBusy(false);
+        setArmed(false);
+      });
+    },
+  } as const;
+  // Every state shares one grid cell, so the widest sets the width and the
+  // pill holds still under the pointer between the two clicks.
+  const content = (
+    <span className="grid justify-items-center">
+      {[label, "Confirm?", busyLabel].map((text) => (
+        <span
+          key={text}
+          className={cn(
+            "col-start-1 row-start-1 flex items-center gap-1",
+            text !== current && "invisible",
+          )}
+        >
+          {text === busyLabel && <Spinner />}
+          {text}
+        </span>
+      ))}
+    </span>
+  );
+
+  if (!tooltip) return <Button {...props}>{content}</Button>;
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant={armed && destructive ? "destructive" : "ghost"}
-      disabled={busy}
-      aria-busy={busy}
-      onClick={() => {
-        if (!armed) {
-          setArmed(true);
-          return;
-        }
-        setBusy(true);
-        // A refused delete has to leave a usable button behind.
-        onConfirm().catch(() => {
-          setBusy(false);
-          setArmed(false);
-        });
-      }}
-    >
-      {busy && <Spinner />}
-      {busy
-        ? destructive
-          ? "Deleting…"
-          : "Removing…"
-        : armed
-          ? "Confirm?"
-          : label}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger render={<Button {...props} />}>{content}</TooltipTrigger>
+      <TooltipContent side="top">{tooltip}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -436,11 +473,14 @@ export function recurringDeleteScopes(isOrganizer: boolean) {
 /** The scope menu itself is the recurring event's destructive confirmation. */
 function RecurringDeleteControl({
   label,
+  fullLabel,
   destructive,
   isOrganizer,
   onConfirm,
 }: {
   label: string;
+  /** The unshortened wording, for the menu's accessible name. */
+  fullLabel: string;
   destructive: boolean;
   isOrganizer: boolean;
   onConfirm: (scope: DeleteScope) => Promise<unknown>;
@@ -472,7 +512,7 @@ function RecurringDeleteControl({
           ? "color-mix(in oklch, var(--destructive) 20%, var(--popover))"
           : undefined
       }
-      menuLabel={`${label} recurring event`}
+      menuLabel={`${fullLabel} recurring event`}
       items={options.map((option) => ({
         label: option.label,
         onClick: () => {
@@ -593,6 +633,7 @@ export function EventDetail({
   const capabilities = useEventCapabilities()(event);
   const calendar = calendars.find((c) => c._id === event.localCalendarId);
   const reminders = useEventReminders(event);
+  const removeLabels = removeControlLabels(capabilities);
 
   const [screen, setScreen] = useState<"main" | "description">("main");
   const mainRef = useRef<HTMLDivElement>(null);
@@ -939,21 +980,19 @@ export function EventDetail({
               {(capabilities.canDelete || capabilities.canRemoveSelf) && (
                 event.providerSeriesId ? (
                   <RecurringDeleteControl
-                    label={
-                      capabilities.canDelete
-                        ? "Delete"
-                        : "Remove from my calendar"
-                    }
+                    label={removeLabels.label}
+                    fullLabel={removeLabels.fullLabel}
                     destructive={capabilities.canDelete}
                     isOrganizer={capabilities.isOrganizer}
                     onConfirm={remove}
                   />
                 ) : (
                   <DeleteButton
-                    label={
-                      capabilities.canDelete
-                        ? "Delete"
-                        : "Remove from my calendar"
+                    label={removeLabels.label}
+                    tooltip={
+                      removeLabels.label === removeLabels.fullLabel
+                        ? undefined
+                        : removeLabels.fullLabel
                     }
                     destructive={capabilities.canDelete}
                     onConfirm={() => remove("thisEvent")}

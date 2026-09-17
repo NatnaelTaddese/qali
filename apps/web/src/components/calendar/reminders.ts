@@ -9,6 +9,7 @@ import {
   MAX_REMINDER_MINUTES,
   MAX_REMINDERS_PER_EVENT,
   dedupeReminders,
+  resolvePopupMinutes,
   sameReminderSets,
   type Reminder,
 } from "@qali/domain/reminders";
@@ -108,6 +109,34 @@ export function summarizeReminders(
   if (popups.length === 0) return "None";
   if (popups.length === 1) return labelFor(popups[0]!.minutes, allDay, use24h);
   return `${popups.length} reminders`;
+}
+
+/**
+ * What the detail panel's reminder row reads: the explicit offsets, or the
+ * ones the default resolves to, so the default is never the bare word
+ * "Default" as in the picker's `summarizeReminders`. These are the offsets the
+ * event carries, not a promise that qali delivers each one: past
+ * MAX_FIRE_OFFSET_MINUTES (a week) only the provider's own reminder fires.
+ */
+export function describeReminders(
+  reminders: readonly Reminder[] | null,
+  allDay: boolean,
+  use24h: boolean,
+  defaults: {
+    calendarDefaults?: readonly Reminder[];
+    preferredMinutes?: readonly number[];
+    preferredAllDayMinutes?: readonly number[];
+  },
+): string {
+  const minutes = resolvePopupMinutes({
+    eventReminders: reminders ?? undefined,
+    allDay,
+    ...defaults,
+  });
+  const offsets =
+    minutes.map((m) => labelFor(m, allDay, use24h)).join(" · ") ||
+    "No reminders";
+  return reminders === null ? `Default · ${offsets}` : offsets;
 }
 
 /** Deduped, sorted, in range, and capped — what the form sends. */

@@ -98,6 +98,9 @@ export async function listCalendarsHandler(ctx: QueryCtx) {
     primary: calendar.primary,
     accessRole: calendar.accessRole,
     timeZone: calendar.timeZone,
+    // What "the calendar's default" resolves to, so the detail panel can
+    // say when a default reminder will actually fire.
+    defaultReminders: calendar.defaultReminders,
     selected: calendar.selected,
     providerSelected: calendar.providerSelected,
     isShared: calendar.isShared,

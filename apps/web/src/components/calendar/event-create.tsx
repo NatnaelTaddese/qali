@@ -26,6 +26,7 @@ const FULL_CAPABILITIES: EventCapabilities = {
   canDelete: true,
   canRemoveSelf: false,
   canRespond: false,
+  canSetReminders: true,
   canChangeRecurrence: true,
   isOrganizer: true,
 };

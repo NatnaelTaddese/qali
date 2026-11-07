@@ -1,0 +1,10 @@
+{
+  "name": "desktop",
+  "private": true,
+  "description": "Qali for macOS, built with Rune (Rust). Cargo does the work; these scripts only wrap it.",
+  "scripts": {
+    "desktop:test": "cargo test",
+    "desktop:run": "cargo run",
+    "desktop:app": "./scripts/mac-app.sh"
+  }
+}

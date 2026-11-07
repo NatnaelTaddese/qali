@@ -1,0 +1,31 @@
+[package]
+name = "qali-desktop"
+version = "0.0.1"
+edition = "2024"
+publish = false
+
+[dependencies]
+# Rune is pre-release and apps pin a rev of its fast-forward-only `dev` branch.
+rune = { git = "https://github.com/anomalyco/rune", rev = "1ad9cf69a22c86e9803b257220eae8ee6456c9ce" }
+rune-mac = { git = "https://github.com/anomalyco/rune", rev = "1ad9cf69a22c86e9803b257220eae8ee6456c9ce" }
+rune-fx = { git = "https://github.com/anomalyco/rune", rev = "1ad9cf69a22c86e9803b257220eae8ee6456c9ce" }
+wgpu = { version = "~30.0.1", default-features = false }
+convex = { version = "0.10", default-features = false, features = ["rustls-tls-webpki-roots"] }
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros", "sync", "time"] }
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+keyring = { version = "3", features = ["apple-native"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono-tz = "0.10"
+iana-time-zone = "0.1"
+url = "2"
+httpdate = "1"
+anyhow = "1"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+codegen-units = 16

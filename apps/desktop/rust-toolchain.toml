@@ -1,0 +1,4 @@
+# Rune pins this toolchain; apps that depend on it build with the same one.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]

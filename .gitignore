@@ -56,3 +56,7 @@ temp
 
 # Convex snapshot exports — production data, never committed
 *.zip
+
+# Rust desktop app
+apps/desktop/target
+apps/desktop/.rune

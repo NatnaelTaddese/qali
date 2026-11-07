@@ -1,3 +1,4 @@
+import { expo } from "@better-auth/expo";
 import { createClient, type GenericCtx } from "@convex-dev/better-auth";
 import { convex, crossDomain } from "@convex-dev/better-auth/plugins";
 import { createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
@@ -10,6 +11,14 @@ import type { DataModel } from "./_generated/dataModel";
 import authConfig from "./auth.config";
 
 const siteUrl = env.SITE_URL;
+
+// Origins the native app signs in from. Better Auth matches non-http origins
+// by prefix, so "qali://" covers every deep link of a dev or release build
+// (`qali:///…`) and "exp://" covers any Expo Go URL. Convex functions run
+// without NODE_ENV, so @better-auth/expo never adds its own dev-only "exp://"
+// entry; only deployments pointed at a local web app trust Expo Go.
+const isLocalSite = new URL(siteUrl).hostname === "localhost";
+const nativeOrigins = ["qali://", ...(isLocalSite ? ["exp://"] : [])];
 
 export const authComponent = createClient<DataModel>(components.betterAuth);
 
@@ -67,7 +76,7 @@ const bindLinkCallbackToSession = createAuthMiddleware(async (ctx) => {
 function createAuth(ctx: GenericCtx<DataModel>) {
   return betterAuth({
     baseURL: env.CONVEX_SITE_URL,
-    trustedOrigins: [siteUrl],
+    trustedOrigins: [siteUrl, ...nativeOrigins],
     database: authComponent.adapter(ctx),
     // Login is OAuth-only, so there is no cheap way to re-prove freshness;
     // without this, unlink-account (used by disconnect) rejects any session
@@ -116,6 +125,14 @@ function createAuth(ctx: GenericCtx<DataModel>) {
       },
     },
     plugins: [
+      // Must precede crossDomain. Both plugins rewrite the OAuth callback
+      // redirect in after-hooks, which run in registration order with headers
+      // merged between them: expo() turns `qali:///` into `qali:///?cookie=…`
+      // (the only way the native client receives its session), and crossDomain
+      // then appends `&ott=…`, which the native client ignores. crossDomain
+      // cannot skip native callbacks itself because Google's redirect carries
+      // no `expo-origin` header.
+      expo(),
       crossDomain({ siteUrl }),
       convex({
         authConfig,

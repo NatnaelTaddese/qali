@@ -83,6 +83,11 @@ pub struct State {
     pub hidden_events: std::collections::HashSet<String>,
     /// An event being moved or resized.
     pub drag: Option<crate::data::drag::EventDrag>,
+    /// A new event being drawn on the grid.
+    pub create_drag: Option<crate::data::drag::CreateDrag>,
+    /// The new event the island's create panel is filling in.
+    pub draft: Option<Draft>,
+    pub draft_title: rune::TextEdit,
     /// New times sent to the server and not yet in its list: drawn in place of the old ones.
     pub time_overrides: HashMap<String, (f64, f64)>,
     /// Horizontal trackpad travel toward a page change, and when paging may resume.
@@ -365,6 +370,10 @@ impl State {
 /// the views, ← → (or J / K) to step pages. ⌘1–3 also switch views, as in Calendar.
 pub fn on_key(s: &mut State, e: &rune::KeyEvent, _tx: &mut rune::Tx) -> bool {
     use rune::Key;
+    if s.phase == Phase::SignedIn && s.island == Island::Nav && !e.mods.cmd && e.key == Key::Text("n".into()) {
+        new_event_now(s);
+        return true;
+    }
     if e.key == Key::Escape && s.island != Island::Nav {
         s.close_island();
         return true;
@@ -404,6 +413,20 @@ pub enum Island {
     /// The event as it was when opened; the panel prefers the live row with the same id.
     Event(CalendarEvent),
     Account,
+    /// A new event (`State::draft`).
+    Create,
+}
+
+/// A new event on its way: its time, the calendar it goes in, and the idempotency key that
+/// keeps a retried create from making two.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Draft {
+    pub start_ms: f64,
+    pub end_ms: f64,
+    pub all_day: bool,
+    pub calendar_id: Option<String>,
+    pub submitting: bool,
+    pub operation_id: String,
 }
 
 impl State {
@@ -419,6 +442,34 @@ impl State {
 
     pub fn close_island(&mut self) {
         self.island = Island::Nav;
+        self.draft = None;
+    }
+
+    /// Open the create panel for `[start, end)`, the title field focused.
+    pub fn open_create(&mut self, start_ms: f64, end_ms: f64) {
+        self.draft = Some(Draft {
+            start_ms,
+            end_ms,
+            all_day: false,
+            calendar_id: self.default_calendar().map(|c| c.id.clone()),
+            submitting: false,
+            operation_id: uuid::Uuid::new_v4().to_string(),
+        });
+        self.draft_title = rune::TextEdit::new("");
+        self.draft_title.focused = true;
+        self.island = Island::Create;
+    }
+
+    /// Calendars a new event can go in.
+    pub fn writable_calendars(&self) -> Vec<&crate::data::models::CalendarListItem> {
+        self.calendars.iter().filter(|c| matches!(c.access_role.as_deref(), Some("owner" | "writer"))).collect()
+    }
+
+    /// `pickPrimaryCalendar`: the one primary calendar. With several accounts' primaries the
+    /// server picks the preferred one, so this leaves it unset.
+    pub fn default_calendar(&self) -> Option<&crate::data::models::CalendarListItem> {
+        let primaries: Vec<_> = self.writable_calendars().into_iter().filter(|c| c.primary == Some(true)).collect();
+        if primaries.len() == 1 { primaries.first().copied() } else { None }
     }
 
     /// The open event, live from the current list when it's still there.
@@ -556,4 +607,48 @@ pub fn update_event_time(s: &mut State, event_id: String, start_ms: f64, end_ms:
             s.error = Some(format!("Couldn't reschedule the event: {error}"));
         }
     });
+}
+
+/// Create the draft (`createEvent`): an empty title becomes "New event", the time zone anchors
+/// it, and the draft's operation id makes a retry safe. The new event arrives through the
+/// subscription; the panel closes once the server has it.
+pub fn create_event(s: &mut State) {
+    let Some(draft) = s.draft.as_mut() else { return };
+    if draft.submitting {
+        return;
+    }
+    draft.submitting = true;
+    let zone = crate::data::days::working_zone(s.prefs.time_zone.as_deref());
+    let title = s.draft_title.text.trim();
+    let mut args = std::collections::BTreeMap::from([
+        ("summary".to_string(), convex::Value::String(if title.is_empty() { "New event".into() } else { title.to_string() })),
+        ("startMs".to_string(), convex::Value::Float64(draft.start_ms)),
+        ("endMs".to_string(), convex::Value::Float64(draft.end_ms)),
+        ("timeZone".to_string(), convex::Value::String(zone.name().to_string())),
+        ("operationId".to_string(), convex::Value::String(draft.operation_id.clone())),
+    ]);
+    if let Some(id) = &draft.calendar_id {
+        args.insert("calendarId".to_string(), convex::Value::String(id.clone()));
+    }
+    spawn_action(session::CREATE_EVENT, args, |s, error| match error {
+        None => s.close_island(),
+        Some(error) => {
+            if let Some(d) = s.draft.as_mut() {
+                d.submitting = false;
+            }
+            s.error = Some(format!("Couldn't create the event: {error}"));
+        }
+    });
+}
+
+/// N: a new hour-long event at the next half hour on the page's day (today on today's page).
+pub fn new_event_now(s: &mut State) {
+    let zone = crate::data::days::working_zone(s.prefs.time_zone.as_deref());
+    let day = s.page_focus();
+    let start = if day == s.today() {
+        (s.now_ms / 1_800_000.0).ceil() * 1_800_000.0
+    } else {
+        crate::data::days::start_of_day_ms(day, zone) + 9.0 * 3_600_000.0
+    };
+    s.open_create(start, start + 3_600_000.0);
 }

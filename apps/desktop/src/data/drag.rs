@@ -101,6 +101,48 @@ pub struct EventDrag {
     pub end_ms: f64,
 }
 
+/// Drawing a new event on empty grid (`grid-drag.ts`): the press anchors a quarter hour, and
+/// past the threshold the range stretches between the anchor and the pointer, at least 15
+/// minutes long and inside the day.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CreateDrag {
+    pub column: usize,
+    pub day_start: f64,
+    pub day_end: f64,
+    pub anchor_ms: f64,
+    pub start_ms: f64,
+    pub end_ms: f64,
+    pub moved: bool,
+    pub hour_h: f32,
+}
+
+impl CreateDrag {
+    fn at(&self, y: f32) -> f64 {
+        let ms = self.day_start + y as f64 * 3_600_000.0 / self.hour_h as f64;
+        snap(ms, self.day_start).clamp(self.day_start, self.day_end)
+    }
+
+    /// A press `y` points down a day column.
+    pub fn begin(column: usize, day_start: f64, day_end: f64, y: f32, hour_h: f32) -> CreateDrag {
+        let mut d = CreateDrag { column, day_start, day_end, anchor_ms: 0.0, start_ms: 0.0, end_ms: 0.0, moved: false, hour_h };
+        d.anchor_ms = d.at(y).min(day_end - SNAP_MS);
+        d.start_ms = d.anchor_ms;
+        d.end_ms = d.anchor_ms + SNAP_MS;
+        d
+    }
+
+    /// The pointer now `y` down the column, having travelled `dx`, `dy` since the press.
+    pub fn advance(&mut self, y: f32, dx: f32, dy: f32) {
+        if !self.moved && dx.abs() < THRESHOLD && dy.abs() < THRESHOLD {
+            return;
+        }
+        self.moved = true;
+        let cursor = self.at(y);
+        self.start_ms = self.anchor_ms.min(cursor);
+        self.end_ms = self.anchor_ms.max(cursor).max(self.start_ms + SNAP_MS).min(self.day_end);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,6 +184,20 @@ mod tests {
         assert_eq!(g.times(100.0, -40.0), (2.0 * day + 9.0 * H, 2.0 * day + 10.0 * H));
         // Past the last column it stays on the last day, and it can't leave the day's bottom.
         assert_eq!(g.times(900.0, 2000.0), (3.0 * day - H, 3.0 * day));
+    }
+
+    #[test]
+    fn drawing_a_new_event_stretches_from_the_anchor_either_way() {
+        let mut d = CreateDrag::begin(0, 0.0, 24.0 * H, 9.0 * 40.0 + 3.0, 40.0);
+        assert_eq!((d.start_ms, d.end_ms), (9.0 * H, 9.25 * H), "a press alone is a quarter hour");
+        d.advance(9.0 * 40.0 + 2.0, 0.0, 1.0);
+        assert!(!d.moved, "under the threshold");
+        d.advance(11.0 * 40.0, 0.0, 77.0);
+        assert_eq!((d.start_ms, d.end_ms), (9.0 * H, 11.0 * H));
+        d.advance(7.0 * 40.0 + 10.0, 0.0, -83.0);
+        assert_eq!((d.start_ms, d.end_ms), (7.25 * H, 9.0 * H), "dragging up puts the anchor at the end");
+        let late = CreateDrag::begin(0, 0.0, 24.0 * H, 24.0 * 40.0, 40.0);
+        assert_eq!(late.end_ms, 24.0 * H, "a press at midnight still fits");
     }
 
     #[test]

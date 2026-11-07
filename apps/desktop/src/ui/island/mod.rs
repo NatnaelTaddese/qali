@@ -4,6 +4,7 @@
 //! closes it, and clicking another event swaps the panel in place.
 
 mod account;
+mod event_create;
 mod event_detail;
 mod nav;
 
@@ -43,6 +44,10 @@ pub fn island(s: &State, p: &Paint, cx: &mut Cx<State>) -> El {
             None => ("nav", None, 28.0, (rem(0.5), rem(0.375)), nav::nav(s, p)),
         },
         Island::Account => ("account", Some(rem(19.0)), 20.0, (rem(1.0), rem(1.0)), account::account(s, p)),
+        Island::Create => match &s.draft {
+            Some(draft) => ("create", Some(rem(27.0)), 20.0, (rem(1.0), rem(1.0)), event_create::event_create(s, p, draft)),
+            None => ("nav", None, 28.0, (rem(0.5), rem(0.375)), nav::nav(s, p)),
+        },
     };
     // A one-pixel edge, a touch lighter than the glass in dark mode and darker in light.
     let border = if p.dark { white(0.06) } else { black(0.05) };

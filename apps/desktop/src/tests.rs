@@ -436,3 +436,49 @@ fn an_invitation_you_cant_edit_doesnt_move() {
     drag_card(&mut rt, "event-review", 0.5, 0.0, crate::ui::calendar::HOUR_H);
     assert!(rt.state.time_overrides.is_empty());
 }
+
+fn type_text(rt: &mut Runtime<State>, text: &str) {
+    for c in text.chars() {
+        rt.key(rune::KeyEvent { key: rune::Key::Text(c.to_string()), mods: rune::Mods::default() });
+        frames(rt, 1);
+    }
+}
+
+#[test]
+fn drawing_on_empty_grid_opens_the_create_panel() {
+    let mut rt = runtime(scenes::signed_in);
+    let sun = rect(&rt, "day-2026-11-15");
+    let h = crate::ui::calendar::HOUR_H;
+    let (x, y) = (sun[0] + sun[2] / 2.0, sun[1] + 15.0 * h + 2.0);
+    rt.pointer_down(x, y);
+    frames(&mut rt, 2);
+    rt.pointer_move(x, y + h);
+    frames(&mut rt, 1);
+    assert!(rt.find("create-ghost").is_some(), "the range shows while drawing");
+    rt.pointer_move(x, y + 2.0 * h);
+    frames(&mut rt, 1);
+    rt.pointer_up(x, y + 2.0 * h);
+    frames(&mut rt, 20);
+    assert_eq!(rt.state.island, Island::Create);
+    let d = rt.state.draft.clone().unwrap();
+    assert_eq!((hours(d.start_ms), hours(d.end_ms)), (15.0, 17.0));
+    assert_eq!(d.calendar_id.as_deref(), Some("cal-work"), "the one primary calendar");
+    assert!(rt.state.draft_title.focused);
+
+    type_text(&mut rt, "Plan Q1");
+    assert_eq!(rt.state.draft_title.text, "Plan Q1");
+    assert!(rt.elements().iter().any(|e| e.key.as_deref() == Some("create-ghost")), "the slot stays while the form is open");
+    key(&mut rt, rune::Key::Enter);
+    assert!(rt.state.draft.as_ref().unwrap().submitting, "Enter creates");
+}
+
+#[test]
+fn n_starts_an_event_at_the_next_half_hour_and_esc_cancels() {
+    let mut rt = runtime(scenes::signed_in);
+    key(&mut rt, rune::Key::Text("n".into()));
+    let d = rt.state.draft.clone().unwrap();
+    assert_eq!((hours(d.start_ms), hours(d.end_ms)), (15.0, 16.0), "2:35 rounds up to 3:00");
+    key(&mut rt, rune::Key::Escape);
+    assert_eq!(rt.state.island, Island::Nav);
+    assert!(rt.state.draft.is_none());
+}

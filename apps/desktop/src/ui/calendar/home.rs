@@ -154,6 +154,9 @@ fn strip(s: &State, p: &Paint, cx: &mut Cx<State>, window: [f32; 2]) -> El {
     if let Some(ghost) = drag_ghost(s, p, &day_starts, col_w, zone, use_24h) {
         columns = columns.child(ghost);
     }
+    if let Some(ghost) = create_ghost(s, p, &day_starts, col_w, zone, use_24h) {
+        columns = columns.child(ghost);
+    }
     // `NowIndicator`: a faint line across the page, bright over today's column.
     if let Some(i) = today {
         let y = now_top * DAY_H;
@@ -244,5 +247,39 @@ fn drag_ghost(s: &State, p: &Paint, day_starts: &[f64], col_w: f32, zone: chrono
             .w(col_w - left - 4.0)
             .h(height)
             .absolute(column as f32 * col_w + left, top),
+    )
+}
+
+/// `GhostEvent`: the range being drawn (its times), then, while the create panel is open, the
+/// slot the new event takes (its title, or "New event"). Dashed, in the primary colour.
+fn create_ghost(s: &State, p: &Paint, day_starts: &[f64], col_w: f32, zone: chrono_tz::Tz, use_24h: bool) -> Option<El> {
+    let (start, end, label) = match (&s.create_drag, &s.draft) {
+        (Some(d), _) if d.moved => (d.start_ms, d.end_ms, format!("{} – {}", clock(d.start_ms, zone, use_24h, false), clock(d.end_ms, zone, use_24h, true))),
+        (_, Some(d)) if s.island == crate::app::Island::Create && !d.all_day => {
+            let title = s.draft_title.text.trim();
+            (d.start_ms, d.end_ms, if title.is_empty() { "New event".to_string() } else { title.to_string() })
+        }
+        _ => return None,
+    };
+    let column = day_starts.windows(2).position(|w| start >= w[0] && start < w[1])?;
+    let (day_start, day_end) = (day_starts[column], day_starts[column + 1]);
+    let day = (day_end - day_start) as f32;
+    let top = (start - day_start) as f32 / day * DAY_H;
+    let height = ((end.min(day_end) - start) as f32 / day * DAY_H).max(14.0);
+    let inset = rem(0.25);
+    Some(
+        row()
+            .key("create-ghost")
+            .px(rem(0.5))
+            .pt(rem(0.125))
+            .items_start()
+            .radius(theme::RADIUS - 2.0)
+            .fill(fade(p.primary, 0.1))
+            .border(1.0, fade(p.primary, 0.4))
+            .border_dash(4.0, 3.0)
+            .child(text(label).font(rune::tok::TextStyle::new(rem(0.75), 500.0)).color(p.primary).truncate())
+            .w(col_w - 2.0 * inset)
+            .h(height)
+            .absolute(column as f32 * col_w + inset, top),
     )
 }

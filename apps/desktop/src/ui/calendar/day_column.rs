@@ -37,6 +37,31 @@ pub fn day_column(
                 .linear_gradient(std::f32::consts::PI, [(0.0, tint), (0.75, tint), (1.0, tint.alpha(0.0))]),
         );
     }
+    if let Some((starts, i)) = drag.clone() {
+        column = column.on_drag(move |s: &mut crate::app::State, d: &mut rune::Drag, _tx: &mut rune::Tx| {
+            use crate::data::drag::CreateDrag;
+            match d.phase {
+                rune::Phase::Down => s.create_drag = Some(CreateDrag::begin(i, starts[i], starts[i + 1], d.start_y, super::HOUR_H)),
+                rune::Phase::Move => {
+                    if let Some(c) = s.create_drag.as_mut().filter(|c| c.column == i) {
+                        c.advance(d.y, d.dx, d.dy);
+                    }
+                }
+                rune::Phase::Up => {
+                    let Some(c) = s.create_drag.take() else { return };
+                    if d.cancelled() {
+                        return;
+                    }
+                    if c.moved {
+                        s.open_create(c.start_ms, c.end_ms);
+                    } else {
+                        // A click on empty grid closes whatever the island shows.
+                        s.close_island();
+                    }
+                }
+            }
+        });
+    }
     // `layout_day` returns cards in start order, which is the paint order: within a cluster a
     // later start (higher `elevation`) sits on top of the earlier cards it overlaps.
     for card in positioned {

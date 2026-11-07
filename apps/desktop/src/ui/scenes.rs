@@ -64,6 +64,12 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
         };
         s.drag = Some(crate::data::drag::EventDrag { grip, moved: true, start_ms: local(2026, 11, 13, 11, 30), end_ms: local(2026, 11, 13, 12, 30) });
     }),
+    ("creating", |s| {
+        signed_in(s);
+        s.open_create(local(2026, 11, 15, 15, 0), local(2026, 11, 15, 17, 0));
+        s.draft_title = rune::TextEdit::new("Plan Q1");
+        s.draft_title.focused = true;
+    }),
     ("account", |s| {
         signed_in(s);
         s.island = crate::app::Island::Account;

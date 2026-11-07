@@ -2,6 +2,7 @@
 //! runs on the Convex client off the UI thread and reports back through `State`.
 
 use crate::app::{Island, State, services};
+use crate::data::models::Attendee;
 use crate::data::session;
 
 pub(crate) fn spawn_action(name: &'static str, args: std::collections::BTreeMap<String, convex::Value>, done: impl FnOnce(&mut State, Option<String>) + Send + 'static) {
@@ -107,9 +108,42 @@ fn reminders_value(minutes: &[f64]) -> convex::Value {
     )
 }
 
+/// How far an edit of a repeating event reaches (`SAVE_SCOPES`).
+pub const SAVE_SCOPES: [(&str, &str); 3] = [("thisEvent", "This event"), ("thisAndFollowing", "This and following events"), ("allEvents", "All events")];
+
+fn attendees_value(guests: &[Attendee], original: &[Attendee]) -> convex::Value {
+    use convex::Value;
+    Value::Array(
+        guests
+            .iter()
+            .map(|g| {
+                let mut o = std::collections::BTreeMap::from([("email".to_string(), s_val(&g.email))]);
+                if let Some(name) = &g.display_name {
+                    o.insert("displayName".into(), s_val(name));
+                }
+                // Patching replaces the list, so carry each guest's answer across, or saving
+                // any change would reset everyone to "needs action".
+                if let Some(old) = original.iter().find(|a| a.email.eq_ignore_ascii_case(&g.email)) {
+                    if let Some(status) = &old.response_status {
+                        o.insert("responseStatus".into(), s_val(status));
+                    }
+                    if let Some(optional) = old.optional {
+                        o.insert("optional".into(), Value::Boolean(optional));
+                    }
+                }
+                Value::Object(o)
+            })
+            .collect(),
+    )
+}
+
+fn recurrence_value(rule: &crate::data::rrule::Recurrence, zone: chrono_tz::Tz) -> convex::Value {
+    convex::Value::Array(rule.to_rrule(zone).iter().map(|l| s_val(l)).collect())
+}
+
 /// The action and arguments that save the form: everything set for a new event, only what
-/// changed for an edit.
-pub fn save_args(s: &State) -> Option<(&'static str, std::collections::BTreeMap<String, convex::Value>)> {
+/// changed for an edit, which reaches `scope` of a repeating event.
+pub fn save_args(s: &State, scope: &'static str) -> Option<(&'static str, std::collections::BTreeMap<String, convex::Value>)> {
     let draft = s.draft.as_ref()?;
     let zone = crate::data::days::working_zone(s.prefs.time_zone.as_deref());
     let title = s.draft_title.text.trim().to_string();
@@ -153,12 +187,18 @@ pub fn save_args(s: &State) -> Option<(&'static str, std::collections::BTreeMap<
             if let Some(minutes) = &draft.reminders {
                 put("reminders", reminders_value(minutes));
             }
+            if let Some(rule) = &draft.recurrence {
+                put("recurrence", recurrence_value(rule, zone));
+            }
+            if !draft.guests.is_empty() {
+                put("attendees", attendees_value(&draft.guests, &[]));
+            }
             session::CREATE_EVENT
         }
         Some(original) => {
             put("eventId", s_val(&original.id));
             if original.provider_series_id.is_some() {
-                put("scope", s_val("thisEvent"));
+                put("scope", s_val(scope));
             }
             if Some(title.as_str()) != original.summary.as_deref() && !title.is_empty() {
                 put("summary", s_val(&title));
@@ -194,6 +234,14 @@ pub fn save_args(s: &State) -> Option<(&'static str, std::collections::BTreeMap<
             if draft.reminders != old_reminders {
                 put("reminders", draft.reminders.as_deref().map_or(convex::Value::Null, reminders_value));
             }
+            // An event being edited never carries a rule, so any rule is a change.
+            if let Some(rule) = &draft.recurrence {
+                put("recurrence", recurrence_value(rule, zone));
+            }
+            let old_guests = original.attendees.clone().unwrap_or_default();
+            if crate::data::guests::changed(&draft.guests, &old_guests) {
+                put("attendees", attendees_value(&draft.guests, &old_guests));
+            }
             session::UPDATE_EVENT
         }
     };
@@ -201,15 +249,27 @@ pub fn save_args(s: &State) -> Option<(&'static str, std::collections::BTreeMap<
 }
 
 /// Save the form: `createEvent` for a new event (an empty title becomes "New event"), or
-/// `updateEvent` with only what changed for an edit (series edits apply to this event).
-/// Created events arrive through the subscription; an edit returns to the event's panel.
+/// `updateEvent` with only what changed for an edit. An edit of a repeating event asks how
+/// far it reaches first (`save_event` with the chosen scope).
 pub fn create_event(s: &mut State) {
+    let Some(draft) = s.draft.as_mut() else { return };
+    if draft.editing.as_ref().is_some_and(|e| e.provider_series_id.is_some()) {
+        draft.save_scopes_open = !draft.save_scopes_open;
+        draft.menu = None;
+        return;
+    }
+    save_event(s, "thisEvent");
+}
+
+/// Created events arrive through the subscription; an edit returns to the event's panel.
+pub fn save_event(s: &mut State, scope: &'static str) {
     let Some(draft) = s.draft.as_mut() else { return };
     if draft.submitting || draft.end_ms <= draft.start_ms {
         return;
     }
     draft.submitting = true;
-    let Some((name, args)) = save_args(s) else { return };
+    draft.save_scopes_open = false;
+    let Some((name, args)) = save_args(s, scope) else { return };
     let done_editing = s.draft.as_ref().and_then(|d| d.editing.clone());
     spawn_action(name, args, move |s, error| match (error, done_editing) {
         (None, None) => s.close_island(),

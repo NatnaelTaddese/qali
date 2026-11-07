@@ -6,7 +6,9 @@
 mod account;
 mod event_create;
 mod event_detail;
+mod guests;
 mod nav;
+mod repeat;
 
 use rune::{Cx, El, Spring, Transition, el, row};
 

@@ -1,5 +1,5 @@
 //! A signed-in user's live data: one Convex websocket, authenticated with the Better Auth
-//! session's JWT, holding the preferences, calendars and events subscriptions. Every new
+//! session's JWT, holding the preferences, calendars, contacts and events subscriptions. Every new
 //! result goes to the UI thread through `AppHandle::update`.
 
 use std::collections::{BTreeMap, HashMap};
@@ -18,6 +18,7 @@ use crate::auth::{AuthError, BetterAuth};
 
 const LIST_EVENTS: &str = "domains/calendar/queries:listEventsInRange";
 const LIST_CALENDARS: &str = "domains/calendar/queries:listCalendars";
+const LIST_PEOPLE: &str = "domains/people/queries:listPeople";
 const MY_PREFERENCES: &str = "domains/preferences/queries:getMyPreferences";
 pub const SYNC_NOW: &str = "domains/sync/engine:syncNow";
 pub const RESPOND_TO_EVENT: &str = "domains/calendar/service:respondToEvent";
@@ -56,6 +57,7 @@ async fn live(convex_url: &str, auth: Arc<BetterAuth>, ui: Handle, mut range: wa
 
     let mut prefs_sub = client.subscribe(MY_PREFERENCES, BTreeMap::new()).await?;
     let mut calendars_sub = client.subscribe(LIST_CALENDARS, BTreeMap::new()).await?;
+    let mut people_sub = client.subscribe(LIST_PEOPLE, BTreeMap::new()).await?;
 
     // The UI cuts pages in the working zone, so it asks for a range once the preferences land.
     let mut events_sub: Option<QuerySubscription> = None;
@@ -92,6 +94,14 @@ async fn live(convex_url: &str, auth: Arc<BetterAuth>, ui: Handle, mut range: wa
                     let changed = s.calendar_colors != colors || s.calendars != calendars;
                     s.calendar_colors = colors;
                     s.calendars = calendars;
+                    changed
+                });
+            }
+            Some(result) = people_sub.next() => {
+                let people = decode::<Vec<crate::data::models::Contact>>(result)?;
+                ui.update_if(move |s, _| {
+                    let changed = s.people != people;
+                    s.people = people;
                     changed
                 });
             }

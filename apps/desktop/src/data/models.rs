@@ -15,6 +15,7 @@ pub struct Attendee {
     pub organizer: Option<bool>,
     #[serde(rename = "self")]
     pub is_self: Option<bool>,
+    pub optional: Option<bool>,
 }
 
 impl Attendee {
@@ -130,4 +131,13 @@ impl StoredPreferences {
     pub fn use_24h(&self) -> bool {
         self.time_format.as_deref() == Some("24h")
     }
+}
+
+/// A synced contact (`listPeople`), for suggesting guests. Ranked by the server.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Contact {
+    pub email: String,
+    pub display_name: Option<String>,
+    pub photo_url: Option<String>,
 }

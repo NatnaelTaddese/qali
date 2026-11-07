@@ -518,7 +518,7 @@ fn the_form_steps_times_and_toggles_its_options() {
     assert_eq!(d.color.as_deref(), Some("4"));
     assert_eq!(d.reminders, Some(vec![900.0]));
 
-    let (name, args) = crate::app::save_args(&rt.state).unwrap();
+    let (name, args) = crate::app::save_args(&rt.state, "thisEvent").unwrap();
     assert_eq!(name, crate::data::session::CREATE_EVENT);
     assert_eq!(arg(&args, "summary"), Some(&convex::Value::String("New event".into())));
     assert_eq!(arg(&args, "allDay"), Some(&convex::Value::Boolean(true)));
@@ -537,7 +537,7 @@ fn edit_opens_prefilled_and_saves_only_what_changed() {
     assert_eq!(rt.state.draft_title.text, "Dentist");
     assert!(rt.find("save").is_some() && rt.find("create").is_none());
 
-    let (name, args) = crate::app::save_args(&rt.state).unwrap();
+    let (name, args) = crate::app::save_args(&rt.state, "thisEvent").unwrap();
     assert_eq!(name, crate::data::session::UPDATE_EVENT);
     let mut keys: Vec<_> = args.keys().map(String::as_str).collect();
     keys.sort();
@@ -545,7 +545,7 @@ fn edit_opens_prefilled_and_saves_only_what_changed() {
 
     press(&mut rt, "draft-start/later");
     press(&mut rt, "reminder-none");
-    let (_, args) = crate::app::save_args(&rt.state).unwrap();
+    let (_, args) = crate::app::save_args(&rt.state, "thisEvent").unwrap();
     assert!(arg(&args, "startMs").is_some() && arg(&args, "endMs").is_some());
     assert_eq!(arg(&args, "reminders"), Some(&convex::Value::Array(vec![])));
     assert!(arg(&args, "summary").is_none() && arg(&args, "color").is_none());
@@ -561,7 +561,7 @@ fn duplicate_opens_a_new_event_with_the_same_details() {
     let d = rt.state.draft.clone().unwrap();
     assert!(d.editing.is_none());
     assert_eq!(rt.state.draft_title.text, "Dentist");
-    let (name, _) = crate::app::save_args(&rt.state).unwrap();
+    let (name, _) = crate::app::save_args(&rt.state, "thisEvent").unwrap();
     assert_eq!(name, crate::data::session::CREATE_EVENT);
     key(&mut rt, rune::Key::Escape);
     assert_eq!(rt.state.island, Island::Nav);
@@ -572,4 +572,86 @@ fn an_invitation_can_be_duplicated_but_not_edited() {
     let rt = runtime(open("review"));
     assert!(rt.find("duplicate").is_some());
     assert!(rt.find("edit").is_none());
+}
+
+#[test]
+fn guests_are_found_invited_and_removed() {
+    let mut rt = runtime(scenes::signed_in);
+    key(&mut rt, rune::Key::Text("n".into()));
+    press(&mut rt, "draft-guests-trigger");
+    assert!(rt.state.guest_query.focused, "the search takes focus");
+    type_text(&mut rt, "sara");
+    assert!(rt.find("suggest-0").is_some() && rt.find("suggest-1").is_none());
+    key(&mut rt, rune::Key::Enter);
+    assert_eq!(rt.state.draft.as_ref().unwrap().guests.iter().map(|g| g.email.as_str()).collect::<Vec<_>>(), ["sara@example.com"]);
+    assert_eq!(rt.state.guest_query.text, "", "the search clears for the next guest");
+
+    type_text(&mut rt, "zoe@x.org");
+    key(&mut rt, rune::Key::Enter);
+    assert_eq!(rt.state.draft.as_ref().unwrap().guests.len(), 2, "a typed address is invited as is");
+    key(&mut rt, rune::Key::Escape);
+    assert_eq!(rt.state.draft.as_ref().unwrap().menu, None, "Escape closes the search, not the form");
+    assert_eq!(rt.state.island, Island::Create);
+
+    press(&mut rt, "guest-zoe@x.org/remove");
+    let (_, args) = crate::app::save_args(&rt.state, "thisEvent").unwrap();
+    let Some(convex::Value::Array(attendees)) = arg(&args, "attendees") else { panic!("no attendees") };
+    assert_eq!(attendees.len(), 1);
+}
+
+#[test]
+fn the_repeat_menu_builds_a_rule() {
+    let mut rt = runtime(scenes::signed_in);
+    key(&mut rt, rune::Key::Text("n".into()));
+    press(&mut rt, "draft-repeat-trigger");
+    press(&mut rt, "repeat-preset-2");
+    assert_eq!(rt.state.draft.as_ref().unwrap().recurrence.as_ref().unwrap().weekdays, [0, 1, 2, 3, 4], "Weekdays");
+    press(&mut rt, "weekday-SA");
+    press(&mut rt, "repeat-interval/later");
+    press(&mut rt, "end-count");
+    press(&mut rt, "repeat-count/earlier");
+    let (_, args) = crate::app::save_args(&rt.state, "thisEvent").unwrap();
+    assert_eq!(
+        arg(&args, "recurrence"),
+        Some(&convex::Value::Array(vec![convex::Value::String("RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TU,WE,TH,FR,SA;COUNT=4".into())]))
+    );
+    press(&mut rt, "repeat-never");
+    assert!(rt.state.draft.as_ref().unwrap().recurrence.is_none());
+}
+
+#[test]
+fn saving_a_repeating_event_asks_how_far_it_reaches() {
+    let mut rt = runtime(open("standup-2"));
+    press(&mut rt, "edit");
+    assert!(rt.find("draft-repeat-trigger").is_none(), "an instance's rule can't change");
+    press(&mut rt, "save");
+    assert!(rt.state.draft.as_ref().unwrap().save_scopes_open);
+    assert!(!rt.state.draft.as_ref().unwrap().submitting, "nothing is saved yet");
+    let (_, args) = crate::app::save_args(&rt.state, "allEvents").unwrap();
+    assert_eq!(arg(&args, "scope"), Some(&convex::Value::String("allEvents".into())));
+    press(&mut rt, "save-allEvents");
+    assert!(rt.state.draft.as_ref().unwrap().submitting);
+}
+
+#[test]
+fn editing_keeps_every_guests_answer() {
+    let mut rt = runtime(open("review"));
+    let review = rt.state.island_event().cloned().unwrap();
+    rt.state.open_from(&review, false);
+    let before = rt.state.draft.as_ref().unwrap().guests.len();
+    rt.state.draft.as_mut().unwrap().guests.push(crate::data::models::Attendee { email: "new@x.com".into(), ..Default::default() });
+    let (_, args) = crate::app::save_args(&rt.state, "thisEvent").unwrap();
+    let Some(convex::Value::Array(attendees)) = arg(&args, "attendees") else { panic!("no attendees") };
+    assert_eq!(attendees.len(), before + 1);
+    let answered = attendees.iter().filter(|a| matches!(a, convex::Value::Object(o) if o.contains_key("responseStatus"))).count();
+    assert_eq!(answered, before, "existing guests keep their answers; the new one has none");
+}
+
+#[test]
+fn a_duplicate_invites_the_same_guests_afresh() {
+    let mut rt = runtime(open("review"));
+    press(&mut rt, "duplicate");
+    let d = rt.state.draft.as_ref().unwrap();
+    assert!(!d.guests.is_empty());
+    assert!(d.guests.iter().all(|g| g.response_status.is_none() && g.is_self != Some(true)));
 }

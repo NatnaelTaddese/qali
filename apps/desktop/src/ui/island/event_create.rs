@@ -1,12 +1,13 @@
 //! The event form (`calendar/event-create.tsx` and the edit form): the title, focused when it
 //! opens; the day and the times as quarter-hour steppers, with All day; a place or a Google
-//! Meet link; the calendar; the colour; Busy and Private; reminders; and the description.
-//! Enter in the title saves, Escape anywhere cancels. Guests and repeat come later.
+//! Meet link; guests; the repeat rule; the calendar; the colour; Busy and Private; reminders;
+//! and the description. Enter in the title saves, Escape anywhere cancels. Saving an edit of
+//! a repeating event first asks how far it reaches.
 
 use rune::tok::TextStyle;
 use rune::{Color, Cursor, El, Icon, col, el, icon, row, text, text_input};
 
-use crate::app::{self, Draft, State};
+use crate::app::{self, Draft, FormMenu, State};
 use crate::data::colors::{self, Swatch};
 use crate::data::days::working_zone;
 use crate::data::detail;
@@ -23,6 +24,10 @@ const DOT: f32 = rem(1.0);
 pub fn event_create(s: &State, p: &Paint, draft: &Draft) -> El {
     let editing = draft.editing.is_some();
     let busy = draft.submitting;
+    let caps = draft.editing.as_ref().map(|e| {
+        let calendar = e.local_calendar_id.as_ref().and_then(|id| s.calendars.iter().find(|c| &c.id == id));
+        crate::data::permissions::capabilities(e, calendar)
+    });
     let actions = row()
         .key("draft-actions")
         .w_full()
@@ -35,15 +40,51 @@ pub fn event_create(s: &State, p: &Paint, draft: &Draft) -> El {
             Button::new("create", "Create").size(ButtonSize::Sm).loading(busy, "Creating…").build(p).on_press(app::create_event)
         });
 
-    let mut form = col().key("event-create").w_full().gap(rem(0.75)).child(title(s, p)).child(when(s, p, draft)).child(place(s, p, draft)).child(calendar(s, p, draft));
-    if draft.picking_calendar {
+    let mut form = col()
+        .key("event-create")
+        .w_full()
+        .gap(rem(0.75))
+        .child(title(s, p))
+        .child(when(s, p, draft))
+        .child(super::repeat::repeat_row(s, p, draft))
+        .child(place(s, p, draft))
+        .child(super::guests::guests_row(s, p, draft, caps.as_ref()))
+        .child(calendar(s, p, draft));
+    if draft.menu == Some(FormMenu::Calendar) {
         form = form.child(calendar_list(s, p, draft));
     }
-    form.child(color_row(s, p, draft))
+    form = form
+        .child(color_row(s, p, draft))
         .child(availability(p, draft))
         .child(reminders(s, p, draft))
-        .child(labelled(p, "draft-description", &TEXT_ALIGN_LEFT_01, field(s, p, Field::Description)))
-        .child(actions)
+        .child(labelled(p, "draft-description", &TEXT_ALIGN_LEFT_01, field(s, p, Field::Description)));
+    if draft.save_scopes_open {
+        form = form.child(save_scopes(p));
+    }
+    form.child(actions)
+}
+
+/// How far an edit of a repeating event reaches (`SAVE_SCOPES`); choosing one saves.
+fn save_scopes(p: &Paint) -> El {
+    let mut list = col().key("save-scopes").w_full().gap(rem(0.125)).padding(rem(0.25)).radius(theme::RADIUS_XL).fill(fade(p.foreground, 0.04));
+    for (scope, label) in app::SAVE_SCOPES {
+        list = list.child(
+            row()
+                .key(format!("save-{scope}"))
+                .role("button")
+                .label(label)
+                .focusable(true)
+                .w_full()
+                .px(rem(0.625))
+                .py(rem(0.5))
+                .radius(theme::RADIUS_LG)
+                .hover(p.accent)
+                .cursor(Cursor::Pointer)
+                .child(text(label).font(theme::TEXT_SM_MEDIUM).color(p.foreground))
+                .on_press(move |s: &mut State| app::save_event(s, scope)),
+        );
+    }
+    list
 }
 
 fn cancel(s: &mut State) {
@@ -151,7 +192,7 @@ fn edit_times(s: &mut State, f: impl FnOnce(&Draft) -> (f64, f64)) {
 }
 
 /// `‹ label ›`: the arrows step back and forward (`on_step(-1 | 1)`).
-fn stepper(p: &Paint, key: &str, label: String, on_step: impl Fn(&mut State, i64) + Clone + 'static) -> El {
+pub(super) fn stepper(p: &Paint, key: &str, label: String, on_step: impl Fn(&mut State, i64) + Clone + 'static) -> El {
     let back = on_step.clone();
     row()
         .key(key.to_string())
@@ -229,15 +270,14 @@ fn calendar(s: &State, p: &Paint, draft: &Draft) -> El {
             .role("button")
             .label("Calendar")
             .focusable(true)
+            .ml(-rem(0.375))
             .px(rem(0.375))
             .py(rem(0.125))
             .radius(theme::RADIUS_LG)
             .hover(p.accent)
             .cursor(Cursor::Pointer)
             .on_press(|s: &mut State| {
-                if let Some(d) = s.draft.as_mut() {
-                    d.picking_calendar = !d.picking_calendar;
-                }
+                super::repeat::toggle_menu(s, FormMenu::Calendar);
             });
     }
     labelled(p, "draft-calendar", &CALENDAR_03, row().key("draft-calendar-row").child(label))
@@ -268,7 +308,7 @@ fn calendar_list(s: &State, p: &Paint, draft: &Draft) -> El {
                 .on_press(move |s: &mut State| {
                     if let Some(d) = s.draft.as_mut() {
                         d.calendar_id = Some(id.clone());
-                        d.picking_calendar = false;
+                        d.menu = None;
                     }
                 }),
         );
@@ -381,7 +421,7 @@ fn short_reminder(minutes: f64, all_day: bool, use_24h: bool) -> String {
     label.replace(" before", "")
 }
 
-fn chip(p: &Paint, key: &str, label: String, on: bool) -> El {
+pub(super) fn chip(p: &Paint, key: &str, label: String, on: bool) -> El {
     row()
         .key(key.to_string())
         .role("checkbox")
@@ -399,7 +439,7 @@ fn chip(p: &Paint, key: &str, label: String, on: bool) -> El {
 }
 
 /// A row with a muted 18px glyph beside its content, as the detail panel's rows.
-fn labelled(p: &Paint, key: &str, glyph: &'static Icon, content: El) -> El {
+pub(super) fn labelled(p: &Paint, key: &str, glyph: &'static Icon, content: El) -> El {
     row()
         .key(key.to_string())
         .w_full()

@@ -73,7 +73,39 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
     ("creating-calendars", |s| {
         signed_in(s);
         s.open_create(local(2026, 11, 15, 15, 0), local(2026, 11, 15, 17, 0));
-        s.draft.as_mut().unwrap().picking_calendar = true;
+        s.draft.as_mut().unwrap().menu = Some(crate::app::FormMenu::Calendar);
+    }),
+    ("creating-guests", |s| {
+        signed_in(s);
+        s.open_create(local(2026, 11, 15, 15, 0), local(2026, 11, 15, 17, 0));
+        s.draft_title = rune::TextEdit::new("Plan Q1");
+        let d = s.draft.as_mut().unwrap();
+        d.guests = vec![crate::data::models::Attendee { email: "noor@example.com".into(), display_name: Some("Noor Haddad".into()), ..Default::default() }];
+        d.menu = Some(crate::app::FormMenu::Guests);
+        s.draft_title.focused = false;
+        s.guest_query = rune::TextEdit::new("a");
+        s.guest_query.focused = true;
+    }),
+    ("creating-repeat", |s| {
+        signed_in(s);
+        s.open_create(local(2026, 11, 15, 15, 0), local(2026, 11, 15, 17, 0));
+        s.draft_title = rune::TextEdit::new("Plan Q1");
+        s.draft_title.focused = false;
+        let d = s.draft.as_mut().unwrap();
+        d.recurrence = Some(crate::data::rrule::Recurrence {
+            freq: crate::data::rrule::Freq::Weekly,
+            interval: 2,
+            weekdays: vec![0, 2],
+            end: crate::data::rrule::End::Count(6),
+        });
+        d.menu = Some(crate::app::FormMenu::Repeat);
+    }),
+    ("editing-series", |s| {
+        signed_in(s);
+        let standup = s.events.iter().find(|e| e.id == "standup-2").unwrap().clone();
+        s.open_from(&standup, false);
+        s.draft_title.focused = false;
+        s.draft.as_mut().unwrap().save_scopes_open = true;
     }),
     ("editing", |s| {
         signed_in(s);
@@ -166,6 +198,10 @@ pub fn signed_in(s: &mut State) {
         access_role: Some("owner".into()),
         ..Default::default()
     }];
+    s.people = [("ana@example.com", "Ana Lima"), ("ben@example.com", "Ben Okafor"), ("noor@example.com", "Noor Haddad"), ("sara@example.com", "Sara Kim"), ("tomas@example.com", "Tomás Ruiz")]
+        .iter()
+        .map(|(email, name)| crate::data::models::Contact { email: email.to_string(), display_name: Some(name.to_string()), photo_url: None })
+        .collect();
     let monday = NaiveDate::from_ymd_opt(2026, 11, 9).unwrap();
     s.window = (days::start_of_day_ms(monday, ZONE), days::start_of_day_ms(monday + chrono::Duration::days(7), ZONE));
     s.now_ms = local(2026, 11, 11, 14, 35);

@@ -90,6 +90,10 @@ pub struct State {
     pub draft_title: rune::TextEdit,
     pub draft_location: rune::TextEdit,
     pub draft_description: rune::TextEdit,
+    /// The guest picker's search.
+    pub guest_query: rune::TextEdit,
+    /// Synced contacts, best first, for guest suggestions.
+    pub people: Vec<crate::data::models::Contact>,
     /// New times sent to the server and not yet in its list: drawn in place of the old ones.
     pub time_overrides: HashMap<String, (f64, f64)>,
     /// Horizontal trackpad travel toward a page change, and when paging may resume.
@@ -423,6 +427,14 @@ pub enum Island {
     Create,
 }
 
+/// What's open under the form's rows; one at a time, so the island stays short.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FormMenu {
+    Calendar,
+    Repeat,
+    Guests,
+}
+
 /// The event the island's form is filling in: a new one (`editing: None`), or the changes to
 /// an existing one. The text fields live in `State` (`draft_title`, `draft_location`,
 /// `draft_description`), where Rune's editors write.
@@ -442,8 +454,16 @@ pub struct Draft {
     pub meet: bool,
     /// Popup reminders in minutes before; `None` is the calendar's default.
     pub reminders: Option<Vec<f64>>,
-    /// The calendar list is open.
-    pub picking_calendar: bool,
+    /// Guests, as they'll be sent: an edit starts with the event's, answers included.
+    pub guests: Vec<crate::data::models::Attendee>,
+    /// `None` doesn't repeat. An edit of a repeating instance never has one.
+    pub recurrence: Option<crate::data::rrule::Recurrence>,
+    /// The list or editor open under one of the form's rows.
+    pub menu: Option<FormMenu>,
+    /// The highlighted guest suggestion.
+    pub guest_active: usize,
+    /// A repeating event's save is asking how far the edit reaches.
+    pub save_scopes_open: bool,
     pub submitting: bool,
     /// Keeps a retried save from creating twice.
     pub operation_id: String,
@@ -478,7 +498,11 @@ impl State {
             private: false,
             meet: false,
             reminders: None,
-            picking_calendar: false,
+            guests: Vec::new(),
+            recurrence: None,
+            menu: None,
+            guest_active: 0,
+            save_scopes_open: false,
             submitting: false,
             operation_id: uuid::Uuid::new_v4().to_string(),
         });
@@ -486,6 +510,7 @@ impl State {
         self.draft_title.focused = true;
         self.draft_location = rune::TextEdit::new("");
         self.draft_description = rune::TextEdit::new("");
+        self.guest_query = rune::TextEdit::new("");
         self.island = Island::Create;
     }
 
@@ -514,6 +539,14 @@ impl State {
         draft.private = event.visibility.as_deref() == Some("private");
         draft.meet = event.conference_url.is_some() && !duplicate;
         draft.reminders = event.reminders.as_ref().map(|r| r.iter().filter(|r| r.method == "popup").map(|r| r.minutes).collect());
+        // A copy is a new invitation: nobody has answered it yet.
+        draft.guests = event.attendees.clone().unwrap_or_default();
+        if duplicate {
+            draft.guests.retain(|g| g.is_self != Some(true) && g.organizer != Some(true));
+            for g in &mut draft.guests {
+                g.response_status = None;
+            }
+        }
         if !duplicate {
             draft.editing = Some(event.clone());
         }

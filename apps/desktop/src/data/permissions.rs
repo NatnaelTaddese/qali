@@ -1,5 +1,5 @@
 //! What the user may do with an event, ported from `packages/domain/src/permissions.ts`
-//! (`eventCapabilities`). Only the rules the detail panel reads so far.
+//! (`eventCapabilities`). The rules the detail panel and the form read.
 
 use super::models::{CalendarEvent, CalendarListItem};
 
@@ -10,12 +10,15 @@ const GOOGLE_MANAGED_EVENT_TYPES: [&str; 3] = ["birthday", "workingLocation", "f
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Capabilities {
     pub can_edit: bool,
+    pub can_invite_others: bool,
     pub can_see_guests: bool,
     /// Hard delete: cancels the event for every guest.
     pub can_delete: bool,
     /// Remove your own copy, leaving the organiser's untouched.
     pub can_remove_self: bool,
     pub can_respond: bool,
+    /// A repeating row is one expanded instance with no rule of its own to edit.
+    pub can_change_recurrence: bool,
     pub is_organizer: bool,
     /// Why editing is off, phrased for the user; `None` when it isn't.
     pub read_only_reason: Option<&'static str>,
@@ -42,8 +45,12 @@ pub fn capabilities(event: &CalendarEvent, calendar: Option<&CalendarListItem>) 
     } else {
         None
     };
+    let can_edit = read_only_reason.is_none();
     Capabilities {
-        can_edit: read_only_reason.is_none(),
+        can_edit,
+        // `guestsCanInviteOthers` defaults to true.
+        can_invite_others: can_edit && (is_organizer || event.guests_can_invite_others != Some(false)),
+        can_change_recurrence: can_edit && event.provider_series_id.is_none(),
         can_delete: writable && !google_managed && is_organizer,
         can_remove_self: writable && !google_managed && !is_organizer && self_attendee.is_some(),
         read_only_reason,

@@ -473,11 +473,11 @@ fn drawing_on_empty_grid_opens_the_create_panel() {
 }
 
 #[test]
-fn n_starts_an_event_at_the_next_half_hour_and_esc_cancels() {
+fn n_starts_an_event_in_the_next_free_slot_and_esc_cancels() {
     let mut rt = runtime(scenes::signed_in);
     key(&mut rt, rune::Key::Text("n".into()));
     let d = rt.state.draft.clone().unwrap();
-    assert_eq!((hours(d.start_ms), hours(d.end_ms)), (15.0, 16.0), "2:35 rounds up to 3:00");
+    assert_eq!((hours(d.start_ms), hours(d.end_ms)), (16.5, 17.0), "from 2:45, past Wednesday's afternoon meetings");
     key(&mut rt, rune::Key::Escape);
     assert_eq!(rt.state.island, Island::Nav);
     assert!(rt.state.draft.is_none());
@@ -493,13 +493,13 @@ fn the_form_steps_times_and_toggles_its_options() {
     key(&mut rt, rune::Key::Text("n".into()));
     press(&mut rt, "draft-start/later");
     let d = rt.state.draft.clone().unwrap();
-    assert_eq!((hours(d.start_ms), hours(d.end_ms)), (15.25, 16.25), "the start moves the end with it");
+    assert_eq!((hours(d.start_ms), hours(d.end_ms)), (16.75, 17.25), "the start moves the end with it");
     press(&mut rt, "draft-end/earlier");
     press(&mut rt, "draft-end/earlier");
     press(&mut rt, "draft-end/earlier");
     press(&mut rt, "draft-end/earlier");
     let d = rt.state.draft.clone().unwrap();
-    assert_eq!(hours(d.end_ms), 15.5, "never shorter than a quarter hour");
+    assert_eq!(hours(d.end_ms), 17.0, "never shorter than a quarter hour");
     press(&mut rt, "draft-day/later");
     assert!(rt.elements().iter().any(|e| e.text.as_deref() == Some("Thu 12 Nov")), "the day moved");
 
@@ -698,4 +698,19 @@ fn a_shaky_click_on_a_card_still_springs_the_island() {
     });
     assert!(matches!(&rt.state.island, Island::Event(e) if e.id == "dentist"));
     assert!(before < mid && mid < after, "{before} → {mid} → {after}");
+}
+
+#[test]
+fn the_island_create_button_opens_the_form_in_the_next_free_slot() {
+    let mut rt = runtime(scenes::signed_in);
+    let (before, mid, after) = island_widths(&mut rt, |rt| {
+        let (x, y) = rt.find("create-event").expect("the + button");
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+    });
+    assert_eq!(rt.state.island, Island::Create);
+    let d = rt.state.draft.clone().unwrap();
+    assert_eq!((hours(d.start_ms), hours(d.end_ms)), (16.5, 17.0));
+    assert!(rt.state.draft_title.focused);
+    assert!(before < mid && mid < after, "the pill springs into the form: {before} → {mid} → {after}");
 }

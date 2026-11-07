@@ -6,6 +6,7 @@ use chrono::{DateTime, Days, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
 
 use super::days::start_of_day_ms;
+use super::models::CalendarEvent;
 use super::week::{MS_PER_DAY, SNAP_MS};
 
 /// Reminder presets in minutes before (`REMINDER_PRESETS` on the web).
@@ -72,6 +73,30 @@ pub fn last_day_ms(start: f64, end: f64) -> f64 {
     (end - MS_PER_DAY).max(start)
 }
 
+/// A new event's length when nothing else says (`DEFAULT_EVENT_DURATION_MS`).
+pub const DEFAULT_DURATION_MS: f64 = 30.0 * 60_000.0;
+
+/// `nextFreeSlot`: where Create and N put a new event on the day `[day_start, day_end)`.
+/// From 9:00, or on today the next quarter hour from now if later, it skips past each timed
+/// event in the way; a full day falls back to its last slot before midnight.
+pub fn next_free_slot(day_start: f64, day_end: f64, events: &[CalendarEvent], now_ms: f64) -> (f64, f64) {
+    let nine = day_start + 9.0 * 3_600_000.0;
+    let today = now_ms >= day_start && now_ms < day_end;
+    let mut start = if today { nine.max((now_ms / SNAP_MS).ceil() * SNAP_MS) } else { nine };
+    let last_start = day_end - DEFAULT_DURATION_MS;
+    let mut timed: Vec<&CalendarEvent> = events.iter().filter(|e| !e.all_day).collect();
+    timed.sort_by(|a, b| a.start_ms.total_cmp(&b.start_ms));
+    while start <= last_start {
+        let end = start + DEFAULT_DURATION_MS;
+        match timed.iter().find(|e| e.start_ms < end && e.end_ms > start) {
+            None => return (start, end),
+            // Jump past the blocking event, snapped forward, not a quarter hour at a time.
+            Some(clash) => start = (start + SNAP_MS).max((clash.end_ms / SNAP_MS).ceil() * SNAP_MS),
+        }
+    }
+    (last_start, last_start + DEFAULT_DURATION_MS)
+}
+
 /// A reminder chip pressed: the calendar's default becomes just this one, and otherwise it
 /// toggles in the list (which may end empty: no reminders).
 pub fn toggle_reminder(reminders: &Option<Vec<f64>>, minutes: f64) -> Option<Vec<f64>> {
@@ -121,6 +146,23 @@ mod tests {
         assert_eq!(shift_last_day(utc(11), utc(12), -1), (utc(11), utc(12)), "at least one day");
         assert_eq!(shift_last_day(utc(11), utc(12), 2), (utc(11), utc(14)));
         assert_eq!(last_day_ms(utc(11), utc(13)), utc(12));
+    }
+
+    #[test]
+    fn the_next_free_slot_skips_what_is_in_the_way() {
+        let day = ny(11, 11, 0);
+        let end = ny(11, 12, 0);
+        let event = |s: f64, e: f64| CalendarEvent { start_ms: day + s * H, end_ms: day + e * H, ..Default::default() };
+        // Another day: 9:00, past a 9:00–10:10 meeting to 10:15.
+        assert_eq!(next_free_slot(day, end, &[], ny(11, 10, 12)), (day + 9.0 * H, day + 9.5 * H));
+        assert_eq!(next_free_slot(day, end, &[event(9.0, 10.0 + 10.0 / 60.0)], ny(11, 10, 12)), (day + 10.25 * H, day + 10.75 * H));
+        // Today at 14:35: from 14:45, past 14:30–15:30 and a back-to-back 15:30–16:00.
+        let now = day + (14.0 + 35.0 / 60.0) * H;
+        assert_eq!(next_free_slot(day, end, &[event(14.5, 15.5), event(15.5, 16.0)], now), (day + 16.0 * H, day + 16.5 * H));
+        // All-day events don't block; a full day takes its last slot.
+        let all_day = CalendarEvent { all_day: true, ..event(0.0, 24.0) };
+        assert_eq!(next_free_slot(day, end, &[all_day], ny(11, 10, 12)).0, day + 9.0 * H);
+        assert_eq!(next_free_slot(day, end, &[event(0.0, 24.0)], ny(11, 10, 12)), (end - 0.5 * H, end));
     }
 
     #[test]

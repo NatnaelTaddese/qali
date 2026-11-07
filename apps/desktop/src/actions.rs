@@ -286,14 +286,13 @@ pub fn save_event(s: &mut State, scope: &'static str) {
     });
 }
 
-/// N: a new hour-long event at the next half hour on the page's day (today on today's page).
+/// Create (the island's + and N): a new event in the next free slot on the page's day, as
+/// the web's `openCreate` does.
 pub fn new_event_now(s: &mut State) {
     let zone = crate::data::days::working_zone(s.prefs.time_zone.as_deref());
     let day = s.page_focus();
-    let start = if day == s.today() {
-        (s.now_ms / 1_800_000.0).ceil() * 1_800_000.0
-    } else {
-        crate::data::days::start_of_day_ms(day, zone) + 9.0 * 3_600_000.0
-    };
-    s.open_create(start, start + 3_600_000.0);
+    let day_start = crate::data::days::start_of_day_ms(day, zone);
+    let day_end = crate::data::days::start_of_day_ms(day.succ_opt().unwrap_or(day), zone);
+    let (start, end) = crate::data::draft::next_free_slot(day_start, day_end, &s.shown_events(), s.now_ms);
+    s.open_create(start, end);
 }

@@ -655,3 +655,47 @@ fn a_duplicate_invites_the_same_guests_afresh() {
     assert!(!d.guests.is_empty());
     assert!(d.guests.iter().all(|g| g.response_status.is_none() && g.is_self != Some(true)));
 }
+
+/// The island's drawn width a few frames after `act`: still springing if it animates.
+fn island_widths(rt: &mut Runtime<State>, act: impl FnOnce(&mut Runtime<State>)) -> (f32, f32, f32) {
+    let before = rect(rt, "island")[2];
+    act(rt);
+    frames(rt, 3);
+    let mid = rect(rt, "island")[2];
+    frames(rt, 60);
+    (before, mid, rect(rt, "island")[2])
+}
+
+#[test]
+fn drawing_an_event_springs_the_island_open() {
+    let mut rt = runtime(scenes::signed_in);
+    let sun = rect(&rt, "day-2026-11-15");
+    let h = crate::ui::calendar::HOUR_H;
+    let (x, y) = (sun[0] + sun[2] / 2.0, sun[1] + 15.0 * h + 2.0);
+    let (before, mid, after) = island_widths(&mut rt, |rt| {
+        rt.pointer_down(x, y);
+        frames(rt, 2);
+        rt.pointer_move(x, y + h);
+        frames(rt, 1);
+        // The release lands in the same frame as the last move, as a real mouse's does.
+        rt.pointer_move(x, y + 2.0 * h);
+        rt.pointer_up(x, y + 2.0 * h);
+    });
+    assert_eq!(rt.state.island, Island::Create);
+    assert!(before < mid && mid < after, "the pill springs into the form: {before} → {mid} → {after}");
+}
+
+#[test]
+fn a_shaky_click_on_a_card_still_springs_the_island() {
+    let mut rt = runtime(scenes::signed_in);
+    let (x, y) = rt.find("event-dentist").expect("the dentist card");
+    let (before, mid, after) = island_widths(&mut rt, |rt| {
+        rt.pointer_down(x, y);
+        frames(rt, 2);
+        // A point of travel, under the drag threshold, in the release's frame.
+        rt.pointer_move(x + 1.0, y);
+        rt.pointer_up(x + 1.0, y);
+    });
+    assert!(matches!(&rt.state.island, Island::Event(e) if e.id == "dentist"));
+    assert!(before < mid && mid < after, "{before} → {mid} → {after}");
+}

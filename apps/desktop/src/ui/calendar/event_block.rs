@@ -79,10 +79,10 @@ fn card(paint: &Paint, p: &Positioned<'_>, swatch: Swatch, body: El, left: f32, 
         .cursor(if draggable.is_some() { rune::Cursor::Grab } else { rune::Cursor::Pointer })
         .press_scale(0.97)
         .opacity(if dragging { 0.4 } else { 1.0 })
-        .on_press({
+        .on_press_tx({
             let event = e.clone();
             // Rune runs this for a click only: a press that became a drag never presses.
-            move |s: &mut crate::app::State| s.open_event(event.clone())
+            move |s: &mut crate::app::State, tx: &mut rune::Tx| crate::app::defer_island(s, crate::app::IslandChange::Open(event.clone()), tx)
         })
         .w(width)
         .h(height)

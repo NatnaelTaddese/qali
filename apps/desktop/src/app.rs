@@ -85,6 +85,8 @@ pub struct State {
     pub drag: Option<crate::data::drag::EventDrag>,
     /// A new event being drawn on the grid.
     pub create_drag: Option<crate::data::drag::CreateDrag>,
+    /// An island change made from a grid release, applied by `poll` next frame (`defer_island`).
+    pub pending_island: Option<IslandChange>,
     /// The new event the island's create panel is filling in.
     pub draft: Option<Draft>,
     pub draft_title: rune::TextEdit,
@@ -129,6 +131,14 @@ pub fn poll(s: &mut State, t: f64, tx: &mut rune::Tx) -> bool {
         }
         Phase::SignedIn => {
             let mut changed = false;
+            if let Some(change) = s.pending_island.take() {
+                match change {
+                    IslandChange::Create(start, end) => s.open_create(start, end),
+                    IslandChange::Open(event) => s.open_event(event),
+                    IslandChange::Close => s.close_island(),
+                }
+                changed = true;
+            }
             if !s.clock_pinned {
                 let now = session::now_ms();
                 let minute = |ms: f64| (ms / 60_000.0).floor();
@@ -425,6 +435,23 @@ pub enum Island {
     Account,
     /// The form (`State::draft`): a new event, a duplicate, or an edit.
     Create,
+}
+
+/// An island change waiting for the next frame.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IslandChange {
+    Create(f64, f64),
+    Open(CalendarEvent),
+    Close,
+}
+
+/// Make an island change from a grid press or drag release on the next frame. The release
+/// often shares its frame with the pointer's last drag move, even a sub-threshold jitter,
+/// and Rune commits any frame with a drag move instantly, which would make the island pop
+/// instead of spring. `poll` applies it in a frame of its own.
+pub fn defer_island(s: &mut State, change: IslandChange, tx: &mut rune::Tx) {
+    s.pending_island = Some(change);
+    tx.wake_after(std::time::Duration::ZERO);
 }
 
 /// What's open under the form's rows; one at a time, so the island stays short.

@@ -38,7 +38,7 @@ pub fn day_column(
         );
     }
     if let Some((starts, i)) = drag.clone() {
-        column = column.on_drag(move |s: &mut crate::app::State, d: &mut rune::Drag, _tx: &mut rune::Tx| {
+        column = column.on_drag(move |s: &mut crate::app::State, d: &mut rune::Drag, tx: &mut rune::Tx| {
             use crate::data::drag::CreateDrag;
             match d.phase {
                 rune::Phase::Down => s.create_drag = Some(CreateDrag::begin(i, starts[i], starts[i + 1], d.start_y, super::HOUR_H)),
@@ -52,11 +52,12 @@ pub fn day_column(
                     if d.cancelled() {
                         return;
                     }
+                    use crate::app::{IslandChange, defer_island};
                     if c.moved {
-                        s.open_create(c.start_ms, c.end_ms);
+                        defer_island(s, IslandChange::Create(c.start_ms, c.end_ms), tx);
                     } else {
                         // A click on empty grid closes whatever the island shows.
-                        s.close_island();
+                        defer_island(s, IslandChange::Close, tx);
                     }
                 }
             }

@@ -255,6 +255,8 @@ fn drag_ghost(s: &State, p: &Paint, day_starts: &[f64], col_w: f32, zone: chrono
 fn create_ghost(s: &State, p: &Paint, day_starts: &[f64], col_w: f32, zone: chrono_tz::Tz, use_24h: bool) -> Option<El> {
     let (start, end, label) = match (&s.create_drag, &s.draft) {
         (Some(d), _) if d.moved => (d.start_ms, d.end_ms, format!("{} – {}", clock(d.start_ms, zone, use_24h, false), clock(d.end_ms, zone, use_24h, true))),
+        // The frame between the release and the form opening keeps the slot in place.
+        _ if let Some(crate::app::IslandChange::Create(start, end)) = s.pending_island => (start, end, "New event".to_string()),
         // An edit shows a ghost only once its time has changed: where the event will move.
         (_, Some(d))
             if s.island == crate::app::Island::Create

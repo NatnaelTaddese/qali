@@ -250,12 +250,17 @@ fn drag_ghost(s: &State, p: &Paint, day_starts: &[f64], col_w: f32, zone: chrono
     )
 }
 
-/// `GhostEvent`: the range being drawn (its times), then, while the create panel is open, the
-/// slot the new event takes (its title, or "New event"). Dashed, in the primary colour.
+/// `GhostEvent`: the range being drawn (its times), then, while the form is open, the
+/// slot the event takes (its title, or "New event"). Dashed, in the primary colour.
 fn create_ghost(s: &State, p: &Paint, day_starts: &[f64], col_w: f32, zone: chrono_tz::Tz, use_24h: bool) -> Option<El> {
     let (start, end, label) = match (&s.create_drag, &s.draft) {
         (Some(d), _) if d.moved => (d.start_ms, d.end_ms, format!("{} – {}", clock(d.start_ms, zone, use_24h, false), clock(d.end_ms, zone, use_24h, true))),
-        (_, Some(d)) if s.island == crate::app::Island::Create && !d.all_day => {
+        // An edit shows a ghost only once its time has changed: where the event will move.
+        (_, Some(d))
+            if s.island == crate::app::Island::Create
+                && !d.all_day
+                && d.editing.as_ref().is_none_or(|o| (o.start_ms, o.end_ms, o.all_day) != (d.start_ms, d.end_ms, d.all_day)) =>
+        {
             let title = s.draft_title.text.trim();
             (d.start_ms, d.end_ms, if title.is_empty() { "New event".to_string() } else { title.to_string() })
         }

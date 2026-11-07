@@ -15,7 +15,7 @@ fn at(ms: f64, zone: Tz) -> DateTime<Tz> {
 }
 
 /// "Wed 11 Nov".
-fn day_label(d: chrono::NaiveDate) -> String {
+pub fn day_label(d: chrono::NaiveDate) -> String {
     format!("{} {} {}", super::page::weekday_short(d), d.day(), MONTHS_SHORT[d.month0() as usize])
 }
 

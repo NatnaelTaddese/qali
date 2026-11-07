@@ -1,7 +1,7 @@
 //! The event panel (`calendar/event-detail.tsx`): the colour strip and title with the calendar
 //! and Busy/Free under it, then rows for the time, reminders, series, video call, place,
 //! guests and description, the RSVP switch when you're invited, and the link actions.
-//! Edit, duplicate and delete arrive with phase 4.
+//! Edit and Duplicate open the form over the panel; Delete asks first.
 
 use std::time::{Duration, Instant};
 
@@ -345,10 +345,17 @@ fn footer(s: &State, p: &Paint, e: &CalendarEvent, caps: &Capabilities) -> El {
     } else {
         footer = footer.child(el().key("no-links"));
     }
+    let mut edits = row().key("edit-actions").gap(rem(0.25)).center_y();
     if caps.can_delete || caps.can_remove_self {
-        footer = footer.child(delete_button(s, p, e, caps));
+        edits = edits.child(delete_button(s, p, e, caps));
     }
-    footer
+    let copy = e.clone();
+    edits = edits.child(icon_button(p, "duplicate", "Duplicate", &COPY_01, rem(2.0), rem(1.125)).on_press(move |s: &mut State| s.open_from(&copy, true)));
+    if caps.can_edit {
+        let event = e.clone();
+        edits = edits.child(icon_button(p, "edit", "Edit", &PENCIL_EDIT_02, rem(2.0), rem(1.125)).on_press(move |s: &mut State| s.open_from(&event, false)));
+    }
+    footer.child(edits)
 }
 
 /// `DeleteButton`: the first press asks "Confirm?" for three seconds, the second deletes.

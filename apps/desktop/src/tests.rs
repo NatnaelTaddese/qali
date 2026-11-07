@@ -482,3 +482,94 @@ fn n_starts_an_event_at_the_next_half_hour_and_esc_cancels() {
     assert_eq!(rt.state.island, Island::Nav);
     assert!(rt.state.draft.is_none());
 }
+
+fn arg<'a>(args: &'a std::collections::BTreeMap<String, convex::Value>, k: &str) -> Option<&'a convex::Value> {
+    args.get(k)
+}
+
+#[test]
+fn the_form_steps_times_and_toggles_its_options() {
+    let mut rt = runtime(scenes::signed_in);
+    key(&mut rt, rune::Key::Text("n".into()));
+    press(&mut rt, "draft-start/later");
+    let d = rt.state.draft.clone().unwrap();
+    assert_eq!((hours(d.start_ms), hours(d.end_ms)), (15.25, 16.25), "the start moves the end with it");
+    press(&mut rt, "draft-end/earlier");
+    press(&mut rt, "draft-end/earlier");
+    press(&mut rt, "draft-end/earlier");
+    press(&mut rt, "draft-end/earlier");
+    let d = rt.state.draft.clone().unwrap();
+    assert_eq!(hours(d.end_ms), 15.5, "never shorter than a quarter hour");
+    press(&mut rt, "draft-day/later");
+    assert!(rt.elements().iter().any(|e| e.text.as_deref() == Some("Thu 12 Nov")), "the day moved");
+
+    press(&mut rt, "draft-all-day");
+    assert!(rt.state.draft.as_ref().unwrap().all_day);
+    let d = rt.state.draft.clone().unwrap();
+    assert_eq!(d.end_ms - d.start_ms, crate::data::week::MS_PER_DAY, "all day on that one day");
+    press(&mut rt, "draft-meet");
+    assert!(rt.find("draft-location-input").is_none(), "Meet replaces the place");
+    press(&mut rt, "draft-busy");
+    press(&mut rt, "draft-private");
+    press(&mut rt, "color-4");
+    press(&mut rt, "reminder-900");
+    let d = rt.state.draft.clone().unwrap();
+    assert!(d.meet && !d.busy && d.private);
+    assert_eq!(d.color.as_deref(), Some("4"));
+    assert_eq!(d.reminders, Some(vec![900.0]));
+
+    let (name, args) = crate::app::save_args(&rt.state).unwrap();
+    assert_eq!(name, crate::data::session::CREATE_EVENT);
+    assert_eq!(arg(&args, "summary"), Some(&convex::Value::String("New event".into())));
+    assert_eq!(arg(&args, "allDay"), Some(&convex::Value::Boolean(true)));
+    assert_eq!(arg(&args, "addConference"), Some(&convex::Value::Boolean(true)));
+    assert_eq!(arg(&args, "busy"), Some(&convex::Value::Boolean(false)));
+    assert_eq!(arg(&args, "visibility"), Some(&convex::Value::String("private".into())));
+    assert!(arg(&args, "location").is_none());
+}
+
+#[test]
+fn edit_opens_prefilled_and_saves_only_what_changed() {
+    let mut rt = runtime(open("dentist"));
+    press(&mut rt, "edit");
+    assert_eq!(rt.state.island, Island::Create);
+    assert_eq!(rt.state.draft.as_ref().unwrap().editing.as_ref().map(|e| e.id.as_str()), Some("dentist"));
+    assert_eq!(rt.state.draft_title.text, "Dentist");
+    assert!(rt.find("save").is_some() && rt.find("create").is_none());
+
+    let (name, args) = crate::app::save_args(&rt.state).unwrap();
+    assert_eq!(name, crate::data::session::UPDATE_EVENT);
+    let mut keys: Vec<_> = args.keys().map(String::as_str).collect();
+    keys.sort();
+    assert_eq!(keys, ["eventId", "operationId", "timeZone"], "nothing changed yet");
+
+    press(&mut rt, "draft-start/later");
+    press(&mut rt, "reminder-none");
+    let (_, args) = crate::app::save_args(&rt.state).unwrap();
+    assert!(arg(&args, "startMs").is_some() && arg(&args, "endMs").is_some());
+    assert_eq!(arg(&args, "reminders"), Some(&convex::Value::Array(vec![])));
+    assert!(arg(&args, "summary").is_none() && arg(&args, "color").is_none());
+
+    key(&mut rt, rune::Key::Escape);
+    assert!(matches!(&rt.state.island, Island::Event(e) if e.id == "dentist"), "Escape goes back to the event");
+}
+
+#[test]
+fn duplicate_opens_a_new_event_with_the_same_details() {
+    let mut rt = runtime(open("dentist"));
+    press(&mut rt, "duplicate");
+    let d = rt.state.draft.clone().unwrap();
+    assert!(d.editing.is_none());
+    assert_eq!(rt.state.draft_title.text, "Dentist");
+    let (name, _) = crate::app::save_args(&rt.state).unwrap();
+    assert_eq!(name, crate::data::session::CREATE_EVENT);
+    key(&mut rt, rune::Key::Escape);
+    assert_eq!(rt.state.island, Island::Nav);
+}
+
+#[test]
+fn an_invitation_can_be_duplicated_but_not_edited() {
+    let rt = runtime(open("review"));
+    assert!(rt.find("duplicate").is_some());
+    assert!(rt.find("edit").is_none());
+}

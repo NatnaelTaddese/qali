@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use super::models::CalendarEvent;
 
 /// Google Calendar's stable event-colour hexes, by the palette key stored in `event.color`.
-fn google_event_hex(key: &str) -> Option<&'static str> {
+pub fn google_event_hex(key: &str) -> Option<&'static str> {
     Some(match key {
         "1" => "#7986cb",
         "2" => "#33b679",
@@ -98,6 +98,25 @@ pub fn event_swatch(event: &CalendarEvent, calendar_colors: &HashMap<String, Str
     }
 }
 
+/// `EVENT_COLOR_CHOICES`: one Google colour key per palette hue it can produce, in palette
+/// order, inverted from `snap` over Google's palette (several keys share a hue; first wins).
+pub fn color_choices() -> Vec<(&'static str, Swatch)> {
+    const KEYS: [&str; 11] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"];
+    let mut by_swatch: Vec<(Swatch, &'static str)> = Vec::new();
+    for key in KEYS {
+        let swatch = snap(google_event_hex(key).unwrap());
+        if !by_swatch.iter().any(|(s, _)| *s == swatch) {
+            by_swatch.push((swatch, key));
+        }
+    }
+    let order = |s: &Swatch| match s {
+        Swatch::Hue(i) => *i,
+        Swatch::Neutral => usize::MAX,
+    };
+    by_swatch.sort_by_key(|(s, _)| order(s));
+    by_swatch.into_iter().map(|(s, k)| (k, s)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +128,15 @@ mod tests {
         assert_eq!(snap("#039be5"), Swatch::Hue(5));
         assert_eq!(snap("#616161"), Swatch::Neutral);
         assert_eq!(snap("not a colour"), Swatch::Neutral);
+    }
+
+    #[test]
+    fn color_choices_offer_each_hue_once() {
+        let choices = color_choices();
+        assert!(choices.len() >= 6);
+        let swatches: Vec<_> = choices.iter().map(|(_, s)| *s).collect();
+        assert!(swatches.windows(2).all(|w| w[0] != w[1]));
+        assert_eq!(choices[0], ("4", Swatch::Hue(0)), "Flamingo comes before Tomato, as on the web");
     }
 
     #[test]

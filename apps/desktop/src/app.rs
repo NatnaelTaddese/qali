@@ -88,6 +88,8 @@ pub struct State {
     /// The new event the island's create panel is filling in.
     pub draft: Option<Draft>,
     pub draft_title: rune::TextEdit,
+    pub draft_location: rune::TextEdit,
+    pub draft_description: rune::TextEdit,
     /// New times sent to the server and not yet in its list: drawn in place of the old ones.
     pub time_overrides: HashMap<String, (f64, f64)>,
     /// Horizontal trackpad travel toward a page change, and when paging may resume.
@@ -155,13 +157,13 @@ pub fn poll(s: &mut State, t: f64, tx: &mut rune::Tx) -> bool {
 }
 
 pub struct Services {
-    rt: tokio::runtime::Runtime,
+    pub(crate) rt: tokio::runtime::Runtime,
     config: Config,
     auth: Arc<BetterAuth>,
-    ui: rune::AppHandle<State>,
+    pub(crate) ui: rune::AppHandle<State>,
     data: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// The signed-in session's Convex client, once connected.
-    client: session::ClientSlot,
+    pub(crate) client: session::ClientSlot,
     /// The event range the signed-in session should load.
     range: Mutex<Option<tokio::sync::watch::Sender<(f64, f64)>>>,
 }
@@ -190,7 +192,7 @@ pub fn install(config: Config, ui: rune::AppHandle<State>) {
     }
 }
 
-fn services() -> Option<&'static Services> {
+pub(crate) fn services() -> Option<&'static Services> {
     SERVICES.get()
 }
 
@@ -374,6 +376,10 @@ pub fn on_key(s: &mut State, e: &rune::KeyEvent, _tx: &mut rune::Tx) -> bool {
         new_event_now(s);
         return true;
     }
+    if e.key == Key::Escape && s.island == Island::Create {
+        s.cancel_form();
+        return true;
+    }
     if e.key == Key::Escape && s.island != Island::Nav {
         s.close_island();
         return true;
@@ -413,19 +419,33 @@ pub enum Island {
     /// The event as it was when opened; the panel prefers the live row with the same id.
     Event(CalendarEvent),
     Account,
-    /// A new event (`State::draft`).
+    /// The form (`State::draft`): a new event, a duplicate, or an edit.
     Create,
 }
 
-/// A new event on its way: its time, the calendar it goes in, and the idempotency key that
-/// keeps a retried create from making two.
+/// The event the island's form is filling in: a new one (`editing: None`), or the changes to
+/// an existing one. The text fields live in `State` (`draft_title`, `draft_location`,
+/// `draft_description`), where Rune's editors write.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Draft {
+    /// The event being edited, as it was when the form opened.
+    pub editing: Option<CalendarEvent>,
     pub start_ms: f64,
     pub end_ms: f64,
     pub all_day: bool,
     pub calendar_id: Option<String>,
+    /// Google colour key; `None` inherits the calendar's.
+    pub color: Option<String>,
+    pub busy: bool,
+    pub private: bool,
+    /// Add (or keep) a Google Meet link instead of a place.
+    pub meet: bool,
+    /// Popup reminders in minutes before; `None` is the calendar's default.
+    pub reminders: Option<Vec<f64>>,
+    /// The calendar list is open.
+    pub picking_calendar: bool,
     pub submitting: bool,
+    /// Keeps a retried save from creating twice.
     pub operation_id: String,
 }
 
@@ -445,19 +465,62 @@ impl State {
         self.draft = None;
     }
 
-    /// Open the create panel for `[start, end)`, the title field focused.
+    /// Open the form for a new event over `[start, end)`, the title field focused.
     pub fn open_create(&mut self, start_ms: f64, end_ms: f64) {
         self.draft = Some(Draft {
+            editing: None,
             start_ms,
             end_ms,
             all_day: false,
             calendar_id: self.default_calendar().map(|c| c.id.clone()),
+            color: None,
+            busy: true,
+            private: false,
+            meet: false,
+            reminders: None,
+            picking_calendar: false,
             submitting: false,
             operation_id: uuid::Uuid::new_v4().to_string(),
         });
         self.draft_title = rune::TextEdit::new("");
         self.draft_title.focused = true;
+        self.draft_location = rune::TextEdit::new("");
+        self.draft_description = rune::TextEdit::new("");
         self.island = Island::Create;
+    }
+
+    /// Escape or Cancel on the form: an edit goes back to its event, anything else closes.
+    pub fn cancel_form(&mut self) {
+        match self.draft.take().and_then(|d| d.editing) {
+            Some(event) => self.open_event(event),
+            None => self.close_island(),
+        }
+    }
+
+    /// The form filled from `event`: to edit it, or (`duplicate`) to create a copy at the
+    /// same time, as the web's Duplicate does.
+    pub fn open_from(&mut self, event: &CalendarEvent, duplicate: bool) {
+        self.open_create(event.start_ms, event.end_ms);
+        let draft = self.draft.as_mut().expect("just opened");
+        draft.all_day = event.all_day;
+        // A copy of an invitation on a calendar you can't write to goes in your default one.
+        let writable = self.writable_calendars().iter().any(|c| Some(&c.id) == event.local_calendar_id.as_ref());
+        let draft = self.draft.as_mut().expect("just opened");
+        if writable || !duplicate {
+            draft.calendar_id = event.local_calendar_id.clone();
+        }
+        draft.color = event.color.clone();
+        draft.busy = event.busy != Some(false);
+        draft.private = event.visibility.as_deref() == Some("private");
+        draft.meet = event.conference_url.is_some() && !duplicate;
+        draft.reminders = event.reminders.as_ref().map(|r| r.iter().filter(|r| r.method == "popup").map(|r| r.minutes).collect());
+        if !duplicate {
+            draft.editing = Some(event.clone());
+        }
+        self.draft_title = rune::TextEdit::new(event.summary.clone().unwrap_or_default());
+        self.draft_title.focused = true;
+        self.draft_location = rune::TextEdit::new(event.location.clone().unwrap_or_default());
+        self.draft_description = rune::TextEdit::new(event.description.as_deref().map(crate::data::detail::preview_text).unwrap_or_default());
     }
 
     /// Calendars a new event can go in.
@@ -519,136 +582,4 @@ impl State {
     }
 }
 
-fn spawn_action(name: &'static str, args: std::collections::BTreeMap<String, convex::Value>, done: impl FnOnce(&mut State, Option<String>) + Send + 'static) {
-    let Some(sv) = services() else { return };
-    let Some(client) = sv.client.lock().unwrap().clone() else {
-        sv.ui.update(move |s, _| done(s, Some("Not connected yet. Try again in a moment.".into())));
-        return;
-    };
-    let ui = sv.ui.clone();
-    sv.rt.spawn(async move {
-        let error = session::call_action(client, name, args).await.err().map(|e| format!("{e:#}"));
-        ui.update(move |s, _| done(s, error));
-    });
-}
-
-/// The island's sync button: pull from Google now (`syncNow`). A rate limit says so quietly.
-pub fn sync_now(s: &mut State) {
-    if s.syncing {
-        return;
-    }
-    s.syncing = true;
-    spawn_action(session::SYNC_NOW, Default::default(), |s, error| {
-        s.syncing = false;
-        if let Some(error) = error.filter(|e| !e.contains("SYNC_RATE_LIMIT")) {
-            s.error = Some(format!("Couldn't sync: {error}"));
-        }
-    });
-}
-
-/// Answer an invitation (`respondToEvent`), showing the answer at once.
-pub fn respond(s: &mut State, event_id: String, status: &'static str) {
-    s.rsvp_pending = Some((event_id.clone(), status.to_string()));
-    let args = std::collections::BTreeMap::from([
-        ("eventId".to_string(), convex::Value::String(event_id)),
-        ("responseStatus".to_string(), convex::Value::String(status.to_string())),
-    ]);
-    spawn_action(session::RESPOND_TO_EVENT, args, |s, error| {
-        if let Some(error) = error {
-            s.rsvp_pending = None;
-            s.error = Some(format!("Couldn't send your reply: {error}"));
-        }
-    });
-}
-
-/// Delete an event, or remove your copy of one you were invited to (`deleteEvent`). `scope` is
-/// "thisEvent", "thisAndFollowing" or "allEvents"; the operation id makes a retry safe. On
-/// success the event disappears at once and its panel closes.
-pub fn delete_event(s: &mut State, event_id: String, scope: &'static str) {
-    if s.deleting.is_some() {
-        return;
-    }
-    s.deleting = Some(event_id.clone());
-    let args = std::collections::BTreeMap::from([
-        ("eventId".to_string(), convex::Value::String(event_id.clone())),
-        ("scope".to_string(), convex::Value::String(scope.to_string())),
-        ("operationId".to_string(), convex::Value::String(uuid::Uuid::new_v4().to_string())),
-    ]);
-    spawn_action(session::DELETE_EVENT, args, move |s, error| {
-        s.deleting = None;
-        s.delete_armed = None;
-        s.delete_scopes_open = false;
-        match error {
-            None => {
-                s.hidden_events.insert(event_id.clone());
-                if matches!(&s.island, Island::Event(e) if e.id == event_id) {
-                    s.close_island();
-                }
-            }
-            Some(error) => s.error = Some(format!("Couldn't remove the event: {error}")),
-        }
-    });
-}
-
-/// Reschedule an event (`updateEventTime`), drawing it at its new time at once and putting it
-/// back if the server refuses.
-pub fn update_event_time(s: &mut State, event_id: String, start_ms: f64, end_ms: f64) {
-    s.time_overrides.insert(event_id.clone(), (start_ms, end_ms));
-    let zone = crate::data::days::working_zone(s.prefs.time_zone.as_deref());
-    let args = std::collections::BTreeMap::from([
-        ("eventId".to_string(), convex::Value::String(event_id.clone())),
-        ("startMs".to_string(), convex::Value::Float64(start_ms)),
-        ("endMs".to_string(), convex::Value::Float64(end_ms)),
-        ("timeZone".to_string(), convex::Value::String(zone.name().to_string())),
-    ]);
-    spawn_action(session::UPDATE_EVENT_TIME, args, move |s, error| {
-        if let Some(error) = error {
-            s.time_overrides.remove(&event_id);
-            s.error = Some(format!("Couldn't reschedule the event: {error}"));
-        }
-    });
-}
-
-/// Create the draft (`createEvent`): an empty title becomes "New event", the time zone anchors
-/// it, and the draft's operation id makes a retry safe. The new event arrives through the
-/// subscription; the panel closes once the server has it.
-pub fn create_event(s: &mut State) {
-    let Some(draft) = s.draft.as_mut() else { return };
-    if draft.submitting {
-        return;
-    }
-    draft.submitting = true;
-    let zone = crate::data::days::working_zone(s.prefs.time_zone.as_deref());
-    let title = s.draft_title.text.trim();
-    let mut args = std::collections::BTreeMap::from([
-        ("summary".to_string(), convex::Value::String(if title.is_empty() { "New event".into() } else { title.to_string() })),
-        ("startMs".to_string(), convex::Value::Float64(draft.start_ms)),
-        ("endMs".to_string(), convex::Value::Float64(draft.end_ms)),
-        ("timeZone".to_string(), convex::Value::String(zone.name().to_string())),
-        ("operationId".to_string(), convex::Value::String(draft.operation_id.clone())),
-    ]);
-    if let Some(id) = &draft.calendar_id {
-        args.insert("calendarId".to_string(), convex::Value::String(id.clone()));
-    }
-    spawn_action(session::CREATE_EVENT, args, |s, error| match error {
-        None => s.close_island(),
-        Some(error) => {
-            if let Some(d) = s.draft.as_mut() {
-                d.submitting = false;
-            }
-            s.error = Some(format!("Couldn't create the event: {error}"));
-        }
-    });
-}
-
-/// N: a new hour-long event at the next half hour on the page's day (today on today's page).
-pub fn new_event_now(s: &mut State) {
-    let zone = crate::data::days::working_zone(s.prefs.time_zone.as_deref());
-    let day = s.page_focus();
-    let start = if day == s.today() {
-        (s.now_ms / 1_800_000.0).ceil() * 1_800_000.0
-    } else {
-        crate::data::days::start_of_day_ms(day, zone) + 9.0 * 3_600_000.0
-    };
-    s.open_create(start, start + 3_600_000.0);
-}
+pub use crate::actions::*;

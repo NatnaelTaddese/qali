@@ -14,6 +14,7 @@ pub mod icons;
 pub mod icons_gen;
 pub mod segmented;
 pub mod spinner;
+pub mod switch;
 pub mod text_link;
 
 pub use button::{Button, Size as ButtonSize, Variant as ButtonVariant};

@@ -70,6 +70,20 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
         s.draft_title = rune::TextEdit::new("Plan Q1");
         s.draft_title.focused = true;
     }),
+    ("creating-calendars", |s| {
+        signed_in(s);
+        s.open_create(local(2026, 11, 15, 15, 0), local(2026, 11, 15, 17, 0));
+        s.draft.as_mut().unwrap().picking_calendar = true;
+    }),
+    ("editing", |s| {
+        signed_in(s);
+        let review = s.events.iter().find(|e| e.id == "review").unwrap().clone();
+        s.open_from(&review, false);
+        let d = s.draft.as_mut().unwrap();
+        (d.start_ms, d.end_ms) = (d.start_ms + 3_600_000.0, d.end_ms + 3_600_000.0);
+        d.reminders = Some(vec![10.0, 60.0]);
+        s.draft_title.focused = false;
+    }),
     ("account", |s| {
         signed_in(s);
         s.island = crate::app::Island::Account;
@@ -144,6 +158,12 @@ pub fn signed_in(s: &mut State) {
         background_color: Some("#039be5".into()),
         access_role: Some("owner".into()),
         primary: Some(true),
+        ..Default::default()
+    }, CalendarListItem {
+        id: "cal-home".into(),
+        summary: Some("Home".into()),
+        background_color: Some("#33b679".into()),
+        access_role: Some("owner".into()),
         ..Default::default()
     }];
     let monday = NaiveDate::from_ymd_opt(2026, 11, 9).unwrap();

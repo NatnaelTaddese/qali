@@ -1,6 +1,7 @@
 //! Qali for the desktop, drawn by Rune. `cargo run` opens the window (sign-in needs the app
 //! bundle, see `scripts/mac-app.sh`); `-- --snap out.png --scene signed-in` renders headless.
 
+mod actions;
 mod app;
 mod auth;
 mod config;

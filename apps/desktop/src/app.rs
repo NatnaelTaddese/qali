@@ -73,6 +73,14 @@ pub struct State {
     pub description_expanded: bool,
     /// Light, dark, or the Mac's setting.
     pub theme: crate::settings::ThemeChoice,
+    /// The delete button asked "Confirm?" for this event, until then.
+    pub delete_armed: Option<(String, std::time::Instant)>,
+    /// A repeating event's delete scopes are showing.
+    pub delete_scopes_open: bool,
+    /// A delete is on its way for this event.
+    pub deleting: Option<String>,
+    /// Deleted here but still in the server's list until it catches up; drawn as gone.
+    pub hidden_events: std::collections::HashSet<String>,
     /// Horizontal trackpad travel toward a page change, and when paging may resume.
     pub swipe: f32,
     pub swipe_resume: Option<std::time::Instant>,
@@ -117,6 +125,10 @@ pub fn poll(s: &mut State, t: f64, tx: &mut rune::Tx) -> bool {
                 tx.wake_after(std::time::Duration::from_millis((60_000.0 - into_minute) as u64 + 5));
             }
             follow_page(s);
+            if s.delete_armed.as_ref().is_some_and(|(_, until)| std::time::Instant::now() >= *until) {
+                s.delete_armed = None;
+                changed = true;
+            }
             if s.copied.is_some_and(|(_, until)| std::time::Instant::now() >= until) {
                 s.copied = None;
                 changed = true;
@@ -395,6 +407,8 @@ impl State {
         if !matches!(&self.island, Island::Event(e) if e.id == event.id) {
             self.guests_expanded = false;
             self.description_expanded = false;
+            self.delete_armed = None;
+            self.delete_scopes_open = false;
         }
         self.island = Island::Event(event);
     }
@@ -409,6 +423,17 @@ impl State {
             Island::Event(snapshot) => Some(self.events.iter().find(|e| e.id == snapshot.id).unwrap_or(snapshot)),
             _ => None,
         }
+    }
+
+    /// The events to draw: the server's list without the ones deleted here.
+    pub fn shown_events(&self) -> Vec<CalendarEvent> {
+        self.events.iter().filter(|e| !self.hidden_events.contains(&e.id)).cloned().collect()
+    }
+
+    /// Forget hidden ids once the server's list no longer has them.
+    pub fn settle_hidden(&mut self) {
+        let events = &self.events;
+        self.hidden_events.retain(|id| events.iter().any(|e| &e.id == id));
     }
 
     /// Drop an optimistic RSVP once the server's copy agrees.
@@ -468,6 +493,35 @@ pub fn respond(s: &mut State, event_id: String, status: &'static str) {
         if let Some(error) = error {
             s.rsvp_pending = None;
             s.error = Some(format!("Couldn't send your reply: {error}"));
+        }
+    });
+}
+
+/// Delete an event, or remove your copy of one you were invited to (`deleteEvent`). `scope` is
+/// "thisEvent", "thisAndFollowing" or "allEvents"; the operation id makes a retry safe. On
+/// success the event disappears at once and its panel closes.
+pub fn delete_event(s: &mut State, event_id: String, scope: &'static str) {
+    if s.deleting.is_some() {
+        return;
+    }
+    s.deleting = Some(event_id.clone());
+    let args = std::collections::BTreeMap::from([
+        ("eventId".to_string(), convex::Value::String(event_id.clone())),
+        ("scope".to_string(), convex::Value::String(scope.to_string())),
+        ("operationId".to_string(), convex::Value::String(uuid::Uuid::new_v4().to_string())),
+    ]);
+    spawn_action(session::DELETE_EVENT, args, move |s, error| {
+        s.deleting = None;
+        s.delete_armed = None;
+        s.delete_scopes_open = false;
+        match error {
+            None => {
+                s.hidden_events.insert(event_id.clone());
+                if matches!(&s.island, Island::Event(e) if e.id == event_id) {
+                    s.close_island();
+                }
+            }
+            Some(error) => s.error = Some(format!("Couldn't remove the event: {error}")),
         }
     });
 }

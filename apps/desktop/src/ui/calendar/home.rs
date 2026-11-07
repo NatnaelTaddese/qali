@@ -99,7 +99,8 @@ fn strip(s: &State, p: &Paint, cx: &mut Cx<State>, window: [f32; 2]) -> El {
     let strip_w = cx.layout_size("strip-days").map_or(window[0] - GUTTER_W, |[w, _]| w);
     let col_w = (strip_w / days.len() as f32).max(1.0);
 
-    let (all_day, timed) = week::bucket(&days, zone, &s.events);
+    let events = s.shown_events();
+    let (all_day, timed) = week::bucket(&days, zone, &events);
     let all_day = week::layout_all_day(&days, &all_day);
     let lane_count = all_day.iter().map(|a| a.lane + 1).max().unwrap_or(0);
     let hidden = all_day.iter().filter(|a| a.lane >= ALLDAY_COLLAPSED_LANES).count();
@@ -164,7 +165,7 @@ fn month(s: &State, p: &Paint, cx: &mut Cx<State>, window: [f32; 2]) -> El {
     let days = page::page_days(View::Month, start, s.prefs.week_starts_on());
     let size = cx.layout_size("month-page").unwrap_or([window[0], window[1] - toolbar::HEIGHT]);
     el().key("month-page").w_full().h_full().clip_rounded(0.0).child(
-        month_view(p, start, &days, s.today(), zone, &s.events, &s.calendar_colors, size)
+        month_view(p, start, &days, s.today(), zone, &s.shown_events(), &s.calendar_colors, size)
             .key(format!("month-{start}"))
             .transition(page_transition(s.page_dir)),
     )

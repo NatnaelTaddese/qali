@@ -6,7 +6,7 @@ use rune::{Env, Runtime};
 use crate::app::{Phase, State};
 use crate::ui::{scenes, views::view};
 
-fn runtime(scene: fn(&mut State)) -> Runtime<State> {
+fn runtime(scene: impl FnOnce(&mut State)) -> Runtime<State> {
     let mut state = State::default();
     scene(&mut state);
     let mut rt = Runtime::new(state, view, crate::ui::views::WINDOW, Env { system_dark: false, scale: 2.0 });
@@ -301,4 +301,58 @@ fn a_month_chip_opens_its_event_without_leaving_the_month() {
     press(&mut rt, "chip-climb");
     assert_eq!(rt.state.view, crate::data::page::View::Month);
     assert!(matches!(&rt.state.island, Island::Event(e) if e.id == "climb"));
+}
+
+fn open(id: &str) -> impl Fn(&mut State) {
+    let id = id.to_string();
+    move |s: &mut State| {
+        scenes::signed_in(s);
+        let e = s.events.iter().find(|e| e.id == id).cloned().unwrap();
+        s.open_event(e);
+    }
+}
+
+#[test]
+fn delete_asks_to_confirm_then_deletes() {
+    let mut rt = runtime(open("dentist"));
+    press(&mut rt, "delete");
+    assert!(rt.state.delete_armed.as_ref().is_some_and(|(id, _)| id == "dentist"));
+    assert!(rt.elements().iter().any(|e| e.text.as_deref() == Some("Confirm?")));
+    press(&mut rt, "delete");
+    assert_eq!(rt.state.deleting.as_deref(), Some("dentist"));
+    assert!(rt.elements().iter().any(|e| e.text.as_deref() == Some("Deleting…")));
+}
+
+#[test]
+fn an_invitation_offers_removal_not_deletion() {
+    let rt = runtime(open("review"));
+    assert!(rt.elements().iter().any(|e| e.text.as_deref() == Some("Remove from my calendar")));
+}
+
+#[test]
+fn a_repeating_event_picks_its_scope() {
+    let mut rt = runtime(open("standup-2"));
+    assert!(rt.find("delete-scopes").is_none());
+    press(&mut rt, "delete");
+    assert!(rt.find("delete-thisAndFollowing").is_some(), "the organiser gets all three scopes");
+    press(&mut rt, "delete-allEvents");
+    assert_eq!(rt.state.deleting.as_deref(), Some("standup-2"));
+}
+
+#[test]
+fn a_deleted_event_leaves_the_grid_until_the_server_agrees() {
+    let mut s = State::default();
+    scenes::signed_in(&mut s);
+    s.hidden_events.insert("dentist".into());
+    let rt = {
+        let mut rt = Runtime::new(s, view, crate::ui::views::WINDOW, Env { system_dark: false, scale: 2.0 });
+        rt.frame(0.0);
+        rt.frame(1.0 / 60.0);
+        rt
+    };
+    assert!(rt.find("event-dentist").is_none());
+    let mut s = rt.state;
+    s.events.retain(|e| e.id != "dentist");
+    s.settle_hidden();
+    assert!(s.hidden_events.is_empty());
 }

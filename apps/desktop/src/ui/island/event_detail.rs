@@ -13,14 +13,19 @@ use crate::data::colors;
 use crate::data::days::working_zone;
 use crate::data::detail::{self, Rsvp, group_guests, rsvp_summary};
 use crate::data::models::CalendarEvent;
-use crate::data::permissions::capabilities;
+use crate::data::permissions::{Capabilities, capabilities};
 use crate::ui::components::avatar::avatar;
+use crate::ui::components::{Button, ButtonSize, ButtonVariant};
 use crate::ui::components::icons_gen::*;
 use crate::ui::theme::{self, Paint, rem};
 
 const MAX_AVATARS: usize = 6;
 const COPIED_FOR: Duration = Duration::from_millis(1500);
 const RSVP_CHOICES: [(&str, &str); 3] = [("accepted", "Going"), ("tentative", "Maybe"), ("declined", "No")];
+/// How long the delete button waits for its second press.
+const CONFIRM_FOR: Duration = Duration::from_secs(3);
+const DELETE_SCOPES: [(&str, &str, bool); 3] =
+    [("thisEvent", "This event", false), ("thisAndFollowing", "This and following events", true), ("allEvents", "All events", false)];
 
 pub fn event_detail(s: &State, p: &Paint, e: &CalendarEvent) -> El {
     let zone = working_zone(s.prefs.time_zone.as_deref());
@@ -99,7 +104,10 @@ pub fn event_detail(s: &State, p: &Paint, e: &CalendarEvent) -> El {
         let pending = s.rsvp_pending.as_ref().filter(|(id, _)| *id == e.id).map(|(_, st)| st.as_str());
         panel = panel.child(rsvp(p, &e.id, pending.or(caps.self_response.as_deref())));
     }
-    panel.child(footer(s, p, e))
+    if s.delete_scopes_open && e.provider_series_id.is_some() && (caps.can_delete || caps.can_remove_self) {
+        panel = panel.child(delete_scopes(s, p, e, &caps));
+    }
+    panel.child(footer(s, p, e, &caps))
 }
 
 /// The colour strip, title, calendar · Busy/Free (and a lock when private), and close.
@@ -318,16 +326,91 @@ fn rsvp(p: &Paint, event_id: &str, current: Option<&str>) -> El {
 }
 
 /// Copy link and Open in Google Calendar, in the bordered group the web's footer uses.
-fn footer(s: &State, p: &Paint, e: &CalendarEvent) -> El {
-    let mut group = row().key("link-actions").gap(rem(0.25)).padding(2.0).radius(theme::RADIUS_XL).border(2.0, p.border);
-    let Some(link) = e.html_link.clone() else { return row().key("footer") };
-    group = group.child(copy_button(s, p, "copy-link", "Copy link", link.clone()));
-    group = group.child(icon_button(p, "open-google", "Open in Google Calendar", &LINK_SQUARE_02, rem(2.0), rem(1.125)).on_press_tx(
-        move |_: &mut State, tx: &mut Tx| {
-            let _ = tx.open_url(&link);
-        },
-    ));
-    row().key("footer").w_full().child(group)
+fn footer(s: &State, p: &Paint, e: &CalendarEvent, caps: &Capabilities) -> El {
+    let mut footer = row().key("footer").w_full().center_y().justify_between();
+    if let Some(link) = e.html_link.clone() {
+        let group = row()
+            .key("link-actions")
+            .gap(rem(0.25))
+            .padding(2.0)
+            .radius(theme::RADIUS_XL)
+            .border(2.0, p.border)
+            .child(copy_button(s, p, "copy-link", "Copy link", link.clone()))
+            .child(icon_button(p, "open-google", "Open in Google Calendar", &LINK_SQUARE_02, rem(2.0), rem(1.125)).on_press_tx(
+                move |_: &mut State, tx: &mut Tx| {
+                    let _ = tx.open_url(&link);
+                },
+            ));
+        footer = footer.child(group);
+    } else {
+        footer = footer.child(el().key("no-links"));
+    }
+    if caps.can_delete || caps.can_remove_self {
+        footer = footer.child(delete_button(s, p, e, caps));
+    }
+    footer
+}
+
+/// `DeleteButton`: the first press asks "Confirm?" for three seconds, the second deletes.
+/// A repeating event's button opens its scopes instead, and choosing one is the confirmation.
+fn delete_button(s: &State, p: &Paint, e: &CalendarEvent, caps: &Capabilities) -> El {
+    let destructive = caps.can_delete;
+    let label = if destructive { "Delete" } else { "Remove from my calendar" };
+    let busy = s.deleting.as_deref() == Some(e.id.as_str());
+    let busy_label = if destructive { "Deleting…" } else { "Removing…" };
+    let id = e.id.clone();
+    if e.provider_series_id.is_some() {
+        let open = s.delete_scopes_open;
+        let variant = if open && destructive { ButtonVariant::Destructive } else { ButtonVariant::Ghost };
+        return Button::new("delete", label).variant(variant).size(ButtonSize::Sm).loading(busy, busy_label).build(p).on_press(
+            |s: &mut State| s.delete_scopes_open = !s.delete_scopes_open,
+        );
+    }
+    let armed = s.delete_armed.as_ref().is_some_and(|(armed, until)| *armed == e.id && Instant::now() < *until);
+    let variant = if armed && destructive { ButtonVariant::Destructive } else { ButtonVariant::Ghost };
+    Button::new("delete", if armed { "Confirm?" } else { label })
+        .variant(variant)
+        .size(ButtonSize::Sm)
+        .loading(busy, busy_label)
+        .build(p)
+        .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+            let armed = s.delete_armed.as_ref().is_some_and(|(armed, until)| *armed == id && Instant::now() < *until);
+            if armed {
+                app::delete_event(s, id.clone(), "thisEvent");
+            } else {
+                s.delete_armed = Some((id.clone(), Instant::now() + CONFIRM_FOR));
+                tx.wake_after(CONFIRM_FOR);
+            }
+        })
+}
+
+/// The repeating event's delete scopes (`RecurringDeleteControl`): "This and following" is
+/// the organiser's alone.
+fn delete_scopes(s: &State, p: &Paint, e: &CalendarEvent, caps: &Capabilities) -> El {
+    let ink = if caps.can_delete { p.destructive } else { p.foreground };
+    let mut list = col().key("delete-scopes").w_full().gap(rem(0.125)).padding(rem(0.25)).radius(theme::RADIUS_XL).fill(theme::fade(p.destructive, 0.08));
+    for (scope, label, organizer_only) in DELETE_SCOPES {
+        if organizer_only && !caps.is_organizer {
+            continue;
+        }
+        let id = e.id.clone();
+        list = list.child(
+            row()
+                .key(format!("delete-{scope}"))
+                .role("button")
+                .label(label)
+                .focusable(s.deleting.is_none())
+                .w_full()
+                .px(rem(0.625))
+                .py(rem(0.5))
+                .radius(theme::RADIUS_LG)
+                .hover(theme::fade(p.destructive, 0.12))
+                .cursor(Cursor::Pointer)
+                .child(text(label).font(theme::TEXT_SM_MEDIUM).color(ink))
+                .on_press(move |s: &mut State| app::delete_event(s, id.clone(), scope)),
+        );
+    }
+    list
 }
 
 /// A copy action whose glyph turns into a tick for a moment after copying.

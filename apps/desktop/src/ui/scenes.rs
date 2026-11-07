@@ -40,6 +40,12 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
         s.open_event(review);
         s.guests_expanded = true;
     }),
+    ("delete-scopes", |s| {
+        signed_in(s);
+        let standup = s.events.iter().find(|e| e.id == "standup-2").cloned().unwrap();
+        s.open_event(standup);
+        s.delete_scopes_open = true;
+    }),
     ("account", |s| {
         signed_in(s);
         s.island = crate::app::Island::Account;
@@ -124,7 +130,10 @@ pub fn signed_in(s: &mut State) {
     let l = local;
     let mut events = Vec::new();
     for (i, d) in (9..=13).enumerate() {
-        events.push(event(&format!("standup-{i}"), "Standup", l(2026, 11, d, 9, 0), l(2026, 11, d, 9, 15), false, Some("2"), None));
+        events.push(CalendarEvent {
+            provider_series_id: Some("standup-series".into()),
+            ..event(&format!("standup-{i}"), "Standup", l(2026, 11, d, 9, 0), l(2026, 11, d, 9, 15), false, Some("2"), None)
+        });
     }
     events.extend([
         event("deep-mon", "Deep work", l(2026, 11, 9, 10, 0), l(2026, 11, 9, 12, 0), false, Some("9"), None),

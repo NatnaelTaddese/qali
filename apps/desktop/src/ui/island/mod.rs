@@ -9,6 +9,7 @@ mod event_detail;
 mod guests;
 mod nav;
 mod repeat;
+pub mod when;
 
 use rune::{Cx, El, Spring, Transition, el, row};
 

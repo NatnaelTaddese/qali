@@ -70,6 +70,15 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
         s.draft_title = rune::TextEdit::new("Plan Q1");
         s.draft_title.focused = true;
     }),
+    ("creating-day", |s| {
+        signed_in(s);
+        s.open_create(local(2026, 11, 15, 15, 0), local(2026, 11, 15, 17, 0));
+        s.draft_title = rune::TextEdit::new("Plan Q1");
+        s.draft_title.focused = false;
+        let d = s.draft.as_mut().unwrap();
+        d.editing_end = true;
+        d.picking_day = chrono::NaiveDate::from_ymd_opt(2026, 11, 1);
+    }),
     ("creating-calendars", |s| {
         signed_in(s);
         s.open_create(local(2026, 11, 15, 15, 0), local(2026, 11, 15, 17, 0));

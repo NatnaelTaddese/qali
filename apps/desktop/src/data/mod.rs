@@ -10,3 +10,4 @@ pub mod permissions;
 pub mod rrule;
 pub mod session;
 pub mod week;
+pub mod wheel;

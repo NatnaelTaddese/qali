@@ -37,6 +37,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .h_full()
         .fill(p.background)
         .child(col().key(screen).w_full().h_full().child(body).transition(Transition::blur_replace()));
+    if let Some(picker) = crate::ui::island::when::day_picker(s, &p) {
+        root = root.child(picker);
+    }
     if s.phase != Phase::SignedIn {
         root = root.child(el().key("drag-band").w_full().h(TITLEBAR_HEIGHT).absolute(0.0, 0.0).window_drag());
     } else if let Some(error) = &s.error {

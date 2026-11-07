@@ -16,6 +16,7 @@ pub mod segmented;
 pub mod spinner;
 pub mod switch;
 pub mod text_link;
+pub mod wheel_picker;
 
 pub use button::{Button, Size as ButtonSize, Variant as ButtonVariant};
 pub use calendar_backdrop::calendar_backdrop;

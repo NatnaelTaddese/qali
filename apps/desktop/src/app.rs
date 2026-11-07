@@ -85,6 +85,8 @@ pub struct State {
     pub drag: Option<crate::data::drag::EventDrag>,
     /// A new event being drawn on the grid.
     pub create_drag: Option<crate::data::drag::CreateDrag>,
+    /// The time wheel being turned, flung or settling, if any.
+    pub wheel: Option<WheelMotion>,
     /// An island change made from a grid release, applied by `poll` next frame (`defer_island`).
     pub pending_island: Option<IslandChange>,
     /// The new event the island's create panel is filling in.
@@ -130,7 +132,8 @@ pub fn poll(s: &mut State, t: f64, tx: &mut rune::Tx) -> bool {
             true
         }
         Phase::SignedIn => {
-            let mut changed = false;
+            s.clock = t;
+            let mut changed = crate::ui::island::when::step_wheel(s, t, tx);
             if let Some(change) = s.pending_island.take() {
                 match change {
                     IslandChange::Create(start, end) => s.open_create(start, end),
@@ -391,7 +394,11 @@ pub fn on_key(s: &mut State, e: &rune::KeyEvent, _tx: &mut rune::Tx) -> bool {
         return true;
     }
     if e.key == Key::Escape && s.island == Island::Create {
-        s.cancel_form();
+        match s.draft.as_mut() {
+            // The day picker closes first, as the web's popover does.
+            Some(d) if d.picking_day.is_some() => d.picking_day = None,
+            _ => s.cancel_form(),
+        }
         return true;
     }
     if e.key == Key::Escape && s.island != Island::Nav {
@@ -435,6 +442,29 @@ pub enum Island {
     Account,
     /// The form (`State::draft`): a new event, a duplicate, or an edit.
     Create,
+}
+
+/// The form's time wheels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WheelId {
+    Hour,
+    Minute,
+    Meridiem,
+}
+
+/// A wheel in motion. Its value follows the nearest row as it turns.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WheelMotion {
+    pub id: WheelId,
+    /// Where the drum is, in rows.
+    pub scroll: f32,
+    /// The drum's position when a drag took hold of it.
+    pub grab: Option<f32>,
+    /// Recent drag positions (clock seconds, scroll) for the release velocity.
+    pub samples: Vec<(f64, f32)>,
+    pub settle: Option<crate::data::wheel::Settle>,
+    /// Snap to a row once the trackpad has been quiet until then (clock seconds).
+    pub snap_at: Option<f64>,
 }
 
 /// An island change waiting for the next frame.
@@ -491,6 +521,10 @@ pub struct Draft {
     pub guest_active: usize,
     /// A repeating event's save is asking how far the edit reaches.
     pub save_scopes_open: bool,
+    /// The Ends tab is selected: the day row and the wheels edit the end, not the start.
+    pub editing_end: bool,
+    /// The day picker is open on this month (its first day).
+    pub picking_day: Option<chrono::NaiveDate>,
     pub submitting: bool,
     /// Keeps a retried save from creating twice.
     pub operation_id: String,
@@ -530,6 +564,8 @@ impl State {
             menu: None,
             guest_active: 0,
             save_scopes_open: false,
+            editing_end: false,
+            picking_day: None,
             submitting: false,
             operation_id: uuid::Uuid::new_v4().to_string(),
         });

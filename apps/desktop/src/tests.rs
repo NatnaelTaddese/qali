@@ -491,17 +491,41 @@ fn arg<'a>(args: &'a std::collections::BTreeMap<String, convex::Value>, k: &str)
 fn the_form_steps_times_and_toggles_its_options() {
     let mut rt = runtime(scenes::signed_in);
     key(&mut rt, rune::Key::Text("n".into()));
-    press(&mut rt, "draft-start/later");
+    assert_eq!(rt.state.draft.as_ref().map(|d| (hours(d.start_ms), hours(d.end_ms))), Some((16.5, 17.0)));
+    // The hour wheel, from the keyboard: a later start drags the end along.
+    press(&mut rt, "draft-hour");
+    key(&mut rt, rune::Key::Down);
     let d = rt.state.draft.clone().unwrap();
-    assert_eq!((hours(d.start_ms), hours(d.end_ms)), (16.75, 17.25), "the start moves the end with it");
-    press(&mut rt, "draft-end/earlier");
-    press(&mut rt, "draft-end/earlier");
-    press(&mut rt, "draft-end/earlier");
-    press(&mut rt, "draft-end/earlier");
+    assert_eq!((hours(d.start_ms), hours(d.end_ms)), (17.5, 17.75), "5:30 PM, the end pushed past it");
+    assert!(rt.state.wheel.is_none(), "the glide has landed");
+
+    // The Ends tab, then a slow drag two rows up the hour wheel, held before letting go.
+    press(&mut rt, "tab-end");
+    assert!(rt.state.draft.as_ref().unwrap().editing_end);
+    turn_wheel(&mut rt, "draft-hour", -2.0 * crate::data::wheel::ITEM_H);
+    assert_eq!(hours(rt.state.draft.as_ref().unwrap().end_ms), 19.75, "7:45 PM, without a fling");
+
+    // An end before the start is flagged and can't be saved.
+    press(&mut rt, "draft-hour");
+    for _ in 0..4 {
+        key(&mut rt, rune::Key::Up);
+    }
+    assert!(rt.find("draft-invalid").is_some());
+    assert!(rt.find("create").is_some());
+    key(&mut rt, rune::Key::Enter);
+    assert!(!rt.state.draft.as_ref().unwrap().submitting, "Create is off while the end is first");
+    press(&mut rt, "draft-hour");
+    key(&mut rt, rune::Key::End);
+
+    // The day picker moves the start, the end coming along.
+    press(&mut rt, "tab-start");
+    press(&mut rt, "draft-day-button");
+    assert!(rt.find("day-picker").is_some());
+    press(&mut rt, "pick-2026-11-12");
+    assert!(rt.find("day-picker").is_none(), "picking a day closes it");
     let d = rt.state.draft.clone().unwrap();
-    assert_eq!(hours(d.end_ms), 17.0, "never shorter than a quarter hour");
-    press(&mut rt, "draft-day/later");
-    assert!(rt.elements().iter().any(|e| e.text.as_deref() == Some("Thu 12 Nov")), "the day moved");
+    assert_eq!(crate::data::days::today(d.start_ms, chrono_tz::America::New_York).to_string(), "2026-11-12");
+    assert_eq!(hours(d.start_ms), 17.5, "the time of day stays");
 
     press(&mut rt, "draft-all-day");
     assert!(rt.state.draft.as_ref().unwrap().all_day);
@@ -543,7 +567,8 @@ fn edit_opens_prefilled_and_saves_only_what_changed() {
     keys.sort();
     assert_eq!(keys, ["eventId", "operationId", "timeZone"], "nothing changed yet");
 
-    press(&mut rt, "draft-start/later");
+    press(&mut rt, "draft-hour");
+    key(&mut rt, rune::Key::Down);
     press(&mut rt, "reminder-none");
     let (_, args) = crate::app::save_args(&rt.state, "thisEvent").unwrap();
     assert!(arg(&args, "startMs").is_some() && arg(&args, "endMs").is_some());
@@ -713,4 +738,41 @@ fn the_island_create_button_opens_the_form_in_the_next_free_slot() {
     assert_eq!((hours(d.start_ms), hours(d.end_ms)), (16.5, 17.0));
     assert!(rt.state.draft_title.focused);
     assert!(before < mid && mid < after, "the pill springs into the form: {before} → {mid} → {after}");
+}
+
+/// Drag a wheel `dy` points in small steps, hold, and let go.
+fn turn_wheel(rt: &mut Runtime<State>, key: &str, dy: f32) {
+    let (x, y) = rt.find(key).unwrap_or_else(|| panic!("no {key}"));
+    rt.pointer_down(x, y);
+    frames(rt, 2);
+    for i in 1..=8 {
+        rt.pointer_move(x, y + dy * i as f32 / 8.0);
+        frames(rt, 2);
+    }
+    frames(rt, 10);
+    rt.pointer_up(x, y + dy);
+    frames(rt, 40);
+}
+
+#[test]
+fn escape_closes_the_day_picker_before_the_form() {
+    let mut rt = runtime(scenes::signed_in);
+    key(&mut rt, rune::Key::Text("n".into()));
+    press(&mut rt, "draft-day-button");
+    press(&mut rt, "next-month");
+    assert_eq!(rt.state.draft.as_ref().unwrap().picking_day.map(|d| d.to_string()), Some("2026-12-01".into()));
+    key(&mut rt, rune::Key::Escape);
+    assert!(rt.find("day-picker").is_none());
+    assert_eq!(rt.state.island, Island::Create, "the form stays");
+}
+
+
+#[test]
+fn a_click_on_a_switch_itself_toggles_it() {
+    let mut rt = runtime(scenes::signed_in);
+    key(&mut rt, rune::Key::Text("n".into()));
+    press(&mut rt, "draft-busy-switch");
+    press(&mut rt, "draft-all-day-switch");
+    let d = rt.state.draft.as_ref().unwrap();
+    assert!(!d.busy && d.all_day);
 }

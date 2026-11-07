@@ -1,6 +1,6 @@
 //! The event form (`calendar/event-create.tsx` and the edit form): the title, focused when it
-//! opens; the day and the times as quarter-hour steppers, with All day; a place or a Google
-//! Meet link; guests; the repeat rule; the calendar; the colour; Busy and Private; reminders;
+//! opens; when (`when.rs`: Starts/Ends tabs, a day picker, time wheels, All day); a place or a
+//! Google Meet link; guests; the repeat rule; the calendar; the colour; Busy and Private; reminders;
 //! and the description. Enter in the title saves, Escape anywhere cancels. Saving an edit of
 //! a repeating event first asks how far it reaches.
 
@@ -9,10 +9,8 @@ use rune::{Color, Cursor, El, Icon, col, el, icon, row, text, text_input};
 
 use crate::app::{self, Draft, FormMenu, State};
 use crate::data::colors::{self, Swatch};
-use crate::data::days::working_zone;
 use crate::data::detail;
 use crate::data::draft as steps;
-use crate::data::week::SNAP_MS;
 use crate::ui::components::icons_gen::*;
 use crate::ui::components::switch::switch;
 use crate::ui::components::{Button, ButtonSize, ButtonVariant};
@@ -24,6 +22,7 @@ const DOT: f32 = rem(1.0);
 pub fn event_create(s: &State, p: &Paint, draft: &Draft) -> El {
     let editing = draft.editing.is_some();
     let busy = draft.submitting;
+    let invalid = draft.end_ms <= draft.start_ms;
     let caps = draft.editing.as_ref().map(|e| {
         let calendar = e.local_calendar_id.as_ref().and_then(|id| s.calendars.iter().find(|c| &c.id == id));
         crate::data::permissions::capabilities(e, calendar)
@@ -35,9 +34,9 @@ pub fn event_create(s: &State, p: &Paint, draft: &Draft) -> El {
         .justify_end()
         .child(Button::new("cancel-create", "Cancel").variant(ButtonVariant::Ghost).size(ButtonSize::Sm).disabled(busy).build(p).on_press(cancel))
         .child(if editing {
-            Button::new("save", "Save").size(ButtonSize::Sm).loading(busy, "Saving…").build(p).on_press(app::create_event)
+            Button::new("save", "Save").size(ButtonSize::Sm).loading(busy, "Saving…").disabled(invalid).build(p).on_press(app::create_event)
         } else {
-            Button::new("create", "Create").size(ButtonSize::Sm).loading(busy, "Creating…").build(p).on_press(app::create_event)
+            Button::new("create", "Create").size(ButtonSize::Sm).loading(busy, "Creating…").disabled(invalid).build(p).on_press(app::create_event)
         });
 
     let mut form = col()
@@ -45,7 +44,7 @@ pub fn event_create(s: &State, p: &Paint, draft: &Draft) -> El {
         .w_full()
         .gap(rem(0.75))
         .child(title(s, p))
-        .child(when(s, p, draft))
+        .child(super::when::when(s, p, draft))
         .child(super::repeat::repeat_row(s, p, draft))
         .child(place(s, p, draft))
         .child(super::guests::guests_row(s, p, draft, caps.as_ref()))
@@ -126,71 +125,6 @@ fn title(s: &State, p: &Paint) -> El {
     field(s, p, Field::Title)
 }
 
-/// The day, the start and end, and All day.
-fn when(s: &State, p: &Paint, draft: &Draft) -> El {
-    let zone = working_zone(s.prefs.time_zone.as_deref());
-    let use_24h = s.prefs.use_24h();
-    let day_of = |ms: f64| {
-        if draft.all_day {
-            detail::day_label(chrono::DateTime::from_timestamp_millis(ms as i64).unwrap_or_default().date_naive())
-        } else {
-            detail::day_label(crate::data::days::today(ms, zone))
-        }
-    };
-    let all_day = draft.all_day;
-    let day = stepper(p, "draft-day", day_of(draft.start_ms), move |s: &mut State, dir| {
-        let zone = working_zone(s.prefs.time_zone.as_deref());
-        edit_times(s, |d| steps::shift_days(d.start_ms, d.end_ms, dir, all_day, zone));
-    });
-    let toggle = row()
-        .key("draft-all-day")
-        .gap(rem(0.5))
-        .center_y()
-        .cursor(Cursor::Pointer)
-        .child(text("All day").font(theme::TEXT_SM).color(p.muted_foreground))
-        .child(switch(p, "draft-all-day-switch", "All day", all_day))
-        .on_press(|s: &mut State| {
-            let zone = working_zone(s.prefs.time_zone.as_deref());
-            if let Some(d) = s.draft.as_mut() {
-                (d.start_ms, d.end_ms) = if d.all_day { steps::to_timed(d.start_ms, zone) } else { steps::to_all_day(d.start_ms, d.end_ms, zone) };
-                d.all_day = !d.all_day;
-            }
-        });
-    let first = row().key("draft-day-row").w_full().center_y().justify_between().child(day).child(toggle);
-
-    let second = if all_day {
-        let last = steps::last_day_ms(draft.start_ms, draft.end_ms);
-        row()
-            .key("draft-span")
-            .gap(rem(0.5))
-            .center_y()
-            .child(text("Until").font(theme::TEXT_SM).color(p.muted_foreground))
-            .child(stepper(p, "draft-last-day", day_of(last), |s: &mut State, dir| edit_times(s, |d| steps::shift_last_day(d.start_ms, d.end_ms, dir))))
-    } else {
-        let clock = |ms| crate::ui::calendar::clock(ms, zone, use_24h, true);
-        // An end on another day says which.
-        let end_label = if crate::data::days::today(draft.end_ms - 1.0, zone) == crate::data::days::today(draft.start_ms, zone) {
-            clock(draft.end_ms)
-        } else {
-            format!("{} {}", day_of(draft.end_ms), clock(draft.end_ms))
-        };
-        row()
-            .key("draft-span")
-            .gap(rem(0.25))
-            .center_y()
-            .child(stepper(p, "draft-start", clock(draft.start_ms), |s: &mut State, dir| edit_times(s, |d| steps::shift_start(d.start_ms, d.end_ms, dir as f64 * SNAP_MS))))
-            .child(text("–").font(theme::TEXT_SM).color(p.muted_foreground))
-            .child(stepper(p, "draft-end", end_label, |s: &mut State, dir| edit_times(s, |d| steps::shift_end(d.start_ms, d.end_ms, dir as f64 * SNAP_MS))))
-    };
-    labelled(p, "draft-time", &CLOCK_01, col().key("draft-when").w_full().gap(rem(0.25)).child(first).child(second))
-}
-
-fn edit_times(s: &mut State, f: impl FnOnce(&Draft) -> (f64, f64)) {
-    if let Some(d) = s.draft.as_mut() {
-        (d.start_ms, d.end_ms) = f(d);
-    }
-}
-
 /// `‹ label ›`: the arrows step back and forward (`on_step(-1 | 1)`).
 pub(super) fn stepper(p: &Paint, key: &str, label: String, on_step: impl Fn(&mut State, i64) + Clone + 'static) -> El {
     let back = on_step.clone();
@@ -223,11 +157,15 @@ fn arrow(p: &Paint, key: &str, glyph: &'static Icon) -> El {
 fn place(s: &State, p: &Paint, draft: &Draft) -> El {
     let meet = row()
         .key("draft-meet")
+        .role("switch")
+        .label("Add Google Meet")
+        .checked(draft.meet)
+        .focusable(true)
         .gap(rem(0.5))
         .center_y()
         .cursor(Cursor::Pointer)
         .child(text("Google Meet").font(theme::TEXT_SM).color(p.muted_foreground))
-        .child(switch(p, "draft-meet-switch", "Add Google Meet", draft.meet))
+        .child(switch(p, "draft-meet-switch", draft.meet))
         .on_press(|s: &mut State| {
             if let Some(d) = s.draft.as_mut() {
                 d.meet = !d.meet;
@@ -356,11 +294,15 @@ fn availability(p: &Paint, draft: &Draft) -> El {
     let toggle = |key: &'static str, label: &'static str, on: bool, flip: fn(&mut Draft)| {
         row()
             .key(key)
+            .role("switch")
+            .label(label)
+            .checked(on)
+            .focusable(true)
             .gap(rem(0.5))
             .center_y()
             .cursor(Cursor::Pointer)
             .child(text(label).font(theme::TEXT_SM).color(p.foreground))
-            .child(switch(p, &format!("{key}-switch"), label, on))
+            .child(switch(p, &format!("{key}-switch"), on))
             .on_press(move |s: &mut State| {
                 if let Some(d) = s.draft.as_mut() {
                     flip(d);
@@ -436,6 +378,19 @@ pub(super) fn chip(p: &Paint, key: &str, label: String, on: bool) -> El {
         .press_scale(0.96)
         .cursor(Cursor::Pointer)
         .child(text(label).font(theme::TEXT_XS).color(if on { p.background } else { p.foreground }))
+}
+
+/// `SettingRow`: a muted glyph and label, and a control at the right.
+pub(super) fn setting_row(p: &Paint, key: &str, glyph: &'static Icon, label: &str, control: El) -> El {
+    row()
+        .key(key.to_string())
+        .w_full()
+        .gap(rem(0.75))
+        .center_y()
+        .min_h(ARROW)
+        .child(icon(glyph, rem(1.125)).color(p.muted_foreground))
+        .child(text(label.to_string()).font(theme::TEXT_SM).color(p.muted_foreground))
+        .child(row().key("control").grow(1.0).min_w(0.0).justify_end().center_y().child(control))
 }
 
 /// A row with a muted 18px glyph beside its content, as the detail panel's rows.

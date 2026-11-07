@@ -356,3 +356,83 @@ fn a_deleted_event_leaves_the_grid_until_the_server_agrees() {
     s.settle_hidden();
     assert!(s.hidden_events.is_empty());
 }
+
+fn frames(rt: &mut Runtime<State>, n: usize) {
+    for _ in 0..n {
+        rt.frame(1.0 / 60.0);
+    }
+}
+
+/// Press at `(fx, fy)` within the card (fractions of its size), drag by `(dx, dy)`, release.
+fn drag_card(rt: &mut Runtime<State>, key: &str, fy: f32, dx: f32, dy: f32) {
+    let r = rect(rt, key);
+    let (x, y) = (r[0] + r[2] * 0.5, r[1] + r[3] * fy);
+    rt.pointer_down(x, y);
+    frames(rt, 2);
+    for step in 1..=6 {
+        let t = step as f32 / 6.0;
+        rt.pointer_move(x + dx * t, y + dy * t);
+        frames(rt, 1);
+    }
+    rt.pointer_up(x + dx, y + dy);
+    frames(rt, 10);
+}
+
+fn hours(ms: f64) -> f64 {
+    use chrono::{TimeZone, Timelike};
+    let t = chrono_tz::America::New_York.timestamp_millis_opt(ms as i64).unwrap();
+    t.hour() as f64 + t.minute() as f64 / 60.0
+}
+
+#[test]
+fn dragging_a_card_down_moves_it_an_hour_without_opening_it() {
+    let mut rt = runtime(scenes::signed_in);
+    drag_card(&mut rt, "event-dentist", 0.5, 0.0, crate::ui::calendar::HOUR_H);
+    let (start, end) = rt.state.time_overrides["dentist"];
+    assert_eq!((hours(start), hours(end)), (11.0, 12.0));
+    assert_eq!(rt.state.island, Island::Nav, "the release isn't a click");
+    assert!(rt.state.drag.is_none());
+}
+
+#[test]
+fn dragging_across_a_column_moves_the_day() {
+    let mut rt = runtime(scenes::signed_in);
+    let col = rect(&rt, "day-2026-11-12")[2];
+    drag_card(&mut rt, "event-dentist", 0.5, col, 0.0);
+    let (start, _) = rt.state.time_overrides["dentist"];
+    let day = chrono_tz::America::New_York.timestamp_millis_opt(start as i64).unwrap();
+    use chrono::{Datelike, TimeZone};
+    assert_eq!((day.day(), hours(start)), (13, 10.0), "Friday at the same time");
+}
+
+#[test]
+fn the_bottom_edge_resizes() {
+    let mut rt = runtime(scenes::signed_in);
+    drag_card(&mut rt, "event-dentist", 0.95, 0.0, crate::ui::calendar::HOUR_H / 2.0);
+    let (start, end) = rt.state.time_overrides["dentist"];
+    assert_eq!((hours(start), hours(end)), (10.0, 11.5));
+}
+
+#[test]
+fn a_ghost_follows_the_drag_and_a_click_still_opens() {
+    let mut rt = runtime(scenes::signed_in);
+    let r = rect(&rt, "event-dentist");
+    let (x, y) = (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+    rt.pointer_down(x, y);
+    frames(&mut rt, 2);
+    rt.pointer_move(x, y + 30.0);
+    frames(&mut rt, 2);
+    assert!(rt.find("drag-ghost").is_some());
+    rt.pointer_up(x, y + 30.0);
+    frames(&mut rt, 5);
+    assert!(rt.find("drag-ghost").is_none());
+    press(&mut rt, "event-lunch-thu");
+    assert!(matches!(&rt.state.island, Island::Event(e) if e.id == "lunch-thu"));
+}
+
+#[test]
+fn an_invitation_you_cant_edit_doesnt_move() {
+    let mut rt = runtime(scenes::signed_in);
+    drag_card(&mut rt, "event-review", 0.5, 0.0, crate::ui::calendar::HOUR_H);
+    assert!(rt.state.time_overrides.is_empty());
+}

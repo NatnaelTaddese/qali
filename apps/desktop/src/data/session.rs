@@ -22,6 +22,7 @@ const MY_PREFERENCES: &str = "domains/preferences/queries:getMyPreferences";
 pub const SYNC_NOW: &str = "domains/sync/engine:syncNow";
 pub const RESPOND_TO_EVENT: &str = "domains/calendar/service:respondToEvent";
 pub const DELETE_EVENT: &str = "domains/calendar/service:deleteEvent";
+pub const UPDATE_EVENT_TIME: &str = "domains/calendar/service:updateEventTime";
 
 /// The signed-in session's Convex client, shared so actions (sync, RSVP) use its connection.
 pub type ClientSlot = Arc<std::sync::Mutex<Option<ConvexClient>>>;

@@ -1,6 +1,7 @@
 pub mod colors;
 pub mod days;
 pub mod detail;
+pub mod drag;
 pub mod models;
 pub mod page;
 pub mod permissions;

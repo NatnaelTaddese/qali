@@ -81,6 +81,10 @@ pub struct State {
     pub deleting: Option<String>,
     /// Deleted here but still in the server's list until it catches up; drawn as gone.
     pub hidden_events: std::collections::HashSet<String>,
+    /// An event being moved or resized.
+    pub drag: Option<crate::data::drag::EventDrag>,
+    /// New times sent to the server and not yet in its list: drawn in place of the old ones.
+    pub time_overrides: HashMap<String, (f64, f64)>,
     /// Horizontal trackpad travel toward a page change, and when paging may resume.
     pub swipe: f32,
     pub swipe_resume: Option<std::time::Instant>,
@@ -425,15 +429,24 @@ impl State {
         }
     }
 
-    /// The events to draw: the server's list without the ones deleted here.
+    /// The events to draw: the server's list without the ones deleted here, and with times
+    /// changed here in place of the server's until it catches up.
     pub fn shown_events(&self) -> Vec<CalendarEvent> {
-        self.events.iter().filter(|e| !self.hidden_events.contains(&e.id)).cloned().collect()
+        self.events
+            .iter()
+            .filter(|e| !self.hidden_events.contains(&e.id))
+            .map(|e| match self.time_overrides.get(&e.id) {
+                Some(&(start_ms, end_ms)) => CalendarEvent { start_ms, end_ms, ..e.clone() },
+                None => e.clone(),
+            })
+            .collect()
     }
 
-    /// Forget hidden ids once the server's list no longer has them.
+    /// Forget hidden ids and time overrides once the server's list agrees.
     pub fn settle_hidden(&mut self) {
         let events = &self.events;
         self.hidden_events.retain(|id| events.iter().any(|e| &e.id == id));
+        self.time_overrides.retain(|id, (start, end)| events.iter().any(|e| &e.id == id && (e.start_ms != *start || e.end_ms != *end)));
     }
 
     /// Drop an optimistic RSVP once the server's copy agrees.
@@ -522,6 +535,25 @@ pub fn delete_event(s: &mut State, event_id: String, scope: &'static str) {
                 }
             }
             Some(error) => s.error = Some(format!("Couldn't remove the event: {error}")),
+        }
+    });
+}
+
+/// Reschedule an event (`updateEventTime`), drawing it at its new time at once and putting it
+/// back if the server refuses.
+pub fn update_event_time(s: &mut State, event_id: String, start_ms: f64, end_ms: f64) {
+    s.time_overrides.insert(event_id.clone(), (start_ms, end_ms));
+    let zone = crate::data::days::working_zone(s.prefs.time_zone.as_deref());
+    let args = std::collections::BTreeMap::from([
+        ("eventId".to_string(), convex::Value::String(event_id.clone())),
+        ("startMs".to_string(), convex::Value::Float64(start_ms)),
+        ("endMs".to_string(), convex::Value::Float64(end_ms)),
+        ("timeZone".to_string(), convex::Value::String(zone.name().to_string())),
+    ]);
+    spawn_action(session::UPDATE_EVENT_TIME, args, move |s, error| {
+        if let Some(error) = error {
+            s.time_overrides.remove(&event_id);
+            s.error = Some(format!("Couldn't reschedule the event: {error}"));
         }
     });
 }

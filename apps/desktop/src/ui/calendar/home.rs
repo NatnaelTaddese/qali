@@ -5,20 +5,26 @@
 
 use std::time::{Duration as StdDuration, Instant};
 
+use std::rc::Rc;
+
 use chrono::{Duration, NaiveDate};
-use rune::{Cx, Edge, El, GesturePhase, ScrollSpec, Transition, WheelEvent, col, el, row};
+use rune::{Cx, Edge, El, GesturePhase, ScrollSpec, Transition, WheelEvent, col, el, row, text};
 
 use super::day_column::day_column;
 use super::gutter::{gutter_body, gutter_header};
 use super::month_view::month_view;
 use super::panel_header::panel_header;
 use super::toolbar::{self, toolbar};
-use super::{BOTTOM_SPACER, DAY_H, GUTTER_W, HEADER_DATE_H, HOUR_H, SCROLL_KEY, clock};
+use super::{BOTTOM_SPACER, DAY_H, EVENT_LEFT_GUTTER, GUTTER_W, HEADER_DATE_H, HOUR_H, SCROLL_KEY, clock};
 use crate::app::State;
 use crate::data::days::{start_of_day_ms, working_zone};
 use crate::data::page::{self, View};
 use crate::data::week::{self, ALLDAY_COLLAPSED_LANES, DAY_TILE_MAX_STAGGER_MS, WEEK_TILE_MAX_STAGGER_MS};
-use crate::ui::theme::{Paint, fade};
+use crate::data::colors;
+use crate::data::models::CalendarEvent;
+use crate::data::permissions::capabilities;
+use crate::ui::components::{Elevation, EventCard};
+use crate::ui::theme::{self, Paint, fade, rem};
 
 /// How far down the viewport the now line lands when the week opens (the web's 35%).
 pub const NOW_SCROLL_FRACTION: f32 = 0.35;
@@ -119,12 +125,34 @@ fn strip(s: &State, p: &Paint, cx: &mut Cx<State>, window: [f32; 2]) -> El {
         );
 
     let mut columns = row().key(page_key).h(DAY_H);
+    // Every day's start and the midnight after the last, for dragging across the page.
+    let day_starts: Rc<Vec<f64>> = Rc::new(days.iter().map(|d| start_of_day_ms(*d, zone)).chain([start_of_day_ms(*days.last().unwrap() + Duration::days(1), zone)]).collect());
+    let editable = |e: &CalendarEvent| {
+        let calendar = s.calendars.iter().find(|c| Some(&c.id) == e.local_calendar_id.as_ref());
+        e.user_id.is_some() && capabilities(e, calendar).can_edit
+    };
+    let dragging = s.drag.as_ref().filter(|d| d.moved).map(|d| d.grip.event_id.as_str());
     for (i, day) in days.iter().enumerate() {
-        let day_start = start_of_day_ms(*day, zone);
-        let day_end = start_of_day_ms(*day + Duration::days(1), zone);
+        let (day_start, day_end) = (day_starts[i], day_starts[i + 1]);
         let stagger = if lanes { DAY_TILE_MAX_STAGGER_MS } else { WEEK_TILE_MAX_STAGGER_MS };
         let positioned = week::layout_day(&timed[i], day_start, day_end, stagger);
-        columns = columns.child(day_column(p, format!("day-{day}"), &positioned, &s.calendar_colors, col_w, today == Some(i), lanes, zone, use_24h));
+        columns = columns.child(day_column(
+            p,
+            format!("day-{day}"),
+            &positioned,
+            &s.calendar_colors,
+            col_w,
+            today == Some(i),
+            lanes,
+            zone,
+            use_24h,
+            Some((day_starts.clone(), i)),
+            &editable,
+            dragging,
+        ));
+    }
+    if let Some(ghost) = drag_ghost(s, p, &day_starts, col_w, zone, use_24h) {
+        columns = columns.child(ghost);
     }
     // `NowIndicator`: a faint line across the page, bright over today's column.
     if let Some(i) = today {
@@ -182,4 +210,39 @@ pub fn now_scroll_y(s: &State, viewport_h: f32) -> f32 {
 /// `zoneShortLabel`: the last part of the IANA name, underscores as spaces.
 fn zone_label(zone: chrono_tz::Tz) -> String {
     zone.name().rsplit('/').next().unwrap_or(zone.name()).replace('_', " ")
+}
+
+/// Where a dragged event would land: its card at the new time, lifted, with the web's
+/// `ring-2 ring-primary/60`, over the page.
+fn drag_ghost(s: &State, p: &Paint, day_starts: &[f64], col_w: f32, zone: chrono_tz::Tz, use_24h: bool) -> Option<El> {
+    let drag = s.drag.as_ref().filter(|d| d.moved)?;
+    let event = s.events.iter().find(|e| e.id == drag.grip.event_id)?;
+    let column = day_starts.windows(2).position(|w| drag.start_ms >= w[0] && drag.start_ms < w[1])?;
+    let (day_start, day_end) = (day_starts[column], day_starts[column + 1]);
+    let day = (day_end - day_start) as f32;
+    let top = (drag.start_ms - day_start) as f32 / day * DAY_H;
+    let height = ((drag.end_ms.min(day_end) - drag.start_ms) as f32 / day * DAY_H).max(20.0);
+    let hue = theme::event_color(colors::event_swatch(event, &s.calendar_colors));
+    let when = format!("{} – {}", clock(drag.start_ms, zone, use_24h, false), clock(drag.end_ms, zone, use_24h, true));
+    let body = col()
+        .key("ghost-body")
+        .w_full()
+        .h_full()
+        .pt(rem(0.25))
+        .pr(rem(0.5))
+        .pl(rem(0.75))
+        .child(text(event.title().to_string()).font(theme::TEXT_SM_MEDIUM).color(p.foreground).max_lines(1))
+        .child(text(when).key("ghost-time").font(theme::TEXT_XS).color(p.muted_foreground).truncate());
+    let left = EVENT_LEFT_GUTTER + 2.0;
+    Some(
+        EventCard::new("drag-ghost", hue)
+            .radius(theme::RADIUS_LG)
+            .pill_inset(rem(0.25))
+            .elevation(Elevation::Lg)
+            .build(p, body)
+            .outline(2.0, 0.0, fade(p.primary, 0.6))
+            .w(col_w - left - 4.0)
+            .h(height)
+            .absolute(column as f32 * col_w + left, top),
+    )
 }

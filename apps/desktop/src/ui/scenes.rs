@@ -46,6 +46,24 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
         s.open_event(standup);
         s.delete_scopes_open = true;
     }),
+    ("dragging", |s| {
+        signed_in(s);
+        // The dentist dragged from Thursday 10:00 to Friday 11:30.
+        let dentist = s.events.iter().find(|e| e.id == "dentist").cloned().unwrap();
+        let day_starts = (9..=16).map(|d| local(2026, 11, d, 0, 0)).collect();
+        let grip = crate::data::drag::Grip {
+            event_id: dentist.id.clone(),
+            mode: crate::data::drag::Mode::Move,
+            start_ms: dentist.start_ms,
+            end_ms: dentist.end_ms,
+            day_starts,
+            column: 3,
+            press_x: 0.0,
+            col_w: 1.0,
+            hour_h: crate::ui::calendar::HOUR_H,
+        };
+        s.drag = Some(crate::data::drag::EventDrag { grip, moved: true, start_ms: local(2026, 11, 13, 11, 30), end_ms: local(2026, 11, 13, 12, 30) });
+    }),
     ("account", |s| {
         signed_in(s);
         s.island = crate::app::Island::Account;

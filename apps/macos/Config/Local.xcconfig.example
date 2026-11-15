@@ -1,0 +1,4 @@
+// Copy to Local.xcconfig (gitignored) and fill in your team to sign with a
+// stable identity:  security find-identity -v -p codesigning
+CODE_SIGN_IDENTITY = Apple Development
+DEVELOPMENT_TEAM = XXXXXXXXXX

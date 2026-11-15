@@ -1,0 +1,13 @@
+// Convex deployment *names*, not URLs: xcconfig treats `//` as a comment, so
+// AppConfig builds https://<name>.convex.cloud and .convex.site from these.
+QALI_BUNDLE_ID = com.myqali.macos
+
+// Ad-hoc ("Sign to Run Locally") unless Local.xcconfig names a team. An ad-hoc
+// signature changes on every build, so the Keychain treats each rebuild as a
+// new app and asks again before handing over the stored session; a stable
+// Apple Development identity avoids that. Copy Local.xcconfig.example.
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

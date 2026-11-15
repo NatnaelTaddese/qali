@@ -1,0 +1,2 @@
+#include "Shared.xcconfig"
+CONVEX_DEPLOYMENT_NAME = frugal-egret-968

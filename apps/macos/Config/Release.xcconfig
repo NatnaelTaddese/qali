@@ -1,0 +1,2 @@
+#include "Shared.xcconfig"
+CONVEX_DEPLOYMENT_NAME = terrific-puffin-582

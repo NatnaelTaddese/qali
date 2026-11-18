@@ -12,6 +12,9 @@ import Observation
 final class LiveQuery<Value: Decodable & Sendable & Equatable> {
   private(set) var value: Value?
   private(set) var error: Error?
+  /// True from a change of arguments until their first result arrives; `value`
+  /// is the previous arguments' result (or nil) in the meantime.
+  private(set) var isLoading = false
 
   @ObservationIgnored private let client: ConvexClient
   @ObservationIgnored private let name: String
@@ -32,7 +35,11 @@ final class LiveQuery<Value: Decodable & Sendable & Equatable> {
     argsKey = key
     task?.cancel()
     task = nil
-    guard let args else { return }
+    guard let args else {
+      isLoading = false
+      return
+    }
+    isLoading = true
 
     let publisher = client.subscribe(to: name, with: args, yielding: Value.self)
     task = Task { [weak self] in
@@ -44,10 +51,12 @@ final class LiveQuery<Value: Decodable & Sendable & Equatable> {
           // unchanged result; only a real change should invalidate views.
           if self.value != next { self.value = next }
           if self.error != nil { self.error = nil }
+          if self.isLoading { self.isLoading = false }
         }
       } catch {
         guard let self, !Task.isCancelled else { return }
         self.error = error
+        self.isLoading = false
       }
     }
   }

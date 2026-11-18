@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
   func applicationWillFinishLaunching(_ notification: Notification) {
     NSApp.mainMenu = MainMenu.make()
+    AppTheme.stored.apply()
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {

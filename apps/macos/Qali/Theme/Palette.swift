@@ -25,6 +25,19 @@ enum Palette {
   static let ring = Color("ring")
   static let link = Color("link")
   static let eventNeutral = Color("eventNeutral")
+  /// The current-time marker: Tailwind's `red-500` (#fb2c36), which the web's
+  /// now line and time pill use in both themes.
+  static let now = Color(red: 251 / 255, green: 44 / 255, blue: 54 / 255)
+
+  /// Google Meet green: Tailwind's emerald-600 in light mode and
+  /// emerald-400 in dark, as the web's "Video" option and Meet chip.
+  static let meet = Color(
+    nsColor: NSColor(name: "meet") { appearance in
+      appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        ? NSColor(srgbRed: 0 / 255, green: 212 / 255, blue: 146 / 255, alpha: 1)
+        : NSColor(srgbRed: 0 / 255, green: 153 / 255, blue: 102 / 255, alpha: 1)
+    }
+  )
 
   /// `--event-1` … `--event-8`.
   static func event(_ index: Int) -> Color { Color("event\(index)") }

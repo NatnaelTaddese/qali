@@ -51,6 +51,23 @@ can be checked without signing in again or clicking through:
 | `-QaliView day\|week\|month` | Open the calendar on that view |
 | `-QaliDate 2026-11-09` | Open the calendar on that day's page |
 | `-QaliFixture events` | Swap the live events for a sample week with overlaps and all-day events |
+| `-QaliCycle month,week,day` | Step through those views after launch, to watch the switch animations |
+| `-QaliFling 2400` | Let the day strip go at that many points per second (negative scrolls back) 3 s after launch, to watch the horizontal glide without a trackpad |
+| `-QaliStep 2` | Press Next that many times in quick succession 3 s after launch (negative presses Previous), to watch the arrows' glide |
+| `-QaliToday YES` | Press Today 3 s after launch (pair with `-QaliDate` to start near or far from today) |
+| `-QaliPillHover YES` | Show the Today/arrow toolbar pills as hovered, to capture their look without a pointer |
+| `-QaliOverscroll 60` | Hold the hour grid that far down, as a pull past the top does, to see what an overscroll reveals |
+| `-QaliSignOut YES` | Sign the restored session out at launch |
+| `-QaliIsland account\|search\|event\|create` | Open that island panel a moment after launch (`create` lands on the next free half hour, as the + button does) |
+| `-QaliGuestQuery an` | With `-QaliIsland create`, type that into the guest search to show its matches |
+| `-QaliDraw 3,14,16` | Draw 14:00–16:00 on the page's fourth day and let go, as a drag down the grid does |
+| `-QaliMove 2,1.5` | Pick up the page's first timed event 3 s after launch, hold it two days on and 1.5 hours later for 4 s, then drop it (with `-QaliFixture events` the drop is kept for 10 s and not saved) |
+| `-QaliAllDay YES` | With `-QaliIsland create`, switch the new event to all day (its ghost moves to the all-day band) |
+| `-QaliMonthPicker YES` | Open the toolbar month picker |
+| `-QaliDescription demo` | With `-QaliIsland create`, open the description screen, write a formatted sample into it (logs the HTML under category `notes`) and return to the form two seconds later |
+| `-QaliMeet YES` | With `-QaliIsland create`, switch the new event's Where row to Google Meet |
+| `-QaliBandToggle YES` | Open the all-day band 3 s after launch and close it a second later |
+| `-QaliPicker day\|time` | With `-QaliIsland create`, open the Starts row's day or time picker |
 
 `scripts/shot.sh out.png` captures the window:
 

@@ -61,6 +61,11 @@ final class AppModel {
     if case .failure = await convex.loginFromCache() {
       phase = .signedOut
     }
+    #if DEBUG
+      // `-QaliSignOut YES` signs the restored session out at launch, the same
+      // as choosing Sign Out from the menu.
+      if UserDefaults.standard.bool(forKey: "QaliSignOut") { await signOut() }
+    #endif
   }
 
   func signIn() async {

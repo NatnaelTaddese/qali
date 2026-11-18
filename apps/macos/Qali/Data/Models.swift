@@ -141,10 +141,14 @@ nonisolated struct ConnectionListItem: Decodable, Hashable, Identifiable, Sendab
   /// The account's address, which is what the picker labels a group with.
   var providerAccountId: String?
   var createdAt: Double
+  /// "google" | "microsoft".
+  var provider: String?
+  /// "active" once connected; anything else is broken or revoked.
+  var status: String?
 
   enum CodingKeys: String, CodingKey {
     case id = "_id"
-    case providerAccountId, createdAt
+    case providerAccountId, createdAt, provider, status
   }
 }
 
@@ -233,4 +237,12 @@ nonisolated struct ResolvedPreferences: Hashable, Sendable {
     use24h = raw.timeFormat == "24h"
     zone = WorkingZone.resolve(preference: raw.timeZone)
   }
+}
+
+/// One row of `listPeople`: the user's people directory (saved contacts,
+/// other contacts and people met in events), most-met first.
+nonisolated struct PersonRow: Decodable, Hashable, Sendable {
+  var email: String
+  var displayName: String?
+  var photoUrl: String?
 }

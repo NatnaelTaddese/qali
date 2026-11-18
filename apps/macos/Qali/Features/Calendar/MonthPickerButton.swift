@@ -17,12 +17,8 @@ struct MonthPickerButton: View {
           .foregroundStyle(Palette.foreground)
           .contentTransition(.numericText())
         if navigation.view == .week {
-          HStack(spacing: 3) {
-            Text("W\(navigation.isoWeek)")
-              .contentTransition(.numericText())
-            Image(systemName: "chevron.down")
-              .font(.system(size: 8, weight: .bold))
-          }
+          Text("W\(navigation.isoWeek)")
+            .contentTransition(.numericText())
           .font(.sans(TextSize.xs, .medium))
           .foregroundStyle(Palette.foreground)
           .padding(.horizontal, 7)
@@ -38,6 +34,14 @@ struct MonthPickerButton: View {
     .popover(isPresented: $isOpen, arrowEdge: .bottom) {
       MonthPicker(navigation: navigation) { isOpen = false }
     }
+    #if DEBUG
+      // `-QaliMonthPicker YES` opens the picker a moment after launch.
+      .task {
+        guard UserDefaults.standard.bool(forKey: "QaliMonthPicker") else { return }
+        try? await Task.sleep(for: .seconds(1.5))
+        isOpen = true
+      }
+    #endif
   }
 }
 
@@ -84,16 +88,24 @@ private struct MonthPicker: View {
       .buttonStyle(.borderless)
       .padding(.horizontal, 4)
 
-      LazyVGrid(columns: Array(repeating: GridItem(.fixed(Self.cell), spacing: 0), count: 7), spacing: 4) {
-        // Keyed by position: the same dates key the day cells below.
-        ForEach(Array(days.prefix(7).enumerated()), id: \.offset) { _, day in
-          Text(zone.format(day, "EEEEE"))
-            .font(.sans(TextSize.xs, .medium))
-            .foregroundStyle(Palette.mutedForeground)
-            .frame(width: Self.cell, height: Self.cell)
+      VStack(spacing: 4) {
+        HStack(spacing: 0) {
+          // Keyed by position: the same dates key the day cells below.
+          ForEach(Array(days.prefix(7).enumerated()), id: \.offset) { _, day in
+            Text(zone.format(day, "EEEEE"))
+              .font(.sans(TextSize.xs, .medium))
+              .foregroundStyle(Palette.mutedForeground)
+              .frame(width: Self.cell, height: Self.cell)
+          }
         }
-        ForEach(days, id: \.self) { day in
-          dayButton(day)
+        ForEach(0..<(days.count / 7), id: \.self) { row in
+          let week = Array(days[(row * 7)..<(row * 7 + 7)])
+          HStack(spacing: 0) {
+            ForEach(week, id: \.self) { day in
+              dayButton(day)
+            }
+          }
+          .background(alignment: .leading) { weekBand(week) }
         }
       }
     }
@@ -101,34 +113,68 @@ private struct MonthPicker: View {
     .foregroundStyle(Palette.foreground)
   }
 
-  private func dayButton(_ day: Date) -> some View {
-    let today = navigation.isToday(day)
+  private func inWeek(_ day: Date) -> Bool {
     let weekStart = navigation.weekStart
-    let inWeek = day >= weekStart && day < zone.addingDays(7, to: weekStart)
-    let inMonth = zone.isSameMonth(day, month)
-    return Button {
+    return day >= weekStart && day < zone.addingDays(7, to: weekStart)
+  }
+
+  /// The week on screen, as one rounded band under the days it covers in
+  /// this row (a scrolled week can straddle two rows).
+  @ViewBuilder private func weekBand(_ week: [Date]) -> some View {
+    if let first = week.firstIndex(where: inWeek), let last = week.lastIndex(where: inWeek) {
+      // `accent` is the popover's own grey in dark mode, so the band is cut
+      // from the text colour instead.
+      RoundedRectangle(cornerRadius: Self.cell / 2, style: .continuous)
+        .fill(Palette.foreground.opacity(0.08))
+        .frame(width: CGFloat(last - first + 1) * Self.cell, height: Self.cell)
+        .offset(x: CGFloat(first) * Self.cell)
+    }
+  }
+
+  private func dayButton(_ day: Date) -> some View {
+    DayCell(
+      label: zone.format(day, "d"),
+      today: navigation.isToday(day),
+      inMonth: zone.isSameMonth(day, month),
+      size: Self.cell
+    ) {
       navigation.jump(to: day)
       close()
-    } label: {
-      Text(zone.format(day, "d"))
+    }
+    .accessibilityLabel(zone.format(day, "EEEE, MMMM d, yyyy"))
+    .accessibilityAddTraits(inWeek(day) ? .isSelected : [])
+  }
+}
+
+/// One day in the picker: today filled like the grid's date header, others
+/// with a soft round hover.
+private struct DayCell: View {
+  let label: String
+  let today: Bool
+  let inMonth: Bool
+  let size: CGFloat
+  let action: () -> Void
+
+  @State private var hovering = false
+
+  var body: some View {
+    Button(action: action) {
+      Text(label)
         .font(.sans(TextSize.sm, today ? .semibold : .regular))
         .monospacedDigit()
         .foregroundStyle(today ? Palette.primaryForeground : Palette.foreground)
         .opacity(inMonth || today ? 1 : 0.35)
-        .frame(width: Self.cell, height: Self.cell)
+        .frame(width: size, height: size)
         .background {
           if today {
-            RoundedRectangle(cornerRadius: 8).fill(Palette.primary)
-          } else if inWeek {
-            // `accent` is the popover's own grey in dark mode, so the band
-            // is cut from the text colour instead.
-            Rectangle().fill(Palette.foreground.opacity(0.1))
+            Circle().fill(Palette.primary).padding(2)
+          } else if hovering {
+            Circle().fill(Palette.foreground.opacity(0.08)).padding(2)
           }
         }
         .contentShape(.rect)
     }
     .buttonStyle(.plain)
-    .accessibilityLabel(zone.format(day, "EEEE, MMMM d, yyyy"))
-    .accessibilityAddTraits(inWeek ? .isSelected : [])
+    .onHover { hovering = $0 }
   }
 }

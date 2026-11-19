@@ -28,7 +28,9 @@ concurrency:
 jobs:
   release:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-macos]')
-    runs-on: macos-26
+    # The app builds with Xcode 27 (26.6's compiler crashes on it), which only
+    # GitHub's xcode-27 image (a preview) carries for now.
+    runs-on: xcode-27
     timeout-minutes: 45
     env:
       HAS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
@@ -40,7 +42,7 @@ jobs:
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: '27.2'
 
       - name: Install XcodeGen
         run: brew install xcodegen

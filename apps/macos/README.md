@@ -45,7 +45,11 @@ ad-hoc unless the `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD` and
 
 Release builds update themselves with Sparkle (`Qali/App/AppUpdater.swift`):
 a daily background check, Qali → Check for Updates…, and an Updates section in
-Settings → General. The feed is
+Settings → General. Sparkle's windows are replaced by `UpdateDriver`, which
+reports into `AppUpdater.status`; the toolbar shows it as a capsule before the
+view switch (`UpdatePill`): available → Update, downloading, preparing, then
+Relaunch Now (✕ installs on quit). `-QaliUpdateState available|downloading|ready|…`
+pins the pill for a capture. The feed is
 `releases/latest/download/appcast.xml`, which the release workflow writes with
 `scripts/appcast.sh` and uploads beside each zip, so the newest release in the
 repo has to be a Mac one. Updates are trusted by their EdDSA signature
@@ -61,7 +65,9 @@ Debug builds don't check. To try an update end to end, build two Debug apps
 with different `CURRENT_PROJECT_VERSION`s, serve the newer one's zip and
 appcast (`SIGN_UPDATE=<Sparkle>/bin/sign_update scripts/appcast.sh …`), and
 launch the older one with `-QaliUpdateFeed <appcast url> -QaliCheckInBackground
-YES -SUAutomaticallyUpdate YES`: it downloads silently and installs on quit.
+YES`; add `-QaliAcceptUpdates YES` and the pill's buttons press themselves
+(found, downloaded, relaunched), or `-SUAutomaticallyUpdate YES` to download
+silently and install on quit.
 
 Release is arm64 only (ConvexMobile's prebuilt library has no x86_64 slice)
 and needs macOS 26.2. With an Apple Development identity the app is signed

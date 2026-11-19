@@ -89,12 +89,10 @@ final class AppUpdater: NSObject {
     controller?.checkForUpdates(nil)
   }
 
-  /// "0.1.0 (4)", as the About panel shows it.
-  static var versionDescription: String {
-    let info = Bundle.main.infoDictionary ?? [:]
-    let version = info["CFBundleShortVersionString"] as? String ?? "?"
-    let build = info["CFBundleVersion"] as? String ?? "?"
-    return "\(version) (\(build))"
+  /// "0.1.2": the version alone, as releases are named. The build number
+  /// (CFBundleVersion) is only for Sparkle's comparisons.
+  static var version: String {
+    Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
   }
 }
 

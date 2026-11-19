@@ -2,10 +2,12 @@ name: macOS release
 
 # Builds the shareable Mac app (apps/macos) when a push's head commit message
 # carries [release-macos]. Any branch gets the zip as a workflow artifact; a
-# push to main also publishes it as a GitHub release. A merged PR's head commit
-# is the merge commit, whose message includes the PR title, so a PR titled
-# "... [release-macos]" releases when it merges. Run it by hand from the
-# Actions tab too.
+# push to main also publishes it as a GitHub release tagged macos-v<version>,
+# so bump MARKETING_VERSION in apps/macos/project.yml for each release (a
+# version that is already released fails before the build). A merged PR's
+# head commit is the merge commit, whose message includes the PR title, so a
+# PR titled "... [release-macos]" releases when it merges. Run it by hand from
+# the Actions tab too.
 #
 # Signing: ad-hoc unless these repository secrets are set, in which case the
 # build is signed with that identity (still not notarized):
@@ -39,6 +41,17 @@ jobs:
         working-directory: apps/macos
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check the version isn't released yet
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(sed -n 's/^ *MARKETING_VERSION: *//p' project.yml | head -n 1)
+          if gh release view "macos-v$VERSION" >/dev/null 2>&1; then
+            echo "::error::macos-v$VERSION is already released. Bump MARKETING_VERSION in apps/macos/project.yml."
+            exit 1
+          fi
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -94,7 +107,7 @@ jobs:
           ZIP: ${{ steps.build.outputs.zip }}
         working-directory: .
         run: |
-          gh release create "macos-v$VERSION-$BUILD" "$ZIP" \
+          gh release create "macos-v$VERSION" "$ZIP" \
             --target "$GITHUB_SHA" \
             --title "Qali for Mac $VERSION ($BUILD)" \
             --notes "Apple silicon, macOS 26.2 or later. The app isn't notarized: after the first launch is blocked, open System Settings → Privacy & Security and choose Open Anyway."

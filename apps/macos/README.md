@@ -27,10 +27,12 @@ scripts/release.sh [build-number]   # → dist/Qali-<version>-<build>-arm64.zip
 CI builds the same zip when a push's head commit message contains
 `[release-macos]` (`.github/workflows/macos-release.yml`). On any branch the
 zip is a workflow artifact; on main it is also published as a GitHub release
-tagged `macos-v<version>-<run>`. A merged PR's head commit is the merge commit,
-so put the flag in the PR title to release on merge. CI signs ad-hoc unless the
-`MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD` and `MACOS_TEAM_ID`
-secrets are set. Bump `MARKETING_VERSION` in `project.yml` for a new version.
+tagged `macos-v<version>`. Bump `MARKETING_VERSION` in `project.yml` before
+each release: a version that is already released fails before the build. The
+build number is the workflow's run number. A merged PR's head commit is the
+merge commit, so put the flag in the PR title to release on merge. CI signs
+ad-hoc unless the `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD` and
+`MACOS_TEAM_ID` secrets are set.
 
 Release is arm64 only (ConvexMobile's prebuilt library has no x86_64 slice)
 and needs macOS 26.2. With an Apple Development identity the app is signed

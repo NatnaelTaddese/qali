@@ -23,6 +23,9 @@ packages:
     from: 0.8.1
   QaliDomain:
     path: Packages/QaliDomain
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.10.1
 
 targets:
   Qali:
@@ -33,6 +36,7 @@ targets:
     dependencies:
       - package: ConvexMobile
       - package: QaliDomain
+      - package: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(QALI_BUNDLE_ID)
@@ -53,11 +57,20 @@ targets:
         # Lexend and Fraunces sit at the root of Contents/Resources.
         ATSApplicationFontsPath: "."
         QaliConvexDeployment: $(CONVEX_DEPLOYMENT_NAME)
+        # Sparkle (Qali/App/AppUpdater.swift). The feed URL comes from the
+        # updater delegate, so Debug builds don't check unless told to.
+        SUPublicEDKey: yjCMbSuTxQpsVm56B1OdxLLntP1jmcFkTbAEnfZvbsI=
+        SUEnableInstallerLauncherService: true
+        SUEnableAutomaticChecks: true
     entitlements:
       path: Qali/Qali.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
+        # Sparkle's installer talks back to the app over these.
+        com.apple.security.temporary-exception.mach-lookup.global-name:
+          - $(PRODUCT_BUNDLE_IDENTIFIER)-spks
+          - $(PRODUCT_BUNDLE_IDENTIFIER)-spki
 
   QaliTests:
     type: bundle.unit-test

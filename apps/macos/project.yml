@@ -46,7 +46,7 @@ targets:
     info:
       path: Qali/Info.plist
       properties:
-        CFBundleDisplayName: Qali
+        CFBundleDisplayName: $(QALI_DISPLAY_NAME)
         LSApplicationCategoryType: public.app-category.productivity
         NSPrincipalClass: NSApplication
         NSHumanReadableCopyright: ""

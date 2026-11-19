@@ -1,2 +1,6 @@
 #include "Shared.xcconfig"
 CONVEX_DEPLOYMENT_NAME = terrific-puffin-582
+// ConvexMobile's prebuilt library is arm64 only: a universal build cannot link.
+ARCHS = arm64
+// A build meant for others: no debugger attach entitlement.
+CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO

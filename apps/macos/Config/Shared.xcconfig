@@ -1,6 +1,7 @@
 // Convex deployment *names*, not URLs: xcconfig treats `//` as a comment, so
 // AppConfig builds https://<name>.convex.cloud and .convex.site from these.
 QALI_BUNDLE_ID = com.myqali.macos
+QALI_DISPLAY_NAME = Qali
 
 // Ad-hoc ("Sign to Run Locally") unless Local.xcconfig names a team. An ad-hoc
 // signature changes on every build, so the Keychain treats each rebuild as a

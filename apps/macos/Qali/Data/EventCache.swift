@@ -81,15 +81,17 @@ nonisolated final class EventCache {
 
   // MARK: Disk
 
-  private static var fileURL: URL? {
-    FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-      .appendingPathComponent("event-windows.json")
+  /// Files are named for the deployment they came from, so rows cached from
+  /// one backend never show while signed in to another.
+  private static func cacheURL(_ name: String) -> URL? {
+    let deployment = Bundle.main.object(forInfoDictionaryKey: "QaliConvexDeployment") as? String ?? "unknown"
+    return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+      .appendingPathComponent("\(name)-\(deployment).json")
   }
 
-  private static var calendarsURL: URL? {
-    FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-      .appendingPathComponent("calendars.json")
-  }
+  private static var fileURL: URL? { cacheURL("event-windows") }
+
+  private static var calendarsURL: URL? { cacheURL("calendars") }
 
   private static func readDisk() -> [Window] {
     guard let url = fileURL, let data = try? Data(contentsOf: url) else { return [] }

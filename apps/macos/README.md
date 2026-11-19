@@ -18,6 +18,27 @@ Open the generated project in Xcode to work there instead.
 Debug builds talk to the dev Convex deployment and Release builds to prod
 (`Config/*.xcconfig`).
 
+## Sharing a build
+
+```sh
+xcodebuild -project Qali.xcodeproj -scheme Qali -configuration Release \
+  -derivedDataPath build-release -destination 'generic/platform=macOS' build
+ditto -c -k --sequesterRsrc --keepParent \
+  build-release/Build/Products/Release/Qali.app dist/Qali-<version>-arm64.zip
+```
+
+Release is arm64 only (ConvexMobile's prebuilt library has no x86_64 slice)
+and needs macOS 26.2. With an Apple Development identity the app is signed
+but not notarized, so on another Mac it opens only after Privacy & Security →
+Open Anyway.
+
+Debug is its own app, `com.myqali.macos.dev` shown as "Qali Dev", so it never
+shares a sandbox container (settings, event cache) with Release. The Keychain
+session and the cache files are also named for the deployment, so a dev
+session is never sent to prod. Look a Debug build up by the `.dev` ID
+(`defaults read com.myqali.macos.dev`, `~/Library/Containers/com.myqali.macos.dev`).
+Its windows belong to "Qali Dev" in the window list; the process is still `Qali`.
+
 ## Signing
 
 Builds are ad-hoc signed unless `Config/Local.xcconfig` names a team (copy

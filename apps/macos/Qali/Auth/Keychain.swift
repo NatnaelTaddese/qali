@@ -6,8 +6,15 @@ import Security
 /// Items live in the login keychain, which ties access to the app's code
 /// signature: sign with a stable identity (Config/Local.xcconfig) or every
 /// rebuild is a stranger that has to ask before reading the stored session.
+///
+/// The service names the app and the deployment it talks to, so a session for
+/// one backend is never sent to another (Debug talks to dev, Release to prod).
 nonisolated enum Keychain {
-  private static let service = "com.myqali.macos.auth"
+  private static let service: String = {
+    let bundle = Bundle.main.bundleIdentifier ?? "com.myqali.macos"
+    let deployment = Bundle.main.object(forInfoDictionaryKey: "QaliConvexDeployment") as? String ?? "unknown"
+    return "\(bundle).auth.\(deployment)"
+  }()
 
   static func read(_ account: String) -> Data? {
     let query: [String: Any] = [

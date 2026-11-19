@@ -5,6 +5,8 @@ Qali/Qali.entitlements
 xcuserdata/
 DerivedData/
 build/
+build-release/
+dist/
 .build/
 .swiftpm/
 # Per-machine signing (see Config/Local.xcconfig.example)

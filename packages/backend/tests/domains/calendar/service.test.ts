@@ -79,8 +79,14 @@ function eventRow(overrides: Partial<Doc<"events">> = {}): Doc<"events"> {
   };
 }
 
-function actionContext(row: Doc<"events">, accessRole = "owner") {
+function actionContext(
+  row: Doc<"events">,
+  accessRole = "owner",
+  /** What the operation claim answers; a replay answers `state: "succeeded"`. */
+  claim: Record<string, unknown> = { state: "claimed", reconcileOnly: false },
+) {
   const mutations: Record<string, unknown>[] = [];
+  const settles: Record<string, unknown>[] = [];
   const ctx = {
     runQuery: async () => [],
     runMutation: async (_reference: unknown, args: Record<string, unknown>) => {
@@ -108,14 +114,17 @@ function actionContext(row: Doc<"events">, accessRole = "owner") {
         };
       }
       if ("kind" in args && "idempotencyKey" in args) {
-        return { state: "claimed", reconcileOnly: false };
+        return claim;
       }
-      if ("status" in args && "attemptId" in args) return true;
+      if ("status" in args && "attemptId" in args) {
+        settles.push(args);
+        return true;
+      }
       mutations.push(args);
       return null;
     },
   } as unknown as ActionCtx;
-  return { ctx, mutations };
+  return { ctx, mutations, settles };
 }
 
 function liveGoogleEvent(row: Doc<"events">, overrides: Record<string, unknown> = {}) {
@@ -1179,5 +1188,341 @@ describe("reminder writes are fitted to the adapter's rules", () => {
       reminders: null,
     });
     expect(bodies[1]?.reminders).toEqual({ useDefault: true });
+  });
+});
+
+describe("reminders from the detail panel", () => {
+  const TEN = [{ method: "popup" as const, minutes: 10 }];
+  const THIRTY = [{ method: "popup" as const, minutes: 30 }];
+  const MASTER = "series-master";
+  const guestRow = () =>
+    eventRow({
+      organizer: { self: false },
+      attendees: [
+        { email: "me@example.com", self: true, responseStatus: "accepted" },
+      ],
+    });
+  const seriesRow = () =>
+    eventRow({
+      providerSeriesId: MASTER,
+      providerEventId: `${MASTER}_20260901T010000Z`,
+    });
+
+  /**
+   * Records what it is asked to write. Reminders are kept per provider event
+   * id, and an occurrence with none of its own reads the series master's, as
+   * Google's expanded instances do.
+   */
+  function fakeAdapter(
+    options: {
+      rules?: (typeof REMINDER_RULES)["google"];
+      own?: Record<string, ProviderEvent["reminders"]>;
+      missing?: string[];
+    } = {},
+  ) {
+    const updates: UpdateEventRequest[] = [];
+    const reads: string[] = [];
+    const stored = new Map(Object.entries(options.own ?? {}));
+    const missing = new Set(options.missing ?? []);
+    let failure: unknown;
+    const find = (id: string): ProviderEvent => {
+      if (missing.has(id)) throw new ProviderError("not-found", "Event not found");
+      return {
+        id,
+        calendarId: PROVIDER_CALENDAR_ID,
+        startMs: 1,
+        endMs: 2,
+        allDay: false,
+        status: "confirmed",
+        updatedMs: 1,
+        reminders: stored.has(id) ? stored.get(id) : stored.get(MASTER),
+      };
+    };
+    const adapter = {
+      provider: "google",
+      capabilities: {
+        contacts: false,
+        recurringEvents: true,
+        attendeeMembershipUpdates: true,
+        rsvp: true,
+        removeSelf: true,
+        conference: { create: true, add: true, remove: true },
+        idempotentCreate: true,
+        idempotentUpdate: true,
+        idempotentResponse: true,
+        idempotentDelete: true,
+        reminders: options.rules ?? REMINDER_RULES.google,
+      },
+      async getEvent(ref: { eventId: string }) {
+        reads.push(ref.eventId);
+        return find(ref.eventId);
+      },
+      async updateEvent(request: UpdateEventRequest) {
+        updates.push(request);
+        if (failure) throw failure;
+        find(request.ref.eventId);
+        stored.set(request.ref.eventId, request.patch.reminders ?? undefined);
+        return find(request.ref.eventId);
+      },
+    } as unknown as CalendarProviderAdapter;
+    return {
+      adapter,
+      updates,
+      reads,
+      failWith(error: unknown) {
+        failure = error;
+      },
+    };
+  }
+
+  function deps(adapter: CalendarProviderAdapter, refresh?: () => Promise<void>) {
+    let refreshes = 0;
+    return {
+      dependencies: {
+        getAdapter: async () => adapter,
+        refreshCalendar: async () => {
+          refreshes += 1;
+          await refresh?.();
+        },
+      },
+      refreshCount: () => refreshes,
+    };
+  }
+
+  const mirrored = (mutations: Record<string, unknown>[]) =>
+    mutations.filter((m) => "event" in m);
+
+  test("a guest sets reminders on an invitation they can't otherwise edit", async () => {
+    const row = guestRow();
+    const { ctx, mutations } = actionContext(row, "writer");
+    const { adapter, updates } = fakeAdapter();
+    const { dependencies } = deps(adapter);
+
+    // The general edit path still turns the guest away…
+    await expect(
+      service.updateEventOp(
+        ctx,
+        "user-1",
+        { eventId: row._id, reminders: TEN },
+        dependencies,
+      ),
+    ).rejects.toThrow(/only the organiser/i);
+    expect(updates).toEqual([]);
+
+    // …while the reminders-only path patches exactly the reminders, quietly.
+    await service.setEventRemindersOp(
+      ctx,
+      "user-1",
+      { eventId: row._id, reminders: TEN },
+      dependencies,
+    );
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.ref.eventId).toBe(row.providerEventId);
+    expect(updates[0]!.patch).toEqual({ reminders: TEN });
+    expect(updates[0]!.notify).toBeUndefined();
+    // No key: it would buy a read-before-write that can skip a needed write.
+    expect(updates[0]!.idempotencyKey).toBeUndefined();
+    expect(mutations[mutations.length - 1]).toMatchObject({
+      event: { reminders: TEN },
+    });
+  });
+
+  test("a read-only calendar is refused before the provider is called", async () => {
+    const row = guestRow();
+    const { ctx } = actionContext(row, "reader");
+    const { adapter, updates } = fakeAdapter();
+    await expect(
+      service.setEventRemindersOp(
+        ctx,
+        "user-1",
+        { eventId: row._id, reminders: TEN },
+        deps(adapter).dependencies,
+      ),
+    ).rejects.toThrow(/can't change reminders/);
+    expect(updates).toEqual([]);
+  });
+
+  test("a working location is refused; it has no reminders to set", async () => {
+    const row = eventRow({ eventType: "workingLocation" });
+    const { ctx } = actionContext(row, "owner");
+    const { adapter, updates } = fakeAdapter();
+    await expect(
+      service.setEventRemindersOp(
+        ctx,
+        "user-1",
+        { eventId: row._id, reminders: TEN },
+        deps(adapter).dependencies,
+      ),
+    ).rejects.toThrow(/can't change reminders/);
+    expect(updates).toEqual([]);
+  });
+
+  test("a series-wide write goes to the master, and the opened occurrence is mirrored at once", async () => {
+    const row = seriesRow();
+    const { ctx, mutations } = actionContext(row, "owner");
+    const { adapter, updates, reads } = fakeAdapter();
+    const { dependencies, refreshCount } = deps(adapter);
+
+    await service.setEventRemindersOp(
+      ctx,
+      "user-1",
+      { eventId: row._id, reminders: TEN, scope: "allEvents" },
+      dependencies,
+    );
+    // One write, to the master; the occurrence inherited it and is only read.
+    expect(updates.map((u) => u.ref.eventId)).toEqual([MASTER]);
+    expect(updates[0]!.patch).toEqual({ reminders: TEN });
+    expect(reads).toEqual([row.providerEventId]);
+    // The refresh can be skipped under a held sync lease, so the row the user
+    // is looking at doesn't wait for it; and the master is never a row.
+    expect(mirrored(mutations)).toHaveLength(1);
+    expect(mirrored(mutations)[0]).toMatchObject({
+      event: { id: row.providerEventId, reminders: TEN },
+    });
+    expect(refreshCount()).toBe(1);
+  });
+
+  test("an occurrence with its own override is written too", async () => {
+    const row = seriesRow();
+    const { ctx, mutations } = actionContext(row, "owner");
+    const { adapter, updates } = fakeAdapter({
+      own: { [row.providerEventId]: THIRTY },
+    });
+
+    await service.setEventRemindersOp(
+      ctx,
+      "user-1",
+      { eventId: row._id, reminders: TEN, scope: "allEvents" },
+      deps(adapter).dependencies,
+    );
+    // The master's change never reaches an exception, so it gets its own write.
+    expect(updates.map((u) => u.ref.eventId)).toEqual([
+      MASTER,
+      row.providerEventId,
+    ]);
+    expect(mirrored(mutations)[0]).toMatchObject({ event: { reminders: TEN } });
+  });
+
+  test("a master that isn't on this calendar falls back to the occurrence", async () => {
+    // A guest invited to a single occurrence of someone else's series.
+    const row = seriesRow();
+    const { ctx, mutations, settles } = actionContext(row, "owner");
+    const { adapter, updates } = fakeAdapter({ missing: [MASTER] });
+    const { dependencies, refreshCount } = deps(adapter);
+
+    await service.setEventRemindersOp(
+      ctx,
+      "user-1",
+      { eventId: row._id, reminders: TEN, scope: "allEvents" },
+      dependencies,
+    );
+    expect(updates.map((u) => u.ref.eventId)).toEqual([
+      MASTER,
+      row.providerEventId,
+    ]);
+    expect(settles).toHaveLength(1);
+    expect(settles[0]).toMatchObject({ status: "succeeded" });
+    expect(mirrored(mutations)[0]).toMatchObject({ event: { reminders: TEN } });
+    // Nothing series-wide changed, so there is nothing to refresh.
+    expect(refreshCount()).toBe(0);
+  });
+
+  test("without a scope only this occurrence changes", async () => {
+    const row = seriesRow();
+    const { ctx, mutations } = actionContext(row, "owner");
+    const { adapter, updates } = fakeAdapter();
+    const { dependencies, refreshCount } = deps(adapter);
+
+    await service.setEventRemindersOp(
+      ctx,
+      "user-1",
+      { eventId: row._id, reminders: TEN },
+      dependencies,
+    );
+    expect(updates.map((u) => u.ref.eventId)).toEqual([row.providerEventId]);
+    expect(refreshCount()).toBe(0);
+    expect(mirrored(mutations)).toHaveLength(1);
+  });
+
+  test("a replayed operation writes nothing again, and still lands the row", async () => {
+    const row = seriesRow();
+    const { ctx, mutations, settles } = actionContext(row, "owner", {
+      state: "succeeded",
+      reconcileOnly: false,
+      providerEventId: MASTER,
+    });
+    // The first attempt already reached the provider.
+    const { adapter, updates, reads } = fakeAdapter({ own: { [MASTER]: TEN } });
+    const { dependencies, refreshCount } = deps(adapter);
+
+    await service.setEventRemindersOp(
+      ctx,
+      "user-1",
+      { eventId: row._id, reminders: TEN, scope: "allEvents" },
+      dependencies,
+    );
+    expect(updates).toEqual([]);
+    // Settled the first time round; and it is the occurrence that is read and
+    // mirrored, never the master the operation recorded.
+    expect(settles).toEqual([]);
+    expect(reads).toEqual([row.providerEventId]);
+    expect(mirrored(mutations)).toHaveLength(1);
+    expect(mirrored(mutations)[0]).toMatchObject({
+      event: { id: row.providerEventId, reminders: TEN },
+    });
+    expect(refreshCount()).toBe(1);
+  });
+
+  test("a refresh that fails after the write is a committed write, not a failure", async () => {
+    const row = seriesRow();
+    const { ctx, mutations, settles } = actionContext(row, "owner");
+    const { adapter, updates } = fakeAdapter();
+    const { dependencies } = deps(adapter, async () => {
+      throw new Error("sync token expired");
+    });
+
+    await expect(
+      service.setEventRemindersOp(
+        ctx,
+        "user-1",
+        { eventId: row._id, reminders: TEN, scope: "allEvents" },
+        dependencies,
+      ),
+    ).rejects.toBeInstanceOf(service.ExternalWriteCommittedError);
+    expect(updates).toHaveLength(1);
+    expect(settles[settles.length - 1]).toMatchObject({ status: "succeeded" });
+    expect(mirrored(mutations)).toHaveLength(1);
+  });
+
+  test("the provider's reminder rules still apply", async () => {
+    const row = guestRow();
+    const { ctx } = actionContext(row, "writer");
+    const { adapter, updates } = fakeAdapter({ rules: REMINDER_RULES.microsoft });
+    await expect(
+      service.setEventRemindersOp(
+        ctx,
+        "user-1",
+        { eventId: row._id, reminders: [...TEN, { method: "popup", minutes: 60 }] },
+        deps(adapter).dependencies,
+      ),
+    ).rejects.toThrow("one reminder per event");
+    expect(updates).toEqual([]);
+  });
+
+  test("a provider refusal settles the attempt and surfaces the error", async () => {
+    const row = guestRow();
+    const { ctx, mutations, settles } = actionContext(row, "writer");
+    const { adapter, failWith } = fakeAdapter();
+    failWith(new ProviderError("validation", "Reminder offset out of range"));
+    await expect(
+      service.setEventRemindersOp(
+        ctx,
+        "user-1",
+        { eventId: row._id, reminders: TEN },
+        deps(adapter).dependencies,
+      ),
+    ).rejects.toMatchObject({ kind: "validation" });
+    expect(settles[settles.length - 1]).toMatchObject({ status: "failed" });
+    expect(mirrored(mutations)).toEqual([]);
   });
 });

@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ALL_DAY_PRESETS,
   allDayMinutes,
+  describeReminders,
   labelFor,
   normalizeReminders,
   sameReminders,
@@ -92,5 +93,32 @@ describe("normalizeReminders / sameReminders / togglePopup", () => {
   test("togglePopup adds, removes, and leaves email entries alone", () => {
     expect(togglePopup([email(30)], 10)).toEqual([popup(10), email(30)]);
     expect(togglePopup([popup(10), email(30)], 10)).toEqual([email(30)]);
+  });
+});
+
+describe("describeReminders", () => {
+  test("an explicit list reads each popup offset, or none", () => {
+    expect(describeReminders([popup(10), popup(60)], false, true, {})).toBe(
+      "10 min before · 1 hour before",
+    );
+    expect(describeReminders([], false, true, {})).toBe("No reminders");
+    // Email reminders never fire here, so they don't count.
+    expect(describeReminders([email(10)], false, true, {})).toBe("No reminders");
+  });
+
+  test("the default says what it resolves to, never just 'Default'", () => {
+    expect(describeReminders(null, false, true, {})).toBe(
+      "Default · 10 min before",
+    );
+    expect(
+      describeReminders(null, false, true, { preferredMinutes: [30] }),
+    ).toBe("Default · 30 min before");
+    expect(
+      describeReminders(null, false, true, { preferredMinutes: [] }),
+    ).toBe("Default · No reminders");
+    // The provider's calendar default applies when no preference is set.
+    expect(
+      describeReminders(null, false, true, { calendarDefaults: [popup(5)] }),
+    ).toBe("Default · 5 min before");
   });
 });

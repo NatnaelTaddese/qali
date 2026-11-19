@@ -26,7 +26,8 @@ nonisolated struct EventDraft: Equatable, Sendable {
   /// Nil goes to the default calendar (see `CalendarData.defaultCalendar`).
   var calendarId: String?
   var guests: [DraftGuest] = []
-  var repeatRule: RepeatRule?
+  /// Nil does not repeat.
+  var repeatRule: Recurrence?
   /// Popup offsets in minutes. Nil is the calendar's default; empty is none.
   var reminders: [Double]?
 
@@ -183,7 +184,7 @@ nonisolated struct EventPatch: Equatable, Sendable {
     }
 
     if let rule = next.repeatRule, rule != initial.repeatRule {
-      recurrence = rule.rrule(startMs: next.startMs, zone: zone)
+      recurrence = rule.rrule(zone: zone)
     }
 
     if Self.reminderSet(next.reminders) != Self.reminderSet(initial.reminders) {
@@ -236,41 +237,6 @@ nonisolated enum EditScope: String, CaseIterable, Sendable {
     case .thisAndFollowing: "This and following events"
     case .allEvents: "All events"
     }
-  }
-}
-
-// MARK: - Repeat
-
-/// The web Repeat control's presets (repeat-control.tsx), each one RRULE.
-nonisolated enum RepeatRule: Hashable, Sendable, CaseIterable {
-  case daily, weekly, weekdays, monthly, yearly
-
-  func label(startMs: Double, zone: WorkingZone) -> String {
-    switch self {
-    case .daily: "Daily"
-    case .weekly: "Weekly on \(zone.format(Date(ms: startMs), "EEEE"))"
-    case .weekdays: "Every weekday"
-    case .monthly: "Monthly"
-    case .yearly: "Annually"
-    }
-  }
-
-  /// Google's `recurrence` lines (the web's `toRRule`). A weekly rule repeats
-  /// on the start's weekday in the working zone.
-  func rrule(startMs: Double, zone: WorkingZone) -> [String] {
-    switch self {
-    case .daily: ["RRULE:FREQ=DAILY"]
-    case .weekly: ["RRULE:FREQ=WEEKLY;BYDAY=\(Self.weekday(startMs, zone: zone))"]
-    case .weekdays: ["RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"]
-    case .monthly: ["RRULE:FREQ=MONTHLY"]
-    case .yearly: ["RRULE:FREQ=YEARLY"]
-    }
-  }
-
-  private static func weekday(_ ms: Double, zone: WorkingZone) -> String {
-    // Calendar weekdays count from Sunday = 1.
-    let codes = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"]
-    return codes[zone.calendar.component(.weekday, from: Date(ms: ms)) - 1]
   }
 }
 

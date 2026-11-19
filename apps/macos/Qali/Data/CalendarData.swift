@@ -224,7 +224,7 @@ final class CalendarData {
     let times = draft.eventTimes(zone: zone)
     let summary = draft.summary.trimmingCharacters(in: .whitespacesAndNewlines)
     let location = draft.location.trimmingCharacters(in: .whitespacesAndNewlines)
-    let recurrence = draft.repeatRule?.rrule(startMs: draft.startMs, zone: zone)
+    let recurrence = draft.repeatRule?.rrule(zone: zone)
     let reminders = draft.reminders.map { Array(Set($0)).sorted().prefix(5) }.map(Array.init)
     let notes = draft.notesHTML
     let zoneId = zone.identifier

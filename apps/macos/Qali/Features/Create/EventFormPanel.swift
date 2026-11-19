@@ -224,6 +224,12 @@ struct EventFormPanel: View {
   /// length.
   private func setStart(_ ms: Double) {
     let length = max(draft.endMs - draft.startMs, snapMs)
+    // A weekly rule on the start's own day follows the start to its new day.
+    let oldDay = Recurrence.Weekday.of(draft.startMs, zone: zone)
+    if var rule = draft.repeatRule, rule.freq == .weekly, rule.byWeekday == [oldDay] {
+      rule.byWeekday = [Recurrence.Weekday.of(ms, zone: zone)]
+      draft.repeatRule = rule
+    }
     draft.startMs = ms
     draft.endMs = ms + length
   }
@@ -289,21 +295,7 @@ struct EventFormPanel: View {
   }
 
   private var repeatPicker: some View {
-    let start = draft.startMs
-    return Menu {
-      Picker("Repeat", selection: $draft.repeatRule) {
-        Text("Does not repeat").tag(RepeatRule?.none)
-        Divider()
-        ForEach(RepeatRule.allCases, id: \.self) { rule in
-          Text(rule.label(startMs: start, zone: zone)).tag(RepeatRule?.some(rule))
-        }
-      }
-      .pickerStyle(.inline)
-      .labelsHidden()
-    } label: {
-      MenuLabel(draft.repeatRule?.label(startMs: start, zone: zone) ?? "Does not repeat")
-    }
-    .modifier(SettingMenuStyle())
+    RepeatField(rule: $draft.repeatRule, startMs: draft.startMs, navigation: navigation)
   }
 
   /// A place or a video call: one row whose switch swaps the location field
@@ -693,7 +685,7 @@ private struct TimeRow: View {
       .task {
         guard label == "Starts", let which = UserDefaults.standard.string(forKey: "QaliPicker") else { return }
         try? await Task.sleep(for: .seconds(1))
-        if which == "day" { pickingDay = true } else { pickingTime = true }
+        if which == "day" { pickingDay = true } else if which == "time" { pickingTime = true }
       }
     #endif
   }
@@ -710,7 +702,7 @@ private struct TimeRow: View {
 
 /// A value that opens its picker: the day as text with a hover fill, the
 /// time as a pill like the web's time field.
-private struct PickerChip: View {
+struct PickerChip: View {
   let text: String
   let open: Bool
   var filled = false

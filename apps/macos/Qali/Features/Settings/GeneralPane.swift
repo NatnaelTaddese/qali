@@ -100,7 +100,7 @@ private struct UpdatesSection: View {
 
   var body: some View {
     Section("Updates") {
-      LabeledContent("Version", value: AppUpdater.versionDescription)
+      LabeledContent("Version", value: AppUpdater.version)
       if updater.isEnabled {
         Toggle("Check for updates automatically", isOn: $updater.automaticallyChecks)
         Toggle("Download and install updates automatically", isOn: $updater.automaticallyDownloads)

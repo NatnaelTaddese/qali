@@ -487,6 +487,10 @@ export const setOverride = mutation({
   handler: (ctx, args) => setOverrideHandler(ctx, args),
 });
 
+/** How far the request check's "now" trails the server clock: the booking
+ * page refreshes its own once a minute, plus a minute for the round trip. */
+export const REQUEST_NOTICE_GRACE_MS = 2 * 60_000;
+
 export async function requestBookingHandler(
   ctx: MutationCtx,
   args: {
@@ -527,6 +531,11 @@ export async function requestBookingHandler(
   // before the page-scoped limits below are spent: an invalid or already-taken
   // slot must not count against the page, or junk submissions could exhaust
   // its hourly allowance and turn every real visitor away.
+  //
+  // The listing is a cached query, so the "now" its notice cutoff was measured
+  // from is the page's last tick, up to a minute old. Measure this check from a
+  // little earlier too: otherwise the earliest slot the visitor can still see
+  // is refused for that minute every time it crosses the cutoff.
   const now = Date.now();
   const endMs = args.startMs + page.slotMinutes * 60_000;
   const slots = await slotGrid(
@@ -534,7 +543,7 @@ export async function requestBookingHandler(
     page,
     args.startMs - MS_PER_DAY,
     endMs + MS_PER_DAY,
-    now,
+    now - REQUEST_NOTICE_GRACE_MS,
   );
   const slot = slots.find((s) => s.startMs === args.startMs);
   if (!slot?.available) {

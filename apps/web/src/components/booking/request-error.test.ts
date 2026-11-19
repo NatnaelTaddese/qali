@@ -40,6 +40,17 @@ describe("bookingRequestErrorMessage", () => {
     ).toBe("Booking is busy right now");
   });
 
+  test("asks for another time when the slot is gone", () => {
+    const error = new Error(
+      "[CONVEX M(domains/booking/mutations:requestBooking)] [Request ID: abc] Server Error Uncaught Error: That time is no longer available",
+    );
+    expect(bookingRequestErrorMessage(error)).toEqual({
+      title: "That time is no longer available",
+      description: "Please pick another one.",
+      slotGone: true,
+    });
+  });
+
   test("does not expose unknown server details", () => {
     const result = bookingRequestErrorMessage(
       new Error("[Request ID: secret] Internal server details"),

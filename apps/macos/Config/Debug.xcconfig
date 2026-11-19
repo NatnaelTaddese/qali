@@ -1,0 +1,6 @@
+#include "Shared.xcconfig"
+CONVEX_DEPLOYMENT_NAME = frugal-egret-968
+// Its own app beside Release: separate sandbox container (event cache,
+// settings) and Keychain session, and a name that tells them apart.
+QALI_BUNDLE_ID = com.myqali.macos.dev
+QALI_DISPLAY_NAME = Qali Dev

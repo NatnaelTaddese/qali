@@ -1,0 +1,84 @@
+name: Qali
+options:
+  bundleIdPrefix: com.myqali
+  deploymentTarget:
+    macOS: "26.2"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+configFiles:
+  Debug: Config/Debug.xcconfig
+  Release: Config/Release.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+packages:
+  ConvexMobile:
+    url: https://github.com/get-convex/convex-swift
+    from: 0.8.1
+  QaliDomain:
+    path: Packages/QaliDomain
+
+targets:
+  Qali:
+    type: application
+    platform: macOS
+    sources:
+      - path: Qali
+    dependencies:
+      - package: ConvexMobile
+      - package: QaliDomain
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(QALI_BUNDLE_ID)
+        PRODUCT_NAME: Qali
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS: NO
+        GENERATE_INFOPLIST_FILE: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+    info:
+      path: Qali/Info.plist
+      properties:
+        CFBundleDisplayName: $(QALI_DISPLAY_NAME)
+        LSApplicationCategoryType: public.app-category.productivity
+        NSPrincipalClass: NSApplication
+        NSHumanReadableCopyright: ""
+        # Lexend and Fraunces sit at the root of Contents/Resources.
+        ATSApplicationFontsPath: "."
+        QaliConvexDeployment: $(CONVEX_DEPLOYMENT_NAME)
+    entitlements:
+      path: Qali/Qali.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+
+  QaliTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: QaliTests
+    dependencies:
+      - target: Qali
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        BUNDLE_LOADER: $(TEST_HOST)
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Qali.app/Contents/MacOS/Qali
+
+schemes:
+  Qali:
+    build:
+      targets:
+        Qali: all
+        QaliTests: [test]
+    test:
+      targets:
+        - QaliTests
+        - package: QaliDomain/QaliDomainTests

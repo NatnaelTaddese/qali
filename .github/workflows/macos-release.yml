@@ -1,0 +1,100 @@
+name: macOS release
+
+# Builds the shareable Mac app (apps/macos) when a push's head commit message
+# carries [release-macos]. Any branch gets the zip as a workflow artifact; a
+# push to main also publishes it as a GitHub release. A merged PR's head commit
+# is the merge commit, whose message includes the PR title, so a PR titled
+# "... [release-macos]" releases when it merges. Run it by hand from the
+# Actions tab too.
+#
+# Signing: ad-hoc unless these repository secrets are set, in which case the
+# build is signed with that identity (still not notarized):
+#   MACOS_CERTIFICATE_P12       base64 of the exported .p12
+#   MACOS_CERTIFICATE_PASSWORD  the .p12's password
+#   MACOS_TEAM_ID               the certificate's organisational unit
+#   MACOS_SIGNING_IDENTITY      optional, defaults to "Apple Development"
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release-macos]')
+    # The app builds with Xcode 27 (26.6's compiler crashes on it), which only
+    # GitHub's xcode-27 image (a preview) carries for now.
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      HAS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+    defaults:
+      run:
+        working-directory: apps/macos
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '27.2'
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Import the signing identity
+        if: env.HAS_CERTIFICATE == 'true'
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
+          echo "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certificate.p12"
+          printf 'CODE_SIGN_IDENTITY = %s\nDEVELOPMENT_TEAM = %s\n' \
+            "${SIGNING_IDENTITY:-Apple Development}" "$TEAM_ID" > Config/Local.xcconfig
+
+      - name: Test
+        run: |
+          xcodegen generate --quiet
+          xcodebuild test -project Qali.xcodeproj -scheme Qali \
+            -destination 'platform=macOS' -derivedDataPath build -quiet
+
+      - name: Build
+        id: build
+        run: scripts/release.sh "${{ github.run_number }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.name }}
+          path: ${{ steps.build.outputs.zip }}
+          if-no-files-found: error
+
+      - name: Publish the release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.build.outputs.version }}
+          BUILD: ${{ steps.build.outputs.build }}
+          ZIP: ${{ steps.build.outputs.zip }}
+        working-directory: .
+        run: |
+          gh release create "macos-v$VERSION-$BUILD" "$ZIP" \
+            --target "$GITHUB_SHA" \
+            --title "Qali for Mac $VERSION ($BUILD)" \
+            --notes "Apple silicon, macOS 26.2 or later. The app isn't notarized: after the first launch is blocked, open System Settings → Privacy & Security and choose Open Anyway."

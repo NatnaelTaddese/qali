@@ -50,7 +50,7 @@ import { summarizeReminders, type Reminder } from "./reminders";
 import { RichTextEditor } from "./rich-text/rich-text-editor";
 import { RichTextView } from "./rich-text/rich-text-view";
 import { htmlToPreviewText } from "./rich-text/text";
-import type { Recurrence } from "./rrule";
+import { summarize, type Recurrence } from "./rrule";
 
 /** Wheel rows. Module-level so their identity is stable across renders — the
  * picker re-derives its geometry and index whenever `options` changes. */
@@ -575,11 +575,14 @@ export function EventForm({
               />
             ) : (
               <span className="px-2 py-1 text-sm text-muted-foreground">
-                {/* We sync with singleEvents=true, so we hold an expanded
-                    instance and never the rule that produced it. */}
-                {value.recurrence === null && capabilities.canEdit
-                  ? "Part of a repeating series"
-                  : "Does not repeat"}
+                {/* An occurrence of a series shows the series' rule once it
+                    has been read (see EventEdit); until then, or for a rule
+                    we can't describe, a plain note. */}
+                {value.recurrence
+                  ? summarize(value.recurrence, timeZone)
+                  : capabilities.canEdit
+                    ? "Part of a repeating series"
+                    : "Does not repeat"}
               </span>
             )}
             </SettingRow>

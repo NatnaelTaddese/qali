@@ -99,11 +99,16 @@ import Testing
     #expect(caps.canRespond)
   }
 
-  @Test func aRecurringInstanceCarriesNoRuleToChange() {
+  @Test func onlyTheOrganiserChangesHowASeriesRepeats() {
     var instance = mine
     instance.providerSeriesId = "series-1"
-    #expect(!eventCapabilities(instance, calendarAccessRole: owned).canChangeRecurrence)
+    #expect(eventCapabilities(instance, calendarAccessRole: owned).canChangeRecurrence)
     #expect(eventCapabilities(mine, calendarAccessRole: owned).canChangeRecurrence)
+    var guest = EventAccessFacts(organizer: .init(isSelf: false))
+    guest.guestsCanModify = true
+    #expect(eventCapabilities(guest, calendarAccessRole: owned).canChangeRecurrence)
+    guest.providerSeriesId = "series-1"
+    #expect(!eventCapabilities(guest, calendarAccessRole: owned).canChangeRecurrence)
   }
 
   @Test func aRowPredatingTheSyncKeepsTheOldBehaviour() {

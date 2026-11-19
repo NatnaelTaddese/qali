@@ -104,12 +104,21 @@ describe("eventCapabilities", () => {
     expect(caps.canRespond).toBe(true);
   });
 
-  test("a recurring instance carries no rule to change", () => {
+  test("only the organiser changes how a series repeats", () => {
     expect(
       eventCapabilities({ ...mine, providerSeriesId: "series-1" }, OWNED)
         .canChangeRecurrence,
-    ).toBe(false);
+    ).toBe(true);
     expect(eventCapabilities(mine, OWNED).canChangeRecurrence).toBe(true);
+    const guest: EventLike = {
+      organizer: { self: false },
+      guestsCanModify: true,
+    };
+    expect(eventCapabilities(guest, OWNED).canChangeRecurrence).toBe(true);
+    expect(
+      eventCapabilities({ ...guest, providerSeriesId: "series-1" }, OWNED)
+        .canChangeRecurrence,
+    ).toBe(false);
   });
 
   test("a row predating the sync keeps the old behaviour", () => {

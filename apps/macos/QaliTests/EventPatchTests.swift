@@ -121,4 +121,17 @@ struct EventPatchTests {
     #expect(patch.visibility == .some("private"))
     #expect(patch.busy == false)
   }
+
+  @Test func aSeriesRepeatChangesOrStops() {
+    let event = event { $0.providerSeriesId = "series-1" }
+    var initial = EventDraft(event: event, zone: zone)
+    initial.repeatRule = .weekly(on: .we)
+    var daily = initial
+    daily.repeatRule = .daily()
+    #expect(EventPatch(from: initial, to: daily, event: event, zone: zone).recurrence == ["RRULE:FREQ=DAILY"])
+    var stopped = initial
+    stopped.repeatRule = nil
+    #expect(EventPatch(from: initial, to: stopped, event: event, zone: zone).recurrence == [])
+    #expect(EventPatch(from: initial, to: initial, event: event, zone: zone).isEmpty)
+  }
 }

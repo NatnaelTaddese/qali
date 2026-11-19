@@ -6,7 +6,7 @@ import type { EventFormValue } from "./event-form";
 import type { CalendarEvent } from "./lib";
 
 process.env.SKIP_ENV_VALIDATION = "1";
-const { diffEvent, finalizeEventPatch } = await import("./event-edit");
+const { diffEvent, finalizeEventPatch, saveScopesFor } = await import("./event-edit");
 
 const initial: EventFormValue = {
   summary: "Pay salary",
@@ -45,6 +45,41 @@ describe("event edit recurrence", () => {
       recurrence: ["RRULE:FREQ=MONTHLY"],
       timeZone: "Asia/Shanghai",
     });
+  });
+
+  test("a series' changed repeat leaves out this event", () => {
+    const weekly: EventFormValue = {
+      ...initial,
+      recurrence: { freq: "WEEKLY", interval: 1, byWeekday: ["TU"], end: { kind: "never" } },
+    };
+    const daily: EventFormValue = {
+      ...initial,
+      recurrence: { freq: "DAILY", interval: 1, end: { kind: "never" } },
+    };
+    const event = { attendees: [] } as unknown as CalendarEvent;
+
+    const patch = diffEvent(weekly, daily, event, "Asia/Shanghai");
+    expect(patch.recurrence).toEqual(["RRULE:FREQ=DAILY"]);
+    expect(saveScopesFor(patch)).toEqual(["thisAndFollowing", "allEvents"]);
+
+    const unchanged = diffEvent(weekly, { ...weekly, summary: "Standup" }, event, "Asia/Shanghai");
+    expect(unchanged.recurrence).toBeUndefined();
+    expect(saveScopesFor(unchanged)).toEqual(["thisEvent", "thisAndFollowing", "allEvents"]);
+  });
+
+  test("stopping a series ends it from this event", () => {
+    const weekly: EventFormValue = {
+      ...initial,
+      recurrence: { freq: "WEEKLY", interval: 1, end: { kind: "never" } },
+    };
+    const patch = diffEvent(
+      weekly,
+      { ...weekly, recurrence: null },
+      { attendees: [] } as unknown as CalendarEvent,
+      "Asia/Shanghai",
+    );
+    expect(patch.recurrence).toEqual([]);
+    expect(saveScopesFor(patch)).toEqual(["thisAndFollowing"]);
   });
 
   test("does not add a time zone to an ordinary single-event metadata edit", () => {

@@ -183,8 +183,10 @@ nonisolated struct EventPatch: Equatable, Sendable {
       self.times = Times(startMs: times.startMs, endMs: times.endMs, allDay: next.allDay)
     }
 
-    if let rule = next.repeatRule, rule != initial.repeatRule {
-      recurrence = rule.rrule(zone: zone)
+    if next.repeatRule != initial.repeatRule {
+      // No rule only reaches a series (whose baseline holds its rule): it
+      // ends the series before this occurrence.
+      recurrence = next.repeatRule?.rrule(zone: zone) ?? []
     }
 
     if Self.reminderSet(next.reminders) != Self.reminderSet(initial.reminders) {

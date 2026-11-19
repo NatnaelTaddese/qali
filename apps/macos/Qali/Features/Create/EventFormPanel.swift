@@ -42,11 +42,26 @@ struct EventFormPanel: View {
   @State private var formHeight: CGFloat?
   /// The Where switch's thumb, which slides between its two segments.
   @Namespace private var whereThumb
+  /// A repeating event's series rule lines (the inner nil is "not fetched
+  /// yet"); nothing is asked for a single event or a new one.
+  @State private var seriesRule: LiveQuery<[String]?>
+  /// Set once the series' rule is read into `initial` and `draft`: from then
+  /// on its repeat can be changed.
+  @State private var seriesRuleLoaded = false
 
   init(draft: Binding<EventDraft>, mode: Mode = .create, island: Island, data: CalendarData, navigation: CalendarNavigation) {
     _draft = draft
     self.mode = mode
     _initial = State(initialValue: draft.wrappedValue)
+    var seriesEvent: CalendarEvent?
+    if case .edit(let event) = mode, event.providerSeriesId != nil { seriesEvent = event }
+    _seriesRule = State(
+      initialValue: LiveQuery(
+        data.client,
+        ConvexAPI.getEventRecurrence,
+        args: seriesEvent.map { ["eventId": $0.id] }
+      )
+    )
     self.island = island
     self.data = data
     self.navigation = navigation
@@ -148,6 +163,7 @@ struct EventFormPanel: View {
 
       footer
     }
+    .task(id: seriesRule.value) { await readSeriesRule() }
     .task {
       // An edit opens on what is there; only a new event starts typing.
       guard editing == nil else { return }
@@ -225,8 +241,9 @@ struct EventFormPanel: View {
   private func setStart(_ ms: Double) {
     let length = max(draft.endMs - draft.startMs, snapMs)
     // A weekly rule on the start's own day follows the start to its new day.
+    // Not a series' rule: moving one occurrence doesn't change the series.
     let oldDay = Recurrence.Weekday.of(draft.startMs, zone: zone)
-    if var rule = draft.repeatRule, rule.freq == .weekly, rule.byWeekday == [oldDay] {
+    if !isRecurring, var rule = draft.repeatRule, rule.freq == .weekly, rule.byWeekday == [oldDay] {
       rule.byWeekday = [Recurrence.Weekday.of(ms, zone: zone)]
       draft.repeatRule = rule
     }
@@ -277,8 +294,9 @@ struct EventFormPanel: View {
   }
 
   @ViewBuilder private var repeatMenu: some View {
-    if let capabilities, !capabilities.canChangeRecurrence {
-      // Rows are expanded instances: a series' rule isn't edited here.
+    // A series' repeat is edited once its rule is read and is one the picker
+    // can show; until then, or for a rule it can't, it is described.
+    if let capabilities, !capabilities.canChangeRecurrence || (isRecurring && !seriesRuleLoaded) {
       Text(isRecurring ? seriesText : "Does not repeat")
         .font(.sans(TextSize.sm, .medium))
         .foregroundStyle(Palette.mutedForeground)
@@ -292,6 +310,32 @@ struct EventFormPanel: View {
   private var seriesText: String {
     guard let event = editing else { return "Part of a repeating series" }
     return data.recurrenceSummary(series: event.providerSeriesId ?? event.id, zone: zone) ?? "Part of a repeating series"
+  }
+
+  /// Takes in the series' rule once it arrives, as the baseline and the
+  /// shown value; asks the server to fetch it when it holds none yet.
+  private func readSeriesRule() async {
+    guard let event = editing, isRecurring, !seriesRuleLoaded else { return }
+    switch seriesRule.value {
+    case .some(.some(let lines)):
+      guard let rule = Recurrence.parse(lines, zone: zone) else { return }
+      initial.repeatRule = rule
+      draft.repeatRule = rule
+      seriesRuleLoaded = true
+    case .some(.none):
+      try? await data.refreshRecurrence(of: event)
+    case .none:
+      return
+    }
+  }
+
+  /// How far a save may reach. A new repeat can't apply to one occurrence,
+  /// and stopping a series ends it from this occurrence on.
+  private var saveScopes: [EditScope] {
+    guard let event = editing else { return [] }
+    let patch = EventPatch(from: initial, to: draft, event: event, zone: zone)
+    guard let rule = patch.recurrence else { return EditScope.allCases }
+    return rule.isEmpty ? [.thisAndFollowing] : [.thisAndFollowing, .allEvents]
   }
 
   private var repeatPicker: some View {
@@ -397,7 +441,7 @@ struct EventFormPanel: View {
         // assumed scope, so ⌘↩ opens nothing here.
         Menu {
           Section("Apply changes to") {
-            ForEach(EditScope.allCases, id: \.self) { scope in
+            ForEach(saveScopes, id: \.self) { scope in
               if scope != .thisAndFollowing || capabilities?.isOrganizer != false {
                 Button(scope.label) { save(scope) }
               }

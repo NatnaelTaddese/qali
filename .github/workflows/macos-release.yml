@@ -166,12 +166,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.build.outputs.version }}
-          BUILD: ${{ steps.build.outputs.build }}
           ZIP: ${{ steps.build.outputs.zip }}
           DMG: ${{ steps.build.outputs.dmg }}
         working-directory: .
         run: |
           gh release create "macos-v$VERSION" "$DMG" "$ZIP" apps/macos/dist/appcast.xml \
             --target "$GITHUB_SHA" \
-            --title "Qali for Mac $VERSION ($BUILD)" \
+            --title "Qali for Mac $VERSION" \
             --notes "Download the .dmg, open it and drag Qali into Applications. Apple silicon, macOS 26.2 or later. The app isn't notarized: after the first launch is blocked, open System Settings → Privacy & Security and choose Open Anyway. Once installed, Qali updates itself."

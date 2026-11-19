@@ -98,7 +98,7 @@ final class AppUpdater: NSObject {
   }
 }
 
-extension AppUpdater: @preconcurrency SPUUpdaterDelegate {
+extension AppUpdater: SPUUpdaterDelegate {
   func feedURLString(for updater: SPUUpdater) -> String? { feedURL }
 }
 

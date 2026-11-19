@@ -70,6 +70,16 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dmgbuild
+        run: |
+          python -m venv "$RUNNER_TEMP/dmgbuild"
+          "$RUNNER_TEMP/dmgbuild/bin/pip" install --quiet dmgbuild==2.0.0
+          echo "DMGBUILD=$RUNNER_TEMP/dmgbuild/bin/dmgbuild" >> "$GITHUB_ENV"
+
       - name: Import the signing identity
         if: env.HAS_CERTIFICATE == 'true'
         env:
@@ -132,6 +142,7 @@ jobs:
           name: ${{ steps.build.outputs.name }}
           path: |
             ${{ steps.build.outputs.zip }}
+            ${{ steps.build.outputs.dmg }}
             apps/macos/dist/appcast.xml
           if-no-files-found: error
 
@@ -142,9 +153,10 @@ jobs:
           VERSION: ${{ steps.build.outputs.version }}
           BUILD: ${{ steps.build.outputs.build }}
           ZIP: ${{ steps.build.outputs.zip }}
+          DMG: ${{ steps.build.outputs.dmg }}
         working-directory: .
         run: |
-          gh release create "macos-v$VERSION" "$ZIP" apps/macos/dist/appcast.xml \
+          gh release create "macos-v$VERSION" "$DMG" "$ZIP" apps/macos/dist/appcast.xml \
             --target "$GITHUB_SHA" \
             --title "Qali for Mac $VERSION ($BUILD)" \
-            --notes "Apple silicon, macOS 26.2 or later. The app isn't notarized: after the first launch is blocked, open System Settings → Privacy & Security and choose Open Anyway."
+            --notes "Download the .dmg, open it and drag Qali into Applications. Apple silicon, macOS 26.2 or later. The app isn't notarized: after the first launch is blocked, open System Settings → Privacy & Security and choose Open Anyway. Once installed, Qali updates itself."

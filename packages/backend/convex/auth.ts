@@ -17,7 +17,9 @@ const siteUrl = env.SITE_URL;
 // (`qali:///…`) and "exp://" covers any Expo Go URL. Convex functions run
 // without NODE_ENV, so @better-auth/expo never adds its own dev-only "exp://"
 // entry; only deployments pointed at a local web app trust Expo Go.
-const isLocalSite = new URL(siteUrl).hostname === "localhost";
+// Parsed defensively: modules load without SITE_URL in unit tests.
+const isLocalSite =
+  URL.canParse(siteUrl ?? "") && new URL(siteUrl).hostname === "localhost";
 const nativeOrigins = ["qali://", ...(isLocalSite ? ["exp://"] : [])];
 
 export const authComponent = createClient<DataModel>(components.betterAuth);

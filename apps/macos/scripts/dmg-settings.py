@@ -12,7 +12,8 @@ files = [app]
 # The volume shows the app's own icon when it mounts.
 icon = os.path.join(app, "Contents/Resources/AppIcon.icns")
 symlinks = {"Applications": "/Applications"}
-hide_extensions = [app_name]
+# No hide_extensions: it sets FinderInfo on Qali.app, which breaks the
+# signature (`codesign --verify --strict` calls it detritus).
 
 # The frame includes Finder's ~30pt title bar; the content is the 800x440 art.
 window_rect = ((200, 160), (800, 470))

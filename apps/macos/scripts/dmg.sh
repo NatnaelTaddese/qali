@@ -15,3 +15,13 @@ rm -f "$OUT"
   -D app="$APP" -D background="$PWD/Packaging/dmg-background.tiff" \
   "Qali" "$OUT"
 hdiutil verify -quiet "$OUT"
+
+# The app inside must still pass a strict signature check, or Gatekeeper may
+# call it damaged.
+MOUNT=$(mktemp -d)
+hdiutil attach -quiet -nobrowse -readonly -mountpoint "$MOUNT" "$OUT"
+STATUS=0
+codesign --verify --strict --deep "$MOUNT/$(basename "$APP")" || STATUS=$?
+hdiutil detach -quiet "$MOUNT"
+rmdir "$MOUNT"
+exit $STATUS

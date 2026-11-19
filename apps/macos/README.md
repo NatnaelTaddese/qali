@@ -21,7 +21,7 @@ Debug builds talk to the dev Convex deployment and Release builds to prod
 ## Sharing a build
 
 ```sh
-scripts/release.sh [build-number]   # → dist/Qali-<version>-<build>-arm64.zip
+scripts/release.sh [build-number]   # → dist/Qali-<version>-arm64.zip
 ```
 
 CI builds the same zip when a push's head commit message contains

@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 BUILD="${1:-1}"
 VERSION=$(sed -n 's/^ *MARKETING_VERSION: *//p' project.yml | head -n 1)
 APP=build-release/Build/Products/Release/Qali.app
-ZIP="dist/Qali-$VERSION-$BUILD-arm64.zip"
+ZIP="dist/Qali-$VERSION-arm64.zip"
 
 xcodegen generate --quiet
 rm -rf "$APP"

@@ -123,6 +123,12 @@ export function BookingPage({
     } catch (error: unknown) {
       setSubmitting(false);
       const message = bookingRequestErrorMessage(error);
+      if (message.slotGone) {
+        // Let go of the time and re-measure notice from now, so the listing
+        // stops offering a slot the server just refused.
+        setSelectedSlot(null);
+        setNowMs(Date.now());
+      }
       toast.error(message.title, { description: message.description });
     }
   };

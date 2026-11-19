@@ -1,6 +1,6 @@
 import { REMINDER_RULES } from "@qali/domain/reminders";
 import { convexTest, type TestConvex } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { api, internal } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -1185,6 +1185,34 @@ describe("anonymous request hardening", () => {
       bookingId: booking!._id,
     });
     expect((await storedBooking(t))?.status).toBe("pending");
+  });
+
+  test("a slot the page still lists just past the notice cutoff can be requested", async () => {
+    // The page measures notice from its last minute tick, so right after a
+    // slot crosses the cutoff it is still on screen. The request check gives
+    // that minute back; anything older is still refused.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const cutoffSlot = Date.UTC(2026, 10, 20, 17, 30);
+      const t = convexTest(schema, modules);
+      await seedPage(t, "notice-host", { minNoticeMinutes: 120 });
+
+      vi.setSystemTime(cutoffSlot - 2 * HOUR + 30_000);
+      await request(t, "notice-host", { startMs: cutoffSlot });
+      expect((await storedBooking(t))?.startMs).toBe(cutoffSlot);
+
+      // The next slot, five minutes past its cutoff: no page still shows it.
+      const nextSlotStart = cutoffSlot + SLOT;
+      vi.setSystemTime(nextSlotStart - 2 * HOUR + 5 * 60_000);
+      await expect(
+        request(t, "notice-host", {
+          startMs: nextSlotStart,
+          email: "late@example.com",
+        }),
+      ).rejects.toThrow("no longer available");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("only an accepted request spends the page's hourly allowance", async () => {

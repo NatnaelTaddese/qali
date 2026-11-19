@@ -3,6 +3,9 @@ import { ConvexError } from "convex/values";
 interface BookingRequestErrorMessage {
   title: string;
   description: string;
+  /** The picked time can't be booked any more, so the picker should let go of
+   * it and the visitor choose again. */
+  slotGone?: boolean;
 }
 
 /** Convert expected public-booking failures into safe copy. Never expose the
@@ -47,6 +50,17 @@ export function bookingRequestErrorMessage(
       title: "Booking page is busy",
       description:
         "This page has received too many requests recently. Please try again later.",
+    };
+  }
+
+  if (
+    error instanceof Error &&
+    error.message.includes("That time is no longer available")
+  ) {
+    return {
+      title: "That time is no longer available",
+      description: "Please pick another one.",
+      slotGone: true,
     };
   }
 

@@ -37,6 +37,33 @@ nonisolated struct EventDraft: Equatable, Sendable {
 
   var isValid: Bool { endMs > startMs }
 
+  /// The form filled from an existing event (the web's `formValueFromEvent`).
+  /// An all-day event's times become working-zone midnights of its first and
+  /// last day. Repeating rows are expanded instances that carry no rule, so
+  /// the repeat stays unset.
+  init(event: CalendarEvent, zone: WorkingZone) {
+    if event.allDay {
+      startMs = fromUtcMidnight(event.startMs, zone: zone)
+      endMs = fromUtcMidnight(event.endMs - msPerDay, zone: zone)
+    } else {
+      startMs = event.startMs
+      endMs = event.endMs
+    }
+    summary = event.summary ?? ""
+    notesHTML = event.description.flatMap { $0.isEmpty ? nil : $0 }
+    location = event.location ?? ""
+    meet = event.conferenceType == "hangoutsMeet"
+    allDay = event.allDay
+    isPrivate = event.visibility == "private"
+    busy = event.busy != false
+    color = event.color
+    calendarId = event.localCalendarId
+    guests = (event.attendees ?? []).map {
+      DraftGuest(email: $0.email, displayName: $0.displayName, isSelf: $0.isSelf == true)
+    }
+    reminders = event.reminders.map { $0.filter { $0.method == "popup" }.map(\.minutes).sorted() }
+  }
+
   /// The instants sent to the provider. All-day events are date-only: UTC
   /// midnight of the first day, as read in the working zone, and the
   /// exclusive UTC midnight after the last one.
@@ -83,11 +110,133 @@ nonisolated func nextFreeSlot(
   return (fallback, fallback + durationMs)
 }
 
-/// Someone invited to the new event. The photo is only for the chip.
+/// Someone invited to the event. The photo is only for the chip; `isSelf`
+/// marks the signed-in user's own row on an edited event.
 nonisolated struct DraftGuest: Hashable, Sendable {
   var email: String
   var displayName: String?
   var photoUrl: String?
+  var isSelf = false
+}
+
+// MARK: - Edit
+
+/// What an edit changes (the web's `diffEvent`): only the fields the user
+/// touched. Google reads an absent field as "leave it" and clears one only on
+/// an explicit null, so a field emptied here is `.some(nil)`.
+nonisolated struct EventPatch: Equatable, Sendable {
+  struct Times: Equatable, Sendable {
+    var startMs: Double
+    var endMs: Double
+    var allDay: Bool
+  }
+
+  struct Attendee: Equatable, Sendable {
+    var email: String
+    var displayName: String?
+    var responseStatus: String?
+    var optional: Bool?
+  }
+
+  var summary: String?
+  var description: String??
+  var location: String??
+  var color: String??
+  var visibility: String??
+  var busy: Bool?
+  /// True mints a Google Meet, false clears the call.
+  var meet: Bool?
+  var times: Times?
+  var recurrence: [String]?
+  /// A list replaces the popups (email reminders kept); `.some(nil)` goes back
+  /// to the calendar's default.
+  var reminders: [EventReminder]??
+  var attendees: [Attendee]?
+
+  var isEmpty: Bool { self == EventPatch() }
+
+  /// The changes from `initial` (the form as it opened) to `next`, for
+  /// `event`. `zone` is the working zone the times were composed in.
+  init(from initial: EventDraft, to next: EventDraft, event: CalendarEvent, zone: WorkingZone) {
+    if next.summary != initial.summary {
+      let title = next.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+      summary = title.isEmpty ? "(No title)" : title
+    }
+    if next.notesHTML != initial.notesHTML {
+      let html = next.notesHTML ?? ""
+      description = .some(next.notesPreview.isEmpty || html.isEmpty ? nil : html)
+    }
+    if next.location != initial.location {
+      let place = next.location.trimmingCharacters(in: .whitespacesAndNewlines)
+      location = .some(place.isEmpty ? nil : place)
+    }
+    if next.color != initial.color { color = .some(next.color) }
+    if next.isPrivate != initial.isPrivate { visibility = .some(next.isPrivate ? "private" : nil) }
+    if next.busy != initial.busy { busy = next.busy }
+    if next.meet != initial.meet { meet = next.meet }
+
+    // Both ends travel together, with all-day, which changes how both are written.
+    let times = next.eventTimes(zone: zone)
+    let before = initial.eventTimes(zone: zone)
+    if times != before || next.allDay != initial.allDay {
+      self.times = Times(startMs: times.startMs, endMs: times.endMs, allDay: next.allDay)
+    }
+
+    if let rule = next.repeatRule, rule != initial.repeatRule {
+      recurrence = rule.rrule(startMs: next.startMs, zone: zone)
+    }
+
+    if Self.reminderSet(next.reminders) != Self.reminderSet(initial.reminders) {
+      reminders = .some(
+        next.reminders.map { popups in
+          // Email reminders aren't shown in the form; keep the event's.
+          let emails = (event.reminders ?? []).filter { $0.method != "popup" }
+          let chosen = Array(Set(popups)).sorted().map { EventReminder(method: "popup", minutes: $0) }
+          return Array((chosen + emails).prefix(5))
+        }
+      )
+    }
+
+    let guestsChanged =
+      next.guests.count != initial.guests.count
+      || zip(next.guests, initial.guests).contains { $0.email.lowercased() != $1.email.lowercased() }
+    if guestsChanged {
+      // The list is replaced wholesale: carry each guest's answer across, or
+      // saving would reset everyone to "needs action".
+      let answered = Dictionary(
+        (event.attendees ?? []).map { ($0.email.lowercased(), $0) },
+        uniquingKeysWith: { first, _ in first }
+      )
+      attendees = next.guests.map { guest in
+        let existing = answered[guest.email.lowercased()]
+        return Attendee(
+          email: guest.email,
+          displayName: guest.displayName ?? existing?.displayName,
+          responseStatus: existing?.responseStatus,
+          optional: existing?.optional
+        )
+      }
+    }
+  }
+
+  private init() {}
+
+  private static func reminderSet(_ reminders: [Double]?) -> Set<Double>? {
+    reminders.map(Set.init)
+  }
+}
+
+/// How far an edit or delete of a repeating event reaches.
+nonisolated enum EditScope: String, CaseIterable, Sendable {
+  case thisEvent, thisAndFollowing, allEvents
+
+  var label: String {
+    switch self {
+    case .thisEvent: "This event"
+    case .thisAndFollowing: "This and following events"
+    case .allEvents: "All events"
+    }
+  }
 }
 
 // MARK: - Repeat

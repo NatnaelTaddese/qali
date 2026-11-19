@@ -8,7 +8,7 @@ import QaliDomain
 // JSON numbers).
 
 /// A guest on an event (`attendeeValidator`).
-nonisolated struct EventAttendee: Decodable, Hashable, Sendable {
+nonisolated struct EventAttendee: Codable, Hashable, Sendable {
   var email: String
   var displayName: String?
   /// "needsAction" | "accepted" | "tentative" | "declined".
@@ -24,7 +24,7 @@ nonisolated struct EventAttendee: Decodable, Hashable, Sendable {
 }
 
 /// An organizer or creator (`personValidator`).
-nonisolated struct EventPerson: Decodable, Hashable, Sendable {
+nonisolated struct EventPerson: Codable, Hashable, Sendable {
   var email: String?
   var displayName: String?
   var isSelf: Bool?
@@ -35,7 +35,7 @@ nonisolated struct EventPerson: Decodable, Hashable, Sendable {
   }
 }
 
-nonisolated struct EventReminder: Decodable, Hashable, Sendable {
+nonisolated struct EventReminder: Codable, Hashable, Sendable {
   /// "popup" | "email".
   var method: String
   var minutes: Double
@@ -43,7 +43,7 @@ nonisolated struct EventReminder: Decodable, Hashable, Sendable {
 
 /// One row of `listEventsInRange`: a synced `events` row, or a public-calendar
 /// `sharedEvents` row mapped into the same shape (`sharedAsEvent`).
-nonisolated struct CalendarEvent: Decodable, Hashable, Identifiable, Sendable, CalendarEventLike, ColorableEventLike {
+nonisolated struct CalendarEvent: Codable, Hashable, Identifiable, Sendable, CalendarEventLike, ColorableEventLike {
   var id: String
   var startMs: Double
   var endMs: Double
@@ -102,7 +102,7 @@ nonisolated struct CalendarEvent: Decodable, Hashable, Identifiable, Sendable, C
 }
 
 /// One row of the `listCalendars` DTO.
-nonisolated struct CalendarListItem: Decodable, Hashable, Identifiable, Sendable {
+nonisolated struct CalendarListItem: Codable, Hashable, Identifiable, Sendable {
   var id: String
   var connectionId: String?
   /// "google" | "microsoft".
@@ -145,10 +145,18 @@ nonisolated struct ConnectionListItem: Decodable, Hashable, Identifiable, Sendab
   var provider: String?
   /// "active" once connected; anything else is broken or revoked.
   var status: String?
+  /// The account's display name and photo, stamped after the first sync.
+  var providerAccountName: String?
+  var providerAccountImageUrl: String?
+  var contactsEnabled: Bool?
+  var lastError: String?
+  var syncIntervalMs: Double?
+  var lastSyncAt: Double?
 
   enum CodingKeys: String, CodingKey {
     case id = "_id"
     case providerAccountId, createdAt, provider, status
+    case providerAccountName, providerAccountImageUrl, contactsEnabled, lastError, syncIntervalMs, lastSyncAt
   }
 }
 
@@ -186,12 +194,6 @@ nonisolated func groupCalendarsByAccount(
 
 /// One row of the notifications feed (`domains/notifications/queries:list`).
 nonisolated struct NotificationRow: Decodable, Hashable, Identifiable, Sendable {
-  /// The event a reminder points at; only what the row's second line reads.
-  struct Event: Decodable, Hashable, Sendable {
-    var startMs: Double
-    var allDay: Bool
-  }
-
   var id: String
   /// "booking_requested" | "event_reminder".
   var type: String
@@ -199,7 +201,9 @@ nonisolated struct NotificationRow: Decodable, Hashable, Identifiable, Sendable 
   var body: String?
   var read: Bool
   var createdAt: Double
-  var event: Event?
+  /// The reminded event (the whole document); nil once it is gone. Opening
+  /// the row shows it in the island and reveals it on the grid.
+  var event: CalendarEvent?
 
   enum CodingKeys: String, CodingKey {
     case id = "_id"

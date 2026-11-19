@@ -11,6 +11,9 @@ enum IslandView: Equatable {
   /// The create form; its draft lives on the island, so the ghost on the
   /// grid can follow the times as they are edited.
   case create
+  /// The edit form on an existing event; its draft lives on the island too,
+  /// so the ghost can preview a move.
+  case edit(CalendarEvent)
 
   /// Each view's own width, so the shell visibly adapts to what it holds
   /// (the web's `widthClass`).
@@ -18,7 +21,7 @@ enum IslandView: Equatable {
     switch self {
     case .account: 280
     case .search, .event: 390
-    case .create: 400
+    case .create, .edit: 400
     }
   }
 
@@ -29,6 +32,16 @@ enum IslandView: Equatable {
     case .search: "search"
     case .event(let event): "event:\(event.id)"
     case .create: "create"
+    case .edit(let event): "edit:\(event.id)"
+    }
+  }
+
+  /// A face holding a draft (create or edit): real work, which only Escape
+  /// or Cancel may throw away.
+  var holdsDraft: Bool {
+    switch self {
+    case .create, .edit: true
+    default: false
     }
   }
 }
@@ -37,11 +50,17 @@ enum IslandView: Equatable {
 @Observable
 final class Island {
   private(set) var view: IslandView?
-  /// The event being created while the create form is open.
+  /// The event being created or edited while a form is open.
   var draft: EventDraft?
+  /// The edited event's times as the edit form opened, so the ghost shows
+  /// only once they move.
+  private(set) var editOrigin: EventDraft?
   /// True while the guest matches float over the form: Escape then closes
   /// them, not the form.
   var guestMatchesOpen = false
+  /// True while a panel shows a drill-down screen (a description): Escape
+  /// then goes back to the panel, not closes it.
+  var drillDownOpen = false
   /// The island's shell in global coordinates, so the grid can keep a new
   /// event's ghost out from under it.
   var shellFrame: CGRect = .zero
@@ -68,13 +87,28 @@ final class Island {
 
   /// True while a panel with a text field is up: the calendar's bare-key
   /// shortcuts (D, W, M, T, arrows) must leave the typing alone.
-  var isTyping: Bool { view == .search || view == .create }
+  var isTyping: Bool { view == .search || (view?.holdsDraft ?? false) }
+
+  /// The draft the grid draws as a ghost: the new event, or an edited one
+  /// whose times have changed.
+  var ghostDraft: EventDraft? {
+    switch view {
+    case .create:
+      return draft
+    case .edit:
+      guard let draft, let origin = editOrigin else { return nil }
+      let moved = draft.startMs != origin.startMs || draft.endMs != origin.endMs || draft.allDay != origin.allDay
+      return moved ? draft : nil
+    default:
+      return nil
+    }
+  }
 
   /// Opens the create form on a range. With the form already open, only the
   /// range moves, as on the web: a fresh drag on the grid keeps the title
   /// and everything else typed so far.
   func openCreate(startMs: Double, endMs: Double) {
-    if view == .create, var current = draft {
+    if view?.holdsDraft == true, var current = draft {
       changes += 1
       current.startMs = startMs
       current.endMs = endMs
@@ -84,6 +118,26 @@ final class Island {
     }
     draft = EventDraft(startMs: startMs, endMs: endMs)
     open(.create)
+  }
+
+
+  /// Opens the edit form on an event, its fields filled from it. With the
+  /// form already open on that event, nothing is reset.
+  func openEdit(_ event: CalendarEvent, draft: EventDraft) {
+    if view?.id == IslandView.edit(event).id { return }
+    self.draft = draft
+    editOrigin = draft
+    open(.edit(event))
+  }
+
+  /// Cancel or Escape on a face: an edit goes back to its event, anything
+  /// else closes.
+  func cancel() {
+    if case .edit(let event) = view {
+      open(.event(event))
+    } else {
+      close()
+    }
   }
 
   func toggle(_ next: IslandView) {

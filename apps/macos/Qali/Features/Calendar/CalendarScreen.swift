@@ -15,7 +15,7 @@ struct CalendarScreen: View {
       }
       // For the event cards, which open themselves in the island.
       .environment(island)
-      .toolbar { CalendarToolbar(navigation: navigation, data: data, typing: island.isTyping) }
+      .toolbar { CalendarToolbar(navigation: navigation, data: data, island: island, typing: island.isTyping) }
       .background { shortcuts }
       .onChange(of: data.preferences, initial: true) { _, preferences in
         if let preferences { navigation.apply(preferences) }
@@ -64,6 +64,8 @@ struct CalendarScreen: View {
 struct CalendarToolbar: ToolbarContent {
   let navigation: CalendarNavigation
   let data: CalendarData
+  /// Handed to the bell, whose reminders open their event in it.
+  let island: Island
   /// A field in the island has the keyboard: T is a letter, not Today.
   var typing = false
 
@@ -97,15 +99,22 @@ struct CalendarToolbar: ToolbarContent {
         Button("Today") { navigation.goToToday() }
           .keyboardShortcut(typing ? nil : KeyboardShortcut("t", modifiers: []))
           .help("Go to today (T)")
-        Button("Previous", systemImage: "chevron.left") { navigation.step(-1) }
-          .help(stepHelp(back: true))
-        Button("Next", systemImage: "chevron.right") { navigation.step(1) }
-          .help(stepHelp(back: false))
+        // The month scrolls up and down, so there the arrows turn to say so.
+        let turn = Angle.degrees(navigation.view == .month ? 90 : 0)
+        Button { navigation.step(-1) } label: {
+          Label("Previous", systemImage: "chevron.left").rotationEffect(turn)
+        }
+        .help(stepHelp(back: true))
+        Button { navigation.step(1) } label: {
+          Label("Next", systemImage: "chevron.right").rotationEffect(turn)
+        }
+        .help(stepHelp(back: false))
       }
       // The capsule's own inset around its pills, as in the view switch.
       .padding(.horizontal, 4)
       .buttonStyle(ToolbarPillButtonStyle())
       .labelStyle(.iconOnly)
+      .animation(.snappy(duration: 0.3), value: navigation.view == .month)
     }
 
     ToolbarSpacer(.fixed, placement: .primaryAction)
@@ -117,7 +126,7 @@ struct CalendarToolbar: ToolbarContent {
     ToolbarSpacer(.fixed, placement: .primaryAction)
 
     ToolbarItem(placement: .primaryAction) {
-      NotificationsButton(data: data, navigation: navigation)
+      NotificationsButton(data: data, navigation: navigation, island: island)
     }
   }
 
@@ -134,12 +143,48 @@ extension CalendarNavigation {
   /// column into seven, and Week to Month squeezes the week into its row of
   /// the month (see `CalendarGrid`).
   func showAnimated(_ view: CalendarView) {
-    var duration = 0.35
+    // Day and Week are one grid at two widths: a quick snap. To and from
+    // Month is a zoom, which wants a slower, even glide.
+    guard view != self.view else { return }
+    guard view == .month || self.view == .month else {
+      return withAnimation(.snappy(duration: Self.scaled(0.35))) { show(view) }
+    }
+    zoomAnimated { show(view) }
+  }
+
+  /// Zooms the month into `day`, with the same animation as a view switch.
+  func openAnimated(day: Date) {
+    zoomAnimated { open(day: day) }
+  }
+
+  /// Runs a change to or from the month as a zoom, flagging `zooming` until
+  /// it has landed.
+  private func zoomAnimated(_ change: () -> Void) {
+    zoomToken += 1
+    let token = zoomToken
+    zooming = true
+    withAnimation(Self.zoomAnimation, completionCriteria: .removed) {
+      change()
+    } completion: { [weak self] in
+      guard let self, self.zoomToken == token else { return }
+      self.zooming = false
+    }
+  }
+
+  /// The month zoom's length.
+  static var zoomDuration: Double { scaled(0.5) }
+
+  /// The month zoom: a critically damped spring, so it eases in and settles
+  /// without the front-loaded rush of `.snappy`.
+  static var zoomAnimation: Animation { .spring(duration: zoomDuration, bounce: 0) }
+
+  /// `-QaliSlow 8` stretches the switches out, to study them frame by frame.
+  static func scaled(_ seconds: Double) -> Double {
     #if DEBUG
-      // `-QaliSlow 8` stretches the switch out, to study it frame by frame.
-      duration *= max(UserDefaults.standard.double(forKey: "QaliSlow"), 1)
+      return seconds * max(UserDefaults.standard.double(forKey: "QaliSlow"), 1)
+    #else
+      return seconds
     #endif
-    withAnimation(.snappy(duration: duration)) { show(view) }
   }
 }
 

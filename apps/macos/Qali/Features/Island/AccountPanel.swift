@@ -8,6 +8,8 @@ struct AccountPanel: View {
 
   @State private var theme = AppTheme.stored
   @State private var isSigningOut = false
+  /// The thumb that slides between the theme's segments.
+  @Namespace private var thumb
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -33,16 +35,17 @@ struct AccountPanel: View {
           .font(.sans(TextSize.xs, .medium))
           .foregroundStyle(Palette.mutedForeground)
           .padding(.horizontal, 8)
-        HStack(spacing: 4) {
+        // The same Mac segmented look as the RSVP and Where switches.
+        HStack(spacing: 2) {
           ForEach(AppTheme.allCases, id: \.self) { option in
-            ThemeButton(option: option, selected: theme == option) {
-              theme = option
+            ThemeButton(option: option, selected: theme == option, thumb: thumb) {
+              withAnimation(.snappy(duration: 0.2)) { theme = option }
               option.apply()
             }
           }
         }
-        .padding(4)
-        .background(Palette.foreground.opacity(0.06), in: .rect(cornerRadius: 14, style: .continuous))
+        .padding(3)
+        .background(Palette.foreground.opacity(0.06), in: .rect(cornerRadius: 10, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Theme")
       }
@@ -66,7 +69,7 @@ struct AccountPanel: View {
         .foregroundStyle(Palette.destructive)
         .padding(.horizontal, 12)
         .frame(height: 38)
-        .background(Palette.foreground.opacity(0.05), in: .rect(cornerRadius: 14, style: .continuous))
+        .background(Palette.foreground.opacity(0.05), in: .rect(cornerRadius: 10, style: .continuous))
         .contentShape(.rect)
       }
       .buttonStyle(.plain)
@@ -79,6 +82,7 @@ struct AccountPanel: View {
 private struct ThemeButton: View {
   let option: AppTheme
   let selected: Bool
+  let thumb: Namespace.ID
   let action: () -> Void
 
   @State private var hovering = false
@@ -91,12 +95,16 @@ private struct ThemeButton: View {
         Text(option.label)
           .font(.sans(TextSize.xs, .medium))
       }
-      .foregroundStyle(selected ? Palette.foreground : Palette.mutedForeground)
+      .foregroundStyle(selected || hovering ? Palette.foreground : Palette.mutedForeground)
       .frame(maxWidth: .infinity)
-      .frame(height: 28)
+      .frame(height: 26)
       .background {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-          .fill(Palette.foreground.opacity(selected ? 0.14 : hovering ? 0.06 : 0))
+        if selected {
+          SegmentThumb(cornerRadius: 7)
+            .matchedGeometryEffect(id: "thumb", in: thumb)
+        } else if hovering {
+          RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Palette.foreground.opacity(0.04))
+        }
       }
       .contentShape(.rect)
     }

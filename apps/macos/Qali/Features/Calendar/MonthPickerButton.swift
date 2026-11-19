@@ -27,7 +27,7 @@ struct MonthPickerButton: View {
         }
       }
       .padding(.horizontal, 4)
-      .animation(.snappy(duration: 0.25), value: navigation.anchor)
+      .animation(.snappy(duration: 0.25), value: navigation.shownAnchor)
     }
     .accessibilityLabel("Choose week of \(navigation.zone.format(navigation.weekStart, "MMMM d, yyyy"))")
     .help("Choose a week")

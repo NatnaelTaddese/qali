@@ -32,6 +32,15 @@ final class StripScroller {
   @ObservationIgnored var isEnabled = true {
     didSet { if !isEnabled { reset() } }
   }
+  /// Scrolls up and down instead (the month grid's week rows, with
+  /// `columnWidth` the row height): every swipe drives it, whatever its
+  /// direction, since nothing under it scrolls.
+  @ObservationIgnored var vertical = false
+  /// How far past the anchor, in steps, the strip runs before handing whole
+  /// steps over to it. Half a step for the time grid; the month draws spare
+  /// weeks either side and hands over several at once, since every hand-over
+  /// rebuilds its grid. Whatever is left is handed over on landing.
+  @ObservationIgnored var handOver: CGFloat = 0.5
   /// The farthest one fling may travel, in days.
   @ObservationIgnored var maxFlingDays = 14
   /// Moves the anchor by whole days.
@@ -39,9 +48,22 @@ final class StripScroller {
   /// Runs and pauses the frame clock that drives the landing spring.
   @ObservationIgnored var setAnimating: (Bool) -> Void = { _ in }
 
+  /// Whole steps past the anchor the strip shows (its offset, rounded).
+  /// Changes only when a step boundary is crossed.
+  private(set) var visibleSteps = 0
+  /// Told `visibleSteps` as it changes, straight after any hand-over in the
+  /// same step, so whoever names the page in view never sees the anchor
+  /// moved without the steps given back.
+  @ObservationIgnored var reportVisibleSteps: (Int) -> Void = { _ in }
+
   /// True from when the strip starts moving (a swipe, a glide, a step) until
   /// it lands on a day.
-  private(set) var isMoving = false
+  private(set) var isMoving = false {
+    didSet { if isMoving != oldValue { reportMoving(isMoving) } }
+  }
+  /// Told when `isMoving` changes, straight away rather than through a
+  /// view's `onChange`, which would tie that view to it.
+  @ObservationIgnored var reportMoving: (Bool) -> Void = { _ in }
 
   // MARK: Tuning
 
@@ -72,12 +94,24 @@ final class StripScroller {
   /// Days the anchor has moved since the gesture began, in points, so
   /// velocity samples stay on one continuous axis across re-anchoring.
   @ObservationIgnored private var base: CGFloat = 0
+  /// The finger's path: where it had moved the strip (`base` + offset) and
+  /// when, by the events' own timestamps.
   @ObservationIgnored private var samples: [(time: TimeInterval, position: CGFloat)] = []
   /// Movement across the locked axis since the swipe began.
   @ObservationIgnored private var crossTravel: CGFloat = 0
   /// Where the landing spring is heading, relative to the current anchor.
   @ObservationIgnored private var target: CGFloat?
   @ObservationIgnored private var velocity: CGFloat = 0
+  /// Where the finger has moved the strip to (`base` + offset), while one
+  /// is on the trackpad. A trackpad reports at its own pace, out of step
+  /// with the display, so drawing each event as it comes would move some
+  /// frames twice as far as others. Instead each frame draws the finger's
+  /// path as it was a moment before that frame is shown, read between the
+  /// events either side, so the strip moves evenly, as a scroll view does.
+  @ObservationIgnored private var finger: CGFloat?
+  /// How far behind its display time a frame reads the finger's path:
+  /// about one trackpad report, so there is nearly always an event after.
+  private static let fingerLag: TimeInterval = 0.012
   /// The anchor this scroller last moved to: any other anchor change came
   /// from the toolbar or a shortcut, and starts the strip afresh.
   @ObservationIgnored var ownAnchor: Date?
@@ -88,6 +122,7 @@ final class StripScroller {
   /// dispatch on, or nil to drop it.
   func handle(_ event: NSEvent) -> NSEvent? {
     guard isEnabled else { return event }
+    if vertical { return handleVertical(event) }
     guard event.hasPreciseScrollingDeltas else { return handleWheel(event) }
 
     // Resting fingers catch a glide in flight, like any scroll view.
@@ -100,6 +135,7 @@ final class StripScroller {
       axis = .undecided
       base = 0
       samples = []
+      finger = nil
       crossTravel = 0
     }
 
@@ -139,16 +175,50 @@ final class StripScroller {
     }
 
     if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
-      release(velocity: velocity(at: event.timestamp))
+      release(velocity: velocity(at: Self.time(of: event)))
     } else {
       // Natural scrolling is already in the deltas: content follows them.
-      move(by: -event.scrollingDeltaX, at: event.timestamp)
+      move(by: -event.scrollingDeltaX, at: Self.time(of: event))
     }
     // The phase still reaches the scroll view, so its own gesture tracking
     // begins and ends cleanly: with the vertical movement on a free swipe,
     // with none on a sideways one.
     return axis == .free ? Self.verticalOnly(event) : Self.withoutDeltas(event)
   }
+
+  /// The vertical mode's whole handling: the swipe moves the rows, its
+  /// momentum is replaced by the landing glide, and a wheel notch steps a
+  /// row. Nothing is passed on.
+  private func handleVertical(_ event: NSEvent) -> NSEvent? {
+    let dy = event.scrollingDeltaY
+    guard event.hasPreciseScrollingDeltas else {
+      if dy != 0, abs(dy) >= abs(event.scrollingDeltaX) { step(days: dy > 0 ? -1 : 1) }
+      return nil
+    }
+    guard event.momentumPhase.isEmpty else { return nil }
+    if event.phase.contains(.mayBegin) {
+      stopSpring()
+      return nil
+    }
+    if event.phase.contains(.began) {
+      stopSpring()
+      base = 0
+      samples = []
+      finger = nil
+      isMoving = true
+    }
+    if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+      if isMoving { release(velocity: velocity(at: Self.time(of: event))) }
+    } else if dy != 0 {
+      isMoving = true
+      move(by: -dy, at: Self.time(of: event))
+    }
+    return nil
+  }
+
+  /// Whole steps ahead of the anchor where the strip is heading: its landing
+  /// spot while it glides, else where it rests.
+  var heading: Int { Int(((target ?? offset) / columnWidth).rounded()) }
 
   /// A mouse wheel (Shift turns it sideways) steps a day per notch.
   private func handleWheel(_ event: NSEvent) -> NSEvent? {
@@ -178,9 +248,34 @@ final class StripScroller {
   // MARK: Moving
 
   private func move(by delta: CGFloat, at time: TimeInterval) {
-    setOffset(offset + delta)
-    samples.append((time, base + offset))
-    samples.removeAll { time - $0.time > 0.1 }
+    if finger == nil {
+      // Where the strip was, a report before the first movement.
+      let start = base + offset
+      finger = start
+      samples = [(time - Self.fingerLag, start)]
+    }
+    finger! += delta
+    samples.append((time, finger!))
+    samples.removeAll { time - $0.time > 0.2 }
+    setAnimating(true)
+  }
+
+  /// The finger's path at `time`: between the reports either side, or the
+  /// nearest end.
+  private func fingerPosition(at time: TimeInterval) -> CGFloat? {
+    guard let last = samples.last, let first = samples.first else { return finger }
+    if time >= last.time { return last.position }
+    if time <= first.time { return first.position }
+    guard let after = samples.firstIndex(where: { $0.time >= time }), after > 0 else { return last.position }
+    let a = samples[after - 1], b = samples[after]
+    let span = b.time - a.time
+    guard span > 0 else { return b.position }
+    return a.position + (b.position - a.position) * CGFloat((time - a.time) / span)
+  }
+
+  /// The finger has let go: the strip carries on from where it is drawn.
+  private func endFinger() {
+    finger = nil
   }
 
   /// The swipe's speed over its last tenth of a second, in points per
@@ -194,6 +289,7 @@ final class StripScroller {
   /// Lands the strip on a day: where the glide would end, rounded to a
   /// column, and at least the next day over for a quick flick.
   private func release(velocity: CGFloat) {
+    endFinger()
     let column = columnWidth
     let nearest = (offset / column).rounded()
     var days = ((offset + velocity * Self.glideSeconds) / column).rounded()
@@ -207,6 +303,7 @@ final class StripScroller {
 
   private func settleIfNeeded() {
     guard target == nil else { return }
+    endFinger()
     if offset != 0 {
       startSpring(to: (offset / columnWidth).rounded() * columnWidth, velocity: 0)
     } else if isMoving {
@@ -215,16 +312,23 @@ final class StripScroller {
   }
 
   /// Moves the strip, handing whole days over to the anchor.
-  private func setOffset(_ value: CGFloat) {
+  private func setOffset(_ value: CGFloat, landing: Bool = false) {
     var value = value
-    let days = (value / columnWidth).rounded()
+    let steps = value / columnWidth
+    let days = landing || abs(steps) > handOver ? steps.rounded() : 0
     if days != 0 {
       value -= days * columnWidth
       target? -= days * columnWidth
       base += days * columnWidth
       shiftAnchor(Int(days))
     }
-    offset = value
+    // Every set notifies, and the strip redraws for it.
+    if offset != value { offset = value }
+    let visible = Int((value / columnWidth).rounded())
+    if visible != visibleSteps {
+      visibleSteps = visible
+      reportVisibleSteps(visible)
+    }
   }
 
   // MARK: Spring
@@ -240,12 +344,22 @@ final class StripScroller {
     guard target != nil else { return }
     target = nil
     velocity = 0
-    setAnimating(false)
+    if finger == nil { setAnimating(false) }
   }
 
-  /// Advances the landing spring by `dt` seconds: the closed-form critically
-  /// damped step, so a long frame cannot make it unstable.
-  func tick(_ dt: CGFloat) {
+  /// Draws the frame to be shown at `time`: the finger's path while one is
+  /// down, else the landing spring advanced by `dt` seconds (the
+  /// closed-form critically damped step, so a long frame cannot make it
+  /// unstable).
+  func tick(_ dt: CGFloat, at time: TimeInterval) {
+    if let finger {
+      let read = time - Self.fingerLag
+      if let position = fingerPosition(at: read) { setOffset(position - base) }
+      // Caught up with a finger resting on the trackpad: rest the clock
+      // until it moves again.
+      if let last = samples.last, read - last.time > 0.1, abs(base + offset - finger) < 0.01 { setAnimating(false) }
+      return
+    }
     guard let target else { return setAnimating(false) }
     let w = Self.omega
     let x0 = offset - target
@@ -254,7 +368,7 @@ final class StripScroller {
     let x = (x0 + c * dt) * decay
     velocity = (velocity - w * c * dt) * decay
     if abs(x) < 0.25, abs(velocity) < 8 {
-      setOffset(target)
+      setOffset(target, landing: true)
       self.target = nil
       velocity = 0
       setAnimating(false)
@@ -272,7 +386,12 @@ final class StripScroller {
     base = 0
     samples = []
     crossTravel = 0
+    finger = nil
     if offset != 0 { offset = 0 }
+    if visibleSteps != 0 {
+      visibleSteps = 0
+      reportVisibleSteps(0)
+    }
     setAnimating(false)
     if isMoving { isMoving = false }
   }
@@ -284,6 +403,18 @@ final class StripScroller {
   #endif
 
   // MARK: Helpers
+
+  /// When the event happened, on the display clock the frames are timed
+  /// by. Both count from boot; an event without a believable timestamp is
+  /// taken as happening now.
+  private static func time(of event: NSEvent) -> TimeInterval {
+    let now = CACurrentMediaTime()
+    let stamp = event.timestamp
+    #if DEBUG
+      if UserDefaults.standard.bool(forKey: "QaliFrameLog") { print(String(format: "CLOCK event lag %.2f ms", (now - stamp) * 1000)) }
+    #endif
+    return stamp > 0 && abs(now - stamp) < 1 ? stamp : now
+  }
 
   /// The same event with no scroll movement, phases intact.
   private static func withoutDeltas(_ event: NSEvent) -> NSEvent? {
@@ -308,6 +439,26 @@ final class StripScroller {
     for field in doubles { copy.setDoubleValueField(field, value: 0) }
     return NSEvent(cgEvent: copy)
   }
+}
+
+/// What a scrolling track draws, skipped when only the scroll moved.
+///
+/// A track re-renders on every scroll frame to move its content, and in
+/// doing so hands the content over again. SwiftUI can't tell that content
+/// (cells and cards built by closures) is unchanged, so without this it
+/// would re-diff and re-lay-out every cell or card each frame, a cost that
+/// grows with the events on screen. `render` is made fresh each time the
+/// grid around the track renders, so the content updates then and only
+/// then; what it observes itself still updates it.
+struct ScrollContent<Content: View>: View, Equatable {
+  final class Render {}
+
+  let render: Render
+  let content: Content
+
+  var body: some View { content }
+
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.render === rhs.render }
 }
 
 /// Feeds the strip the scroll-wheel events that land inside it, and runs its
@@ -341,6 +492,9 @@ struct StripScrollCatcher: NSViewRepresentable {
     private var monitor: Any?
     private var link: CADisplayLink?
     private var lastFrame: CFTimeInterval?
+    #if DEBUG
+      private var meter: FrameMeter?
+    #endif
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -355,6 +509,10 @@ struct StripScrollCatcher: NSViewRepresentable {
         guard self.bounds.contains(point) else { return event }
         return scroller.handle(event)
       }
+      #if DEBUG
+        if let script = UserDefaults.standard.string(forKey: "QaliSwipe") { DebugSwipe.run(script, in: self) }
+        if UserDefaults.standard.bool(forKey: "QaliFrameLog"), !FrameMeter.running { meter = FrameMeter(view: self) }
+      #endif
     }
 
     func stop() {
@@ -382,7 +540,132 @@ struct StripScrollCatcher: NSViewRepresentable {
       let now = link.timestamp
       let dt = lastFrame.map { min(now - $0, 1.0 / 30) } ?? 1.0 / 120
       lastFrame = now
-      scroller?.tick(CGFloat(dt))
+      scroller?.tick(CGFloat(dt), at: link.targetTimestamp)
     }
   }
 }
+
+#if DEBUG
+  /// `-QaliFrameLog YES` prints, every half second the display ticks, how
+  /// many frames the main thread missed: a callback arriving more than one
+  /// refresh after the last means the run loop was busy through a vsync.
+  final class FrameMeter: NSObject {
+    static var running = false
+    private var link: CADisplayLink?
+    private var last: CFTimeInterval?
+    private var frames = 0, missed = 0, worst = 0.0
+    private var windowStart: CFTimeInterval = 0
+
+    init(view: NSView) {
+      super.init()
+      Self.running = true
+      let link = view.displayLink(target: self, selector: #selector(tick(_:)))
+      link.add(to: .main, forMode: .common)
+      self.link = link
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+      let now = link.timestamp
+      let period = max(link.targetTimestamp - link.timestamp, 1.0 / 240)
+      if let last {
+        let gap = now - last
+        frames += 1
+        missed += max(Int((gap / period).rounded()) - 1, 0)
+        worst = max(worst, gap)
+      } else {
+        windowStart = now
+      }
+      last = now
+      if now - windowStart >= 0.5 {
+        print(String(format: "FRAMES t=%.1f frames=%d missed=%d worst=%.1fms", now, frames, missed, worst * 1000))
+        frames = 0; missed = 0; worst = 0; windowStart = now
+      }
+    }
+  }
+
+  /// `-QaliSwipe @600,0` (or `@0,-900`, or several `dx,dy` pairs joined by `;`)
+  /// plays trackpad swipes over the view three seconds after launch: a
+  /// quarter second of finger movement covering that many points, then the
+  /// momentum a real flick leaves. The events are delivered inside the app,
+  /// never posted to the system, so they reach only this window.
+  enum DebugSwipe {
+    static func run(_ script: String, in view: NSView) {
+      // A leading `@` keeps a negative first number from reading as a flag.
+      // `f2400` instead of a pair lets the strip go at that speed, as a
+      // release would: the glide runs on the display clock, so it is the
+      // steadiest way to time frames.
+      let steps = script.trimmingCharacters(in: CharacterSet(charactersIn: "@ ")).split(separator: ";").map(String.init)
+      Task { @MainActor [weak view] in
+        let delay = UserDefaults.standard.double(forKey: "QaliSwipeDelay")
+        try? await Task.sleep(for: .seconds(delay > 0 ? delay : 3))
+        for step in steps {
+          guard let view, let scroller = (view as? StripScrollCatcher.CatcherView)?.scroller, scroller.isEnabled else { return }
+          if step.hasPrefix("f"), let velocity = Double(step.dropFirst()) {
+            scroller.debugFling(velocity)
+            try? await Task.sleep(for: .milliseconds(1200))
+            continue
+          }
+          let pair = step.split(separator: ",").compactMap { Double($0) }
+          guard pair.count == 2 else { continue }
+          await play(dx: pair[0], dy: pair[1], over: view)
+          try? await Task.sleep(for: .milliseconds(600))
+        }
+      }
+    }
+
+    @MainActor private static func play(dx: Double, dy: Double, over view: NSView) async {
+      guard let window = view.window, let screen = window.screen else { return }
+      // Each grid has a catcher; only the one whose grid is showing plays.
+      guard (view as? StripScrollCatcher.CatcherView)?.scroller?.isEnabled == true else { return }
+      let local = NSPoint(x: view.bounds.midX, y: view.bounds.midY)
+      let inWindow = view.convert(local, to: nil)
+      let onScreen = window.convertPoint(toScreen: inWindow)
+      // CGEvent locations are measured down from the primary screen's top.
+      let primary = NSScreen.screens.first?.frame.height ?? screen.frame.height
+      let location = CGPoint(x: onScreen.x, y: primary - onScreen.y)
+      func send(_ x: Double, _ y: Double, phase: Int64, momentum: Int64) {
+        guard let event = CGEvent(
+          scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+          wheel1: Int32(y.rounded()), wheel2: Int32(x.rounded()), wheel3: 0
+        ) else { return }
+        event.location = location
+        // Stamped like a real event: nanoseconds of uptime.
+        event.timestamp = CGEventTimestamp(clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
+        event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(y.rounded()))
+        event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(x.rounded()))
+        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: y)
+        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: x)
+        event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+        event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: momentum)
+        event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
+        event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
+        guard let ns = NSEvent(cgEvent: event) else { return }
+        // A window-less event skips the app's monitors and hit testing, so
+        // both are done here as `sendEvent` would: the strip first, then
+        // the view under the point (which hands it up to its scroll view).
+        let routed: NSEvent? = (view as? StripScrollCatcher.CatcherView)?.scroller.map { $0.handle(ns) } ?? ns
+        if let routed { window.contentView?.hitTest(inWindow)?.scrollWheel(with: routed) }
+      }
+      let tick: Duration = .microseconds(8333)
+      let steps = 30
+      send(0, 0, phase: 128, momentum: 0)
+      send(0, 0, phase: 1, momentum: 0)
+      for _ in 0..<steps {
+        // A trackpad reports near the display's rate but not in step with it.
+        try? await Task.sleep(for: .microseconds(Int.random(in: 6000...11000)))
+        send(dx / Double(steps), dy / Double(steps), phase: 2, momentum: 0)
+      }
+      send(0, 0, phase: 4, momentum: 0)
+      // Momentum: the last speed, decaying.
+      var vx = dx / Double(steps), vy = dy / Double(steps)
+      send(vx, vy, phase: 0, momentum: 1)
+      while abs(vx) > 0.5 || abs(vy) > 0.5 {
+        try? await Task.sleep(for: tick)
+        vx *= 0.95; vy *= 0.95
+        send(vx, vy, phase: 0, momentum: 2)
+      }
+      send(0, 0, phase: 0, momentum: 3)
+    }
+  }
+#endif

@@ -19,8 +19,18 @@ enum ConvexAPI {
   static let dismissNotification = "domains/notifications/mutations:dismiss"
   static let clearNotifications = "domains/notifications/mutations:clearAll"
   static let createEvent = "domains/calendar/service:createEvent"
+  static let updateEvent = "domains/calendar/service:updateEvent"
   static let updateEventTime = "domains/calendar/service:updateEventTime"
+  static let respondToEvent = "domains/calendar/service:respondToEvent"
+  static let deleteEvent = "domains/calendar/service:deleteEvent"
+  static let refreshEventRecurrence = "domains/calendar/service:refreshEventRecurrence"
+  static let getEventRecurrence = "domains/calendar/queries:getEventRecurrence"
   static let listPeople = "domains/people/queries:listPeople"
+  static let updatePreferences = "domains/preferences/mutations:updatePreferences"
+  static let setConnectionStatus = "domains/calendar/mutations:setConnectionStatus"
+  static let setConnectionContacts = "domains/calendar/mutations:setConnectionContacts"
+  static let setCalendarSummaryOverride = "domains/calendar/mutations:setCalendarSummaryOverride"
+  static let disconnectAccount = "domains/calendar/connectionService:disconnectAccount"
 }
 
 /// The signed-in user's calendar data: resolved preferences, their calendars,
@@ -42,9 +52,19 @@ final class CalendarData {
   private let preferencesQuery: LiveQuery<StoredPreferences?>
   private let calendarsQuery: LiveQuery<[CalendarListItem]>
   private let eventsQuery: LiveQuery<[CalendarEvent]>
+  /// Event windows seen before, drawn while the live window loads.
+  @ObservationIgnored private let eventCache = EventCache()
+  /// The window `eventsQuery` is pointed at.
+  private var eventWindow: (startMs: Double, endMs: Double)?
   private let connectionsQuery: LiveQuery<[ConnectionListItem]>
+  /// Today and tomorrow for the menu bar companion, independent of the
+  /// window the calendar grid is showing.
+  private let agendaQuery: LiveQuery<[CalendarEvent]>
   private let notificationsQuery: LiveQuery<[NotificationRow]>
   private let unreadCountQuery: LiveQuery<Double>
+  /// The people directory (guest search and photos), kept for the session
+  /// so panels opening again have it at once.
+  let peopleQuery: LiveQuery<[PersonRow]>
 
   init(client: ConvexClient) {
     self.client = client
@@ -52,11 +72,27 @@ final class CalendarData {
     calendarsQuery = LiveQuery(client, ConvexAPI.listCalendars)
     eventsQuery = LiveQuery(client, ConvexAPI.listEventsInRange, args: nil)
     connectionsQuery = LiveQuery(client, ConvexAPI.listConnections)
+    agendaQuery = LiveQuery(client, ConvexAPI.listEventsInRange, args: nil)
     notificationsQuery = LiveQuery(client, ConvexAPI.listNotifications)
     unreadCountQuery = LiveQuery(client, ConvexAPI.unreadNotificationCount)
+    peopleQuery = LiveQuery(client, ConvexAPI.listPeople)
+    eventsQuery.onResult = { [weak self, eventCache] events in
+      guard let window = self?.eventWindow else { return }
+      eventCache.record(events, startMs: window.startMs, endMs: window.endMs)
+    }
+    calendarsQuery.onResult = { [eventCache] calendars in eventCache.record(calendars: calendars) }
+    eventsQuery.onChange = { [weak self] in self?.refreshEvents() }
+    refreshEvents()
   }
 
-  var calendars: [CalendarListItem] { calendarsQuery.value ?? [] }
+  /// The connected accounts, oldest first; nil while loading.
+  var connections: [ConnectionListItem]? {
+    connectionsQuery.value?.sorted { $0.createdAt < $1.createdAt }
+  }
+
+  /// The live list, or the cached one until it arrives (cached events take
+  /// their colours from it).
+  var calendars: [CalendarListItem] { calendarsQuery.value ?? eventCache.calendars ?? [] }
 
   /// The calendars in the toolbar picker's order (primary first, then by
   /// name), grouped by connected account once there is more than one account.
@@ -128,7 +164,7 @@ final class CalendarData {
   /// Fires a mutation whose result nobody reads; the subscriptions carry the
   /// outcome back. The arguments are built off the main actor (a dictionary
   /// of `ConvexEncodable` is not Sendable), hence the closure.
-  private func run(_ name: String, _ args: @escaping @Sendable () -> [String: ConvexEncodable?] = { [:] }) {
+  func run(_ name: String, _ args: @escaping @Sendable () -> [String: ConvexEncodable?] = { [:] }) {
     Task { [client] in await Self.perform(client, name, args) }
   }
 
@@ -249,6 +285,114 @@ final class CalendarData {
     }
   }
 
+  /// Saves an edit (the web's `EventEdit` save): only the patch's fields are
+  /// sent. `scope` says how far a repeating event's edit reaches; a series-wide
+  /// scope may re-create the series, and Google wants a zone on a repeating
+  /// event, so the zone always goes with one. `operationId` keeps a retried
+  /// save (a "this and following" split makes a new series) from acting twice.
+  func updateEvent(
+    _ event: CalendarEvent,
+    patch: EventPatch,
+    scope: EditScope,
+    zone: WorkingZone,
+    operationId: String
+  ) async throws {
+    #if DEBUG
+      if DebugFixtures.events != nil { return }
+    #endif
+    let id = event.id
+    let zoneId = zone.identifier
+    try await Self.act(client, ConvexAPI.updateEvent) {
+      var args: [String: ConvexEncodable?] = [
+        "eventId": id,
+        "scope": scope.rawValue,
+        "operationId": operationId,
+      ]
+      // An explicit nil is sent as null: that clears the field. (Assigning
+      // nil through the subscript would drop the key instead.)
+      func put(_ key: String, _ value: String??) {
+        guard let value else { return }
+        args.updateValue(value.map { $0 as ConvexEncodable }, forKey: key)
+      }
+      if let summary = patch.summary { args["summary"] = summary }
+      put("description", patch.description)
+      put("location", patch.location)
+      put("color", patch.color)
+      put("visibility", patch.visibility)
+      if let busy = patch.busy { args["busy"] = busy }
+      if let meet = patch.meet { put("conference", .some(meet ? "meet" : nil)) }
+      if let times = patch.times {
+        args["startMs"] = times.startMs
+        args["endMs"] = times.endMs
+        args["allDay"] = times.allDay
+      }
+      if patch.times != nil || patch.recurrence != nil || scope != .thisEvent {
+        args["timeZone"] = zoneId
+      }
+      if let recurrence = patch.recurrence { args["recurrence"] = recurrence.map { $0 as ConvexEncodable? } }
+      if let reminders = patch.reminders {
+        let encoded: ConvexEncodable? = reminders.map { list in
+          list.map { ["method": $0.method, "minutes": $0.minutes] as [String: ConvexEncodable?] as ConvexEncodable? }
+        }
+        args.updateValue(encoded, forKey: "reminders")
+      }
+      if let attendees = patch.attendees {
+        args["attendees"] = attendees.map { guest -> ConvexEncodable? in
+          var attendee: [String: ConvexEncodable?] = ["email": guest.email]
+          if let name = guest.displayName { attendee["displayName"] = name }
+          if let status = guest.responseStatus { attendee["responseStatus"] = status }
+          if let optional = guest.optional { attendee["optional"] = optional }
+          return attendee
+        }
+      }
+      return args
+    }
+  }
+
+  /// Answers an invitation: "accepted", "tentative" or "declined".
+  func respond(to event: CalendarEvent, status: String) async throws {
+    let id = event.id
+    try await Self.act(client, ConvexAPI.respondToEvent) { ["eventId": id, "responseStatus": status] }
+  }
+
+  /// Deletes the event, or removes this user's copy when they only guest it.
+  /// `scope` picks the instances of a repeating one; `operationId` keeps a
+  /// retried delete from acting twice.
+  func deleteEvent(_ event: CalendarEvent, scope: String, operationId: String) async throws {
+    let id = event.id
+    try await Self.act(client, ConvexAPI.deleteEvent) {
+      ["eventId": id, "scope": scope, "operationId": operationId]
+    }
+  }
+
+  /// Asks the server to fetch a repeating event's rule from the provider when
+  /// it holds none yet; `getEventRecurrence` then delivers it.
+  func refreshRecurrence(of event: CalendarEvent) async throws {
+    let id = event.id
+    try await Self.act(client, ConvexAPI.refreshEventRecurrence) { ["eventId": id] }
+  }
+
+  var people: [PersonRow] { peopleQuery.value ?? [] }
+
+  /// Repeating series' rules in words, by series and zone, from the last
+  /// time a panel read them: shown at once when one of the series' events
+  /// opens again, while its subscription catches up.
+  @ObservationIgnored private var recurrenceSummaries: [String: String] = [:]
+
+  func recurrenceSummary(series: String, zone: WorkingZone) -> String? {
+    recurrenceSummaries["\(zone.identifier)|\(series)"]
+  }
+
+  func rememberRecurrence(_ summary: String, series: String, zone: WorkingZone) {
+    recurrenceSummaries["\(zone.identifier)|\(series)"] = summary
+  }
+
+  /// The event as the live window has it now, so an RSVP or an edit made
+  /// elsewhere shows in a panel opened on an older copy.
+  func current(_ event: CalendarEvent) -> CalendarEvent {
+    events.first { $0.id == event.id } ?? event
+  }
+
   /// Whether the event's times may be changed from the grid.
   func canReschedule(_ event: CalendarEvent) -> Bool {
     #if DEBUG
@@ -258,7 +402,7 @@ final class CalendarData {
   }
 
   /// Runs an action and reports its failure to the caller.
-  private nonisolated static func act(
+  nonisolated static func act(
     _ client: ConvexClient,
     _ name: String,
     _ args: @Sendable () -> [String: ConvexEncodable?]
@@ -270,11 +414,31 @@ final class CalendarData {
   func announce(_ message: String) { post(message) }
 
   /// Events in the current window (see `setEventWindow`), start-ordered.
-  var events: [CalendarEvent] {
+  /// Stored, and replaced only when they differ: the grids redraw on a
+  /// change, and a window loading or a sync re-sending the same rows is not
+  /// one.
+  private(set) var events: [CalendarEvent] = []
+
+  private func refreshEvents() {
+    let next = currentEvents()
+    if next != events { events = next }
+  }
+
+  private func currentEvents() -> [CalendarEvent] {
     #if DEBUG
       if let fixture = DebugFixtures.events { return fixture }
     #endif
-    return eventsQuery.value ?? []
+    // While a new window loads, the live value is still the previous
+    // window's: draw what the cache knows of the new one instead (which
+    // includes that previous result), so known events don't pop in late.
+    if eventsQuery.isLoading || eventsQuery.value == nil, let window = eventWindow,
+      let cached = eventCache.events(startMs: window.startMs, endMs: window.endMs)
+    {
+      return cached
+    }
+    // In the cache's order, so the live rows replacing the cached ones are
+    // not a change when they hold the same events.
+    return (eventsQuery.value ?? []).sorted { ($0.startMs, $0.endMs, $0.id) < ($1.startMs, $1.endMs, $1.id) }
   }
 
   /// True until the first event window has loaded.
@@ -283,7 +447,23 @@ final class CalendarData {
   /// Point the live event subscription at `[startMs, endMs)`. Pass a quantized
   /// window (`eventQueryRange`) so scrolling within it keeps one subscription.
   func setEventWindow(startMs: Double, endMs: Double) {
+    if eventWindow?.startMs != startMs || eventWindow?.endMs != endMs { eventWindow = (startMs, endMs) }
     eventsQuery.setArgs(["startMs": startMs, "endMs": endMs])
+    refreshEvents()
+  }
+
+  /// Points the menu bar's subscription at `[startMs, endMs)`; the same
+  /// window again is a no-op.
+  func setAgendaWindow(startMs: Double, endMs: Double) {
+    agendaQuery.setArgs(["startMs": startMs, "endMs": endMs])
+  }
+
+  /// The menu bar's events (see `setAgendaWindow`); nil while loading.
+  var agendaEvents: [CalendarEvent]? {
+    #if DEBUG
+      if let fixture = DebugFixtures.events { return fixture }
+    #endif
+    return agendaQuery.value
   }
 
   func calendar(id: String?) -> CalendarListItem? {

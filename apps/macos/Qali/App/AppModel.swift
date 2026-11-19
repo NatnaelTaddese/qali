@@ -86,6 +86,7 @@ final class AppModel {
   }
 
   func signOut() async {
+    EventCache.clear()
     await convex.logout()
   }
 

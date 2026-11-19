@@ -8,6 +8,9 @@ struct GuestField: View {
   @Binding var guests: [DraftGuest]
   @Binding var text: String
   let people: [PersonRow]
+  /// Why the list can't be changed (the organiser keeps it), or nil when it
+  /// can: the chips then stay, without the field or their remove buttons.
+  var readOnlyReason: String? = nil
 
   @State private var active = 0
   @FocusState private var focused: Bool
@@ -61,6 +64,12 @@ struct GuestField: View {
         .foregroundStyle(Palette.mutedForeground)
         .frame(width: 16)
       VStack(alignment: .leading, spacing: 6) {
+        if let readOnlyReason {
+          Text(guests.isEmpty ? readOnlyReason : "\(guests.count) guest\(guests.count == 1 ? "" : "s")")
+            .font(.sans(TextSize.sm))
+            .foregroundStyle(Palette.mutedForeground)
+            .help(readOnlyReason)
+        } else {
         TextField("Add guests", text: $text)
           .textFieldStyle(.plain)
           .font(.sans(TextSize.sm, .medium))
@@ -102,13 +111,17 @@ struct GuestField: View {
               text = candidate
             }
           }
+        }
 
         if !guests.isEmpty {
+          let photos = photos
           FlowLayout(spacing: 4) {
             ForEach(guests, id: \.email) { guest in
-              GuestChip(guest: guest) {
-                guests.removeAll { $0.email == guest.email }
-              }
+              GuestChip(
+                guest: guest,
+                photoUrl: guest.photoUrl ?? photos[guest.email.lowercased()],
+                remove: readOnlyReason == nil ? { guests.removeAll { $0.email == guest.email } } : nil
+              )
             }
           }
         }
@@ -136,6 +149,15 @@ struct GuestField: View {
     }
     .onChange(of: count > 0, initial: true) { _, open in island.guestMatchesOpen = open }
     .onDisappear { island.guestMatchesOpen = false }
+  }
+
+  /// Pictures from the people directory, for guests an event brought in
+  /// without one.
+  private var photos: [String: String] {
+    Dictionary(
+      people.compactMap { person in person.photoUrl.map { (person.email.lowercased(), $0) } },
+      uniquingKeysWith: { first, _ in first }
+    )
   }
 
   private func add(_ person: PersonRow) {
@@ -253,27 +275,34 @@ private struct SuggestionRow: View {
 
 private struct GuestChip: View {
   let guest: DraftGuest
-  let remove: () -> Void
+  let photoUrl: String?
+  /// Nil when the list is read-only.
+  let remove: (() -> Void)?
 
   var body: some View {
     HStack(spacing: 5) {
-      PersonAvatar(name: guest.displayName, email: guest.email, photoUrl: guest.photoUrl, size: 16)
+      PersonAvatar(name: guest.displayName, email: guest.email, photoUrl: photoUrl, size: 16)
       Text(guest.displayName ?? guest.email)
         .lineLimit(1)
         .truncationMode(.middle)
-      Button(action: remove) {
-        Image(systemName: "xmark")
-          .font(.system(size: 8, weight: .bold))
-          .foregroundStyle(Palette.mutedForeground)
-          .frame(width: 12, height: 12)
-          .contentShape(.rect)
+      if guest.isSelf {
+        Text("(you)").foregroundStyle(Palette.mutedForeground)
       }
-      .buttonStyle(.plain)
-      .accessibilityLabel("Remove \(guest.displayName ?? guest.email)")
+      if let remove {
+        Button(action: remove) {
+          Image(systemName: "xmark")
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(Palette.mutedForeground)
+            .frame(width: 12, height: 12)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Remove \(guest.displayName ?? guest.email)")
+      }
     }
     .font(.sans(TextSize.xs, .medium))
     .padding(.leading, 3)
-    .padding(.trailing, 6)
+    .padding(.trailing, remove == nil ? 8 : 6)
     .frame(height: 22)
     .background(Palette.foreground.opacity(0.08), in: .capsule)
     .help(guest.email)
@@ -282,7 +311,7 @@ private struct GuestChip: View {
 
 /// A person's picture, or their initial when there is none or it fails to
 /// load.
-private struct PersonAvatar: View {
+struct PersonAvatar: View {
   let name: String?
   let email: String
   let photoUrl: String?
@@ -295,9 +324,7 @@ private struct PersonAvatar: View {
         .font(.sans(size * 0.45, .medium))
         .foregroundStyle(Palette.foreground)
       if let photoUrl, let url = URL(string: photoUrl) {
-        AsyncImage(url: url) { phase in
-          if let image = phase.image { image.resizable().scaledToFill() }
-        }
+        RemoteImage(url: url)
       }
     }
     .frame(width: size, height: size)

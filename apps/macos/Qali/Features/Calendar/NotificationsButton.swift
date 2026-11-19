@@ -7,6 +7,7 @@ import SwiftUI
 struct NotificationsButton: View {
   let data: CalendarData
   let navigation: CalendarNavigation
+  let island: Island
   @State private var isOpen = false
 
   private var unread: Int { data.unreadNotificationCount }
@@ -24,14 +25,46 @@ struct NotificationsButton: View {
     )
     .help("Notifications")
     .popover(isPresented: $isOpen, arrowEdge: .bottom) {
-      NotificationFeed(data: data, navigation: navigation)
+      NotificationFeed(data: data, navigation: navigation) { row in
+        open(row)
+      }
     }
+    #if DEBUG
+      // `-QaliReveal notification` opens the newest event reminder three
+      // seconds after launch, as clicking it in the feed does;
+      // `-QaliReveal "<title>"` reaches for a loaded event by title the
+      // same way, for captures of the glide and flash.
+      .task {
+        guard let target = UserDefaults.standard.string(forKey: "QaliReveal") else { return }
+        try? await Task.sleep(for: .seconds(3))
+        if target == "notification" {
+          if let row = data.notifications.first(where: { $0.type == "event_reminder" && $0.event != nil }) {
+            open(row)
+          }
+        } else if let event = data.events.first(where: { $0.title == target }) {
+          island.open(.event(event))
+          navigation.reveal(event)
+        }
+      }
+    #endif
+  }
+
+  /// As on the web: a reminder closes the feed, opens its event in the
+  /// island and reaches for it on the grid, which flashes it once there.
+  /// Booking requests have no panel here yet, so they are only marked read.
+  private func open(_ row: NotificationRow) {
+    if !row.read { data.markRead(row) }
+    guard row.type == "event_reminder", let event = row.event else { return }
+    isOpen = false
+    island.open(.event(event))
+    navigation.reveal(event)
   }
 }
 
 private struct NotificationFeed: View {
   let data: CalendarData
   let navigation: CalendarNavigation
+  let onOpen: (NotificationRow) -> Void
 
   private static let rowHeight: CGFloat = 68
 
@@ -67,7 +100,7 @@ private struct NotificationFeed: View {
         ScrollView {
           VStack(spacing: 0) {
             ForEach(rows) { row in
-              NotificationItem(row: row, detail: detail(row), data: data)
+              NotificationItem(row: row, detail: detail(row), data: data, onOpen: onOpen)
                 .frame(height: Self.rowHeight)
             }
           }
@@ -96,6 +129,7 @@ private struct NotificationItem: View {
   let row: NotificationRow
   let detail: String?
   let data: CalendarData
+  let onOpen: (NotificationRow) -> Void
   @State private var isHovered = false
 
   private static let relative: RelativeDateTimeFormatter = {
@@ -138,10 +172,8 @@ private struct NotificationItem: View {
     .padding(.horizontal, 6)
     .contentShape(.rect)
     .onHover { isHovered = $0 }
-    .onTapGesture {
-      if !row.read { data.markRead(row) }
-    }
+    .onTapGesture { onOpen(row) }
     .accessibilityElement(children: .combine)
-    .accessibilityAddTraits(row.read ? [] : .isButton)
+    .accessibilityAddTraits(row.read && row.event == nil ? [] : .isButton)
   }
 }

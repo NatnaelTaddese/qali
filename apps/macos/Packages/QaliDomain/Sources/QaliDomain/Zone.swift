@@ -81,11 +81,7 @@ public struct WorkingZone: Sendable, Hashable {
   /// ("HH:mm", "h:mm a", "EEE d MMM", "MMMM yyyy", …) mean the same in ICU as
   /// in date-fns, and the POSIX locale matches date-fns' default en-US output.
   public func format(_ date: Date, _ pattern: String) -> String {
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = timeZone
-    formatter.dateFormat = pattern
-    return formatter.string(from: date)
+    DateFormatterCache.shared.formatter(timeZone: timeZone, pattern: pattern).string(from: date)
   }
 
   /// The instant at `hour` on the given calendar date in this zone.
@@ -169,4 +165,27 @@ public func zoneShortLabel(_ zone: String) -> String {
 /// Stable reveal key for a whole day, keyed by its working-zone midnight.
 public func dayKey(_ date: Date, zone: WorkingZone) -> String {
   "day:\(Int64(zone.startOfDay(date).ms))"
+}
+
+/// Formatters by zone and pattern. Making a `DateFormatter` is expensive and
+/// the calendar formats every visible day on each redraw; formatting with a
+/// configured one is thread-safe.
+final class DateFormatterCache: @unchecked Sendable {
+  static let shared = DateFormatterCache()
+
+  private let lock = NSLock()
+  private var formatters: [String: DateFormatter] = [:]
+
+  func formatter(timeZone: TimeZone, pattern: String) -> DateFormatter {
+    let key = timeZone.identifier + "|" + pattern
+    lock.lock()
+    defer { lock.unlock() }
+    if let formatter = formatters[key] { return formatter }
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = timeZone
+    formatter.dateFormat = pattern
+    formatters[key] = formatter
+    return formatter
+  }
 }

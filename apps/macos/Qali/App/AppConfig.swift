@@ -23,4 +23,7 @@ nonisolated enum AppConfig {
   static let authOrigin = "qali://"
 
   static let marketingURL = URL(string: "https://myqali.com")!
+
+  /// The web app, where linking another Google account happens for now.
+  static let webAppURL = URL(string: "https://calendar.myqali.com")!
 }

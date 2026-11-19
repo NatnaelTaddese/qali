@@ -2,26 +2,35 @@ import ConvexMobile
 import QaliDomain
 import SwiftUI
 
-/// The island's create face (the web's `EventCreate` over `EventForm`), in the
-/// web's order: privacy, title and description; when it starts and ends; all
-/// day, reminders, repeat, where and guests; then the calendar, colour and
-/// free/busy beside Cancel and Create. The controls are the stock macOS ones.
+/// The island's create and edit faces (the web's `EventCreate` and
+/// `EventEdit` over `EventForm`), in the web's order: privacy, title and
+/// description; when it starts and ends; all day, reminders, repeat, where and
+/// guests; then the calendar, colour and free/busy beside Cancel and Create or
+/// Save. The controls are the stock macOS ones.
 ///
 /// The draft lives on the island, so the ghost on the grid follows the times
-/// while they are edited here.
-struct EventCreatePanel: View {
+/// while they are edited here. Editing starts from the event's own values and
+/// saves only what changed; a repeating event asks how far the change reaches.
+struct EventFormPanel: View {
+  enum Mode {
+    case create
+    case edit(CalendarEvent)
+  }
+
   @Binding var draft: EventDraft
+  let mode: Mode
   let island: Island
   let data: CalendarData
   let navigation: CalendarNavigation
 
   @State private var submitting = false
-  /// The idempotency key for this create, minted on the first try and kept
-  /// across retries so the backend makes one event, not two.
+  /// The idempotency key for this create or save, minted on the first try
+  /// and kept across retries so the backend acts once, not twice.
   @State private var operationId: String?
+  /// The form as it opened: what an edit's save is diffed against. Taken
+  /// once, so a sync landing mid-edit can't erase what is being typed.
+  @State private var initial: EventDraft
   @State private var guestText = ""
-  /// The people directory, for the guest search; loaded while the form is up.
-  @State private var people: LiveQuery<[PersonRow]>
   @FocusState private var titleFocused: Bool
   /// Which screen fills the panel: the form, or the description editor.
   @State private var editingNotes = false
@@ -31,13 +40,18 @@ struct EventCreatePanel: View {
   /// The form's height, which the description screen keeps so the island
   /// stays put while only its contents change.
   @State private var formHeight: CGFloat?
+  /// The Where switch's thumb, which slides between its two segments.
+  @Namespace private var whereThumb
 
-  init(draft: Binding<EventDraft>, island: Island, data: CalendarData, navigation: CalendarNavigation) {
+  init(draft: Binding<EventDraft>, mode: Mode = .create, island: Island, data: CalendarData, navigation: CalendarNavigation) {
     _draft = draft
+    self.mode = mode
+    _initial = State(initialValue: draft.wrappedValue)
     self.island = island
     self.data = data
     self.navigation = navigation
-    _people = State(initialValue: LiveQuery(data.client, ConvexAPI.listPeople))
+    // An edited event arrives with its description: the editor starts there.
+    _notesText = State(initialValue: draft.wrappedValue.notesHTML.map(DescriptionHTML.attributed(from:)) ?? NSAttributedString())
     #if DEBUG
       // `-QaliGuestQuery an` opens the form with that typed in the guest
       // search, to look at the matches without typing.
@@ -46,6 +60,18 @@ struct EventCreatePanel: View {
   }
 
   private var zone: WorkingZone { navigation.zone }
+
+  /// The event being edited, as the live window has it now.
+  private var editing: CalendarEvent? {
+    if case .edit(let event) = mode { data.current(event) } else { nil }
+  }
+
+  /// What the user may change. A new event is all theirs.
+  private var capabilities: EventCapabilities? { editing.map(data.capabilities(for:)) }
+
+  private var isRecurring: Bool { editing?.providerSeriesId != nil }
+
+  private var titlePlaceholder: String { editing == nil ? "New event" : "(No title)" }
 
   /// The calendar the event goes to: the one picked, else the default.
   private var calendar: CalendarListItem? {
@@ -56,7 +82,7 @@ struct EventCreatePanel: View {
     ZStack(alignment: .topLeading) {
       if editingNotes {
         DescriptionPage(
-          title: draft.summary.trimmingCharacters(in: .whitespaces).isEmpty ? "New event" : draft.summary,
+          title: draft.summary.trimmingCharacters(in: .whitespaces).isEmpty ? titlePlaceholder : draft.summary,
           initial: notesText,
           back: { showNotes(false) }
         ) { text in
@@ -92,6 +118,13 @@ struct EventCreatePanel: View {
 
   private var form: some View {
     VStack(alignment: .leading, spacing: 12) {
+      if editing != nil {
+        HStack {
+          BackButton(title: "Edit event", action: island.cancel)
+          Spacer(minLength: 0)
+        }
+        .padding(.bottom, -4)
+      }
       header
       times
       VStack(alignment: .leading, spacing: 8) {
@@ -116,6 +149,8 @@ struct EventCreatePanel: View {
       footer
     }
     .task {
+      // An edit opens on what is there; only a new event starts typing.
+      guard editing == nil else { return }
       // Let the face land before taking focus, or the field is still being
       // inserted and the focus is dropped.
       try? await Task.sleep(for: .milliseconds(50))
@@ -145,7 +180,7 @@ struct EventCreatePanel: View {
       .accessibilityLabel(draft.isPrivate ? "Private" : "Visible to others")
 
       VStack(alignment: .leading, spacing: 4) {
-        TextField("New event", text: $draft.summary)
+        TextField(titlePlaceholder, text: $draft.summary)
           .textFieldStyle(.plain)
           .font(.sans(TextSize.base, .semibold))
           .focused($titleFocused)
@@ -154,7 +189,9 @@ struct EventCreatePanel: View {
       }
       .padding(.top, 5)
 
-      IslandCloseButton(action: island.close)
+      if editing == nil {
+        IslandCloseButton(action: island.close)
+      }
     }
   }
 
@@ -233,7 +270,25 @@ struct EventCreatePanel: View {
     .modifier(SettingMenuStyle())
   }
 
-  private var repeatMenu: some View {
+  @ViewBuilder private var repeatMenu: some View {
+    if let capabilities, !capabilities.canChangeRecurrence {
+      // Rows are expanded instances: a series' rule isn't edited here.
+      Text(isRecurring ? seriesText : "Does not repeat")
+        .font(.sans(TextSize.sm, .medium))
+        .foregroundStyle(Palette.mutedForeground)
+        .lineLimit(1)
+    } else {
+      repeatPicker
+    }
+  }
+
+  /// The series' rule in words when a panel has read it, else a plain note.
+  private var seriesText: String {
+    guard let event = editing else { return "Part of a repeating series" }
+    return data.recurrenceSummary(series: event.providerSeriesId ?? event.id, zone: zone) ?? "Part of a repeating series"
+  }
+
+  private var repeatPicker: some View {
     let start = draft.startMs
     return Menu {
       Picker("Repeat", selection: $draft.repeatRule) {
@@ -281,11 +336,11 @@ struct EventCreatePanel: View {
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
-      // The web's "Where" switch. Not a stock segmented control: outside the
-      // toolbar that takes the blue system accent.
+      // The web's "Where" switch, drawn as a Mac segmented control (see
+      // SegmentThumb for why not the stock one).
       HStack(spacing: 2) {
-        WhereTab(label: "In person", active: !draft.meet) { draft.meet = false }
-        WhereTab(label: "Video", active: draft.meet, accent: Palette.meet) { draft.meet = true }
+        WhereTab(label: "In person", active: !draft.meet, thumb: whereThumb) { setMeet(false) }
+        WhereTab(label: "Video", active: draft.meet, accent: Palette.meet, thumb: whereThumb) { setMeet(true) }
       }
       .padding(2)
       .background(Palette.foreground.opacity(0.06), in: .rect(cornerRadius: 8, style: .continuous))
@@ -295,9 +350,20 @@ struct EventCreatePanel: View {
     .frame(minHeight: 24)
   }
 
+  private func setMeet(_ meet: Bool) {
+    withAnimation(.snappy(duration: 0.2)) { draft.meet = meet }
+  }
+
   /// Guests: search the people directory or type any address (GuestField).
-  private var guestsRow: some View {
-    GuestField(guests: $draft.guests, text: $guestText, people: people.value ?? [])
+  @ViewBuilder private var guestsRow: some View {
+    if capabilities?.canSeeGuests != false {
+      GuestField(
+        guests: $draft.guests,
+        text: $guestText,
+        people: data.people,
+        readOnlyReason: capabilities.flatMap { $0.canInviteOthers ? nil : ($0.readOnlyReason ?? "Only the organiser can change the guests") }
+      )
+    }
   }
 
   // MARK: Footer
@@ -322,31 +388,96 @@ struct EventCreatePanel: View {
 
       Spacer(minLength: 8)
 
-      Button("Cancel", action: island.close)
+      Button("Cancel", action: island.cancel)
         .buttonStyle(.plain)
         .font(.sans(TextSize.sm, .medium))
         .foregroundStyle(Palette.mutedForeground)
         .padding(.horizontal, 6)
 
-      Button(action: submit) {
-        HStack(spacing: 6) {
-          if submitting { ProgressView().controlSize(.mini) }
-          Text(submitting ? "Creating…" : "Create")
+      if editing == nil {
+        Button(action: submit) { submitLabel("Create", busy: "Creating…") }
+          .modifier(PrimaryButton())
+          .disabled(!draft.isValid || submitting)
+          .keyboardShortcut(.return, modifiers: .command)
+          .help("Create (⌘↩)")
+      } else if isRecurring {
+        // The reach of the change is the confirmation: no save under an
+        // assumed scope, so ⌘↩ opens nothing here.
+        Menu {
+          Section("Apply changes to") {
+            ForEach(EditScope.allCases, id: \.self) { scope in
+              if scope != .thisAndFollowing || capabilities?.isOrganizer != false {
+                Button(scope.label) { save(scope) }
+              }
+            }
+          }
+        } label: {
+          // A stock menu won't take the prominent glass style: the capsule
+          // is drawn to match Create.
+          HStack(spacing: 5) {
+            submitLabel("Save", busy: "Saving…")
+            if !submitting {
+              Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.8)
+            }
+          }
+          .foregroundStyle(Palette.primaryForeground)
+          .padding(.horizontal, 10)
+          .frame(height: 28)
+          .background(Palette.primary.opacity(draft.isValid ? 1 : 0.5), in: .capsule)
+          .contentShape(.capsule)
         }
-        .font(.sans(TextSize.sm, .medium))
-        .padding(.horizontal, 4)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(!draft.isValid || submitting)
+        .help("Save this event, or more of the series")
+      } else {
+        Button(action: submit) { submitLabel("Save", busy: "Saving…") }
+          .modifier(PrimaryButton())
+          .disabled(!draft.isValid || submitting)
+          .keyboardShortcut(.return, modifiers: .command)
+          .help("Save (⌘↩)")
       }
-      .buttonStyle(.glassProminent)
-      .buttonBorderShape(.capsule)
-      .tint(Palette.primary)
-      .foregroundStyle(Palette.primaryForeground)
-      .disabled(!draft.isValid || submitting)
-      .keyboardShortcut(.return, modifiers: .command)
-      .help("Create (⌘↩)")
     }
   }
 
-  private var calendarMenu: some View {
+  private func submitLabel(_ text: String, busy: String) -> some View {
+    HStack(spacing: 6) {
+      if submitting { ProgressView().controlSize(.mini) }
+      Text(submitting ? busy : text)
+    }
+    .font(.sans(TextSize.sm, .medium))
+    .padding(.horizontal, 4)
+  }
+
+  @ViewBuilder private var calendarMenu: some View {
+    if editing != nil {
+      // Moving an event between calendars needs the provider's move, which
+      // isn't built: an edit shows the calendar without offering a change.
+      calendarLabel
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .frame(maxWidth: 130, alignment: .leading)
+        .background(Palette.foreground.opacity(0.08), in: .capsule)
+        .fixedSize(horizontal: true, vertical: false)
+        .help("Calendar. Events can't be moved to another calendar here.")
+    } else {
+      calendarPicker
+    }
+  }
+
+  private var calendarLabel: some View {
+    HStack(spacing: 6) {
+      Circle().fill(Palette.event(calendar?.colorKey ?? .neutral)).frame(width: 8, height: 8)
+      Text(calendar?.displayName ?? "Calendar")
+        .lineLimit(1)
+        .truncationMode(.tail)
+    }
+    .font(.sans(TextSize.xs, .medium))
+  }
+
+  private var calendarPicker: some View {
     Menu {
       Picker("Calendar", selection: Binding(get: { calendar?.id }, set: { draft.calendarId = $0 })) {
         ForEach(data.writableCalendars) { item in
@@ -362,13 +493,7 @@ struct EventCreatePanel: View {
       .pickerStyle(.inline)
       .labelsHidden()
     } label: {
-      HStack(spacing: 6) {
-        Circle().fill(Palette.event(calendar?.colorKey ?? .neutral)).frame(width: 8, height: 8)
-        Text(calendar?.displayName ?? "Calendar")
-          .lineLimit(1)
-          .truncationMode(.tail)
-      }
-      .font(.sans(TextSize.xs, .medium))
+      calendarLabel
     }
     .menuStyle(.button)
     .buttonStyle(.plain)
@@ -383,13 +508,15 @@ struct EventCreatePanel: View {
 
   // MARK: Submit
 
+  /// Return in the title or ⌘↩: create, or save a single event. A repeating
+  /// one saves only through the scope menu.
   private func submit() {
-    guard draft.isValid, !submitting else { return }
-    // An address typed but not yet added still counts.
-    if let typed = GuestField.typedGuest(guestText, existing: draft.guests) {
-      draft.guests.append(typed)
-      guestText = ""
+    guard editing == nil else {
+      if !isRecurring { save(.thisEvent) }
+      return
     }
+    guard draft.isValid, !submitting else { return }
+    takeTypedGuest()
     submitting = true
     let key = operationId ?? UUID().uuidString
     operationId = key
@@ -409,6 +536,41 @@ struct EventCreatePanel: View {
     }
   }
 
+  /// An address typed but not yet added still counts.
+  private func takeTypedGuest() {
+    guard capabilities?.canInviteOthers != false,
+      let typed = GuestField.typedGuest(guestText, existing: draft.guests)
+    else { return }
+    draft.guests.append(typed)
+    guestText = ""
+  }
+
+  /// Sends what the edit changed, then goes back to the event. Nothing
+  /// changed is a save too.
+  private func save(_ scope: EditScope) {
+    guard let event = editing, draft.isValid, !submitting else { return }
+    takeTypedGuest()
+    let patch = EventPatch(from: initial, to: draft, event: event, zone: zone)
+    guard !patch.isEmpty else {
+      island.cancel()
+      return
+    }
+    submitting = true
+    let key = operationId ?? UUID().uuidString
+    operationId = key
+    let zone = zone
+    Task {
+      do {
+        try await data.updateEvent(event, patch: patch, scope: scope, zone: zone, operationId: key)
+        operationId = nil
+        island.cancel()
+      } catch {
+        submitting = false
+        data.announce("Couldn't save the event. \(Self.reason(error))")
+      }
+    }
+  }
+
   private static func reason(_ error: Error) -> String {
     if case ClientError.ConvexError(let data) = error {
       return data.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
@@ -418,6 +580,17 @@ struct EventCreatePanel: View {
 }
 
 // MARK: - Pieces
+
+/// The form's filled capsule: Create or Save.
+private struct PrimaryButton: ViewModifier {
+  func body(content: Content) -> some View {
+    content
+      .buttonStyle(.glassProminent)
+      .buttonBorderShape(.capsule)
+      .tint(Palette.primary)
+      .foregroundStyle(Palette.primaryForeground)
+  }
+}
 
 /// A labelled row: a leading glyph, the label, and the control at the end.
 private struct SettingRow<Control: View>: View {
@@ -629,25 +802,29 @@ private struct WhereTab: View {
   let label: String
   let active: Bool
   var accent: Color = Palette.foreground
+  let thumb: Namespace.ID
   let action: () -> Void
+  @State private var hovering = false
 
   var body: some View {
     Button(action: action) {
       Text(label)
         .font(.sans(TextSize.xs, .medium))
-        .foregroundStyle(active ? accent : Palette.mutedForeground)
+        .foregroundStyle(active ? accent : hovering ? Palette.foreground : Palette.mutedForeground)
         .padding(.horizontal, 9)
         .frame(height: 20)
         .background {
           if active {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-              .fill(Palette.background)
-              .shadow(color: .black.opacity(0.12), radius: 1, y: 0.5)
+            SegmentThumb(cornerRadius: 6)
+              .matchedGeometryEffect(id: "thumb", in: thumb)
+          } else if hovering {
+            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Palette.foreground.opacity(0.04))
           }
         }
         .contentShape(.rect)
     }
     .buttonStyle(.plain)
+    .onHover { hovering = $0 }
     .accessibilityAddTraits(active ? .isSelected : [])
   }
 }
@@ -742,5 +919,15 @@ private struct DrillDown: ViewModifier {
 
   func body(content: Content) -> some View {
     content.offset(x: x).opacity(opacity).blur(radius: blur)
+  }
+}
+
+extension EventDraft {
+  /// The edit form's draft: the event's own values, with the description's
+  /// one-line preview for the form.
+  static func editing(_ event: CalendarEvent, zone: WorkingZone) -> EventDraft {
+    var draft = EventDraft(event: event, zone: zone)
+    draft.notesPreview = event.description.map { DescriptionHTML.preview(from: DescriptionHTML.attributed(from: $0)) } ?? ""
+    return draft
   }
 }

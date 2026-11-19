@@ -59,6 +59,7 @@ can be checked without signing in again or clicking through:
 | `-QaliOverscroll 60` | Hold the hour grid that far down, as a pull past the top does, to see what an overscroll reveals |
 | `-QaliSignOut YES` | Sign the restored session out at launch |
 | `-QaliIsland account\|search\|event\|create` | Open that island panel a moment after launch (`create` lands on the next free half hour, as the + button does) |
+| `-QaliSearch Lunch` | With `-QaliIsland search`, type that query and pick the first match (reveals and flashes it on the grid) |
 | `-QaliGuestQuery an` | With `-QaliIsland create`, type that into the guest search to show its matches |
 | `-QaliDraw 3,14,16` | Draw 14:00–16:00 on the page's fourth day and let go, as a drag down the grid does |
 | `-QaliMove 2,1.5` | Pick up the page's first timed event 3 s after launch, hold it two days on and 1.5 hours later for 4 s, then drop it (with `-QaliFixture events` the drop is kept for 10 s and not saved) |
@@ -66,8 +67,12 @@ can be checked without signing in again or clicking through:
 | `-QaliMonthPicker YES` | Open the toolbar month picker |
 | `-QaliDescription demo` | With `-QaliIsland create`, open the description screen, write a formatted sample into it (logs the HTML under category `notes`) and return to the form two seconds later |
 | `-QaliMeet YES` | With `-QaliIsland create`, switch the new event's Where row to Google Meet |
+| `-QaliEventTitle Lunch` | With `-QaliIsland event`, open the first loaded event with that title instead of the first timed one |
+| `-QaliDetail notes\|guests` | With `-QaliIsland event`, open the event's description screen or its guest list |
 | `-QaliBandToggle YES` | Open the all-day band 3 s after launch and close it a second later |
 | `-QaliPicker day\|time` | With `-QaliIsland create`, open the Starts row's day or time picker |
+| `-QaliSwipe @-900,0;0,-600;f2400` | Play trackpad swipes (each `dx,dy` points, then momentum; `fN` lets the strip go at N pt/s) over the grid that's showing, 3 s after launch (`-QaliSwipeDelay 6` waits longer); delivered inside the app only |
+| `-QaliFrameLog YES` | Print, every half second, how many display frames the main thread missed (pair with `-QaliSwipe` to measure scrolling) |
 
 `scripts/shot.sh out.png` captures the window:
 

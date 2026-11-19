@@ -99,7 +99,30 @@ struct SearchPanel: View {
       }
     }
     .foregroundStyle(Palette.foreground)
-    .onAppear { focused = true }
+    .task {
+      // Typing starts at once, with no click in the field. Focus set while
+      // the face is still being inserted is dropped, so wait for it to land
+      // and try again if the first attempt didn't take.
+      for delay in [50, 150, 300] {
+        try? await Task.sleep(for: .milliseconds(delay))
+        guard !Task.isCancelled, !focused else { return }
+        focused = true
+      }
+    }
+    #if DEBUG
+      // `-QaliSearch "<query>"` types the query and picks the first match.
+      .task {
+        guard let typed = UserDefaults.standard.string(forKey: "QaliSearch") else { return }
+        try? await Task.sleep(for: .milliseconds(600))
+        text = typed
+      }
+      .task(id: !loading ? matches?.first?.id : nil) {
+        guard UserDefaults.standard.string(forKey: "QaliSearch") != nil, let first = matches?.first else { return }
+        try? await Task.sleep(for: .milliseconds(800))
+        guard !Task.isCancelled else { return }
+        pick(first)
+      }
+    #endif
     .onChange(of: text) { _, next in
       if next.count > Self.maxLength { text = String(next.prefix(Self.maxLength)) }
       active = 0
@@ -123,14 +146,12 @@ struct SearchPanel: View {
     }
   }
 
-  /// Takes the calendar to the event's day and hands the island to it.
+  /// Hands the island to the event and reaches for it on the grid, as a
+  /// notification does: the strip glides to its day, the hours ease to its
+  /// start, and it flashes once there.
   private func pick(_ event: CalendarEvent) {
-    let day =
-      event.allDay
-      ? Date(ms: fromUtcMidnight(event.startMs, zone: navigation.zone))
-      : Date(ms: event.startMs)
-    navigation.jump(to: day)
     island.open(.event(event))
+    navigation.reveal(event)
   }
 
   /// One line of when and where: "Tomorrow · 9:00 – 9:30 AM · Work".

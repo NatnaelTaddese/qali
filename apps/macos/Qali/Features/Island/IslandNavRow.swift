@@ -102,11 +102,7 @@ struct UserAvatar: View {
         .font(.sans(size * 0.4, .medium))
         .foregroundStyle(Palette.foreground)
       if let image = user?.image, let url = URL(string: image) {
-        AsyncImage(url: url) { phase in
-          if let picture = phase.image {
-            picture.resizable().scaledToFill()
-          }
-        }
+        RemoteImage(url: url)
       }
     }
     .frame(width: size, height: size)

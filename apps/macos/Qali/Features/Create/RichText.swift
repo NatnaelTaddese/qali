@@ -223,6 +223,21 @@ final class RichTextController {
 
   // MARK: Lists
 
+  static func textList(_ kind: ListKind) -> NSTextList {
+    NSTextList(markerFormat: kind == .bullet ? .disc : .decimal, options: 0)
+  }
+
+  /// A list item's paragraph: the marker between two tab stops, wrapped lines
+  /// hanging under the text.
+  static func listStyle(_ list: NSTextList) -> NSParagraphStyle {
+    let style = NSMutableParagraphStyle()
+    style.setParagraphStyle(baseAttributes[.paragraphStyle] as! NSParagraphStyle)
+    style.textLists = [list]
+    style.tabStops = [NSTextTab(textAlignment: .natural, location: 6), NSTextTab(textAlignment: .natural, location: 22)]
+    style.headIndent = 22
+    return style
+  }
+
   /// The marker text AppKit keeps at the start of a list item.
   static let markerPattern = "^\t[^\t\n]*\t"
 
@@ -243,14 +258,8 @@ final class RichTextController {
     if paragraphs.isEmpty { paragraphs = [NSRange(location: whole.location, length: 0)] }
 
     let removing = list == kind
-    let textList = NSTextList(markerFormat: kind == .bullet ? .disc : .decimal, options: 0)
-    let style = NSMutableParagraphStyle()
-    style.setParagraphStyle(Self.baseAttributes[.paragraphStyle] as! NSParagraphStyle)
-    if !removing {
-      style.textLists = [textList]
-      style.tabStops = [NSTextTab(textAlignment: .natural, location: 6), NSTextTab(textAlignment: .natural, location: 22)]
-      style.headIndent = 22
-    }
+    let textList = Self.textList(kind)
+    let style = removing ? Self.baseAttributes[.paragraphStyle] as! NSParagraphStyle : Self.listStyle(textList)
 
     guard textView.shouldChangeText(in: whole, replacementString: nil) else { return }
     storage.beginEditing()
@@ -321,6 +330,147 @@ enum DescriptionHTML {
       .joined(separator: " ")
   }
 
+  /// Reads a description back into the editor's text: the same subset, from
+  /// Google's HTML or from plain text with line breaks. Anything outside the
+  /// subset keeps its text and loses its markup, and only http(s) and mailto
+  /// links survive. The input is untrusted, so it is parsed here by hand
+  /// rather than by AppKit's HTML importer, which runs WebKit and would load
+  /// whatever the markup points at.
+  static func attributed(from html: String) -> NSAttributedString {
+    struct Paragraph {
+      var list: RichTextController.ListKind?
+      var runs: [(String, [NSAttributedString.Key: Any])] = []
+      var isEmpty: Bool { runs.allSatisfy { $0.0.isEmpty } }
+    }
+    let hasTags = html.range(of: "<[a-zA-Z][^>]*>", options: .regularExpression) != nil
+    var paragraphs: [Paragraph] = []
+    var current = Paragraph()
+    var bold = 0, italic = 0, underline = 0
+    var links: [String?] = []
+    var lists: [RichTextController.ListKind] = []
+
+    func attributes() -> [NSAttributedString.Key: Any] {
+      var result = RichTextController.baseAttributes
+      if bold > 0 { result[.font] = RichTextController.boldFont }
+      if italic > 0 { result[.obliqueness] = RichTextController.obliqueness }
+      if underline > 0 { result[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+      if let href = links.last ?? nil { result[.link] = href }
+      return result
+    }
+    /// Closes the line being built; the next one belongs to the list it is
+    /// in, if any.
+    func endParagraph(keepEmpty: Bool = false) {
+      if !current.isEmpty || keepEmpty { paragraphs.append(current) }
+      current = Paragraph(list: lists.last)
+    }
+    func append(_ text: String) {
+      guard !text.isEmpty else { return }
+      current.runs.append((text, attributes()))
+    }
+
+    if !hasTags {
+      for line in decode(html).components(separatedBy: .newlines) {
+        current.runs = [(line, RichTextController.baseAttributes)]
+        endParagraph(keepEmpty: true)
+      }
+    } else {
+      let tag = #/<(\/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>/#
+      var rest = Substring(html)
+      while !rest.isEmpty {
+        guard let match = rest.firstMatch(of: tag) else {
+          append(collapse(decode(String(rest))))
+          break
+        }
+        append(collapse(decode(String(rest[rest.startIndex..<match.range.lowerBound]))))
+        rest = rest[match.range.upperBound...]
+        let closing = !match.1.isEmpty
+        switch match.2.lowercased() {
+        case "b", "strong": bold += closing ? -1 : 1
+        case "i", "em": italic += closing ? -1 : 1
+        case "u": underline += closing ? -1 : 1
+        case "a":
+          if closing {
+            _ = links.popLast()
+          } else {
+            links.append(safeHref(in: String(match.3)))
+          }
+        case "br":
+          endParagraph(keepEmpty: true)
+        case "p", "div":
+          // `<p></p>` is a blank line; a `<p>` inside a list item is not.
+          endParagraph(keepEmpty: closing && lists.isEmpty)
+        case "ul", "ol":
+          if closing { _ = lists.popLast() } else { lists.append(match.2.lowercased() == "ul" ? .bullet : .number) }
+          endParagraph()
+        case "li":
+          endParagraph()
+        default:
+          break
+        }
+        bold = max(bold, 0)
+        italic = max(italic, 0)
+        underline = max(underline, 0)
+      }
+      endParagraph()
+    }
+
+    // Plain paragraphs keep leading spaces trimmed, as HTML collapses them.
+    let result = NSMutableAttributedString()
+    var activeList: (kind: RichTextController.ListKind, list: NSTextList, number: Int)?
+    for (index, paragraph) in paragraphs.enumerated() {
+      if index > 0 { result.append(NSAttributedString(string: "\n", attributes: RichTextController.baseAttributes)) }
+      let start = result.length
+      if let kind = paragraph.list {
+        if activeList?.kind != kind { activeList = (kind, RichTextController.textList(kind), 0) }
+        activeList!.number += 1
+        result.append(NSAttributedString(
+          string: "\t\(activeList!.list.marker(forItemNumber: activeList!.number))\t",
+          attributes: RichTextController.baseAttributes
+        ))
+      } else {
+        activeList = nil
+      }
+      for (index, run) in paragraph.runs.enumerated() {
+        let text = hasTags && index == 0 ? String(run.0.drop(while: { $0 == " " })) : run.0
+        result.append(NSAttributedString(string: text, attributes: run.1))
+      }
+      if let activeList, paragraph.list != nil {
+        result.addAttribute(
+          .paragraphStyle,
+          value: RichTextController.listStyle(activeList.list),
+          range: NSRange(location: start, length: result.length - start)
+        )
+      }
+    }
+    return result
+  }
+
+  /// Runs of whitespace in HTML text read as one space.
+  private static func collapse(_ text: String) -> String {
+    text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+  }
+
+  private static func decode(_ text: String) -> String {
+    guard text.contains("&") else { return text }
+    var result = text
+    for (entity, value) in [("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'")] {
+      result = result.replacingOccurrences(of: entity, with: value)
+    }
+    result = result.replacing(#/&#(x?)([0-9a-fA-F]+);/#) { match in
+      let value = UInt32(match.2, radix: match.1.isEmpty ? 10 : 16)
+      return value.flatMap(Unicode.Scalar.init).map { String(Character($0)) } ?? ""
+    }
+    return result.replacingOccurrences(of: "&amp;", with: "&")
+  }
+
+  /// The href of an `<a>`, when it is a web or mail address.
+  private static func safeHref(in attributes: String) -> String? {
+    guard let match = attributes.firstMatch(of: #/href\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/#) else { return nil }
+    let href = decode(String(match.2 ?? match.3 ?? match.4 ?? "")).trimmingCharacters(in: .whitespaces)
+    guard href.range(of: "^(https?://|mailto:)", options: [.regularExpression, .caseInsensitive]) != nil else { return nil }
+    return href
+  }
+
   private struct Block {
     var list: RichTextController.ListKind?
     var html: String
@@ -382,6 +532,8 @@ enum DescriptionHTML {
 struct RichTextEditor: NSViewRepresentable {
   let initial: NSAttributedString
   let controller: RichTextController
+  /// Off for reading an event's description: selectable, links clickable.
+  var editable = true
   let onChange: (NSAttributedString) -> Void
 
   func makeCoordinator() -> Coordinator { Coordinator(controller: controller, onChange: onChange) }
@@ -421,12 +573,15 @@ struct RichTextEditor: NSViewRepresentable {
     ]
     plainPaste.textStorage?.setAttributedString(initial)
     plainPaste.delegate = context.coordinator
+    plainPaste.isEditable = editable
     controller.textView = plainPaste
     controller.refresh()
     // Once the page is in its window: the caret goes to the end, ready to type.
-    DispatchQueue.main.async {
-      plainPaste.window?.makeFirstResponder(plainPaste)
-      plainPaste.setSelectedRange(NSRange(location: plainPaste.string.utf16.count, length: 0))
+    if editable {
+      DispatchQueue.main.async {
+        plainPaste.window?.makeFirstResponder(plainPaste)
+        plainPaste.setSelectedRange(NSRange(location: plainPaste.string.utf16.count, length: 0))
+      }
     }
     return scroll
   }
@@ -475,6 +630,7 @@ struct DescriptionPage: View {
 
   @State private var controller = RichTextController()
   @State private var isEmpty: Bool
+  @Environment(Island.self) private var island
 
   init(title: String, initial: NSAttributedString, back: @escaping () -> Void, onChange: @escaping (NSAttributedString) -> Void) {
     self.title = title
@@ -532,23 +688,23 @@ struct DescriptionPage: View {
         controller.setLink("qali.app")
         Logger(subsystem: "com.myqali.macos", category: "notes")
           .notice("DESC \(DescriptionHTML.html(from: view.attributedString()) ?? "nil", privacy: .public)")
+        // The reader and the writer agree: read back, written again, the same.
+        let written = DescriptionHTML.html(from: view.attributedString()) ?? ""
+        let tiptap = "<p><b>Agenda</b> for the review</p><ul><li><p>Intro and goals</p></li><li><p>Demo of the <i>new grid</i></p></li></ul><p></p><p>Notes: <a href=\"https://qali.app\" target=\"_blank\">https://qali.app</a></p>"
+        for (name, source) in [("self", written), ("tiptap", tiptap), ("plain", "Line one\nLine two & more")] {
+          let again = DescriptionHTML.html(from: DescriptionHTML.attributed(from: source)) ?? "nil"
+          Logger(subsystem: "com.myqali.macos", category: "notes").notice("ROUNDTRIP \(name, privacy: .public) \(again, privacy: .public)")
+        }
         // Then back to the form, to see its preview line.
         try? await Task.sleep(for: .seconds(2))
         back()
       }
     #endif
-    // Escape returns to the form rather than closing it.
-    .background {
-      Button("Back", action: back)
-        .keyboardShortcut(.cancelAction)
-        .opacity(0)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
+    .escapeGoesBack(island: island, action: back)
   }
 }
 
-private struct BackButton: View {
+struct BackButton: View {
   let title: String
   let action: () -> Void
   @State private var hovering = false
@@ -662,5 +818,21 @@ private struct FormatButton: View {
     } else {
       button
     }
+  }
+}
+
+extension View {
+  /// On a drill-down screen, Escape goes back rather than closing the panel:
+  /// the island's own Escape steps aside while the screen is up.
+  func escapeGoesBack(island: Island, action: @escaping () -> Void) -> some View {
+    background {
+      Button("Back", action: action)
+        .keyboardShortcut(.cancelAction)
+        .opacity(0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+    .onAppear { island.drillDownOpen = true }
+    .onDisappear { island.drillDownOpen = false }
   }
 }

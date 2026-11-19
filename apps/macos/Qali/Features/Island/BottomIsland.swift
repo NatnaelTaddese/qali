@@ -65,7 +65,7 @@ struct BottomIsland: View {
     .background { shortcuts }
     // A half-filled create form is real work: only Escape or Cancel discards
     // it, never a click elsewhere (which may well be a drag for a new range).
-    .onChange(of: island.view != nil && island.view != .create, initial: true) { _, dismissable in
+    .onChange(of: island.view != nil && island.view?.holdsDraft != true, initial: true) { _, dismissable in
       outsideClicks.island = dismissable ? island : nil
     }
     .onChange(of: frame) { _, frame in
@@ -81,7 +81,11 @@ struct BottomIsland: View {
         switch name {
         case "account": island.open(.account)
         case "search": island.open(.search)
-        case "event": if let event = data.events.first(where: { !$0.allDay }) { island.open(.event(event)) }
+        case "event":
+          // `-QaliEventTitle Lunch` picks the first event with that title.
+          while data.isLoadingEvents { try? await Task.sleep(for: .milliseconds(100)) }
+          let title = UserDefaults.standard.string(forKey: "QaliEventTitle")
+          if let event = data.events.first(where: { title == nil ? !$0.allDay : $0.title == title }) { island.open(.event(event)) }
         case "create":
           // Seed from loaded events, as a real click would be.
           while data.isLoadingEvents { try? await Task.sleep(for: .milliseconds(100)) }
@@ -90,6 +94,13 @@ struct BottomIsland: View {
           if UserDefaults.standard.bool(forKey: "QaliAllDay") { island.draft?.allDay = true }
           // `-QaliMeet YES` switches its Where row to a Google Meet.
           if UserDefaults.standard.bool(forKey: "QaliMeet") { island.draft?.meet = true }
+        case "edit":
+          // `-QaliEventTitle Lunch` picks the event, as for `event`.
+          while data.isLoadingEvents { try? await Task.sleep(for: .milliseconds(100)) }
+          let title = UserDefaults.standard.string(forKey: "QaliEventTitle")
+          if let event = data.events.first(where: { title == nil ? !$0.allDay : $0.title == title }) {
+            island.openEdit(event, draft: EventDraft.editing(event, zone: navigation.zone))
+          }
         default: break
         }
       }
@@ -117,17 +128,20 @@ struct BottomIsland: View {
         // One event to the next is a swap too, not an update in place.
         .id(event.id)
     case .create:
-      EventCreatePanel(
-        draft: Binding(
-          get: { island.draft ?? EventDraft(startMs: 0, endMs: 0) },
-          set: { island.draft = $0 }
-        ),
-        island: island,
-        data: data,
-        navigation: navigation
-      )
-      .modifier(IslandPanel(width: IslandView.create.width, size: $size))
+      EventFormPanel(draft: draftBinding, island: island, data: data, navigation: navigation)
+        .modifier(IslandPanel(width: IslandView.create.width, size: $size))
+    case .edit(let event):
+      EventFormPanel(draft: draftBinding, mode: .edit(event), island: island, data: data, navigation: navigation)
+        .modifier(IslandPanel(width: IslandView.edit(event).width, size: $size))
+        .id(event.id)
     }
+  }
+
+  private var draftBinding: Binding<EventDraft> {
+    Binding(
+      get: { island.draft ?? EventDraft(startMs: 0, endMs: 0) },
+      set: { island.draft = $0 }
+    )
   }
 
   /// Create from the dock or ⌘N (the web's `openCreate`): the next free
@@ -144,19 +158,20 @@ struct BottomIsland: View {
     island.openCreate(startMs: slot.startMs, endMs: slot.endMs)
   }
 
-  /// Escape closes a panel, ⌘K toggles search and ⌘N starts an event, from
-  /// anywhere in the window. Over the create form ⌘K stays quiet: only
-  /// Escape or Cancel may throw a draft away.
+  /// Escape closes a panel (an edit goes back to its event), ⌘K toggles
+  /// search and ⌘N starts an event, from anywhere in the window. Over the
+  /// create or edit form ⌘K stays quiet: only Escape or Cancel may throw a
+  /// draft away.
   private var shortcuts: some View {
     Group {
       Button("Search") { island.toggle(.search) }
         .keyboardShortcut("k", modifiers: .command)
-        .disabled(island.view == .create)
+        .disabled(island.view?.holdsDraft == true)
       Button("New Event", action: openCreate)
         .keyboardShortcut("n", modifiers: .command)
-        .disabled(island.view == .create)
-      if island.view != nil, !island.guestMatchesOpen {
-        Button("Close", action: island.close)
+        .disabled(island.view?.holdsDraft == true)
+      if island.view != nil, !island.guestMatchesOpen, !island.drillDownOpen {
+        Button("Close", action: island.cancel)
           .keyboardShortcut(.cancelAction)
       }
     }

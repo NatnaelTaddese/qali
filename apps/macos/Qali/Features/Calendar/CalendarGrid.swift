@@ -31,22 +31,56 @@ struct CalendarGrid: View {
         expanded: !isMonth,
         zone: navigation.zone
       )
-      // The part of the window the time grid shows through: all of it, or
-      // only its own page's place in the month.
-      let window = isMonth ? layout.focusRect : CGRect(origin: .zero, size: proxy.size)
+      // The rectangle the time grid fills: all of it, or (zoomed out) its
+      // own page's place in the month. It is scaled into it rather than
+      // cropped, so the week shrinks into its row and the day into its cell
+      // as the month opens around them.
+      let full = CGRect(origin: .zero, size: proxy.size)
+      let target = isMonth ? layout.focusRect : full
+      let fade = CalendarNavigation.zoomDuration
       ZStack(alignment: .topLeading) {
-        TimeGrid(days: stripDays, navigation: navigation, data: data, zoom: zoom)
-          .mask(alignment: .topLeading) {
-            Rectangle()
-              .frame(width: window.width, height: window.height)
-              .offset(x: window.minX, y: window.minY)
+        // A header band that never moves or fades, under both grids, easing
+        // between the strip's height and the weekday row's. As the time
+        // grid's header slides down into its row, the title bar still runs
+        // straight into header colour instead of a white gap.
+        HeaderBand {
+          Color.clear.frame(height: layout.headerHeight)
+        }
+
+        // Skipped while its page is unchanged: scrolling the month rebuilds
+        // this body every week, and the hidden time grid is costly to redo.
+        StablePage(days: stripDays) {
+          TimeGrid(days: stripDays, navigation: navigation, data: data, zoom: zoom)
+        }
+        .equatable()
+          .scaleEffect(
+            x: full.width > 0 ? target.width / full.width : 1,
+            y: full.height > 0 ? target.height / full.height : 1,
+            anchor: .topLeading
+          )
+          .offset(x: target.minX, y: target.minY)
+          // Gone early on the way out, before it is small enough to read as
+          // squashed. On the way in it is back at once, under the month,
+          // which then fades off it, so nothing between them goes blank.
+          .animation(isMonth ? .easeOut(duration: fade * 0.35) : .easeOut(duration: fade * 0.2)) {
+            $0.opacity(isMonth ? 0 : 1)
           }
-          .opacity(isMonth ? 0 : 1)
           .allowsHitTesting(!isMonth)
           .accessibilityHidden(isMonth)
 
-        MonthGrid(days: monthDays, layout: layout, navigation: navigation, data: data, zoom: zoom)
-          .opacity(isMonth ? 1 : 0)
+        MonthGrid(
+          days: monthDays,
+          bufferDays: navigation.monthBufferDays,
+          layout: layout,
+          navigation: navigation,
+          data: data,
+          zoom: zoom,
+          shown: isMonth
+        )
+        // Skipped while its inputs are unchanged: this body re-renders as
+        // the month scrolls (the month in view, the held page), and the
+        // grid redoes only what it observes itself.
+        .equatable()
           .allowsHitTesting(isMonth)
           .accessibilityHidden(!isMonth)
       }
@@ -65,7 +99,7 @@ struct CalendarGrid: View {
 }
 
 /// Web grid metrics (components/calendar/lib.ts).
-enum GridMetrics {
+nonisolated enum GridMetrics {
   static let gutter: CGFloat = 64
   static let headerHeight: CGFloat = 44
   static let minHourHeight: CGFloat = 40
@@ -87,6 +121,10 @@ enum ZoomID {
   static func date(_ day: Date, zone: WorkingZone) -> String {
     "date-\(dayKey(day, zone: zone))"
   }
+
+  static func weekday(_ day: Date, zone: WorkingZone) -> String {
+    "weekday-\(dayKey(day, zone: zone))"
+  }
 }
 
 /// Where the month grid's rows and columns sit, resting or zoomed.
@@ -98,7 +136,7 @@ enum ZoomID {
 /// other rows have no height. When the focus is a single day, its column is
 /// likewise the whole width. SwiftUI animates each frame between the two, and
 /// since every edge moves linearly the rows stay flush on the way.
-struct MonthZoomLayout {
+struct MonthZoomLayout: Equatable {
   let size: CGSize
   let rows: Int
   /// The week row holding the time grid's page.
@@ -140,12 +178,17 @@ struct MonthZoomLayout {
     return row == focusRow ? bodyHeight : 0
   }
 
+  /// A row's top; rows above the first (a scroll's buffer) sit above zero.
   func y(row: Int) -> CGFloat {
-    (0..<row).reduce(0) { $0 + height(row: $1) }
+    row >= 0
+      ? (0..<row).reduce(0) { $0 + height(row: $1) }
+      : -(row..<0).reduce(0) { $0 + height(row: $1) }
   }
 
   /// A cell's height in the resting month, whatever the zoom: what fits in a
   /// cell is decided once, so its events do not reflow while it changes size.
+  var restingCellWidth: CGFloat { size.width / 7 }
+
   var restingCellHeight: CGFloat {
     max(size.height - GridMetrics.monthHeaderHeight, 0) / CGFloat(rows)
   }
@@ -190,4 +233,15 @@ struct EventTint: View {
 
 extension CalendarEvent {
   var title: String { summary ?? "(No title)" }
+}
+
+/// A view that SwiftUI skips re-evaluating while `days` is unchanged. What
+/// the content observes itself (events, the zone) still updates it.
+struct StablePage<Content: View>: View, Equatable {
+  let days: [Date]
+  @ViewBuilder var content: () -> Content
+
+  var body: some View { content() }
+
+  static func == (lhs: Self, rhs: Self) -> Bool { lhs.days == rhs.days }
 }

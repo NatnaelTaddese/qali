@@ -23,6 +23,8 @@ enum MainMenu {
     let menu = NSMenu()
     menu.addItem("About Qali", #selector(NSApplication.orderFrontStandardAboutPanel(_:)))
     menu.addItem(.separator())
+    menu.addItem("Settings…", #selector(AppDelegate.showSettings(_:)), ",")
+    menu.addItem(.separator())
     menu.addItem("Sign Out", #selector(AppDelegate.signOut(_:)))
     menu.addItem(.separator())
 
@@ -63,6 +65,8 @@ enum MainMenu {
     let menu = NSMenu(title: "Window")
     menu.addItem("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
     menu.addItem("Zoom", #selector(NSWindow.performZoom(_:)))
+    menu.addItem(.separator())
+    menu.addItem("qali", #selector(AppDelegate.showCalendar(_:)), "1")
     menu.addItem(.separator())
     menu.addItem("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)))
     return menu

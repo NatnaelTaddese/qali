@@ -20,9 +20,6 @@ struct TimeGrid: View {
   /// Whether the all-day band shows every lane. It stays as set while the
   /// days scroll or page, and across launches.
   @AppStorage("allDayExpanded") private var expanded = false
-  /// The band's height while the strip is moving: held where it was, so the
-  /// hours don't shift under a scroll; it catches up once the strip lands.
-  @State private var heldBandHeight: CGFloat?
   @State private var scroll = ScrollPosition(edge: .top)
   @State private var scroller = StripScroller()
   /// A range being drawn on the grid for a new event.
@@ -40,9 +37,7 @@ struct TimeGrid: View {
   var body: some View {
     let zone = navigation.zone
     let columns = days.count
-    // A page each side covers anything one frame can travel: the scroller
-    // re-anchors at every day boundary it crosses.
-    let side = columns
+    let side = Self.side(columns: columns)
     let strip = stripDays(anchor: days[0], columns: columns, side: side, zone: zone)
     let visible = side..<(side + columns)
     let buckets = bucketDayEvents(days: strip, events: drag.apply(to: data.events))
@@ -51,17 +46,17 @@ struct TimeGrid: View {
     let ghost = allDayGhost(strip: strip, layouts: allDay, laneCount: metrics.laneCount)
     // A ghost on the page may need a row of its own, open or closed.
     let ghostLanes = ghost.flatMap { $0.endIdx >= visible.lowerBound && $0.startIdx < visible.upperBound ? $0.lane + 1 : nil } ?? 0
-    let fittedBandHeight = max(
+    let bandHeight = max(
       metrics.laneCount == 0 ? 0 : allDayBandHeight(laneCount: metrics.laneCount, expanded: expanded),
       ghostLanes == 0 ? 0 : allDayBandHeight(laneCount: ghostLanes, expanded: true)
     )
-    let bandHeight = scroller.isMoving ? (heldBandHeight ?? fittedBandHeight) : fittedBandHeight
 
     GeometryReader { outer in
       let column = max(outer.size.width - GridMetrics.gutter, 1) / CGFloat(columns)
       let track = StripGeometry(column: column, side: side, count: strip.count)
 
       VStack(spacing: 0) {
+        HeldBandHeight(scroller: scroller, height: bandHeight, settled: navigation.stripSettled) { height in
         HeaderBand {
           VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -94,7 +89,7 @@ struct TimeGrid: View {
             // Animated frame by frame, not just drawn that way: the hours
             // below are cut from the height left over, so they must see every
             // step of it or they jump to the end while the band is still moving.
-            .modifier(AnimatedHeight(height: bandHeight))
+            .modifier(AnimatedHeight(height: height))
             .clipped()
           }
           // The day dividers run the full header height, through the date row
@@ -110,7 +105,8 @@ struct TimeGrid: View {
             .allowsHitTesting(false)
           }
         }
-        .animation(.snappy(duration: 0.2), value: bandHeight)
+        .animation(.snappy(duration: 0.2), value: height)
+        }
 
         GeometryReader { proxy in
           // The day fills the window above the runout when there is room, and
@@ -136,7 +132,7 @@ struct TimeGrid: View {
                       }
                     // Under the cards, so a drag that starts on one is
                     // the card's and not a new event.
-                    CreateDragLayer(days: strip, column: column, dayHeight: hour * 24, drawing: drawing)
+                    CreateDragLayer(days: strip, firstVisible: side, column: column, dayHeight: hour * 24, drawing: drawing)
                     TimedEvents(
                       days: strip,
                       visible: visible,
@@ -215,6 +211,12 @@ struct TimeGrid: View {
         scroller.columnWidth = column
         hoursScroll.column = column
       }
+      .onChange(of: side, initial: true) { _, side in
+        // The strip runs into its buffer before handing days over to the
+        // anchor, which rebuilds the grid: every few days of a swipe rather
+        // than every one, and the rest on landing.
+        scroller.handOver = CGFloat(side) - 0.5
+      }
       .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { hoursScroll.left = $0 }
     }
     .onChange(of: navigation.view, initial: true) { _, view in
@@ -231,6 +233,8 @@ struct TimeGrid: View {
         navigation.scroll(days: days)
         scroller.ownAnchor = navigation.anchor
       }
+      // The toolbar names the page in view, not the anchor's.
+      scroller.reportVisibleSteps = { [navigation] days in navigation.setStripScroll(days: days) }
       navigation.strip = .init(
         step: { [scroller] days in scroller.step(days: days) },
         glide: { [navigation, scroller] day in
@@ -254,13 +258,21 @@ struct TimeGrid: View {
           withAnimation(.smooth(duration: 0.45)) {
             scroll.scrollTo(y: nowScrollY(hour: hour, viewport: viewport))
           }
-        }
+        },
+        revealHour: { at in
+          let (hour, viewport) = body24
+          // A third of the way down, so the island opening over the lower
+          // half leaves the card in view.
+          let limit = max(hour * 24 + GridMetrics.bottomRunout - viewport, 0)
+          let y = min(max(at * hour - viewport * 0.3, 0), limit)
+          withAnimation(.smooth(duration: 0.45)) { scroll.scrollTo(y: y) }
+        },
+        isMoving: { [scroller] in scroller.isMoving }
       )
     }
     .onDisappear { navigation.strip = nil }
     .onChange(of: data.events) { _, events in drag.reconcile(events) }
-    // Captured from the render where the strip set off, before any day moved.
-    .onChange(of: scroller.isMoving) { _, moving in heldBandHeight = moving ? bandHeight : nil }
+    .environment(\.reveal, navigation.reveal)
     #if DEBUG
       // `-QaliFling 2400` lets the strip go at that many points per second
       // (negative goes back) three seconds after launch, for captures of the
@@ -291,6 +303,30 @@ struct TimeGrid: View {
         if today { navigation.goToToday() }
       }
     #endif
+  }
+}
+
+/// The all-day band's height, held where it was while the strip is moving
+/// so the hours don't shift under a scroll; it catches up once the strip
+/// lands. Its own view, so that a swipe starting and landing re-renders
+/// only the header and not the whole grid.
+private struct HeldBandHeight<Content: View>: View {
+  let scroller: StripScroller
+  /// The height the page's events need.
+  let height: CGFloat
+  /// Called when the strip lands.
+  let settled: () -> Void
+  @ViewBuilder let content: (CGFloat) -> Content
+
+  /// Captured from the render where the strip set off, before any day moved.
+  @State private var held: CGFloat?
+
+  var body: some View {
+    content(scroller.isMoving ? (held ?? height) : height)
+      .onChange(of: scroller.isMoving) { _, moving in
+        held = moving ? height : nil
+        if !moving { settled() }
+      }
   }
 }
 
@@ -340,12 +376,16 @@ private struct AllDayGhost: Equatable {
 }
 
 extension TimeGrid {
+  /// Days drawn off the page on each side, for the strip to scroll into
+  /// before it hands them over: a page in week view, a few days in day view.
+  static func side(columns: Int) -> Int { max(columns, 3) }
+
   /// The create form's all-day event, as a bar in the band: on the days it
   /// covers, in the first row the band shows that is free across them, or a
   /// row of its own below them, so it is never hidden by the band being
   /// closed.
   fileprivate func allDayGhost(strip: [Date], layouts: [AllDayEventLayout<CalendarEvent>], laneCount: Int) -> AllDayGhost? {
-    guard island.view == .create, let draft = island.draft, draft.allDay, draft.isValid else { return nil }
+    guard let draft = island.ghostDraft, draft.allDay, draft.isValid else { return nil }
     let zone = navigation.zone
     let startMs = utcMidnight(draft.startMs, zone: zone)
     let endMs = utcMidnight(draft.endMs, zone: zone) + msPerDay
@@ -371,7 +411,7 @@ extension TimeGrid {
     // Strip coordinates to the window's: the strip starts a buffer of
     // columns before the gutter's edge and moves with the trackpad offset;
     // the hours move with their scroll.
-    let side = CGFloat(days.count)
+    let side = CGFloat(Self.side(columns: days.count))
     let frame = local.offsetBy(
       dx: hoursScroll.left + GridMetrics.gutter - side * hoursScroll.column - scroller.offset,
       dy: hoursScroll.top - hoursScroll.y
@@ -409,9 +449,12 @@ private struct StripTrack<Content: View>: View {
   let scroller: StripScroller
   let geometry: StripGeometry
   @ViewBuilder var content: Content
+  /// Made with the grid's render: see `ScrollContent`.
+  private let render = ScrollContent<Content>.Render()
 
   var body: some View {
-    content
+    ScrollContent(render: render, content: content)
+      .equatable()
       .frame(width: geometry.column * CGFloat(geometry.count), alignment: .topLeading)
       .offset(x: -CGFloat(geometry.side) * geometry.column - scroller.offset)
       // Scrolling is never animated by SwiftUI; the band's height animation
@@ -423,7 +466,16 @@ private struct StripTrack<Content: View>: View {
       // Clipped sideways only (to the area right of the gutter): what the
       // strip draws above or below itself, like the dividers an overscroll
       // reveals, stays visible.
-      .mask { Rectangle().padding(.vertical, -GridMetrics.overscrollRoom) }
+      // (A clip, not a mask: a mask renders offscreen every frame.)
+      .clipShape(StripClip())
+  }
+}
+
+/// The strip's viewport: its own width, and far enough above and below
+/// for anything an overscroll reveals.
+nonisolated private struct StripClip: Shape {
+  func path(in rect: CGRect) -> Path {
+    Path(rect.insetBy(dx: 0, dy: -GridMetrics.overscrollRoom))
   }
 }
 
@@ -439,11 +491,16 @@ private struct DayHeader: View {
   var body: some View {
     let today = navigation.isToday(day)
     let zoomID = ZoomID.date(day, zone: navigation.zone)
+    // While zooming, the month's copies of this page's label and number
+    // stand in for them, travelling to and from the month.
+    let handedOver = onPage && navigation.zooming
     HStack(alignment: .firstTextBaseline, spacing: 6) {
       Text(navigation.zone.format(day, "EEE").uppercased())
         .font(.sans(TextSize.xs, .medium))
         .tracking(0.3)
         .foregroundStyle(today ? Palette.foreground : Palette.mutedForeground)
+        .matchedGeometryEffect(id: onPage ? ZoomID.weekday(day, zone: navigation.zone) : "strip-\(zoomID)-wd", in: zoom)
+        .opacity(handedOver ? 0 : 1)
       Text(navigation.zone.format(day, "d"))
         .font(.sans(TextSize.lg, .semibold))
         .foregroundStyle(today ? Palette.primaryForeground : Palette.foreground)
@@ -451,6 +508,7 @@ private struct DayHeader: View {
         .background { if today { Circle().fill(Palette.primary) } }
         // Where this day's number in the month grid sets out from.
         .matchedGeometryEffect(id: onPage ? zoomID : "strip-\(zoomID)", in: zoom)
+        .opacity(handedOver ? 0 : 1)
     }
     .padding(.horizontal, 8)
     .accessibilityElement(children: .combine)
@@ -546,7 +604,9 @@ private struct AllDayCard: View {
   private let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
 
   var body: some View {
+    // The flash sits under the label, as on the web.
     EventTint(hue: hue)
+      .revealFlash([event.id])
       .overlay(alignment: .leading) {
         StickyLabel(title: event.title, hue: hue, width: width, minX: minX, viewport: viewport)
       }
@@ -959,7 +1019,8 @@ private struct EventCard: View {
     .padding(.trailing, 8)
     .padding(.vertical, compact ? 0 : 4)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: compact ? .leading : .topLeading)
-    .background { EventTint(hue: hue) }
+    // The flash sits under the text, as on the web.
+    .background { EventTint(hue: hue).revealFlash([event.id]) }
     .overlay(alignment: .leading) {
       Capsule().fill(hue).frame(width: 3).padding(.vertical, 4).padding(.leading, 4)
     }
@@ -1027,6 +1088,8 @@ private func snappedMs(y: CGFloat, dayStartMs: Double, dayHeight: CGFloat) -> Do
 /// nothing, and sideways movement belongs to the trackpad, not to this.
 private struct CreateDragLayer: View {
   let days: [Date]
+  /// The page's first day on the strip.
+  let firstVisible: Int
   let column: CGFloat
   let dayHeight: CGFloat
   let drawing: GridDrawing
@@ -1065,8 +1128,7 @@ private struct CreateDragLayer: View {
             .split(separator: ",").compactMap { Double($0) }
           guard parts.count == 3 else { return }
           try? await Task.sleep(for: .seconds(3))
-          let side = days.count / 3
-          let dayStart = days[side + Int(parts[0])].ms
+          let dayStart = days[firstVisible + Int(parts[0])].ms
           drawing.anchor = (dayStart, dayStart + parts[1] * msPerHour)
           drawing.range = .init(dayStartMs: dayStart, startMs: dayStart + parts[1] * msPerHour, endMs: dayStart + parts[2] * msPerHour)
           try? await Task.sleep(for: .seconds(1))
@@ -1128,7 +1190,7 @@ private struct CreateGhost: View {
     let range: (start: Double, end: Double)? =
       if let drawn = drawing.range {
         (drawn.startMs, drawn.endMs)
-      } else if island.view == .create, let draft = island.draft, !draft.allDay, draft.isValid {
+      } else if let draft = island.ghostDraft, !draft.allDay, draft.isValid {
         (draft.startMs, draft.endMs)
       } else {
         nil
@@ -1184,7 +1246,7 @@ private struct CreateGhost: View {
   /// The create form opens over the bottom of the grid: when it covers the
   /// event being created, the hours scroll it into the clear above.
   private func revealIfCovered(_ range: (start: Double, end: Double)?) {
-    guard island.view == .create, drawing.range == nil, let lead = lead(range) else { return }
+    guard island.view?.holdsDraft == true, drawing.range == nil, let lead = lead(range) else { return }
     reveal(lead, island.shellFrame)
   }
 

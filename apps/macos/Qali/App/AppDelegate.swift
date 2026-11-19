@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   func applicationDidFinishLaunching(_ notification: Notification) {
     showMainWindow()
     Task { await model.restoreSession() }
+    AppUpdater.shared.start()
     menuBar = MenuBarController(
       model: model,
       openApp: { [weak self] in self?.showMainWindow() },
@@ -94,6 +95,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     NSApp.activate()
   }
 
+  @objc func checkForUpdates(_ sender: Any?) {
+    AppUpdater.shared.checkForUpdates()
+  }
+
   @objc func signOut(_ sender: Any?) {
     Task { await model.signOut() }
   }
@@ -105,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   func validateMenuItem(_ item: NSMenuItem) -> Bool {
     switch item.action {
     case #selector(signOut(_:)): model.phase == .signedIn
+    case #selector(checkForUpdates(_:)): AppUpdater.shared.canCheckForUpdates
     default: true
     }
   }

@@ -47,6 +47,8 @@ struct GeneralPane: View {
       if let data = model.calendarData {
         DefaultViewSection(data: data, error: $error)
       }
+
+      UpdatesSection()
     }
     .formStyle(.grouped)
     .saveErrors($error)
@@ -89,5 +91,33 @@ private struct DefaultViewSection: View {
         try await data.updatePreferences(PreferencesPatch(defaultView: next))
       }
     }
+  }
+}
+
+/// Sparkle's preferences, in Release builds (see AppUpdater).
+private struct UpdatesSection: View {
+  @Bindable private var updater = AppUpdater.shared
+
+  var body: some View {
+    Section("Updates") {
+      LabeledContent("Version", value: AppUpdater.versionDescription)
+      if updater.isEnabled {
+        Toggle("Check for updates automatically", isOn: $updater.automaticallyChecks)
+        Toggle("Download and install updates automatically", isOn: $updater.automaticallyDownloads)
+          .disabled(!updater.automaticallyChecks)
+        LabeledContent {
+          Button("Check Now") { updater.checkForUpdates() }
+            .disabled(!updater.canCheckForUpdates)
+        } label: {
+          Text("Last checked")
+          Text(lastCheckText)
+        }
+      }
+    }
+  }
+
+  private var lastCheckText: String {
+    guard let date = updater.lastCheck else { return "Never" }
+    return date.formatted(.relative(presentation: .named))
   }
 }

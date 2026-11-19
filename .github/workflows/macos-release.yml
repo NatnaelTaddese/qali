@@ -9,6 +9,11 @@ name: macOS release
 # PR titled "... [release-macos]" releases when it merges. Run it by hand from
 # the Actions tab too.
 #
+# Updates: each release also carries appcast.xml, signed with the Sparkle
+# EdDSA key in the SPARKLE_PRIVATE_KEY secret. The app reads it from
+# releases/latest/download/appcast.xml, so the newest release in this repo
+# must stay a Mac one.
+#
 # Signing: ad-hoc unless these repository secrets are set, in which case the
 # build is signed with that identity (still not notarized):
 #   MACOS_CERTIFICATE_P12       base64 of the exported .p12
@@ -46,7 +51,12 @@ jobs:
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
+          HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
         run: |
+          if [ "$HAS_SPARKLE_KEY" != true ]; then
+            echo "::error::The SPARKLE_PRIVATE_KEY secret is missing, so the update couldn't be signed."
+            exit 1
+          fi
           VERSION=$(sed -n 's/^ *MARKETING_VERSION: *//p' project.yml | head -n 1)
           if gh release view "macos-v$VERSION" >/dev/null 2>&1; then
             echo "::error::macos-v$VERSION is already released. Bump MARKETING_VERSION in apps/macos/project.yml."
@@ -92,10 +102,37 @@ jobs:
         id: build
         run: scripts/release.sh "${{ github.run_number }}"
 
+      - name: Sign the update
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.build.outputs.version }}
+          ZIP: ${{ steps.build.outputs.zip }}
+        working-directory: .
+        run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "::warning::No SPARKLE_PRIVATE_KEY secret: skipping the appcast."
+            exit 0
+          fi
+          # Sparkle's sign_update, pinned to the version the app links.
+          SPARKLE="$RUNNER_TEMP/sparkle"
+          mkdir -p "$SPARKLE"
+          gh release download 2.10.1 -R sparkle-project/Sparkle -p 'Sparkle-2.10.1.tar.xz' -D "$SPARKLE"
+          echo "1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27  $SPARKLE/Sparkle-2.10.1.tar.xz" | shasum -a 256 -c -
+          tar -xf "$SPARKLE/Sparkle-2.10.1.tar.xz" -C "$SPARKLE"
+          TAG="macos-v$VERSION"
+          SIGN_UPDATE="$SPARKLE/bin/sign_update" apps/macos/scripts/appcast.sh "$ZIP" \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$(basename "$ZIP")" \
+            "https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" \
+            > apps/macos/dist/appcast.xml
+          cat apps/macos/dist/appcast.xml
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.name }}
-          path: ${{ steps.build.outputs.zip }}
+          path: |
+            ${{ steps.build.outputs.zip }}
+            apps/macos/dist/appcast.xml
           if-no-files-found: error
 
       - name: Publish the release
@@ -107,7 +144,7 @@ jobs:
           ZIP: ${{ steps.build.outputs.zip }}
         working-directory: .
         run: |
-          gh release create "macos-v$VERSION" "$ZIP" \
+          gh release create "macos-v$VERSION" "$ZIP" apps/macos/dist/appcast.xml \
             --target "$GITHUB_SHA" \
             --title "Qali for Mac $VERSION ($BUILD)" \
             --notes "Apple silicon, macOS 26.2 or later. The app isn't notarized: after the first launch is blocked, open System Settings → Privacy & Security and choose Open Anyway."

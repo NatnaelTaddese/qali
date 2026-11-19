@@ -34,6 +34,28 @@ merge commit, so put the flag in the PR title to release on merge. CI signs
 ad-hoc unless the `MACOS_CERTIFICATE_P12`, `MACOS_CERTIFICATE_PASSWORD` and
 `MACOS_TEAM_ID` secrets are set.
 
+## Updates
+
+Release builds update themselves with Sparkle (`Qali/App/AppUpdater.swift`):
+a daily background check, Qali → Check for Updates…, and an Updates section in
+Settings → General. The feed is
+`releases/latest/download/appcast.xml`, which the release workflow writes with
+`scripts/appcast.sh` and uploads beside each zip, so the newest release in the
+repo has to be a Mac one. Updates are trusted by their EdDSA signature
+(`SUPublicEDKey` in `project.yml`), which is why ad-hoc builds can update each
+other. The private key is the `SPARKLE_PRIVATE_KEY` repository secret and the
+`qali` account in the login keychain of the Mac that generated it; losing both
+means shipping a new key, and apps holding the old one can't update past it.
+The app is sandboxed, so Sparkle installs through its Installer XPC service
+(`SUEnableInstallerLauncherService` and the `-spks`/`-spki` mach-lookup
+exceptions).
+
+Debug builds don't check. To try an update end to end, build two Debug apps
+with different `CURRENT_PROJECT_VERSION`s, serve the newer one's zip and
+appcast (`SIGN_UPDATE=<Sparkle>/bin/sign_update scripts/appcast.sh …`), and
+launch the older one with `-QaliUpdateFeed <appcast url> -QaliCheckInBackground
+YES -SUAutomaticallyUpdate YES`: it downloads silently and installs on quit.
+
 Release is arm64 only (ConvexMobile's prebuilt library has no x86_64 slice)
 and needs macOS 26.2. With an Apple Development identity the app is signed
 but not notarized, so on another Mac it opens only after Privacy & Security →

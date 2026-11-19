@@ -22,6 +22,9 @@ enum MainMenu {
   private static func appMenu() -> NSMenu {
     let menu = NSMenu()
     menu.addItem("About Qali", #selector(NSApplication.orderFrontStandardAboutPanel(_:)))
+    if AppUpdater.shared.isEnabled {
+      menu.addItem("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:)))
+    }
     menu.addItem(.separator())
     menu.addItem("Settings…", #selector(AppDelegate.showSettings(_:)), ",")
     menu.addItem(.separator())

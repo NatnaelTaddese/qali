@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   func applicationDidFinishLaunching(_ notification: Notification) {
     showMainWindow()
     Task { await model.restoreSession() }
+    AppUpdater.shared.revealApp = { [weak self] in self?.showMainWindow() }
     AppUpdater.shared.start()
     menuBar = MenuBarController(
       model: model,

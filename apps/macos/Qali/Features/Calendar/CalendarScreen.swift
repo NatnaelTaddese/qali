@@ -15,7 +15,13 @@ struct CalendarScreen: View {
       }
       // For the event cards, which open themselves in the island.
       .environment(island)
-      .toolbar { CalendarToolbar(navigation: navigation, data: data, island: island, typing: island.isTyping) }
+      .toolbar {
+        // The update status is read here, in a view's body, so the toolbar is
+        // rebuilt when it changes.
+        CalendarToolbar(
+          navigation: navigation, data: data, island: island, typing: island.isTyping,
+          update: AppUpdater.shared.status)
+      }
       .background { shortcuts }
       .onChange(of: data.preferences, initial: true) { _, preferences in
         if let preferences { navigation.apply(preferences) }
@@ -68,6 +74,8 @@ struct CalendarToolbar: ToolbarContent {
   let island: Island
   /// A field in the island has the keyboard: T is a letter, not Today.
   var typing = false
+  /// Shown as a pill before the view switch unless idle.
+  var update: UpdateStatus = .idle
 
   var body: some ToolbarContent {
     ToolbarItem(placement: .navigation) {
@@ -78,6 +86,14 @@ struct CalendarToolbar: ToolbarContent {
 
     // Everything else sits against the trailing edge, as on the web.
     ToolbarSpacer(.flexible)
+
+    if update != .idle {
+      ToolbarItem(placement: .primaryAction) {
+        UpdatePill(status: update)
+      }
+
+      ToolbarSpacer(.fixed, placement: .primaryAction)
+    }
 
     ToolbarItem(placement: .primaryAction) {
       Picker("View", selection: Binding(get: { navigation.view }, set: navigation.showAnimated)) {
@@ -193,18 +209,27 @@ extension CalendarNavigation {
 /// brighter, full-height highlight, so a group of buttons reads like the
 /// view switch next to it.
 struct ToolbarPillButtonStyle: ButtonStyle {
+  /// Rests on the pill's fill, like the view switch's selected segment: for
+  /// the one action in a group that should stand out (the update pill's
+  /// Update / Relaunch Now).
+  var selected = false
+
   func makeBody(configuration: Configuration) -> some View {
-    Pill(configuration: configuration)
+    Pill(configuration: configuration, selected: selected)
   }
 
   private struct Pill: View {
     let configuration: Configuration
+    let selected: Bool
     @State private var hovering = false
     /// Toolbar controls grey out while the window is in the background.
     @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
-      let fill = configuration.isPressed ? 0.14 : hovering || Self.debugHover ? 0.09 : 0
+      let fill =
+        configuration.isPressed ? 0.14
+        : selected ? (hovering ? 0.13 : 0.09)
+        : hovering || Self.debugHover ? 0.09 : 0
       configuration.label
         .font(.system(size: 13, weight: .medium))
         .imageScale(.large)

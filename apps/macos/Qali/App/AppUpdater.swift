@@ -9,9 +9,12 @@ import Sparkle
 /// installs through its Installer XPC service (`SUEnableInstallerLauncherService`
 /// and the `-spks`/`-spki` mach-lookup exceptions in project.yml).
 ///
+/// Sparkle's own windows are replaced by `UpdateDriver`, which reports into
+/// `status`; the toolbar's `UpdatePill` and Settings draw it.
+///
 /// Release builds only: Debug is the dev app, which nothing publishes. A Debug
 /// build can still be pointed at a feed with `-QaliUpdateFeed <url>` to try
-/// an update end to end.
+/// an update end to end (see `start()` for the flags).
 @Observable
 final class AppUpdater: NSObject {
   static let shared = AppUpdater()
@@ -24,6 +27,9 @@ final class AppUpdater: NSObject {
   /// Nil when this build doesn't update (Debug without a feed override).
   let feedURL: String?
 
+  /// Where an update stands, for the toolbar pill and Settings.
+  var status: UpdateStatus = .idle
+
   /// Mirrors of the updater's KVO properties, for SwiftUI.
   private(set) var canCheckForUpdates = false
   private(set) var lastCheck: Date?
@@ -34,11 +40,17 @@ final class AppUpdater: NSObject {
     didSet { if updater?.automaticallyDownloadsUpdates != automaticallyDownloads { updater?.automaticallyDownloadsUpdates = automaticallyDownloads } }
   }
 
-  @ObservationIgnored private var controller: SPUStandardUpdaterController?
+  /// Brings the main window forward, where the pill is (set by AppDelegate).
+  @ObservationIgnored var revealApp: () -> Void = {}
+
+  @ObservationIgnored private var updater: SPUUpdater?
+  @ObservationIgnored private var driver: UpdateDriver?
   @ObservationIgnored private var observations: [NSKeyValueObservation] = []
+  /// An update Sparkle downloaded silently and will install on quit, unless
+  /// the user relaunches now (automatic downloads on).
+  @ObservationIgnored private var installNow: (() -> Void)?
 
   var isEnabled: Bool { feedURL != nil }
-  private var updater: SPUUpdater? { controller?.updater }
 
   override private init() {
     #if DEBUG
@@ -50,14 +62,21 @@ final class AppUpdater: NSObject {
   }
 
   /// Starts Sparkle's scheduled checks. Call once the app has finished
-  /// launching, so a first-launch prompt or update alert has an app to sit in.
+  /// launching.
   func start() {
-    guard isEnabled, controller == nil else { return }
-    let controller = SPUStandardUpdaterController(
-      startingUpdater: false, updaterDelegate: self, userDriverDelegate: self
-    )
-    self.controller = controller
-    let updater = controller.updater
+    #if DEBUG
+      // `-QaliUpdateState available|checking|downloading|preparing|ready|upToDate|failed`
+      // pins the pill to a state for a capture, with no updater running.
+      if let pinned = UserDefaults.standard.string(forKey: "QaliUpdateState") {
+        status = UpdateStatus.sample(pinned)
+        return
+      }
+    #endif
+    guard isEnabled, updater == nil else { return }
+    let driver = UpdateDriver(owner: self)
+    let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: driver, delegate: self)
+    self.driver = driver
+    self.updater = updater
     observations = [
       updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] updater, _ in
         MainActor.assumeIsolated { self?.canCheckForUpdates = updater.canCheckForUpdates }
@@ -72,21 +91,54 @@ final class AppUpdater: NSObject {
         MainActor.assumeIsolated { self?.automaticallyDownloads = updater.automaticallyDownloadsUpdates }
       },
     ]
-    controller.startUpdater()
+    do {
+      try updater.start()
+    } catch {
+      status = .failed(error.localizedDescription)
+    }
     #if DEBUG
-      // `-QaliUpdateFeed <url> -QaliCheckInBackground YES -SUAutomaticallyUpdate YES`
-      // runs a silent check that downloads the update and installs it when the
-      // app quits: an update tried end to end with no clicks.
+      // `-QaliCheckInBackground YES` runs a scheduled-style check at launch;
+      // with `-QaliAcceptUpdates YES` the pill's buttons press themselves, so
+      // an update can be tried end to end (found, downloaded, relaunched)
+      // with no clicks.
       if UserDefaults.standard.bool(forKey: "QaliCheckInBackground") {
         updater.checkForUpdatesInBackground()
       }
     #endif
   }
 
-  /// "Check for Updates…": Sparkle's own window reports what it finds.
+  // MARK: Actions
+
+  /// "Check for Updates…": the pill reports what the check finds.
   func checkForUpdates() {
     NSApp.setActivationPolicy(.regular)
-    controller?.checkForUpdates(nil)
+    revealApp()
+    updater?.checkForUpdates()
+  }
+
+  /// The pill's Update button: download and prepare the update found.
+  func install() { driver?.choose(.install) }
+
+  /// Relaunch Now: install the prepared update and reopen.
+  func relaunch() {
+    if let installNow {
+      self.installNow = nil
+      status = .preparing
+      installNow()
+    } else {
+      driver?.choose(.install)
+    }
+  }
+
+  /// The pill's close button. An update that is ready still installs when
+  /// Qali quits; one that was only found is offered again on a later check.
+  func dismiss() {
+    if installNow != nil {
+      status = .idle
+      return
+    }
+    driver?.choose(.dismiss)
+    status = .idle
   }
 
   /// "0.1.2": the version alone, as releases are named. The build number
@@ -98,20 +150,49 @@ final class AppUpdater: NSObject {
 
 extension AppUpdater: SPUUpdaterDelegate {
   func feedURLString(for updater: SPUUpdater) -> String? { feedURL }
+
+  /// With automatic downloads on, Sparkle fetches the update silently and
+  /// holds it for the next quit; offer to relaunch now instead.
+  func updater(
+    _ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem,
+    immediateInstallationBlock: @escaping () -> Void
+  ) -> Bool {
+    installNow = immediateInstallationBlock
+    status = .ready(version: item.displayVersionString)
+    #if DEBUG
+      if UserDefaults.standard.bool(forKey: "QaliAcceptUpdates") { relaunch() }
+    #endif
+    return true
+  }
 }
 
-extension AppUpdater: @preconcurrency SPUStandardUserDriverDelegate {
-  /// Lets a scheduled check that finds an update wait for a calmer moment
-  /// instead of throwing a window up mid-task; Sparkle handles the reminder.
-  var supportsGentleScheduledUpdateReminders: Bool { true }
+/// Where an update stands. Transient states clear themselves (see UpdateDriver).
+enum UpdateStatus: Equatable {
+  case idle
+  /// A check the user asked for is running.
+  case checking
+  /// The user's check found nothing (shown briefly).
+  case upToDate
+  case available(version: String)
+  /// Fraction downloaded, or nil before the size is known.
+  case downloading(progress: Double?)
+  /// Unpacking or installing.
+  case preparing
+  case ready(version: String)
+  /// A check or update failed (shown briefly).
+  case failed(String)
 
-  /// The app may be running Dock-less behind the menu bar companion; bring
-  /// the Dock icon back so the update window can come forward.
-  func standardUserDriverWillHandleShowingUpdate(
-    _ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState
-  ) {
-    guard handleShowingUpdate else { return }
-    NSApp.setActivationPolicy(.regular)
-    NSApp.activate()
-  }
+  #if DEBUG
+    static func sample(_ name: String) -> UpdateStatus {
+      switch name {
+      case "checking": .checking
+      case "upToDate": .upToDate
+      case "downloading": .downloading(progress: 0.42)
+      case "preparing": .preparing
+      case "ready": .ready(version: "0.1.3")
+      case "failed": .failed("The update couldn't be downloaded.")
+      default: .available(version: "0.1.3")
+      }
+    }
+  #endif
 }

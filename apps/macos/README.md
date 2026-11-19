@@ -21,8 +21,15 @@ Debug builds talk to the dev Convex deployment and Release builds to prod
 ## Sharing a build
 
 ```sh
-scripts/release.sh [build-number]   # → dist/Qali-<version>-arm64.zip
+scripts/release.sh [build-number]   # → dist/Qali-<version>-arm64.{dmg,zip}
 ```
+
+The DMG is what people download: Qali beside an Applications link on a
+background asking them to drag it across (`scripts/dmg.sh`, laid out by
+`scripts/dmg-settings.py`, art from `scripts/gen-dmg-background.swift` →
+`Packaging/dmg-background.tiff`; keep the icon positions in step). It's built
+with dmgbuild, which needs Python 3.11 or later; without it the script makes
+only the zip. The zip is what Sparkle updates from.
 
 CI builds the same zip when a push's head commit message contains
 `[release-macos]` (`.github/workflows/macos-release.yml`). On any branch the

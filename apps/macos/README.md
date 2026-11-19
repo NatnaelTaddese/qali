@@ -148,10 +148,18 @@ scripts/run.sh -QaliView week -QaliFixture events
 
 ## Design tokens and icon
 
-Colours are generated from the web tokens, and the icon from the web icon's
-recipe. Rerun these after either changes:
+Colours are generated from the web tokens; rerun this after they change:
 
 ```sh
 python3 scripts/gen-colors.py
-swift scripts/gen-icon.swift
+```
+
+The app icon is an Icon Composer document, `Qali/Resources/AppIcon.icon`
+(open it in Icon Composer to edit the glass, groups and dark/tinted looks).
+Its layers are vector SVGs drawn from the web icon's recipe. To redraw them,
+run this, then drag the files from `Icon/layers` over the matching layers in
+the document:
+
+```sh
+swift scripts/gen-icon-layers.swift
 ```

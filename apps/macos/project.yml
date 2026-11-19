@@ -46,7 +46,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         ENABLE_HARDENED_RUNTIME: YES
         CURRENT_PROJECT_VERSION: 1
-        MARKETING_VERSION: 0.1.1
+        MARKETING_VERSION: 0.1.2
     info:
       path: Qali/Info.plist
       properties:
@@ -67,6 +67,10 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
+        # Release builds are ad-hoc signed (no Team ID), and the hardened
+        # runtime's library validation only admits frameworks from Apple or
+        # the app's own team, so dyld refused Sparkle.framework at launch.
+        com.apple.security.cs.disable-library-validation: true
         # Sparkle's installer talks back to the app over these.
         com.apple.security.temporary-exception.mach-lookup.global-name:
           - $(PRODUCT_BUNDLE_IDENTIFIER)-spks

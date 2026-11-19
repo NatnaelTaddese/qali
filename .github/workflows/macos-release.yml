@@ -112,6 +112,21 @@ jobs:
         id: build
         run: scripts/release.sh "${{ github.run_number }}"
 
+      # A build that can't start (0.1.1: dyld refused Sparkle.framework under
+      # ad-hoc signing) must never be published.
+      - name: Launch the built app
+        run: |
+          APP=build-release/Build/Products/Release/Qali.app
+          "$APP/Contents/MacOS/Qali" > "$RUNNER_TEMP/launch.log" 2>&1 &
+          PID=$!
+          sleep 10
+          if ! kill -0 "$PID" 2>/dev/null; then
+            cat "$RUNNER_TEMP/launch.log"
+            echo "::error::Qali quit within 10 seconds of launching."
+            exit 1
+          fi
+          kill "$PID"
+
       - name: Sign the update
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}

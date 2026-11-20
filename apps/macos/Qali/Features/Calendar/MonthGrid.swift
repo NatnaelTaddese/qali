@@ -40,10 +40,10 @@ struct MonthGrid: View, Equatable {
     a.days == b.days && a.bufferDays == b.bufferDays && a.layout == b.layout && a.shown == b.shown
       && a.zoom == b.zoom
   }
-  /// The last bucketing of events by day: the grid is rebuilt for many
+  /// The last layout of the weeks' events: the grid is rebuilt for many
   /// reasons (weeks handed over, the month in view changing) that leave
   /// the events and days alone.
-  @State private var buckets = MonthBuckets()
+  @State private var weeks = MonthWeeks()
 
   var body: some View {
     // What is left of a resting cell for events, under the day number.
@@ -51,11 +51,18 @@ struct MonthGrid: View, Equatable {
     // The scroll offset itself is read only by `MonthTrack`, so a scroll
     // frame moves the rows without re-evaluating this body. Nothing here
     // reads whether it is scrolling either: starting a swipe costs nothing.
-    // The page's events, sorted once and bucketed by day in one pass.
-    let byDay = buckets.get(data.events, days: bufferDays, zone: navigation.zone)
     // The six rows and the spare weeks either side, always: the scroller
     // hands weeks over to the anchor (rebuilding this) only every few.
     let spare = CalendarNavigation.monthSpareWeeks
+    // The page's events bucketed by day in one pass, then laid out a week
+    // row at a time: multi-day all-day events as bars across their days.
+    let laidOut = weeks.get(
+      data.events,
+      days: bufferDays,
+      zone: navigation.zone,
+      rows: Self.fittingRows(eventArea),
+      firstRow: -spare
+    )
     let cells = Array(bufferDays.enumerated()).map { ($0.offset - 7 * spare, $0.element) }
     ZStack(alignment: .topLeading) {
       HeaderBand {
@@ -93,8 +100,7 @@ struct MonthGrid: View, Equatable {
           let column = (index % 7 + 7) % 7
           MonthDayCell(
             day: day,
-            events: byDay[day] ?? [],
-            eventArea: eventArea,
+            slots: laidOut.slots[day] ?? [],
             focused: isFocused(row: row, column: column),
             spare: row < 0 || row >= layout.rows,
             today: navigation.isToday(day),
@@ -110,6 +116,19 @@ struct MonthGrid: View, Equatable {
           .equatable()
             .frame(width: layout.width(column: column), height: layout.height(row: row), alignment: .topLeading)
             .offset(x: layout.x(column: column), y: layout.headerHeight + layout.y(row: row))
+        }
+        // Over the cells, so a bar runs across the day borders as one.
+        ForEach(laidOut.weeks, id: \.first) { week in
+          MonthBarsRow(
+            bars: week.bars,
+            row: week.row,
+            layout: layout,
+            spare: week.row < 0 || week.row >= layout.rows,
+            fade: fade,
+            navigation: navigation,
+            data: data
+          )
+          .equatable()
         }
       }
        .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
@@ -231,20 +250,37 @@ struct MonthGrid: View, Equatable {
     return result
   }
 
-  /// How many events fit, keeping the last row for the "+N more" count when
-  /// they do not all fit (the web's `visibleMonthEventMetrics`).
-  fileprivate static func visibleEvents(count: Int, availableHeight: CGFloat) -> (visible: Int, hidden: Int) {
-    let rows = max(Int((availableHeight + rowGap) / (rowHeight + rowGap)), 0)
-    let visible = count <= rows ? count : max(rows - 1, 0)
-    return (visible, count - visible)
+  /// How many event rows fit in a cell's event area (the web's
+  /// `visibleMonthEventMetrics`); a day that needs more keeps the last for
+  /// its "+N more" count.
+  fileprivate static func fittingRows(_ availableHeight: CGFloat) -> Int {
+    max(Int(((availableHeight + rowGap) / (rowHeight + rowGap)).rounded(.down)), 0)
+  }
+
+  /// Where a cell's event row sits below the cell's top.
+  fileprivate static func rowY(_ row: Int) -> CGFloat {
+    padding + numberSize + rowGap + CGFloat(row) * (rowHeight + rowGap)
   }
 }
 
+/// A month event: a dot and the title on the event's tint. A bar that runs on
+/// past its piece (onto the next row, or under a day's "+N more") is squared
+/// off on that side, and one carried on from before starts its title where a
+/// chip's would be.
 private struct MonthChip: View {
   let event: CalendarEvent
   let hue: Color
+  var continuesBefore = false
+  var continuesAfter = false
 
   var body: some View {
+    let radius: CGFloat = 4
+    let shape = UnevenRoundedRectangle(
+      topLeadingRadius: continuesBefore ? 0 : radius,
+      bottomLeadingRadius: continuesBefore ? 0 : radius,
+      bottomTrailingRadius: continuesAfter ? 0 : radius,
+      topTrailingRadius: continuesAfter ? 0 : radius
+    )
     HStack(spacing: 4) {
       Circle()
         .fill(hue)
@@ -253,13 +289,63 @@ private struct MonthChip: View {
         .font(.sans(TextSize.xs))
         .lineLimit(1)
     }
-    .padding(.horizontal, 4)
+    .padding(.leading, continuesBefore ? 4 + MonthGrid.padding : 4)
+    .padding(.trailing, 4)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     .background { EventTint(hue: hue, strength: 0.18) }
-    .clipShape(.rect(cornerRadius: 4))
+    .clipShape(shape)
     .help(event.title)
     .opensEvent(event)
   }
+}
+
+/// A week row's multi-day bars, drawn over its cells. They follow the row and
+/// its columns through a zoom (fading with the rest of the grid) and are
+/// clipped to the row as it squeezes shut.
+private struct MonthBarsRow: View, Equatable {
+  let bars: [MonthBar<CalendarEvent>]
+  let row: Int
+  let layout: MonthZoomLayout
+  let spare: Bool
+  let fade: MonthFade
+  let navigation: CalendarNavigation
+  let data: CalendarData
+
+  private typealias M = MonthGrid
+
+  static func == (a: Self, b: Self) -> Bool {
+    a.bars == b.bars && a.row == b.row && a.layout == b.layout && a.spare == b.spare && a.fade == b.fade
+  }
+
+  var body: some View {
+    ZStack(alignment: .topLeading) {
+      ForEach(bars, id: \.key) { bar in
+        // Inset like a chip at its ends; flush with the cell edge where it
+        // runs on, so it meets its next piece.
+        let x = layout.x(column: bar.startIdx) + (bar.continuesBefore ? 0 : M.padding)
+        let end = layout.x(column: bar.endIdx) + layout.width(column: bar.endIdx) - (bar.continuesAfter ? 0 : M.padding)
+        MonthChip(
+          event: bar.event,
+          hue: Palette.event(data.colorKey(for: bar.event)),
+          continuesBefore: bar.continuesBefore,
+          continuesAfter: bar.continuesAfter
+        )
+        .frame(width: max(end - x, 0), height: M.rowHeight)
+        .offset(x: x, y: M.rowY(bar.lane))
+      }
+    }
+    .frame(width: layout.size.width, height: layout.height(row: row), alignment: .topLeading)
+    .clipped()
+    .modifier(fade)
+    .opacity(spare && navigation.zooming ? 0 : 1)
+    .offset(y: layout.headerHeight + layout.y(row: row))
+  }
+}
+
+extension MonthBar where E == CalendarEvent {
+  /// A piece's identity in its row: an event can have several pieces when a
+  /// day's "+N more" hides part of it.
+  fileprivate var key: String { "\(event.id)#\(startIdx)" }
 }
 
 /// Shows or hides part of the month grid, with its own timing when given one
@@ -367,8 +453,8 @@ nonisolated private struct InsetRect: Shape {
 /// changed are redrawn.
 private struct MonthDayCell: View, Equatable {
   let day: Date
-  let events: [CalendarEvent]
-  let eventArea: CGFloat
+  /// Its event rows, from its week's layout; bars are drawn by the week.
+  let slots: [MonthSlot<CalendarEvent>]
   /// On the time grid's page: its number travels during a zoom.
   let focused: Bool
   /// One of the spare weeks drawn past the six rows for scrolling. Hidden
@@ -386,7 +472,7 @@ private struct MonthDayCell: View, Equatable {
   let open: (Date) -> Void
 
   static func == (a: Self, b: Self) -> Bool {
-    a.day == b.day && a.events == b.events && a.eventArea == b.eventArea && a.focused == b.focused && a.spare == b.spare
+    a.day == b.day && a.slots == b.slots && a.focused == b.focused && a.spare == b.spare
       && a.today == b.today && a.expanded == b.expanded
       && a.restingSize == b.restingSize && a.shown == b.shown && a.fade == b.fade && a.zoom == b.zoom
   }
@@ -401,7 +487,7 @@ private struct MonthDayCell: View, Equatable {
       // Its own equatable view: the month in view changing, or a scroll
       // handing weeks over, changes the cell's shading and number but not
       // its events, so the chips are left alone.
-      MonthCellEvents(events: events, eventArea: eventArea, data: data)
+      MonthCellEvents(slots: slots, data: data)
         .equatable()
       .padding(M.padding)
       // Laid out at the resting cell's size whatever the zoom, and uncovered
@@ -472,50 +558,73 @@ private struct MonthDayCell: View, Equatable {
   }
 }
 
-/// A day cell's chips and "+N more", as many as fit.
+/// A day cell's event rows: its chips, room for the week's bars passing
+/// through, and "+N more".
 private struct MonthCellEvents: View, Equatable {
-  let events: [CalendarEvent]
-  let eventArea: CGFloat
+  let slots: [MonthSlot<CalendarEvent>]
   let data: CalendarData
 
   private typealias M = MonthGrid
 
   nonisolated static func == (a: Self, b: Self) -> Bool {
-    a.events == b.events && a.eventArea == b.eventArea
+    a.slots == b.slots
   }
 
   var body: some View {
-    let fit = M.visibleEvents(count: events.count, availableHeight: eventArea)
     VStack(alignment: .leading, spacing: M.rowGap) {
       Color.clear.frame(width: M.numberSize, height: M.numberSize)
-      ForEach(events.prefix(fit.visible)) { event in
-        MonthChip(event: event, hue: Palette.event(data.colorKey(for: event)))
-          .frame(height: M.rowHeight)
-      }
-      if fit.hidden > 0 {
-        Text("+\(fit.hidden) more")
-          .font(.sans(10))
-          .foregroundStyle(Palette.mutedForeground)
-          .padding(.horizontal, 4)
-          .frame(height: M.rowHeight)
+      ForEach(Array(slots.enumerated()), id: \.offset) { _, slot in
+        switch slot {
+        case .empty, .bar:
+          Color.clear.frame(height: M.rowHeight)
+        case .chip(let event):
+          MonthChip(event: event, hue: Palette.event(data.colorKey(for: event)))
+            .frame(height: M.rowHeight)
+        case .more(let hidden):
+          Text("+\(hidden) more")
+            .font(.sans(10))
+            .foregroundStyle(Palette.mutedForeground)
+            .padding(.horizontal, 4)
+            .frame(height: M.rowHeight)
+        }
       }
     }
   }
 }
 
-/// Events bucketed by day, kept until the events, days or zone change.
-private final class MonthBuckets {
-  private var events: [CalendarEvent]?
-  private var days: [Date] = []
-  private var zone: WorkingZone?
-  private var result: [Date: [CalendarEvent]] = [:]
+/// The weeks' events laid out (bucketed by day, then a week row at a time),
+/// kept until the events, days, zone or rows that fit change.
+private final class MonthWeeks {
+  struct Week {
+    /// The week's first day, its identity.
+    let first: Date
+    /// Its row, counted from the six rows' top (spare weeks above are negative).
+    let row: Int
+    let bars: [MonthBar<CalendarEvent>]
+  }
 
-  func get(_ events: [CalendarEvent], days: [Date], zone: WorkingZone) -> [Date: [CalendarEvent]] {
-    if events == self.events, days == self.days, zone == self.zone { return result }
-    result = MonthGrid.bucket(events, days: days, zone: zone)
-    self.events = events
-    self.days = days
-    self.zone = zone
+  struct Result {
+    var slots: [Date: [MonthSlot<CalendarEvent>]] = [:]
+    var weeks: [Week] = []
+  }
+
+  private var key: (events: [CalendarEvent], days: [Date], zone: WorkingZone, rows: Int, firstRow: Int)?
+  private var result = Result()
+
+  func get(_ events: [CalendarEvent], days: [Date], zone: WorkingZone, rows: Int, firstRow: Int) -> Result {
+    if let key, key.events == events, key.days == days, key.zone == zone, key.rows == rows, key.firstRow == firstRow {
+      return result
+    }
+    let byDay = MonthGrid.bucket(events, days: days, zone: zone)
+    var next = Result()
+    for (offset, start) in stride(from: 0, to: days.count, by: 7).enumerated() {
+      let week = Array(days[start..<min(start + 7, days.count)])
+      let laid = layoutMonthWeek(days: week, dayEvents: week.map { byDay[$0] ?? [] }, rows: rows, zone: zone)
+      for (day, slots) in zip(week, laid.days) where !slots.isEmpty { next.slots[day] = slots }
+      next.weeks.append(Week(first: week[0], row: firstRow + offset, bars: laid.bars))
+    }
+    key = (events, days, zone, rows, firstRow)
+    result = next
     return result
   }
 }

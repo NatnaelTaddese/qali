@@ -173,6 +173,7 @@ async function cacheSeries(
   event: ProviderEvent,
   recurrence: readonly string[],
   replacedEventId?: Id<"events">,
+  currentForUpdatedMs?: number,
 ): Promise<void> {
   await ctx.runMutation(internal.domains.calendar.mutations.upsertProviderRecurringSeries, {
     userId,
@@ -181,6 +182,7 @@ async function cacheSeries(
     providerEventId: event.id,
     recurrence: [...recurrence],
     providerUpdatedMs: event.updatedMs,
+    currentForUpdatedMs,
     replacedEventId,
   });
 }
@@ -1403,12 +1405,16 @@ export async function refreshEventRecurrenceHandler(
     calendarId: target.providerCalendarId,
     eventId: target.providerSeriesId,
   });
+  // Just read from the provider, so the rule is current for the occurrence
+  // that asked, even one edited more recently than its master.
   await cacheSeries(
     ctx,
     userId,
     target,
     master,
     master.recurrence ?? [],
+    undefined,
+    context.event.providerUpdatedMs,
   );
   return null;
 }

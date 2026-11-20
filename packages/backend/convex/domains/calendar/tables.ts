@@ -134,9 +134,14 @@ export const calendarTables = {
     // The series master's provider event id.
     providerEventId: v.string(),
     providerSeriesId: v.optional(v.string()),
-    // The instance update time that this rule was fetched against. A newer
-    // synced instance invalidates the cache and triggers one master refresh.
+    // The master's provider version when this rule was cached (the
+    // assistant's series conflict token compares it with the master's).
     providerUpdatedMs: v.number(),
+    // The newest occurrence version this rule was fetched for. An occurrence
+    // edited on its own is newer than its master, so the master's version
+    // alone would hide the rule from it for good. A newer synced occurrence
+    // than both invalidates the cache and triggers one master refresh.
+    currentForUpdatedMs: v.optional(v.number()),
     recurrence: v.array(v.string()),
   })
     // Per-user drain for account purge; the connection-keyed index below

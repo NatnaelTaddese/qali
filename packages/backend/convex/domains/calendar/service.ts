@@ -653,18 +653,40 @@ export async function updateEventOp(
   const attendees = withHostAttendee(args.attendees, {
     email: hostEmailForTarget(target.calendar),
   });
+  const scope = target.providerSeriesId
+    ? (args.scope ?? "thisEvent")
+    : "thisEvent";
   if (args.recurrence !== undefined) {
-    if (args.recurrence.length === 0) {
-      throw new Error("A recurring event needs a recurrence rule");
-    }
     if (!capabilities.canChangeRecurrence) {
-      throw new Error("This event is already part of a recurring series");
+      throw new Error(
+        target.providerSeriesId
+          ? "Only the organiser can change how this series repeats"
+          : "You can't change how this event repeats",
+      );
+    }
+    if (target.providerSeriesId) {
+      // An occurrence holds no rule of its own: a new one rewrites the
+      // series from this occurrence on, or the whole of it.
+      if (scope === "thisEvent") {
+        throw new Error(
+          "A new repeat applies to this and following events or to all events, not to one occurrence",
+        );
+      }
+      // [] ends the series before this occurrence, which stays as a single
+      // event; ending all of it is a delete.
+      if (args.recurrence.length === 0 && scope !== "thisAndFollowing") {
+        throw new Error(
+          "To stop a series repeating, end it from this event with this and following",
+        );
+      }
+    } else if (args.recurrence.length === 0) {
+      throw new Error("A recurring event needs a recurrence rule");
     }
     requireCapability(
       adapter.capabilities.recurringEvents,
       "This calendar provider does not support recurring events",
     );
-    if (!allDay && !args.timeZone) {
+    if (args.recurrence.length > 0 && !allDay && !args.timeZone) {
       throw new Error("A time zone is required to make a timed event repeat");
     }
   }
@@ -689,9 +711,6 @@ export async function updateEventOp(
     args.reminders,
   );
 
-  const scope = target.providerSeriesId
-    ? (args.scope ?? "thisEvent")
-    : "thisEvent";
   const notify = args.attendees !== undefined ? ("all" as const) : undefined;
   const operation = await claimWrite(
     ctx,
@@ -740,7 +759,7 @@ export async function updateEventOp(
   }
 
   try {
-    if (args.recurrence !== undefined) {
+    if (args.recurrence !== undefined && !target.providerSeriesId) {
       const event = await adapter.updateEvent({
         ref: {
           calendarId: target.providerCalendarId,
@@ -826,18 +845,47 @@ export async function updateEventOp(
       };
     }
     const isSeriesHead = row.startMs === master.startMs;
+    // From the first occurrence, "this and following" is the whole series.
     if (scope === "allEvents" || isSeriesHead) {
+      if (args.recurrence?.length === 0) {
+        throw new Error(
+          "This is the series' first event. To stop it repeating, delete the following events instead",
+        );
+      }
+      // A new rule replaces the series' RRULE but keeps its exceptions
+      // (EXDATE/RDATE): the provider replaces the whole list.
+      const seriesRecurrence =
+        args.recurrence === undefined
+          ? undefined
+          : [
+              ...args.recurrence,
+              ...(master.recurrence ?? []).filter(
+                (line) =>
+                  !line.startsWith("RRULE:") && !args.recurrence!.includes(line),
+              ),
+            ];
       const event = await adapter.updateEvent({
         ref: { calendarId: target.providerCalendarId, eventId: masterId },
-        patch: { ...basePatch(args, attendees, reminders), ...shifted },
+        patch: {
+          ...basePatch(args, attendees, reminders),
+          ...shifted,
+          ...(seriesRecurrence !== undefined
+            ? { recurrence: seriesRecurrence, timeZone: effectiveTimeZone }
+            : {}),
+        },
         notify,
         idempotencyKey: operation.idempotencyKey,
         expectedUpdatedMs:
-          args.attendees !== undefined ? args.expectedSeriesUpdatedMs : undefined,
+          args.attendees !== undefined || args.recurrence !== undefined
+            ? args.expectedSeriesUpdatedMs
+            : undefined,
         knownAttendeeEmails: row.attendees?.map((attendee) => attendee.email),
       });
       await finishUpdate(ctx, userId, target, operation, event);
       try {
+        if (seriesRecurrence !== undefined) {
+          await cacheSeries(ctx, userId, target, event, seriesRecurrence);
+        }
         await refreshTarget(ctx, userId, target, dependencies);
       } catch (error) {
         throw new ExternalWriteCommittedError("Event updated.", error);
@@ -892,6 +940,7 @@ export async function updateEventOp(
         "This calendar provider cannot create conferences",
       );
     }
+    const tailRecurrence = args.recurrence ?? recurrence;
     const tailKey = `${operation.idempotencyKey}:tail`;
     const tailRequest = (idempotencyKey: string) => ({
       calendarId: target.providerCalendarId,
@@ -911,7 +960,8 @@ export async function updateEventOp(
         visibility: carried(args.visibility, row.visibility),
         busy: args.busy === undefined ? row.busy : args.busy,
         attendees: tailAttendees,
-        recurrence,
+        // A new repeat starts here; [] leaves this occurrence on its own.
+        recurrence: tailRecurrence.length > 0 ? tailRecurrence : undefined,
         timeZone: effectiveTimeZone,
         conference: addConference ? ("add" as const) : undefined,
       },
@@ -955,7 +1005,9 @@ export async function updateEventOp(
     await finishUpdate(ctx, userId, target, operation, tail);
     try {
       await cacheSeries(ctx, userId, target, truncatedMaster, truncated);
-      await cacheSeries(ctx, userId, target, tail, tail.recurrence ?? recurrence);
+      if (tailRecurrence.length > 0) {
+        await cacheSeries(ctx, userId, target, tail, tail.recurrence ?? tailRecurrence);
+      }
       await refreshTarget(ctx, userId, target, dependencies);
     } catch (error) {
       throw new ExternalWriteCommittedError("Event series updated.", error);

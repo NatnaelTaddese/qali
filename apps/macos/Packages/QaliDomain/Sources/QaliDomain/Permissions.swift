@@ -114,9 +114,10 @@ public func eventCapabilities(_ event: EventAccessFacts, calendarAccessRole: Str
     // Answering an invitation is not editing it; it still needs write access
     // to the calendar holding the copy we would patch.
     canRespond: writableCalendar && selfAttendee != nil,
-    // Synced with singleEvents=true: a recurring row is one expanded instance
-    // and carries no rule to edit.
-    canChangeRecurrence: canEdit && event.providerSeriesId == nil,
+    // A single event can be made to repeat by anyone who can edit it. A
+    // recurring row is one expanded instance, so changing its repeat rewrites
+    // the organiser's series rule: only the organiser may.
+    canChangeRecurrence: canEdit && (event.providerSeriesId == nil || isOrganizer),
     isOrganizer: isOrganizer,
     selfResponse: selfAttendee?.responseStatus,
     readOnlyReason: readOnlyReason

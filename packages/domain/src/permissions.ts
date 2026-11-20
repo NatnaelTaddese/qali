@@ -49,6 +49,9 @@ export interface EventCapabilities {
   /** Remove your own copy, leaving the organiser's untouched. */
   canRemoveSelf: boolean;
   canRespond: boolean;
+  /** Set or change how the event repeats. On an occurrence of a series this
+   * rewrites the series' rule, so it needs the "this and following" or "all
+   * events" scope (the backend refuses "this event"). */
   canChangeRecurrence: boolean;
   isOrganizer: boolean;
   /** Your own RSVP: "needsAction" | "declined" | "tentative" | "accepted". */
@@ -108,9 +111,12 @@ export function eventCapabilities(
     // still works on an event locked against every other change. It does need
     // write access to the calendar holding the copy we would patch.
     canRespond: writableCalendar && selfAttendee !== undefined,
-    // We sync with singleEvents=true, so a recurring row is one expanded
-    // instance and never carries its own rule — there is nothing here to edit.
-    canChangeRecurrence: canEdit && event.providerSeriesId === undefined,
+    // A single event can be made to repeat by anyone who can edit it. A
+    // recurring row is one expanded instance (we sync with singleEvents=true),
+    // so changing its repeat rewrites the organiser's series rule: only the
+    // organiser may, as with splitting the series.
+    canChangeRecurrence:
+      canEdit && (event.providerSeriesId === undefined || isOrganizer),
     isOrganizer,
     selfResponse: selfAttendee?.responseStatus,
     readOnlyReason,

@@ -493,7 +493,7 @@ describe("single event recurrence conversion", () => {
     expect(methods).toEqual(["GET"]);
   });
 
-  test("does not replace the rule of an existing recurring instance", async () => {
+  test("does not give one occurrence of a series its own rule", async () => {
     const row = eventRow({ providerSeriesId: "existing-master" });
     const { ctx } = actionContext(row);
     let fetched = false;
@@ -508,7 +508,31 @@ describe("single event recurrence conversion", () => {
         recurrence: ["RRULE:FREQ=DAILY"],
         timeZone: "Asia/Shanghai",
       }),
-    ).rejects.toThrow("already part");
+    ).rejects.toThrow("not to one occurrence");
+    expect(fetched).toBe(false);
+  });
+
+  test("leaves a series' rule to its organiser", async () => {
+    const row = eventRow({
+      providerSeriesId: "existing-master",
+      organizer: { self: false },
+      guestsCanModify: true,
+    });
+    const { ctx } = actionContext(row);
+    let fetched = false;
+    globalThis.fetch = (async () => {
+      fetched = true;
+      return Response.json({});
+    }) as typeof fetch;
+
+    await expect(
+      updateEventOp(ctx, row.userId, "access-token", {
+        eventId: row._id,
+        scope: "allEvents",
+        recurrence: ["RRULE:FREQ=DAILY"],
+        timeZone: "Asia/Shanghai",
+      }),
+    ).rejects.toThrow("Only the organiser");
     expect(fetched).toBe(false);
   });
 
@@ -599,6 +623,162 @@ describe("scoped recurring updates through a non-Google adapter", () => {
       startMs: masterEvent().startMs + 60 * 60_000,
       endMs: masterEvent().endMs + 60 * 60_000,
     });
+  });
+
+  /** An adapter recording each write, whose tail series is created as asked. */
+  const recordingAdapter = () => {
+    const writes: { kind: string; request: unknown }[] = [];
+    const adapter = {
+      provider: "microsoft",
+      capabilities,
+      async getEvent() {
+        return masterEvent();
+      },
+      async createEvent(request: CreateEventRequest) {
+        writes.push({ kind: "create", request });
+        return {
+          ...masterEvent(),
+          id: "tail-series",
+          startMs: request.event.startMs,
+          endMs: request.event.endMs,
+          recurrence: request.event.recurrence,
+        };
+      },
+      async reconcileAmbiguousCreate() {
+        return null;
+      },
+      async updateEvent(request: UpdateEventRequest) {
+        writes.push({ kind: "update", request });
+        return { ...masterEvent(), ...request.patch, updatedMs: 2 };
+      },
+    } as unknown as CalendarProviderAdapter;
+    return { adapter, writes };
+  };
+  const seriesRules = (mutations: unknown[]) =>
+    mutations.filter(
+      (mutation): mutation is { providerEventId: string; recurrence: string[] } =>
+        typeof mutation === "object" &&
+        mutation !== null &&
+        "recurrence" in mutation &&
+        "providerEventId" in mutation,
+    );
+
+  test("gives the whole series a new rule, keeping its exceptions", async () => {
+    const row = recurringRow();
+    const { ctx, mutations } = actionContext(row);
+    const { adapter, writes } = recordingAdapter();
+    const exception = "EXDATE;TZID=Asia/Shanghai:20260915T090000";
+    const getEvent = adapter.getEvent;
+    adapter.getEvent = async (request) => ({
+      ...(await getEvent(request)),
+      recurrence: ["RRULE:FREQ=WEEKLY", exception],
+    });
+
+    await service.updateEventOp(
+      ctx,
+      row.userId,
+      {
+        eventId: row._id,
+        scope: "allEvents",
+        recurrence: ["RRULE:FREQ=DAILY;COUNT=5"],
+        timeZone: "Asia/Shanghai",
+        operationId: "rule-all",
+      },
+      { getAdapter: async () => adapter, refreshCalendar: async () => {} },
+    );
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      kind: "update",
+      request: {
+        ref: { eventId: "series-master" },
+        patch: {
+          recurrence: ["RRULE:FREQ=DAILY;COUNT=5", exception],
+          timeZone: "Asia/Shanghai",
+        },
+      },
+    });
+    expect(seriesRules(mutations)).toContainEqual(
+      expect.objectContaining({
+        providerEventId: "series-master",
+        recurrence: ["RRULE:FREQ=DAILY;COUNT=5", exception],
+      }),
+    );
+  });
+
+  test("starts the new rule at this occurrence and ends the old series before it", async () => {
+    const row = recurringRow();
+    const { ctx, mutations } = actionContext(row);
+    const { adapter, writes } = recordingAdapter();
+
+    await service.updateEventOp(
+      ctx,
+      row.userId,
+      {
+        eventId: row._id,
+        scope: "thisAndFollowing",
+        recurrence: ["RRULE:FREQ=DAILY"],
+        timeZone: "Asia/Shanghai",
+        operationId: "rule-following",
+      },
+      { getAdapter: async () => adapter, refreshCalendar: async () => {} },
+    );
+
+    expect(writes.map((write) => write.kind)).toEqual(["create", "update"]);
+    expect(writes[0]?.request).toMatchObject({
+      event: { startMs: row.startMs, recurrence: ["RRULE:FREQ=DAILY"] },
+    });
+    expect(writes[1]?.request).toMatchObject({
+      ref: { eventId: "series-master" },
+      patch: { recurrence: [expect.stringContaining("UNTIL=")] },
+    });
+    expect(seriesRules(mutations)).toContainEqual(
+      expect.objectContaining({
+        providerEventId: "tail-series",
+        recurrence: ["RRULE:FREQ=DAILY"],
+      }),
+    );
+  });
+
+  test("stops repeating from this occurrence, which stays on its own", async () => {
+    const row = recurringRow();
+    const { ctx, mutations } = actionContext(row);
+    const { adapter, writes } = recordingAdapter();
+
+    await service.updateEventOp(
+      ctx,
+      row.userId,
+      {
+        eventId: row._id,
+        scope: "thisAndFollowing",
+        recurrence: [],
+        operationId: "rule-stop",
+      },
+      { getAdapter: async () => adapter, refreshCalendar: async () => {} },
+    );
+
+    expect(writes.map((write) => write.kind)).toEqual(["create", "update"]);
+    const tail = writes[0]?.request as CreateEventRequest;
+    expect(tail.event.recurrence).toBeUndefined();
+    expect(
+      seriesRules(mutations).some((rule) => rule.providerEventId === "tail-series"),
+    ).toBe(false);
+  });
+
+  test("refuses to stop the whole series, which is a delete", async () => {
+    const row = recurringRow();
+    const { ctx } = actionContext(row);
+    const { adapter, writes } = recordingAdapter();
+
+    await expect(
+      service.updateEventOp(
+        ctx,
+        row.userId,
+        { eventId: row._id, scope: "allEvents", recurrence: [] },
+        { getAdapter: async () => adapter, refreshCalendar: async () => {} },
+      ),
+    ).rejects.toThrow("this and following");
+    expect(writes).toHaveLength(0);
   });
 
   test("creates a deterministic tail first and compensates a definitive truncation failure", async () => {

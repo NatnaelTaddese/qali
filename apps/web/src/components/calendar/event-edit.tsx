@@ -5,7 +5,7 @@ import { Button } from "@qali/ui/components/button";
 import { GooDropdown } from "@qali/ui/components/ui/goo-dropdown";
 import { Spinner } from "@qali/ui/components/spinner";
 import { useAction, useQuery } from "convex/react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -19,7 +19,7 @@ import { normalizeReminders, sameReminders } from "./reminders";
 import { usePreferences } from "@/components/workspace/preferences-context";
 import { editableEventId, type CalendarEvent } from "./lib";
 import { useEventCapabilities } from "./permissions";
-import { toRRule } from "./rrule";
+import { parseRRule, toRRule, type Recurrence } from "./rrule";
 
 /** Args for `updateEvent`, minus the id — built by diffing the form against
  * what the event started as. */
@@ -89,11 +89,11 @@ export function diffEvent(
     patch.timeZone = timeZone;
   }
 
-  if (
-    next.recurrence !== null &&
-    JSON.stringify(next.recurrence) !== JSON.stringify(initial.recurrence)
-  ) {
-    patch.recurrence = toRRule(next.recurrence, timeZone);
+  if (JSON.stringify(next.recurrence) !== JSON.stringify(initial.recurrence)) {
+    // [] only reaches a series (whose baseline holds its rule): it ends the
+    // series before this occurrence.
+    patch.recurrence =
+      next.recurrence === null ? [] : toRRule(next.recurrence, timeZone);
   }
 
   if (!sameReminders(next.reminders, initial.reminders)) {
@@ -136,6 +136,17 @@ export function finalizeEventPatch(
     : patch;
 }
 
+/** The scopes a save may use. A new repeat can't apply to one occurrence, and
+ * stopping a series ends it from this occurrence on. */
+export function saveScopesFor(patch: EventPatch): SaveScope[] {
+  if (patch.recurrence === undefined) {
+    return ["thisEvent", "thisAndFollowing", "allEvents"];
+  }
+  return patch.recurrence.length === 0
+    ? ["thisAndFollowing"]
+    : ["thisAndFollowing", "allEvents"];
+}
+
 /** Edit an existing event. The form is the same one used to create — what
  * differs is that the fields start populated, the save sends only what changed,
  * and what the user may change at all depends on the event. */
@@ -149,6 +160,9 @@ export function EventEdit({
   onSaved: () => void;
 }) {
   const updateEvent = useAction(api.domains.calendar.service.updateEvent);
+  const refreshEventRecurrence = useAction(
+    api.domains.calendar.service.refreshEventRecurrence,
+  );
   const calendars = useQuery(api.domains.calendar.queries.listCalendars) ?? [];
   const { timeZone } = usePreferences();
   const capabilities = useEventCapabilities()(event);
@@ -167,11 +181,39 @@ export function EventEdit({
   // should reach across the series. A plain event has only itself to change.
   const isRecurring = Boolean(event.providerSeriesId);
 
+  // A series' rule lives on its master, cached apart from the row. Once read,
+  // it is both the repeat shown and the baseline a change is diffed against.
+  const seriesLines = useQuery(
+    api.domains.calendar.queries.getEventRecurrence,
+    isRecurring ? { eventId: event._id } : "skip",
+  );
+  useEffect(() => {
+    if (!isRecurring || seriesLines !== null) return;
+    // Not cached yet (or stale): fetch it; the query updates when it lands.
+    refreshEventRecurrence({ eventId: event._id }).catch(() => {});
+  }, [event._id, isRecurring, seriesLines, refreshEventRecurrence]);
+  const seriesRule = seriesLines ? parseRRule(seriesLines, timeZone) : null;
+  // The user's pick, once they touch the repeat of a series.
+  const [seriesRepeat, setSeriesRepeat] = useState<{ value: Recurrence | null }>();
+  const baseline: EventFormValue = isRecurring
+    ? { ...initial, recurrence: seriesRule }
+    : initial;
+  const shown: EventFormValue = isRecurring
+    ? { ...value, recurrence: seriesRepeat ? seriesRepeat.value : seriesRule }
+    : value;
+  // Only a rule this form can show and rewrite is editable here; anything
+  // else (an unknown or unparsed rule) stays read-only.
+  const formCapabilities =
+    isRecurring && !seriesRule
+      ? { ...capabilities, canChangeRecurrence: false }
+      : capabilities;
+  const scopes = saveScopesFor(diffEvent(baseline, shown, event, timeZone));
+
   const save = (scope: SaveScope) => {
     if (!valid || saving) return;
     // The working zone: the form composed its times in it, so it is the
     // honest label and recurrence anchor.
-    const patch = diffEvent(initial, value, event, timeZone);
+    const patch = diffEvent(baseline, shown, event, timeZone);
     if (Object.keys(patch).length === 0) {
       onSaved();
       return;
@@ -212,13 +254,22 @@ export function EventEdit({
 
   return (
     <EventForm
-      value={value}
-      onChange={(patch) => setValue((prev) => ({ ...prev, ...patch }))}
+      value={shown}
+      onChange={({ recurrence, ...patch }) => {
+        if (recurrence !== undefined && isRecurring) {
+          setSeriesRepeat({ value: recurrence });
+        }
+        setValue((prev) => ({
+          ...prev,
+          ...patch,
+          ...(recurrence !== undefined && !isRecurring ? { recurrence } : {}),
+        }));
+      }}
       onChangeRange={(startMs, endMs) =>
         setValue((prev) => ({ ...prev, startMs, endMs }))
       }
       onSubmit={onSubmit}
-      capabilities={capabilities}
+      capabilities={formCapabilities}
       calendars={calendars}
       titlePlaceholder="(No title)"
       header={
@@ -238,6 +289,7 @@ export function EventEdit({
       footer={
         capabilities.canEdit && isRecurring ? (
           <RecurringSaveControl
+            scopes={scopes}
             valid={valid}
             saving={saving}
             onCancel={onCancel}
@@ -269,11 +321,13 @@ const SAVE_SCOPES: { scope: SaveScope; label: string }[] = [
 
 /** The recurring-event footer asks how far the edit should reach before saving. */
 function RecurringSaveControl({
+  scopes,
   valid,
   saving,
   onCancel,
   onSelect,
 }: {
+  scopes: SaveScope[];
   valid: boolean;
   saving: boolean;
   onCancel: () => void;
@@ -300,7 +354,7 @@ function RecurringSaveControl({
         foreground="var(--primary-foreground)"
         hoverFill="color-mix(in oklch, var(--primary-foreground) 12%, transparent)"
         menuLabel="Apply changes to recurring event"
-        items={SAVE_SCOPES.map((option) => ({
+        items={SAVE_SCOPES.filter((option) => scopes.includes(option.scope)).map((option) => ({
           label: option.label,
           onClick: () => onSelect(option.scope),
         }))}

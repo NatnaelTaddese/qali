@@ -171,9 +171,7 @@ struct BookingPanel: View {
             copied = false
           }
         }
-        IconButton(symbol: "arrow.up.right.square", label: "Open in browser") {
-          NSWorkspace.shared.open(url)
-        }
+        BookingShareButton(url: url, title: page.title)
       }
     }
     .padding(.horizontal, 12)
@@ -605,6 +603,34 @@ private struct IconButton: View {
     .onHover { hovering = $0 }
     .accessibilityLabel(label)
     .help(label)
+  }
+}
+
+/// The system share menu for the link (Messages, Mail, AirDrop, Notes…),
+/// drawn like the copy button beside it.
+private struct BookingShareButton: View {
+  let url: URL
+  let title: String?
+  @State private var hovering = false
+
+  var body: some View {
+    ShareLink(
+      item: url,
+      subject: Text(title ?? "Book a time with me"),
+      message: Text("Pick a time that works for you:"),
+      preview: SharePreview(title ?? "Book a time with me")
+    ) {
+      Image(systemName: "square.and.arrow.up")
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(hovering ? Palette.foreground : Palette.mutedForeground)
+        .frame(width: 26, height: 26)
+        .background { Circle().fill(Palette.foreground.opacity(hovering ? 0.08 : 0)) }
+        .contentShape(.circle)
+    }
+    .buttonStyle(.plain)
+    .onHover { hovering = $0 }
+    .accessibilityLabel("Share link")
+    .help("Share link")
   }
 }
 

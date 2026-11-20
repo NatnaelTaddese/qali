@@ -119,9 +119,13 @@ struct BookingPane: View {
         LabeledContent {
           HStack {
             Button(copied ? "Copied" : "Copy Link", systemImage: copied ? "checkmark" : "doc.on.doc", action: copyLink)
-            Button("Open", systemImage: "safari") {
-              NSWorkspace.shared.open(BookingData.publicURL(slug: normalized))
-            }
+            ShareLink(
+              "Share…",
+              item: BookingData.publicURL(slug: normalized),
+              subject: Text(draft.title.isEmpty ? "Book a time with me" : draft.title),
+              message: Text("Pick a time that works for you:")
+            )
+            // Only the saved link: an unsaved name isn't live yet.
             .disabled(page == nil || !slugUnchanged)
           }
           .disabled(!slugReady)

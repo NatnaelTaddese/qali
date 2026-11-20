@@ -60,6 +60,7 @@ extension EnvironmentValues {
 /// days, its code as bright as the day numbers. Empty when no other zones are set.
 struct ZoneRailHeader: View {
   let zone: WorkingZone
+  let data: CalendarData
 
   @AppStorage(ZoneRailPrefs.zones) private var raw = ""
 
@@ -67,38 +68,49 @@ struct ZoneRailHeader: View {
     let others = ZoneRailPrefs.zones(raw)
     HStack(spacing: 0) {
       if !others.isEmpty {
-        ForEach(others, id: \.identifier) { other in
-          cell(
-            other.identifier,
-            detail: zoneOffsetLabel(other, from: zone, at: .now),
-            primary: false
-          )
+        let ids = others.map(\.identifier)
+        ForEach(Array(others.enumerated()), id: \.element.identifier) { index, other in
+          let city = zoneShortLabel(other.identifier)
+          Menu {
+            Section("\(city) · \(other.format(.now, timePattern(use24h: data.preferences?.use24h ?? false))) · \(zoneOffsetPhrase(other, from: zone, at: .now))") {
+              Button("Make \(city) Your Time Zone") {
+                ZoneRailEdits.makePrimary(other.identifier, rail: ids, working: zone, data: data)
+              }
+            }
+            Section {
+              Button("Move Left") { ZoneRailEdits.save(zonesMoving(ids, other.identifier, by: -1), data: data) }
+                .disabled(index == 0)
+              Button("Move Right") { ZoneRailEdits.save(zonesMoving(ids, other.identifier, by: 1), data: data) }
+                .disabled(index == ids.count - 1)
+            }
+            Section {
+              Button("Time Zone Settings…") { ZoneRailEdits.openSettings() }
+              Button("Remove \(city)") {
+                ZoneRailEdits.save(ids.filter { $0 != other.identifier }, data: data)
+              }
+            }
+          } label: {
+            ZoneRailCell(
+              identifier: other.identifier,
+              detail: zoneOffsetLabel(other, from: zone, at: .now),
+              primary: false
+            )
+          }
+          .zoneRailMenu()
           .frame(width: GridMetrics.zoneColumn)
         }
-        cell(zone.identifier, detail: gmtLabel(zone), primary: true)
-          .frame(width: GridMetrics.gutter)
+        Menu {
+          Section("\(zoneShortLabel(zone.identifier)) · your time zone") {
+            Button("Time Zone Settings…") { ZoneRailEdits.openSettings() }
+          }
+        } label: {
+          ZoneRailCell(identifier: zone.identifier, detail: gmtLabel(zone), primary: true)
+        }
+        .zoneRailMenu()
+        .frame(width: GridMetrics.gutter)
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-    .allowsHitTesting(false)
-  }
-
-  private func cell(_ identifier: String, detail: String, primary: Bool) -> some View {
-    let city = zoneShortLabel(identifier)
-    return VStack(alignment: .trailing, spacing: 2) {
-      Text(zoneCode(identifier))
-        .font(.sans(10, .semibold))
-        .tracking(0.4)
-        .foregroundStyle(primary ? Palette.foreground : Palette.mutedForeground)
-      Text(detail)
-        .font(.sans(9))
-        .monospacedDigit()
-        .foregroundStyle(Palette.mutedForeground)
-    }
-    .padding(.trailing, 6)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-    .help(primary ? "\(city) (your calendar’s zone)" : "\(city), \(detail) from your zone")
-    .accessibilityElement(children: .combine)
   }
 
   /// "GMT−5", "GMT+5:30", "GMT".
@@ -108,6 +120,88 @@ struct ZoneRailHeader: View {
     let sign = seconds < 0 ? "−" : "+"
     let hours = abs(seconds) / 3600, minutes = abs(seconds) % 3600 / 60
     return minutes == 0 ? "GMT\(sign)\(hours)" : "GMT\(sign)\(hours):\(String(format: "%02d", minutes))"
+  }
+}
+
+/// One zone's code and offset in the rail's header, lit while the pointer
+/// is over it to say it opens a menu.
+private struct ZoneRailCell: View {
+  let identifier: String
+  let detail: String
+  let primary: Bool
+
+  @State private var hovering = false
+
+  var body: some View {
+    let city = zoneShortLabel(identifier)
+    VStack(alignment: .trailing, spacing: 2) {
+      Text(zoneCode(identifier))
+        .font(.sans(10, .semibold))
+        .tracking(0.4)
+        .foregroundStyle(primary || hovering ? Palette.foreground : Palette.mutedForeground)
+      Text(detail)
+        .font(.sans(9))
+        .monospacedDigit()
+        .foregroundStyle(Palette.mutedForeground)
+    }
+    .padding(.trailing, 6)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+    .background {
+      RoundedRectangle(cornerRadius: 6)
+        .fill(Palette.foreground.opacity(hovering ? 0.07 : 0))
+        .padding(.vertical, 6)
+        .padding(.horizontal, 3)
+    }
+    .contentShape(.rect)
+    .onHover { hovering = $0 }
+    .animation(.easeOut(duration: 0.12), value: hovering)
+    .help(primary ? "\(city), your time zone" : "\(city), \(detail) from your zone")
+    .accessibilityElement(children: .combine)
+    .accessibilityHint("Opens a menu")
+  }
+}
+
+extension View {
+  /// A rail header cell as a plain, indicator-less pull-down: the cell is the
+  /// button and the menu is the system's.
+  fileprivate func zoneRailMenu() -> some View {
+    menuStyle(.button)
+      .buttonStyle(.plain)
+      .menuIndicator(.hidden)
+  }
+}
+
+/// The rail header menus' changes: the zones are saved to the account, and
+/// shown at once except for a swap with the working zone, which waits for
+/// the account so the rail and the working zone change together.
+@MainActor enum ZoneRailEdits {
+  static func save(_ identifiers: [String], data: CalendarData) {
+    let defaults = UserDefaults.standard
+    let before = defaults.string(forKey: ZoneRailPrefs.zones)
+    defaults.set(ZoneRailPrefs.encode(identifiers), forKey: ZoneRailPrefs.zones)
+    Task {
+      do {
+        try await data.updatePreferences(PreferencesPatch(otherTimeZones: identifiers))
+      } catch {
+        defaults.set(before, forKey: ZoneRailPrefs.zones)
+        data.announce("Couldn't save your time zones.")
+      }
+    }
+  }
+
+  static func makePrimary(_ identifier: String, rail: [String], working: WorkingZone, data: CalendarData) {
+    let next = zonesAfterMakingPrimary(rail, other: identifier, working: working.identifier)
+    Task {
+      do {
+        try await data.updatePreferences(PreferencesPatch(timeZone: identifier, otherTimeZones: next))
+      } catch {
+        data.announce("Couldn't change your time zone.")
+      }
+    }
+  }
+
+  static func openSettings() {
+    (NSApp.delegate as? AppDelegate)?.showSettings(pane: .dateTime)
   }
 }
 

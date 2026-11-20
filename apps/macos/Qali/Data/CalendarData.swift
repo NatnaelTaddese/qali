@@ -65,9 +65,12 @@ final class CalendarData {
   /// The people directory (guest search and photos), kept for the session
   /// so panels opening again have it at once.
   let peopleQuery: LiveQuery<[PersonRow]>
+  /// The booking page, its date overrides and the requests waiting on it.
+  let booking: BookingData
 
   init(client: ConvexClient) {
     self.client = client
+    booking = BookingData(client: client)
     preferencesQuery = LiveQuery(client, ConvexAPI.getMyPreferences)
     calendarsQuery = LiveQuery(client, ConvexAPI.listCalendars)
     eventsQuery = LiveQuery(client, ConvexAPI.listEventsInRange, args: nil)
@@ -83,6 +86,7 @@ final class CalendarData {
     calendarsQuery.onResult = { [eventCache] calendars in eventCache.record(calendars: calendars) }
     eventsQuery.onChange = { [weak self] in self?.refreshEvents() }
     refreshEvents()
+    booking.announce = { [weak self] message in self?.announce(message) }
   }
 
   /// The connected accounts, oldest first; nil while loading.

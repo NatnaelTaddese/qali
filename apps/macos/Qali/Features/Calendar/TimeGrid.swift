@@ -36,6 +36,7 @@ struct TimeGrid: View {
 
   var body: some View {
     let zone = navigation.zone
+    let painting = data.booking.isPainting
     let columns = days.count
     let side = Self.side(columns: columns)
     let strip = stripDays(anchor: days[0], columns: columns, side: side, zone: zone)
@@ -66,6 +67,14 @@ struct TimeGrid: View {
                   ForEach(Array(strip.enumerated()), id: \.element) { index, day in
                     DayHeader(day: day, navigation: navigation, zoom: zoom, onPage: visible.contains(index))
                       .frame(width: column, height: GridMetrics.headerHeight, alignment: .leading)
+                      .overlay(alignment: .trailing) {
+                        if painting, day.ms >= zone.startOfDay(.now).ms,
+                          data.booking.availability(on: day, zone: zone).isOverride
+                        {
+                          UseWeeklyButton { data.booking.resetDay(day, zone: zone) }
+                            .padding(.trailing, 6)
+                        }
+                      }
                   }
                 }
               }
@@ -133,7 +142,12 @@ struct TimeGrid: View {
                       }
                     // Under the cards, so a drag that starts on one is
                     // the card's and not a new event.
-                    CreateDragLayer(days: strip, firstVisible: side, column: column, dayHeight: hour * 24, drawing: drawing)
+                    CreateDragLayer(
+                      days: strip, firstVisible: side, column: column, dayHeight: hour * 24, drawing: drawing,
+                      paint: painting ? data.booking : nil, zone: zone
+                    )
+                    // While painting, events and requests drop back to inert
+                    // context, so a span can be drawn anywhere on a day.
                     TimedEvents(
                       days: strip,
                       visible: visible,
@@ -145,12 +159,21 @@ struct TimeGrid: View {
                       data: data,
                       drag: drag
                     )
+                    .opacity(painting ? 0.45 : 1)
+                    .allowsHitTesting(!painting)
+                    BookingBlocks(days: strip, column: column, dayHeight: hour * 24, navigation: navigation, data: data)
+                      .opacity(painting ? 0.45 : 1)
+                      .allowsHitTesting(!painting)
+                    if painting {
+                      AvailabilityLayer(days: strip, column: column, dayHeight: hour * 24, navigation: navigation, booking: data.booking)
+                    }
                     CreateGhost(
                       days: strip,
                       column: column,
                       dayHeight: hour * 24,
                       drawing: drawing,
                       navigation: navigation,
+                      painting: painting,
                       reveal: reveal
                     )
                     NowLine(days: strip, column: column, navigation: navigation, hour: hour)
@@ -1134,6 +1157,10 @@ private struct CreateDragLayer: View {
   let column: CGFloat
   let dayHeight: CGFloat
   let drawing: GridDrawing
+  /// While painting availability, the store a drawn span goes to instead
+  /// of the create form.
+  let paint: BookingData?
+  let zone: WorkingZone
 
   @Environment(Island.self) private var island
 
@@ -1147,6 +1174,10 @@ private struct CreateDragLayer: View {
               let index = Int(value.startLocation.x / max(column, 1))
               guard days.indices.contains(index) else { return }
               let dayStart = days[index].ms
+              // Days already gone take no painting, as on the web.
+              if let paint {
+                guard paint.paintingReady(zone: zone), dayStart >= zone.startOfDay(.now).ms else { return }
+              }
               let pressed = snappedMs(y: value.startLocation.y, dayStartMs: dayStart, dayHeight: dayHeight)
               // A press at the very bottom still leaves room for a range.
               drawing.anchor = (dayStart, min(pressed, dayStart + msPerDay - snapMs))
@@ -1186,7 +1217,13 @@ private struct CreateDragLayer: View {
   private func finish() {
     drawing.anchor = nil
     if let range = drawing.range {
-      island.openCreate(startMs: range.startMs, endMs: range.endMs)
+      if let paint {
+        if let day = days.first(where: { $0.ms == range.dayStartMs }) {
+          paint.addInterval(on: day, startMs: range.startMs, endMs: range.endMs, zone: zone)
+        }
+      } else {
+        island.openCreate(startMs: range.startMs, endMs: range.endMs)
+      }
     }
     drawing.range = nil
   }
@@ -1197,18 +1234,20 @@ private struct CreateDragLayer: View {
 private struct GhostPiece: View {
   let label: String
   var cornerRadius: CGFloat = 7
+  /// Green for a span of availability being painted.
+  var tint: Color = Palette.primary
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
     Text(label)
       .font(.sans(TextSize.xs, .medium))
-      .foregroundStyle(Palette.primary)
+      .foregroundStyle(tint)
       .lineLimit(1)
       .padding(.horizontal, 8)
       .padding(.vertical, 3)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-      .background(Palette.primary.opacity(0.1), in: shape)
-      .overlay { shape.strokeBorder(Palette.primary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [4, 3])) }
+      .background(tint.opacity(0.1), in: shape)
+      .overlay { shape.strokeBorder(tint.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [4, 3])) }
       .clipShape(shape)
   }
 }
@@ -1221,6 +1260,7 @@ private struct CreateGhost: View {
   let dayHeight: CGFloat
   let drawing: GridDrawing
   let navigation: CalendarNavigation
+  let painting: Bool
   /// Scrolls the hours so the ghost's first piece (in strip coordinates)
   /// clears the island.
   let reveal: (CGRect, CGRect) -> Void
@@ -1231,6 +1271,8 @@ private struct CreateGhost: View {
     let range: (start: Double, end: Double)? =
       if let drawn = drawing.range {
         (drawn.startMs, drawn.endMs)
+      } else if painting {
+        nil
       } else if let draft = island.ghostDraft, !draft.allDay, draft.isValid {
         (draft.startMs, draft.endMs)
       } else {
@@ -1245,7 +1287,10 @@ private struct CreateGhost: View {
           let start = max(range.start, dayStart)
           let end = min(range.end, dayEnd)
           if end > start {
-            GhostPiece(label: label(range.start, range.end, pending: drawing.range == nil))
+            GhostPiece(
+              label: label(range.start, range.end, pending: drawing.range == nil),
+              tint: painting ? Palette.available : Palette.primary
+            )
               .frame(
                 width: max(column - 8, 0),
                 height: max(CGFloat((end - start) / msPerDay) * dayHeight, 14)

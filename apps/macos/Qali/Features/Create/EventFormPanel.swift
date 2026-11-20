@@ -618,7 +618,7 @@ struct EventFormPanel: View {
 // MARK: - Pieces
 
 /// The form's filled capsule: Create or Save.
-private struct PrimaryButton: ViewModifier {
+struct PrimaryButton: ViewModifier {
   func body(content: Content) -> some View {
     content
       .buttonStyle(.glassProminent)
@@ -750,6 +750,8 @@ struct PickerChip: View {
   let text: String
   let open: Bool
   var filled = false
+  /// Set where chips stack in a column, so their edges line up.
+  var minWidth: CGFloat?
   let action: () -> Void
 
   @State private var hovering = false
@@ -762,6 +764,7 @@ struct PickerChip: View {
         .monospacedDigit()
         .foregroundStyle(Palette.foreground)
         .padding(.horizontal, 10)
+        .frame(minWidth: minWidth)
         .frame(height: 26)
         .background(Palette.foreground.opacity(fill), in: .capsule)
         .contentShape(.capsule)

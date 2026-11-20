@@ -19,9 +19,12 @@ struct BottomIsland: View {
   @State private var frame: CGRect = .zero
   @State private var outsideClicks = OutsideClickMonitor()
 
+  /// Painting availability takes the island over, as on the web.
+  private var painting: Bool { data.booking.isPainting }
+
   private var shape: RoundedRectangle {
     // The nav row is a pill; panels are cards, so they round less.
-    RoundedRectangle(cornerRadius: island.view == nil ? 23 : 20, style: .continuous)
+    RoundedRectangle(cornerRadius: island.view == nil || painting ? 23 : 20, style: .continuous)
   }
 
   var body: some View {
@@ -65,8 +68,13 @@ struct BottomIsland: View {
     .background { shortcuts }
     // A half-filled create form is real work: only Escape or Cancel discards
     // it, never a click elsewhere (which may well be a drag for a new range).
-    .onChange(of: island.view != nil && island.view?.holdsDraft != true, initial: true) { _, dismissable in
+    .onChange(of: island.view != nil && island.view?.holdsDraft != true && !painting, initial: true) { _, dismissable in
       outsideClicks.island = dismissable ? island : nil
+    }
+    // Painting starts from any face, the Settings window included; the
+    // panel it came from closes, and Done brings back the nav row.
+    .onChange(of: painting) { _, painting in
+      if painting { island.close() }
     }
     .onChange(of: frame) { _, frame in
       outsideClicks.exempt = frame
@@ -81,6 +89,16 @@ struct BottomIsland: View {
         switch name {
         case "account": island.open(.account)
         case "search": island.open(.search)
+        // `-QaliBookingScreen main|requests` picks the booking face's screen.
+        case "booking": island.open(.booking)
+        case "request":
+          while data.booking.pending.isEmpty { try? await Task.sleep(for: .milliseconds(100)) }
+          let request = data.booking.pending[0]
+          island.open(.bookingRequest(request))
+          navigation.reveal(booking: request)
+        case "paint":
+          while data.booking.page == nil { try? await Task.sleep(for: .milliseconds(100)) }
+          await data.booking.beginPainting(zone: navigation.zone)
         case "event":
           // `-QaliEventTitle Lunch` picks the first event with that title.
           while data.isLoadingEvents { try? await Task.sleep(for: .milliseconds(100)) }
@@ -109,6 +127,21 @@ struct BottomIsland: View {
 
   /// The current face. Each one measures itself, and the shell follows.
   @ViewBuilder private var content: some View {
+    if painting {
+      AvailabilityPaintBar(ready: data.booking.paintingReady(zone: navigation.zone)) {
+        data.booking.stopPainting()
+      }
+      .padding(.leading, 14)
+      .padding(.trailing, 7)
+      .padding(.vertical, 6)
+      .fixedSize()
+      .modifier(IslandFace(size: $size))
+    } else {
+      face
+    }
+  }
+
+  @ViewBuilder private var face: some View {
     switch island.view {
     case nil:
       IslandNavRow(island: island, data: data, create: openCreate)
@@ -134,6 +167,13 @@ struct BottomIsland: View {
       EventFormPanel(draft: draftBinding, mode: .edit(event), island: island, data: data, navigation: navigation)
         .modifier(IslandPanel(width: IslandView.edit(event).width, size: $size))
         .id(event.id)
+    case .booking:
+      BookingPanel(island: island, data: data, navigation: navigation)
+        .modifier(IslandPanel(width: IslandView.booking.width, size: $size))
+    case .bookingRequest(let booking):
+      BookingRequestPanel(booking: booking, island: island, data: data, navigation: navigation)
+        .modifier(IslandPanel(width: IslandView.bookingRequest(booking).width, size: $size))
+        .id(booking.id)
     }
   }
 
@@ -166,11 +206,12 @@ struct BottomIsland: View {
     Group {
       Button("Search") { island.toggle(.search) }
         .keyboardShortcut("k", modifiers: .command)
-        .disabled(island.view?.holdsDraft == true)
+        .disabled(island.view?.holdsDraft == true || painting)
       Button("New Event", action: openCreate)
         .keyboardShortcut("n", modifiers: .command)
-        .disabled(island.view?.holdsDraft == true)
-      if island.view != nil, !island.guestMatchesOpen, !island.drillDownOpen {
+        .disabled(island.view?.holdsDraft == true || painting)
+      // While painting, the bar's Done button owns Escape.
+      if island.view != nil, !painting, !island.guestMatchesOpen, !island.drillDownOpen {
         Button("Close", action: island.cancel)
           .keyboardShortcut(.cancelAction)
       }

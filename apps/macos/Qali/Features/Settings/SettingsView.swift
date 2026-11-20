@@ -5,7 +5,7 @@ import SwiftUI
 /// Date & Time and Events, and General holds the account and appearance that
 /// the web keeps in the dock's account panel.
 enum SettingsPane: String, CaseIterable, Identifiable, Hashable {
-  case general, accounts, calendars, dateTime, events, menuBar
+  case general, accounts, calendars, dateTime, events, booking, menuBar
 
   var id: Self { self }
 
@@ -16,6 +16,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Hashable {
     case .calendars: "Calendars"
     case .dateTime: "Date & Time"
     case .events: "Events"
+    case .booking: "Booking Link"
     case .menuBar: "Menu Bar"
     }
   }
@@ -27,6 +28,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Hashable {
     case .calendars: "calendar"
     case .dateTime: "clock"
     case .events: "bell"
+    case .booking: "calendar.badge.clock"
     case .menuBar: "menubar.rectangle"
     }
   }
@@ -109,6 +111,7 @@ struct SettingsView: View {
         case .calendars: CalendarsPane(data: data)
         case .dateTime: DateTimePane(data: data)
         case .events: EventsPane(data: data)
+        case .booking: BookingPane(data: data)
         case .general, .menuBar: EmptyView()
         }
       } else {

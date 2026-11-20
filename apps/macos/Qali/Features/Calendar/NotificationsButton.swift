@@ -51,9 +51,15 @@ struct NotificationsButton: View {
 
   /// As on the web: a reminder closes the feed, opens its event in the
   /// island and reaches for it on the grid, which flashes it once there.
-  /// Booking requests have no panel here yet, so they are only marked read.
+  /// A booking request opens in the island and is reached for on the grid.
   private func open(_ row: NotificationRow) {
     if !row.read { data.markRead(row) }
+    if row.type == "booking_requested", let booking = row.booking {
+      isOpen = false
+      island.open(.bookingRequest(booking))
+      navigation.reveal(booking: booking)
+      return
+    }
     guard row.type == "event_reminder", let event = row.event else { return }
     isOpen = false
     island.open(.event(event))

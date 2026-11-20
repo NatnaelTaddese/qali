@@ -21,6 +21,8 @@ struct EventDetailPanel: View {
   /// A repeating event's rule lines; the inner nil is "not fetched yet".
   @State private var recurrence: LiveQuery<[String]?>
   @State private var recurrenceFailed = false
+  /// The time rail's other zones, whose clocks the event is also read in.
+  @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
 
   init(event: CalendarEvent, island: Island, data: CalendarData, navigation: CalendarNavigation) {
     self.event = event
@@ -110,6 +112,22 @@ struct EventDetailPanel: View {
               .foregroundStyle(Palette.foreground)
             Text(relative(event))
               .font(.sans(TextSize.xs))
+          }
+        }
+        let others = ZoneRailPrefs.zones(railZones)
+        if !event.allDay, !others.isEmpty {
+          DetailRow(symbol: "globe") {
+            VStack(alignment: .leading, spacing: 4) {
+              ForEach(
+                eventTimesInZones(
+                  startMs: event.startMs, endMs: event.endMs, zones: others,
+                  primary: navigation.zone, use24h: navigation.use24h
+                ),
+                id: \.identifier
+              ) { time in
+                ZoneTimeRow(time: time)
+              }
+            }
           }
         }
         if let reminders = reminderText(event) {
@@ -281,6 +299,37 @@ private struct DetailRow<Content: View>: View {
       content
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+  }
+}
+
+/// The event in one of the rail's other zones: day or night there, the
+/// zone's code, its times and, when they differ, its days.
+private struct ZoneTimeRow: View {
+  let time: ZoneEventTime
+
+  var body: some View {
+    HStack(spacing: 6) {
+      Image(systemName: time.isDaytime ? "sun.max.fill" : "moon.fill")
+        .font(.system(size: 9, weight: .semibold))
+        .foregroundStyle(time.isDaytime ? Palette.event(3) : Palette.mutedForeground)
+        .frame(width: 12, height: 17)
+      Text(time.code)
+        .font(.sans(TextSize.xs, .semibold))
+        .tracking(0.4)
+        .frame(width: 30, alignment: .leading)
+      Text(time.time)
+        .monospacedDigit()
+      if let days = time.days {
+        Text(days)
+          .font(.sans(TextSize.xs))
+      }
+    }
+    .lineLimit(1)
+    .help(zoneShortLabel(time.identifier))
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(
+      "\(zoneShortLabel(time.identifier)): \(time.time)\(time.days.map { ", \($0)" } ?? ""), \(time.isDaytime ? "daytime" : "night")"
+    )
   }
 }
 

@@ -148,3 +148,47 @@ private let knownZoneCodes: [String: String] = [
   "Australia/Sydney": "SYD", "Australia/Melbourne": "MEL", "Pacific/Auckland": "AKL",
   "UTC": "UTC", "Etc/UTC": "UTC", "GMT": "GMT", "Etc/GMT": "GMT",
 ]
+
+/// A timed event's span read in one of the rail's other zones, for the
+/// event detail: "11:30 PM – 12:30 AM", with the day or days when they are
+/// not the event's own, and whether it starts in that zone's daytime.
+public struct ZoneEventTime: Equatable, Sendable {
+  public let identifier: String
+  public let code: String
+  public let time: String
+  /// "Wed" when it starts on another date there than here; "Tue → Wed" when
+  /// it runs past midnight there; nil when it is the same day.
+  public let days: String?
+  /// Starts between 6am and 6pm in that zone.
+  public let isDaytime: Bool
+}
+
+public func eventTimesInZones(
+  startMs: Double,
+  endMs: Double,
+  zones: [WorkingZone],
+  primary: WorkingZone,
+  use24h: Bool
+) -> [ZoneEventTime] {
+  let start = Date(ms: startMs), end = Date(ms: endMs)
+  let pattern = timePattern(use24h: use24h)
+  return zones.map { zone in
+    // The last instant inside the event decides its last day, so an event
+    // ending exactly at midnight stays on the day it ran.
+    let lastInstant = end > start ? end.addingTimeInterval(-1) : end
+    let crosses = !zone.isSameDay(start, lastInstant)
+    let moved = calendarDayOffset(start, of: zone, from: primary) != 0
+    let days: String? =
+      crosses
+      ? "\(zone.format(start, "EEE")) → \(zone.format(lastInstant, "EEE"))"
+      : moved ? zone.format(start, "EEE") : nil
+    let hour = zone.calendar.component(.hour, from: start)
+    return ZoneEventTime(
+      identifier: zone.identifier,
+      code: zoneCode(zone.identifier),
+      time: "\(zone.format(start, pattern)) – \(zone.format(end, pattern))",
+      days: days,
+      isDaytime: (6..<18).contains(hour)
+    )
+  }
+}

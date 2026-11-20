@@ -33,6 +33,7 @@ struct TimeGrid: View {
   @State private var body24 = (hour: CGFloat(0), viewport: CGFloat(0))
 
   @Environment(Island.self) private var island
+  @Environment(\.railWidth) private var gutter
 
   var body: some View {
     let zone = navigation.zone
@@ -53,7 +54,7 @@ struct TimeGrid: View {
     )
 
     GeometryReader { outer in
-      let column = max(outer.size.width - GridMetrics.gutter, 1) / CGFloat(columns)
+      let column = max(outer.size.width - gutter, 1) / CGFloat(columns)
       let track = StripGeometry(column: column, side: side, count: strip.count)
 
       VStack(spacing: 0) {
@@ -61,7 +62,7 @@ struct TimeGrid: View {
         HeaderBand {
           VStack(spacing: 0) {
             HStack(spacing: 0) {
-              Color.clear.frame(width: GridMetrics.gutter)
+              ZoneRailHeader(zone: zone).frame(width: gutter)
               StripTrack(scroller: scroller, geometry: track) {
                 HStack(spacing: 0) {
                   ForEach(Array(strip.enumerated()), id: \.element) { index, day in
@@ -106,7 +107,7 @@ struct TimeGrid: View {
           // PanelHeader overlay), behind the dates and all-day cards.
           .background {
             HStack(spacing: 0) {
-              Color.clear.frame(width: GridMetrics.gutter)
+              Color.clear.frame(width: gutter)
               StripTrack(scroller: scroller, geometry: track) {
                 DayDividers(count: strip.count, column: column, fadeIn: GridMetrics.headerDividerFade)
               }
@@ -127,8 +128,9 @@ struct TimeGrid: View {
             ZStack(alignment: .topLeading) {
               HourLines(hour: hour)
               HourLabels(hour: hour, use24h: navigation.use24h)
+              ZoneRailColumns(hour: hour, day: days[0], navigation: navigation)
               HStack(spacing: 0) {
-                Color.clear.frame(width: GridMetrics.gutter)
+                Color.clear.frame(width: gutter)
                 StripTrack(scroller: scroller, geometry: track) {
                   ZStack(alignment: .topLeading) {
                     DayDividers(count: strip.count, column: column)
@@ -198,7 +200,7 @@ struct TimeGrid: View {
             // Room below midnight where the day dividers carry on and dissolve,
             // so the grid trails off instead of stopping dead.
             HStack(spacing: 0) {
-              Color.clear.frame(width: GridMetrics.gutter)
+              Color.clear.frame(width: gutter)
               StripTrack(scroller: scroller, geometry: track) {
                 DayDividers(count: strip.count, column: column)
               }
@@ -446,7 +448,7 @@ extension TimeGrid {
     // the hours move with their scroll.
     let side = CGFloat(Self.side(columns: days.count))
     let frame = local.offsetBy(
-      dx: hoursScroll.left + GridMetrics.gutter - side * hoursScroll.column - scroller.offset,
+      dx: hoursScroll.left + gutter - side * hoursScroll.column - scroller.offset,
       dy: hoursScroll.top - hoursScroll.y
     )
     guard frame.maxX > obstacle.minX, frame.minX < obstacle.maxX, frame.maxY > obstacle.minY - 16 else { return }
@@ -555,6 +557,7 @@ private struct DayHeader: View {
 /// All-day and multi-day events, packed into lanes across the strip's day
 /// columns. Two lanes show by default; the gutter control reveals the rest.
 private struct AllDayBand: View {
+  @Environment(\.railWidth) private var gutter
   let layouts: [AllDayEventLayout<CalendarEvent>]
   let ghost: AllDayGhost?
   let column: CGFloat
@@ -577,7 +580,7 @@ private struct AllDayBand: View {
             }
             .font(.sans(TextSize.xs, .medium))
             .foregroundStyle(Palette.mutedForeground)
-            .frame(width: GridMetrics.gutter - 10, height: allDayEventHeight, alignment: .trailing)
+            .frame(width: gutter - 10, height: allDayEventHeight, alignment: .trailing)
             .contentShape(.rect)
           }
           .buttonStyle(.plain)
@@ -585,7 +588,7 @@ private struct AllDayBand: View {
           .accessibilityLabel(expanded ? "Show fewer all-day events" : "Show \(hiddenCount) more all-day events")
         }
       }
-      .frame(width: GridMetrics.gutter, alignment: .topLeading)
+      .frame(width: gutter, alignment: .topLeading)
       // Above the strip, so the toggle stays the rail's to click.
       .zIndex(1)
 
@@ -694,6 +697,7 @@ private struct StickyLabel: View {
 /// `color-mix(in oklab, var(--border) 55%, transparent)`), softer than the
 /// day dividers. They stay put while the days scroll.
 private struct HourLines: View {
+  @Environment(\.railWidth) private var gutter
   let hour: CGFloat
 
   var body: some View {
@@ -701,7 +705,7 @@ private struct HourLines: View {
       var path = Path()
       for index in 1..<24 {
         let y = (CGFloat(index) * hour).rounded() + 0.5
-        path.move(to: CGPoint(x: GridMetrics.gutter, y: y))
+        path.move(to: CGPoint(x: gutter, y: y))
         path.addLine(to: CGPoint(x: size.width, y: y))
       }
       context.stroke(path, with: .color(Palette.border.opacity(0.55)), lineWidth: 1)
@@ -748,26 +752,32 @@ private struct DayDividers: View {
 /// The time rail's trailing edge: a 1pt line in the system separator colour,
 /// as AppKit draws a split view's divider. It sits on the first day column's
 /// leading divider and stays put while the days scroll, so the rail keeps its
-/// edge mid-swipe. With `fadeIn`, it fades in from the top like the header's
-/// day dividers.
+/// edge mid-swipe. The lines between the rail's zone columns, if any, go with
+/// it. With `fadeIn`, they fade in from the top like the header's day dividers.
 private struct RailEdge: View {
+  @Environment(\.railWidth) private var gutter
   var fadeIn: CGFloat = 0
 
   var body: some View {
-    Rectangle()
-      .fill(GridEdge.separator)
-      .frame(width: 1)
-      .mask {
-        VStack(spacing: 0) {
-          LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-            .frame(height: fadeIn)
-          Color.black
-        }
+    ZStack(alignment: .topLeading) {
+      // The lines between the rail's zone columns travel with its edge:
+      // through the header, above midnight and into the runout's fade.
+      ZoneDividers()
+      Rectangle()
+        .fill(GridEdge.separator)
+        .frame(width: 1)
+        .padding(.leading, gutter)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+    .mask {
+      VStack(spacing: 0) {
+        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+          .frame(height: fadeIn)
+        Color.black
       }
-      .padding(.leading, GridMetrics.gutter)
-      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-      .allowsHitTesting(false)
-      .accessibilityHidden(true)
+    }
+    .allowsHitTesting(false)
+    .accessibilityHidden(true)
   }
 }
 
@@ -775,6 +785,7 @@ private struct RailEdge: View {
 /// (or "1" … "23" on a 24-hour clock) in 10pt tabular figures, centred on
 /// their lines and 6pt in from the gutter's edge, where the time pill sits.
 private struct HourLabels: View {
+  @Environment(\.railWidth) private var gutter
   let hour: CGFloat
   let use24h: Bool
 
@@ -785,7 +796,7 @@ private struct HourLabels: View {
           .font(.sans(10))
           .monospacedDigit()
           .foregroundStyle(Palette.mutedForeground)
-          .frame(width: GridMetrics.gutter - 6, height: 16, alignment: .trailing)
+          .frame(width: gutter - 6, height: 16, alignment: .trailing)
           .offset(y: CGFloat(index) * hour - 8)
       }
     }
@@ -809,6 +820,7 @@ private func nowY(_ date: Date, hour: CGFloat, zone: WorkingZone) -> CGFloat {
 /// page, and in the gutter a pill with the time, tied to the line by a short
 /// stub. It stays put while the days scroll.
 private struct NowMarker: View {
+  @Environment(\.railWidth) private var gutter
   let hour: CGFloat
   let navigation: CalendarNavigation
 
@@ -819,7 +831,7 @@ private struct NowMarker: View {
         Rectangle()
           .fill(Palette.now.opacity(0.25))
           .frame(height: 1)
-          .padding(.leading, GridMetrics.gutter)
+          .padding(.leading, gutter)
           .offset(y: y - 0.5)
 
         HStack(spacing: 0) {
@@ -837,7 +849,7 @@ private struct NowMarker: View {
             .frame(width: 6, height: 2)
         }
         // A box centred on the line, the pill at its trailing edge.
-        .frame(width: GridMetrics.gutter, height: 20, alignment: .trailing)
+        .frame(width: gutter, height: 20, alignment: .trailing)
         .offset(y: y - 10)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

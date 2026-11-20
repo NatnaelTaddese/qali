@@ -16,6 +16,8 @@ struct CalendarGrid: View {
   let data: CalendarData
 
   @Namespace private var zoom
+  /// The other zones in the time rail, which widen it.
+  @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
 
   var body: some View {
     // Read the view and both pages together and hand them down as values, so
@@ -23,13 +25,15 @@ struct CalendarGrid: View {
     let isMonth = navigation.view == .month
     let stripDays = navigation.stripDays
     let monthDays = navigation.monthDays
+    let gutter = GridMetrics.gutter(zones: ZoneRailPrefs.zones(railZones).count)
     GeometryReader { proxy in
       let layout = MonthZoomLayout(
         size: proxy.size,
         days: monthDays,
         focus: stripDays,
         expanded: !isMonth,
-        zone: navigation.zone
+        zone: navigation.zone,
+        gutter: gutter
       )
       // The rectangle the time grid fills: all of it, or (zoomed out) its
       // own page's place in the month. It is scaled into it rather than
@@ -84,6 +88,7 @@ struct CalendarGrid: View {
           .allowsHitTesting(isMonth)
           .accessibilityHidden(!isMonth)
       }
+      .environment(\.railWidth, gutter)
     }
     // Not into the top safe area: a shape-style background fills every edge
     // by default and would cover the header colour behind the toolbar.
@@ -144,10 +149,13 @@ struct MonthZoomLayout: Equatable {
   /// The day's column when the time grid shows a single day.
   let focusColumn: Int?
   let expanded: Bool
+  /// The time rail's width, which the expanded columns start after.
+  let gutter: CGFloat
 
-  init(size: CGSize, days: [Date], focus: [Date], expanded: Bool, zone: WorkingZone) {
+  init(size: CGSize, days: [Date], focus: [Date], expanded: Bool, zone: WorkingZone, gutter: CGFloat = GridMetrics.gutter) {
     self.size = size
     self.expanded = expanded
+    self.gutter = gutter
     rows = max(days.count / 7, 1)
     let index = focus.first.flatMap { first in days.firstIndex { zone.isSameDay($0, first) } } ?? 0
     focusRow = min(index / 7, rows - 1)
@@ -160,11 +168,11 @@ struct MonthZoomLayout: Equatable {
 
   var bodyHeight: CGFloat { max(size.height - headerHeight, 0) }
 
-  private var leading: CGFloat { expanded ? GridMetrics.gutter : 0 }
+  private var leading: CGFloat { expanded ? gutter : 0 }
 
   func width(column: Int) -> CGFloat {
     guard expanded else { return size.width / 7 }
-    let available = max(size.width - GridMetrics.gutter, 0)
+    let available = max(size.width - gutter, 0)
     guard let focusColumn else { return available / 7 }
     return column == focusColumn ? available : 0
   }

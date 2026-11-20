@@ -54,11 +54,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         showSettings(nil)
         settingsWindow?.navigation.show(pane)
       }
-      // `-QaliMenuBar open` opens the companion's panel at launch.
-      if UserDefaults.standard.string(forKey: "QaliMenuBar") == "open" {
+      // `-QaliMenuBar open` opens the companion's panel at launch, once the
+      // data is in; `early` opens it before, so it grows while on screen;
+      // `reopen` opens it early, closes it, and opens it again once the data
+      // is in, so it grows while closed.
+      if let when = UserDefaults.standard.string(forKey: "QaliMenuBar") {
         Task {
-          try? await Task.sleep(for: .seconds(3))
-          menuBar?.open()
+          switch when {
+          case "early":
+            try? await Task.sleep(for: .seconds(0.3))
+            menuBar?.open()
+          case "reopen":
+            try? await Task.sleep(for: .seconds(0.3))
+            menuBar?.open()
+            try? await Task.sleep(for: .seconds(0.5))
+            menuBar?.close()
+            try? await Task.sleep(for: .seconds(5))
+            menuBar?.open()
+          case "open":
+            try? await Task.sleep(for: .seconds(3))
+            menuBar?.open()
+          default: break
+          }
         }
       }
     #endif

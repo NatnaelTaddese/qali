@@ -29,6 +29,9 @@ struct TimeGrid: View {
   /// Where the hours are scrolled, kept out of observation so scrolling does
   /// not re-render the grid.
   @State private var hoursScroll = HoursScroll()
+  /// The pointer over the hours, for the rail's readout; only the readout
+  /// reads it.
+  @State private var railHover = RailHover()
   /// The hour body's row height and visible height, for scrolling to a time.
   @State private var body24 = (hour: CGFloat(0), viewport: CGFloat(0))
 
@@ -194,6 +197,13 @@ struct TimeGrid: View {
                     .offset(y: -GridMetrics.overscrollRoom)
                 }
               NowMarker(hour: hour, navigation: navigation)
+              RailHoverReadout(hover: railHover, hour: hour, day: days[0], navigation: navigation)
+            }
+            .onContinuousHover { phase in
+              switch phase {
+              case .active(let point): railHover.y = point.y
+              case .ended: railHover.y = nil
+              }
             }
             .frame(height: hour * 24)
 

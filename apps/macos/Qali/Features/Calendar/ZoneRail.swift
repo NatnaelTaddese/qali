@@ -326,3 +326,76 @@ struct ZoneDividers: View {
     }
   }
 }
+
+/// Where the pointer is over the hours, in the hour body's coordinates. A
+/// reference of its own so that moving the pointer redraws the readout and
+/// nothing else of the grid.
+@Observable final class RailHover {
+  var y: CGFloat?
+}
+
+/// With other zones on the rail, the time under the pointer in every column,
+/// in 5-minute steps: a neutral pill in each, as the now pill is red. Read
+/// off the page's first day, like the rail's labels.
+struct RailHoverReadout: View {
+  let hover: RailHover
+  let hour: CGFloat
+  let day: Date
+  let navigation: CalendarNavigation
+
+  @AppStorage(ZoneRailPrefs.zones) private var raw = ""
+
+  /// `-QaliHoverAt 16.5` holds the readout at that hour, for a capture.
+  private var debugY: CGFloat? {
+    #if DEBUG
+      let at = UserDefaults.standard.double(forKey: "QaliHoverAt")
+      return at > 0 ? at * hour : nil
+    #else
+      return nil
+    #endif
+  }
+
+  var body: some View {
+    let others = ZoneRailPrefs.zones(raw)
+    if !others.isEmpty, let y = hover.y ?? debugY, hour > 0 {
+      let minutes = min(max((y / hour * 60 / 5).rounded() * 5, 0), 24 * 60 - 5)
+      let at = navigation.zone.startOfDay(day).addingTimeInterval(minutes * 60)
+      let pillY = minutes / 60 * hour
+      let pattern = timePattern(use24h: navigation.use24h, withDayPeriod: false)
+      ZStack(alignment: .topLeading) {
+        // Labels near the pills give way to them: a band of background across
+        // each column, short of the dividers on its edges.
+        ForEach(0...others.count, id: \.self) { index in
+          let primary = index == others.count
+          Palette.background
+            .frame(width: (primary ? GridMetrics.gutter : GridMetrics.zoneColumn) - 2, height: 40)
+            .offset(x: CGFloat(index) * GridMetrics.zoneColumn + 0.5, y: pillY - 20)
+        }
+        ForEach(Array(others.enumerated()), id: \.element.identifier) { index, other in
+          Text(other.format(at, pattern))
+            .font(.sans(10, .semibold))
+            .monospacedDigit()
+            .foregroundStyle(Palette.foreground)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Palette.muted))
+            .overlay(Capsule().strokeBorder(Palette.border))
+            .frame(width: GridMetrics.zoneColumn - 3, height: 18, alignment: .trailing)
+            .offset(x: CGFloat(index) * GridMetrics.zoneColumn, y: pillY - 9)
+        }
+        Text(navigation.zone.format(at, pattern))
+          .font(.sans(TextSize.xs, .semibold))
+          .monospacedDigit()
+          .foregroundStyle(Palette.background)
+          .padding(.horizontal, 6)
+          .padding(.vertical, 2)
+          .background(Capsule().fill(Palette.foreground))
+          .frame(width: GridMetrics.gutter - 6, height: 20, alignment: .trailing)
+          .offset(x: CGFloat(others.count) * GridMetrics.zoneColumn, y: pillY - 10)
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
+    }
+  }
+}

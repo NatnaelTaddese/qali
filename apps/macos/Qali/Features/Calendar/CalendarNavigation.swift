@@ -369,6 +369,24 @@ final class CalendarNavigation {
     if !strip.isMoving() { flashPending() }
   }
 
+  /// Reaches for a booking request the way `reveal(_:)` does for a timed
+  /// event: its day among the columns, the hours eased to its start, and a
+  /// flash on its block. The month view has no request blocks, so it opens
+  /// the request's week.
+  func reveal(booking: Booking) {
+    let day = Date(ms: booking.startMs)
+    if view == .month { show(.week) }
+    pendingFlash = booking.id
+    guard let strip else {
+      jump(to: day)
+      return flashPending()
+    }
+    let lead = zone.addingDays(-(viewColumns(view) / 2), to: zone.startOfDay(day))
+    if days(to: lead) != 0 { strip.glide(lead) }
+    strip.revealHour(day.timeIntervalSince(zone.startOfDay(day)) / 3600)
+    if !strip.isMoving() { flashPending() }
+  }
+
   /// The grids call this when a swipe or glide lands.
   func stripSettled() {
     if pendingFlash != nil { flashPending() }

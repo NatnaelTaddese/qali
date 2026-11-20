@@ -618,7 +618,7 @@ struct EventFormPanel: View {
 // MARK: - Pieces
 
 /// The form's filled capsule: Create or Save.
-private struct PrimaryButton: ViewModifier {
+struct PrimaryButton: ViewModifier {
   func body(content: Content) -> some View {
     content
       .buttonStyle(.glassProminent)

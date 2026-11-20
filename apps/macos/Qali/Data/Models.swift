@@ -204,10 +204,13 @@ nonisolated struct NotificationRow: Decodable, Hashable, Identifiable, Sendable 
   /// The reminded event (the whole document); nil once it is gone. Opening
   /// the row shows it in the island and reveals it on the grid.
   var event: CalendarEvent?
+  /// The request a "booking_requested" row is about (the whole document);
+  /// opening the row shows it in the island.
+  var booking: Booking?
 
   enum CodingKeys: String, CodingKey {
     case id = "_id"
-    case type, title, body, read, createdAt, event
+    case type, title, body, read, createdAt, event, booking
   }
 }
 

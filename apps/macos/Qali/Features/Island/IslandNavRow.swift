@@ -21,8 +21,14 @@ struct IslandNavRow: View {
         island.open(.search)
       }
       IslandNavButton(symbol: "plus", label: "New event (⌘N)", action: create)
-      // The booking link is not built yet.
-      IslandNavButton(symbol: "calendar.badge.clock", label: "Booking link (coming soon)", action: nil)
+      let pending = data.booking.pending.count
+      IslandNavButton(
+        symbol: "calendar.badge.clock",
+        label: pending == 0 ? "Booking link" : "Booking link, \(pending) pending",
+        badge: pending
+      ) {
+        island.open(.booking)
+      }
 
       Palette.border
         .frame(width: 1, height: 22)
@@ -47,6 +53,8 @@ private struct IslandNavButton: View {
   let label: String
   var active = false
   var busy = false
+  /// A count drawn over the glyph's corner; nothing at zero.
+  var badge = 0
   /// Nil for something not built yet: drawn dim and inert.
   let action: (() -> Void)?
 
@@ -66,6 +74,17 @@ private struct IslandNavButton: View {
       }
       .foregroundStyle(active || hovering ? Palette.foreground : Palette.mutedForeground)
       .frame(width: 34, height: 34)
+      .overlay(alignment: .topTrailing) {
+        if badge > 0 {
+          Text(badge > 9 ? "9+" : "\(badge)")
+            .font(.sans(9, .semibold))
+            .foregroundStyle(Palette.primaryForeground)
+            .padding(.horizontal, 4)
+            .frame(minWidth: 15, minHeight: 15)
+            .background(Palette.primary, in: .capsule)
+            .offset(x: -2, y: 3)
+        }
+      }
       .background {
         UnevenRoundedRectangle(
           topLeadingRadius: active ? 17 : 9,

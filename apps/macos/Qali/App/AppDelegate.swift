@@ -25,6 +25,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    model.openSettingsPane = { [weak self] pane in
+      self?.showSettings(nil)
+      self?.settingsWindow?.navigation.show(pane)
+    }
+    model.showCalendar = { [weak self] in self?.showMainWindow() }
     showMainWindow()
     Task { await model.restoreSession() }
     AppUpdater.shared.revealApp = { [weak self] in self?.showMainWindow() }

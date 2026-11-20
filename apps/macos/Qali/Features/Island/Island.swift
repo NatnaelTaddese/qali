@@ -14,6 +14,10 @@ enum IslandView: Equatable {
   /// The edit form on an existing event; its draft lives on the island too,
   /// so the ghost can preview a move.
   case edit(CalendarEvent)
+  /// The booking link: its status, the link, and the pending requests.
+  case booking
+  /// One booking request, opened from the grid or a notification.
+  case bookingRequest(Booking)
 
   /// Each view's own width, so the shell visibly adapts to what it holds
   /// (the web's `widthClass`).
@@ -22,6 +26,7 @@ enum IslandView: Equatable {
     case .account: 280
     case .search, .event: 390
     case .create, .edit: 400
+    case .booking, .bookingRequest: 370
     }
   }
 
@@ -33,6 +38,8 @@ enum IslandView: Equatable {
     case .event(let event): "event:\(event.id)"
     case .create: "create"
     case .edit(let event): "edit:\(event.id)"
+    case .booking: "booking"
+    case .bookingRequest(let booking): "booking:\(booking.id)"
     }
   }
 

@@ -29,6 +29,19 @@ struct CalendarScreen: View {
       .onChange(of: navigation.eventRange, initial: true) { _, range in
         data.setEventWindow(startMs: range.lowerBound, endMs: range.upperBound)
       }
+      // Days are painted on the time grid, so painting leaves the month.
+      .onChange(of: data.booking.isPainting) { _, painting in
+        if painting, navigation.view == .month { navigation.showAnimated(.week) }
+      }
+      // The grid's date keys are cut in the working zone, which the page was
+      // saved in; a change elsewhere mid-paint ends it, as on the web.
+      .onChange(of: data.preferences?.zone.identifier) { _, _ in
+        guard data.booking.isPainting, case .some(.some(let page)) = data.booking.page,
+          page.timeZone != navigation.zone.identifier
+        else { return }
+        data.booking.stopPainting()
+        data.announce("Availability editing closed: your working time zone changed. Open it again to carry on in the new zone.")
+      }
       #if DEBUG
         // `-QaliCycle month,week,day,week` steps through views after launch,
         // so their transitions can be watched without touching the toolbar.

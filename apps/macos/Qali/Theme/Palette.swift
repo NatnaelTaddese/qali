@@ -29,6 +29,10 @@ enum Palette {
   /// now line and time pill use in both themes.
   static let now = Color(red: 251 / 255, green: 44 / 255, blue: 54 / 255)
 
+  /// Open availability: the web's `--chart-2`, oklch(0.75 0.15 155), in
+  /// both themes.
+  static let available = Color(red: 78 / 255, green: 201 / 255, blue: 131 / 255)
+
   /// Google Meet green: Tailwind's emerald-600 in light mode and
   /// emerald-400 in dark, as the web's "Video" option and Meet chip.
   static let meet = Color(

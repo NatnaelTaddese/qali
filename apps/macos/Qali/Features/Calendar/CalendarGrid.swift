@@ -206,14 +206,28 @@ struct MonthZoomLayout: Equatable {
   }
 }
 
-/// The header band: the calendar-header colour over a hairline.
+/// The grid's edges (the time rail's trailing edge, the header's bottom): the
+/// system separator, as AppKit draws a split view's divider, softened so that
+/// over the grid's own border line it reads only a touch firmer than the rest.
+enum GridEdge {
+  static var separator: some ShapeStyle { .separator.opacity(0.45) }
+}
+
+/// The header band: the calendar-header colour over a hairline, the grid's
+/// border with the native separator on top, matching the time rail's edge.
 struct HeaderBand<Content: View>: View {
   @ViewBuilder var content: Content
 
   var body: some View {
     content
       .background(Palette.calendarHeader)
-      .overlay(alignment: .bottom) { Palette.border.frame(height: 1) }
+      .overlay(alignment: .bottom) {
+        ZStack {
+          Palette.border
+          Rectangle().fill(GridEdge.separator)
+        }
+        .frame(height: 1)
+      }
   }
 }
 

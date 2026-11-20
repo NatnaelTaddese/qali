@@ -309,8 +309,8 @@ private struct GuestChip: View {
   }
 }
 
-/// A person's picture, or their initial when there is none or it fails to
-/// load.
+/// A person's picture, or their initial on their own palette hue when there
+/// is none or it fails to load (the web's `Avatar`).
 struct PersonAvatar: View {
   let name: String?
   let email: String
@@ -319,10 +319,11 @@ struct PersonAvatar: View {
 
   var body: some View {
     ZStack {
-      Palette.secondary
+      Palette.event(Self.hue(for: email))
       Text(String(name?.first ?? email.first ?? "?").uppercased())
-        .font(.sans(size * 0.45, .medium))
-        .foregroundStyle(Palette.foreground)
+        .font(.sans(size * 0.45, .semibold))
+        // The palette hues stay light in both themes, so a dark initial reads.
+        .foregroundStyle(.black.opacity(0.75))
       if let photoUrl, let url = URL(string: photoUrl) {
         RemoteImage(url: url)
       }
@@ -330,5 +331,13 @@ struct PersonAvatar: View {
     .frame(width: size, height: size)
     .clipShape(.circle)
     .accessibilityHidden(true)
+  }
+
+  /// The web's `avatarColorVar`: one of the first eight event hues, hashed
+  /// from the email, so a guest gets the same colour on every surface.
+  static func hue(for email: String) -> Int {
+    var hash: Int32 = 0
+    for unit in email.lowercased().utf16 { hash = hash &* 31 &+ Int32(unit) }
+    return Int(hash.magnitude % 8) + 1
   }
 }

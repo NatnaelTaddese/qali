@@ -1,3 +1,4 @@
+import QaliDomain
 import SwiftUI
 
 /// Week start, clock format and working time zone (the first half of the
@@ -9,6 +10,9 @@ struct DateTimePane: View {
   @State private var timeFormat = "auto"
   @State private var error: String?
   @State private var showZones = false
+  @State private var showAddZone = false
+  /// The time rail's other zones, kept on this Mac.
+  @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
 
   private var stored: StoredPreferences? { data.preferences?.raw }
 
@@ -53,6 +57,41 @@ struct DateTimePane: View {
           Text("Your calendar and booking page run in this zone")
         }
       }
+
+      Section {
+        ForEach(railIdentifiers, id: \.self) { id in
+          LabeledContent {
+            Button {
+              railZones = ZoneRailPrefs.encode(railIdentifiers.filter { $0 != id })
+            } label: {
+              Image(systemName: "minus.circle.fill")
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Remove \(zoneShortLabel(id))")
+            .accessibilityLabel("Remove \(zoneShortLabel(id))")
+          } label: {
+            Text(id.zoneLabel)
+            Text(railDetail(id))
+          }
+        }
+        if railIdentifiers.count < ZoneRailPrefs.limit {
+          Button("Add Time Zone…") { showAddZone = true }
+            .popover(isPresented: $showAddZone, arrowEdge: .bottom) {
+              TimeZoneList(current: nil, includesAutomatic: false) { zone in
+                showAddZone = false
+                guard let zone, !railIdentifiers.contains(zone) else { return }
+                railZones = ZoneRailPrefs.encode(railIdentifiers + [zone])
+              }
+            }
+        }
+      } header: {
+        Text("Other time zones")
+      } footer: {
+        Text("Shown beside your hours in day and week view, up to two. Kept on this Mac.")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+      }
     }
     .formStyle(.grouped)
     .saveErrors($error)
@@ -77,6 +116,23 @@ struct DateTimePane: View {
     }
   }
 
+  private var railIdentifiers: [String] {
+    Array(ZoneRailPrefs.identifiers(railZones).prefix(ZoneRailPrefs.limit))
+  }
+
+  /// "GMT+9 · 14 hours ahead" against the working zone.
+  private func railDetail(_ id: String) -> String {
+    guard let other = WorkingZone(identifier: id) else { return "Unknown zone" }
+    let working = data.preferences?.zone ?? WorkingZone(.current)
+    let gmt = other.timeZone.offsetLabel
+    let seconds = other.timeZone.secondsFromGMT() - working.timeZone.secondsFromGMT()
+    let code = zoneCode(id)
+    if seconds == 0 { return "\(code) · \(gmt) · same time as you" }
+    let hours = Double(abs(seconds)) / 3600
+    let amount = hours == hours.rounded() ? "\(Int(hours)) hour\(hours == 1 ? "" : "s")" : String(format: "%.1f hours", hours)
+    return "\(code) · \(gmt) · \(amount) \(seconds > 0 ? "ahead" : "behind")"
+  }
+
   private var zoneLabel: String {
     if let zone = stored?.timeZone { return zone.zoneLabel }
     return "Automatic · \(TimeZone.current.identifier.zoneLabel)"
@@ -91,6 +147,7 @@ extension String {
 /// A searchable list of every time zone, Automatic first.
 private struct TimeZoneList: View {
   let current: String?
+  var includesAutomatic = true
   let pick: (String?) -> Void
   @State private var query = ""
 
@@ -110,7 +167,7 @@ private struct TimeZoneList: View {
       Divider()
       ScrollViewReader { proxy in
         List {
-          if query.isEmpty {
+          if includesAutomatic, query.isEmpty {
             row("Automatic · \(TimeZone.current.identifier.zoneLabel)", selected: current == nil) { pick(nil) }
           }
           ForEach(matches, id: \.self) { zone in

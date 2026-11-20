@@ -8,6 +8,9 @@ import SwiftUI
 enum ZoneRailPrefs {
   /// IANA identifiers, comma-separated, in rail order (left to right).
   static let zones = "zoneRail.zones"
+  /// Whether hovering over the hours shows the time there in every zone.
+  /// Off unless turned on in Settings; kept per Mac.
+  static let hoverReadout = "zoneRail.hoverReadout"
   /// How many fit beside the working zone's hours.
   static let limit = 2
 
@@ -325,6 +328,83 @@ struct ZoneDividers: View {
         path.addLine(to: CGPoint(x: x, y: size.height))
       }
       context.stroke(path, with: .color(Palette.border), lineWidth: 1)
+    }
+  }
+}
+
+/// Where the pointer is over the hours, in the hour body's coordinates. A
+/// reference of its own so that moving the pointer redraws the readout and
+/// nothing else of the grid.
+@Observable final class RailHover {
+  var y: CGFloat?
+}
+
+/// With other zones on the rail and the readout turned on in Settings, the
+/// time under the pointer in every column, in 5-minute steps: a neutral pill
+/// in each, as the now pill is red. Read off the page's first day, like the
+/// rail's labels.
+struct RailHoverReadout: View {
+  let hover: RailHover
+  let hour: CGFloat
+  let day: Date
+  let navigation: CalendarNavigation
+
+  @AppStorage(ZoneRailPrefs.zones) private var raw = ""
+  @AppStorage(ZoneRailPrefs.hoverReadout) private var enabled = false
+
+  /// `-QaliHoverAt 16.5` holds the readout at that hour, for a capture.
+  private var debugY: CGFloat? {
+    #if DEBUG
+      let at = UserDefaults.standard.double(forKey: "QaliHoverAt")
+      return at > 0 ? at * hour : nil
+    #else
+      return nil
+    #endif
+  }
+
+  var body: some View {
+    let others = ZoneRailPrefs.zones(raw)
+    // Checked before the pointer is read, so that while it is off, moving the
+    // pointer redraws nothing.
+    if enabled, !others.isEmpty, let y = hover.y ?? debugY, hour > 0 {
+      let minutes = min(max((y / hour * 60 / 5).rounded() * 5, 0), 24 * 60 - 5)
+      let at = navigation.zone.startOfDay(day).addingTimeInterval(minutes * 60)
+      let pillY = minutes / 60 * hour
+      let pattern = timePattern(use24h: navigation.use24h, withDayPeriod: false)
+      ZStack(alignment: .topLeading) {
+        // Labels near the pills give way to them: a band of background across
+        // each column, short of the dividers on its edges.
+        ForEach(0...others.count, id: \.self) { index in
+          let primary = index == others.count
+          Palette.background
+            .frame(width: (primary ? GridMetrics.gutter : GridMetrics.zoneColumn) - 2, height: 40)
+            .offset(x: CGFloat(index) * GridMetrics.zoneColumn + 0.5, y: pillY - 20)
+        }
+        ForEach(Array(others.enumerated()), id: \.element.identifier) { index, other in
+          Text(other.format(at, pattern))
+            .font(.sans(10, .semibold))
+            .monospacedDigit()
+            .foregroundStyle(Palette.foreground)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Palette.muted))
+            .overlay(Capsule().strokeBorder(Palette.border))
+            .frame(width: GridMetrics.zoneColumn - 3, height: 18, alignment: .trailing)
+            .offset(x: CGFloat(index) * GridMetrics.zoneColumn, y: pillY - 9)
+        }
+        Text(navigation.zone.format(at, pattern))
+          .font(.sans(TextSize.xs, .semibold))
+          .monospacedDigit()
+          .foregroundStyle(Palette.background)
+          .padding(.horizontal, 6)
+          .padding(.vertical, 2)
+          .background(Capsule().fill(Palette.foreground))
+          .frame(width: GridMetrics.gutter - 6, height: 20, alignment: .trailing)
+          .offset(x: CGFloat(others.count) * GridMetrics.zoneColumn, y: pillY - 10)
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
     }
   }
 }

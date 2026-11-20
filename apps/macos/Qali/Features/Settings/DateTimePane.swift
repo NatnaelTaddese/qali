@@ -13,6 +13,7 @@ struct DateTimePane: View {
   @State private var showAddZone = false
   /// The time rail's other zones, mirrored from the account.
   @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
+  @AppStorage(ZoneRailPrefs.hoverReadout) private var railHoverReadout = false
 
   private var stored: StoredPreferences? { data.preferences?.raw }
 
@@ -85,6 +86,11 @@ struct DateTimePane: View {
               }
             }
         }
+        Toggle(isOn: $railHoverReadout) {
+          Text("Show times under the pointer")
+          Text("Hovering over the hours shows that time in each zone")
+        }
+        .disabled(railIdentifiers.isEmpty)
       } header: {
         Text("Other time zones")
       } footer: {

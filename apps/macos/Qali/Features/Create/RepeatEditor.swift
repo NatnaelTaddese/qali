@@ -301,7 +301,7 @@ private struct PresetRow: View {
 
 /// A number in a capsule between − and +: hold a button to keep counting,
 /// or click the number to type one. The digits roll as they change.
-private struct CountField: View {
+struct CountField: View {
   let value: Int
   let range: ClosedRange<Int>
   let label: String

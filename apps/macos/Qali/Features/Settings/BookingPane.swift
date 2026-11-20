@@ -152,8 +152,8 @@ struct BookingPane: View {
           Text("Each slot people can pick")
         }
 
-        NumberRow(title: "Minimum notice", detail: "How soon before a slot it can still be booked", unit: "hours", value: binding.noticeHours, range: 0...720)
-        NumberRow(title: "Days ahead", detail: "How far ahead people can book", unit: "days", value: binding.horizonDays, range: 1...365)
+        NumberRow(title: "Minimum notice", detail: "Hours before a slot starts that it can still be booked", unit: "hours", value: binding.noticeHours, range: 0...720)
+        NumberRow(title: "Days ahead", detail: "How many days ahead people can book", unit: "days", value: binding.horizonDays, range: 1...365)
       }
 
       Section {
@@ -319,27 +319,20 @@ private struct NumberRow: View {
 
   var body: some View {
     LabeledContent {
-      HStack(spacing: 6) {
-        TextField(title, value: clamped, format: .number)
-          .labelsHidden()
-          .multilineTextAlignment(.trailing)
-          .frame(width: 54)
-        Text(unit).foregroundStyle(.secondary)
-        Stepper(title, value: $value, in: range)
-          .labelsHidden()
-      }
+      // The Repeat editor's count, so both forms step numbers the same way.
+      // The unit is in the detail line, so every stepper ends on the
+      // form's trailing edge like the controls above it.
+      CountField(value: value, range: range, label: "\(title) in \(unit)") { value = $0 }
     } label: {
       Text(title)
       Text(detail)
     }
   }
-
-  private var clamped: Binding<Int> {
-    Binding(get: { value }, set: { value = min(max($0, range.lowerBound), range.upperBound) })
-  }
 }
 
-/// One weekday: open or closed, and its single span of hours.
+/// One weekday: open or closed, and its single span of hours. Every row is
+/// the same height and ends on the form's trailing edge, like the rows
+/// above; copying a day's hours is offered beside its name on hover.
 private struct WeekdayRow: View {
   let weekday: Int
   @Binding var day: BookingPageDraft.Day
@@ -359,6 +352,13 @@ private struct WeekdayRow: View {
         .labelsHidden()
       Text(Self.names[weekday])
         .foregroundStyle(day.enabled ? .primary : .secondary)
+        .frame(width: 38, alignment: .leading)
+      Button("Copy to All Open Days", systemImage: "doc.on.doc", action: copyToAll)
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .help("Copy these hours to all open days")
+        .opacity(canCopy && hovering ? 1 : 0)
+        .disabled(!canCopy)
       Spacer(minLength: 8)
       if day.enabled {
         if day.endMin <= day.startMin {
@@ -366,19 +366,18 @@ private struct WeekdayRow: View {
             .foregroundStyle(.red)
             .help("Ends before it starts, so this day is left closed")
         }
-        TimeOfDayField(minutes: $day.startMin, use24h: use24h, isEnd: false)
-        Text("to").foregroundStyle(.secondary)
-        TimeOfDayField(minutes: $day.endMin, use24h: use24h, isEnd: true)
-        Button("Copy to All Open Days", systemImage: "doc.on.doc", action: copyToAll)
-          .labelStyle(.iconOnly)
-          .buttonStyle(.borderless)
-          .help("Copy these hours to all open days")
-          .opacity(canCopy && hovering ? 1 : 0)
-          .disabled(!canCopy)
+        TimeOfDayChip(minutes: $day.startMin, use24h: use24h, isEnd: false, label: "\(Self.names[weekday]) opens")
+        Text("to")
+          .font(.sans(TextSize.sm))
+          .foregroundStyle(Palette.mutedForeground)
+        TimeOfDayChip(minutes: $day.endMin, use24h: use24h, isEnd: true, label: "\(Self.names[weekday]) closes")
       } else {
-        Text("Unavailable").foregroundStyle(.secondary)
+        Text("Unavailable")
+          .font(.sans(TextSize.sm))
+          .foregroundStyle(Palette.mutedForeground)
       }
     }
+    .frame(minHeight: 28)
     .contentShape(.rect)
     .onHover { hovering = $0 }
     .contextMenu {
@@ -387,39 +386,30 @@ private struct WeekdayRow: View {
   }
 }
 
-/// A time of day as minutes from midnight, in a stock hour-and-minute field.
-/// An end at midnight reads as the end of the day (24:00), as on the web.
-struct TimeOfDayField: View {
+/// A time of day as minutes from midnight: the create form's time chip,
+/// opening the same wheels. An end at midnight is the end of the day
+/// (24:00), as on the web.
+struct TimeOfDayChip: View {
   @Binding var minutes: Double
   let use24h: Bool
   let isEnd: Bool
+  let label: String
 
-  private static var utc: Calendar {
-    var calendar = Calendar(identifier: .gregorian)
-    calendar.timeZone = TimeZone(identifier: "UTC")!
-    return calendar
-  }
+  @State private var open = false
 
-  private static let reference = Date(timeIntervalSince1970: 0)
+  /// Wall-clock minutes carry no zone: the wheels turn them on UTC's first
+  /// day, where nothing shifts for daylight saving.
+  private static let utc = WorkingZone(identifier: "UTC")!
 
   var body: some View {
-    DatePicker(
-      "Time",
-      selection: Binding(
-        get: { Self.reference.addingTimeInterval(minutes.truncatingRemainder(dividingBy: 1440) * 60) },
-        set: { date in
-          let parts = Self.utc.dateComponents([.hour, .minute], from: date)
-          let next = Double((parts.hour ?? 0) * 60 + (parts.minute ?? 0))
+    let text = formatWallClockMinutes(minutes, use24h: use24h)
+    PickerChip(text: text, open: open, filled: true, minWidth: use24h ? 56 : 78) { open.toggle() }
+      .popover(isPresented: $open, arrowEdge: .top) {
+        TimeWheels(ms: minutes.truncatingRemainder(dividingBy: 1440) * 60_000, zone: Self.utc, use24h: use24h) { ms in
+          let next = (ms / 60_000).rounded()
           minutes = isEnd && next == 0 ? 1440 : next
         }
-      ),
-      displayedComponents: .hourAndMinute
-    )
-    .labelsHidden()
-    .datePickerStyle(.field)
-    .environment(\.timeZone, TimeZone(identifier: "UTC")!)
-    .environment(\.calendar, Self.utc)
-    .environment(\.locale, Locale(identifier: use24h ? "en_GB" : "en_US"))
-    .fixedSize()
+      }
+      .accessibilityLabel("\(label) at \(text)")
   }
 }

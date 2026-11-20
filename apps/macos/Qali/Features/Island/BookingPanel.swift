@@ -623,6 +623,9 @@ private struct BookingShareButton: View {
       Image(systemName: "square.and.arrow.up")
         .font(.system(size: 12, weight: .medium))
         .foregroundStyle(hovering ? Palette.foreground : Palette.mutedForeground)
+        // The glyph's box sits low in its bounds (the arrow above it is all
+        // hairline), so centred by bounds it reads low in the circle.
+        .offset(y: -1)
         .frame(width: 26, height: 26)
         .background { Circle().fill(Palette.foreground.opacity(hovering ? 0.08 : 0)) }
         .contentShape(.circle)

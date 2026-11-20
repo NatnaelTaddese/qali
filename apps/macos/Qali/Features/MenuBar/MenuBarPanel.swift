@@ -107,7 +107,7 @@ struct MenuBarPanel: View {
     VStack(alignment: .leading, spacing: 0) {
       MenuRow("Open qali", shortcut: "⌘1", action: actions.openApp)
       MenuRow("Settings…", shortcut: "⌘,", action: actions.openSettings)
-      PanelDivider()
+      MenuSeparator()
       MenuRow("Quit qali Completely", shortcut: "⌘Q", action: actions.quit)
     }
   }
@@ -413,11 +413,14 @@ private struct PanelDivider: View {
   }
 }
 
-/// A menu item: title, right-aligned shortcut, the shared hover highlight.
+/// A menu item drawn as the system draws one, unlike the rest of the panel:
+/// the menu font, the shortcut in secondary text, and on hover the accent
+/// selection with white text.
 private struct MenuRow: View {
   let title: String
   let shortcut: String
   let action: () -> Void
+  @State private var hovering = false
 
   init(_ title: String, shortcut: String, action: @escaping () -> Void) {
     self.title = title
@@ -426,15 +429,35 @@ private struct MenuRow: View {
   }
 
   var body: some View {
-    HoverRow(action: action) {
+    HStack(spacing: 8) {
       Text(title)
-        .font(.sans(TextSize.sm))
       Spacer(minLength: 12)
       Text(shortcut)
-        .font(.system(size: 13))
-        .foregroundStyle(.tertiary)
+        .foregroundStyle(hovering ? AnyShapeStyle(Color.white.opacity(0.85)) : AnyShapeStyle(.secondary))
     }
+    .font(Font(NSFont.menuFont(ofSize: 0)))
+    .foregroundStyle(hovering ? AnyShapeStyle(Color.white) : AnyShapeStyle(.primary))
+    .padding(.horizontal, 10)
+    .frame(height: 24)
+    .background {
+      RoundedRectangle(cornerRadius: 6, style: .continuous)
+        .fill(hovering ? Color(nsColor: .selectedContentBackgroundColor) : .clear)
+    }
+    .contentShape(.rect)
+    .onHover { hovering = $0 }
+    .onTapGesture(perform: action)
     .accessibilityElement(children: .combine)
     .accessibilityAddTraits(.isButton)
+  }
+}
+
+/// A system menu separator between menu items.
+private struct MenuSeparator: View {
+  var body: some View {
+    Rectangle()
+      .fill(Color(nsColor: .separatorColor))
+      .frame(height: 1)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 5)
   }
 }

@@ -196,34 +196,44 @@ struct BookingPane: View {
           }
         }
       }
-
-      Section {
-        HStack {
-          Text(statusLine)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-          Spacer()
-          Button("Revert") { self.draft = baseline }
-            .disabled(!dirty || saving || page == nil)
-          Button {
-            save()
-          } label: {
-            HStack(spacing: 6) {
-              if saving { ProgressView().controlSize(.small) }
-              Text(saving ? "Saving…" : "Save")
-            }
-          }
-          .keyboardShortcut(.defaultAction)
-          .disabled(!canSave || !dirty)
-          .help(blockedReason ?? "")
-        }
-      }
     }
     .formStyle(.grouped)
     #if DEBUG
       // `-QaliScrollBottom YES` opens the form at its foot, for captures.
       .defaultScrollAnchor(UserDefaults.standard.bool(forKey: "QaliScrollBottom") ? .bottom : .top)
     #endif
+    // Pinned under the form, so Save is in view wherever it is scrolled to.
+    .safeAreaInset(edge: .bottom, spacing: 0) { saveBar }
+  }
+
+  /// Where the draft stands, with Revert and Save.
+  private var saveBar: some View {
+    HStack(spacing: 8) {
+      if dirty, !saving, blockedReason == nil {
+        Circle().fill(.orange).frame(width: 6, height: 6)
+      }
+      Text(statusLine)
+        .foregroundStyle(dirty && blockedReason == nil ? .primary : .secondary)
+        .lineLimit(1)
+      Spacer()
+      Button("Revert") { self.draft = baseline }
+        .disabled(!dirty || saving || page == nil)
+      Button {
+        save()
+      } label: {
+        HStack(spacing: 6) {
+          if saving { ProgressView().controlSize(.small) }
+          Text(saving ? "Saving…" : "Save")
+        }
+      }
+      .keyboardShortcut(.defaultAction)
+      .disabled(!canSave || !dirty)
+      .help(blockedReason ?? "Save (Return)")
+    }
+    .padding(.horizontal, 20)
+    .padding(.vertical, 12)
+    .background(.bar)
+    .overlay(alignment: .top) { Divider() }
   }
 
   /// A slug problem worth showing as it is typed: format rules once three

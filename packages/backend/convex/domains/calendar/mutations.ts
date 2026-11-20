@@ -838,6 +838,7 @@ export async function upsertProviderRecurringSeriesHandler(
     providerEventId: string;
     recurrence: string[];
     providerUpdatedMs: number;
+    currentForUpdatedMs?: number;
     replacedEventId?: Id<"events">;
   },
 ): Promise<null> {
@@ -865,6 +866,12 @@ export async function upsertProviderRecurringSeriesHandler(
     recurrence: args.recurrence,
     providerSeriesId: args.providerEventId,
     providerUpdatedMs: args.providerUpdatedMs,
+    // Kept while the master is unchanged; a new master version starts over.
+    currentForUpdatedMs:
+      args.currentForUpdatedMs ??
+      (existing?.providerUpdatedMs === args.providerUpdatedMs
+        ? existing.currentForUpdatedMs
+        : undefined),
   };
   if (existing) await ctx.db.patch(existing._id, value);
   else {
@@ -898,6 +905,7 @@ export const upsertProviderRecurringSeries = internalMutation({
     providerEventId: v.string(),
     recurrence: v.array(v.string()),
     providerUpdatedMs: v.number(),
+    currentForUpdatedMs: v.optional(v.number()),
     replacedEventId: v.optional(v.id("events")),
   },
   handler: (ctx, args) => upsertProviderRecurringSeriesHandler(ctx, args),

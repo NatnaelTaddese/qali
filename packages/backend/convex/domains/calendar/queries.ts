@@ -371,6 +371,17 @@ export const findEventForDeepLink = query({
   },
 });
 
+/** A cached series' rule for an occurrence at `occurrenceUpdatedMs`, or null
+ * when the rule may be older than that occurrence: fresh when cached at or
+ * after the master's version, or fetched for this occurrence or a later one. */
+export function seriesRuleFor(
+  series: Pick<Doc<"recurringSeries">, "recurrence" | "providerUpdatedMs" | "currentForUpdatedMs">,
+  occurrenceUpdatedMs: number,
+): string[] | null {
+  const currentFor = Math.max(series.providerUpdatedMs, series.currentForUpdatedMs ?? -Infinity);
+  return currentFor >= occurrenceUpdatedMs ? series.recurrence : null;
+}
+
 /** The cached rule for an expanded recurring instance. `null` is a cache miss. */
 export async function getEventRecurrenceHandler(
   ctx: QueryCtx,
@@ -409,11 +420,7 @@ export async function getEventRecurrenceHandler(
         .eq("providerEventId", providerSeriesId),
     )
     .unique();
-  return series &&
-    series.providerUpdatedMs !== undefined &&
-    series.providerUpdatedMs >= providerUpdatedMs
-    ? series.recurrence
-    : null;
+  return series ? seriesRuleFor(series, providerUpdatedMs) : null;
 }
 
 export const getEventRecurrence = query({

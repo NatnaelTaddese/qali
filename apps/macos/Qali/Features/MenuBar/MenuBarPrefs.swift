@@ -15,6 +15,15 @@ enum MenuBarPrefs {
   static let includeTomorrow = "menuBar.includeTomorrow"
   /// A clock per zone (yours and the time rail's) under the panel's date.
   static let worldClock = "menuBar.worldClock"
+  /// Whether the panel's clock has a tile for your own zone.
+  static let clockIncludesYours = "menuBar.clockIncludesYours"
+  /// The "Today · +1h" line under each clock.
+  static let clockDetails = "menuBar.clockDetails"
+  /// The sun or moon on each clock, in the panel and the menu bar item.
+  static let clockIcons = "menuBar.clockIcons"
+  /// The zone the World clock menu bar item shows; empty or gone = the
+  /// first of the time rail's zones.
+  static let clockZone = "menuBar.clockZone"
   static let hideDockIcon = "menuBar.hideDockIcon"
 
   static func registerDefaults() {
@@ -26,11 +35,22 @@ enum MenuBarPrefs {
       joinPill: true,
       includeTomorrow: true,
       worldClock: true,
+      clockIncludesYours: true,
+      clockDetails: true,
+      clockIcons: true,
+      clockZone: "",
       hideDockIcon: false,
     ])
   }
 
   static var isEnabled: Bool { UserDefaults.standard.bool(forKey: enabled) }
+
+  /// The World clock item's zone: the one picked if it is still on the rail,
+  /// else the rail's first; nil with no rail zones.
+  static func clockZone(_ picked: String, rail: String) -> WorkingZone? {
+    let others = ZoneRailPrefs.zones(rail)
+    return others.first { $0.identifier == picked } ?? others.first
+  }
   static var hidesDockIcon: Bool { UserDefaults.standard.bool(forKey: hideDockIcon) }
 }
 
@@ -40,6 +60,8 @@ enum MenuBarStyle: String, CaseIterable, Identifiable {
   case nextUp
   /// Today's day number, in the app's serif.
   case date
+  /// One of the time rail's zones and its time ("TYO 9:08 PM").
+  case worldClock
   /// The calendar glyph alone.
   case icon
 
@@ -49,6 +71,7 @@ enum MenuBarStyle: String, CaseIterable, Identifiable {
     switch self {
     case .nextUp: "Next event"
     case .date: "Date"
+    case .worldClock: "World clock"
     case .icon: "Icon only"
     }
   }

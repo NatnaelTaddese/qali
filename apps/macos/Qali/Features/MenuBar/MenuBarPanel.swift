@@ -21,6 +21,9 @@ struct MenuBarPanel: View {
   @Environment(AppModel.self) private var model
   @AppStorage(MenuBarPrefs.includeTomorrow) private var includeTomorrow = true
   @AppStorage(MenuBarPrefs.worldClock) private var showsWorldClock = true
+  @AppStorage(MenuBarPrefs.clockIncludesYours) private var clockIncludesYours = true
+  @AppStorage(MenuBarPrefs.clockDetails) private var clockDetails = true
+  @AppStorage(MenuBarPrefs.clockIcons) private var clockIcons = true
   @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
 
   var body: some View {
@@ -90,7 +93,12 @@ struct MenuBarPanel: View {
   private func worldClock(now: Date, zone: WorkingZone, use24h: Bool) -> some View {
     let others = ZoneRailPrefs.zones(railZones)
     if showsWorldClock, !others.isEmpty {
-      WorldClockRow(entries: QaliDomain.worldClock(now: now, others: others, primary: zone, use24h: use24h))
+      let entries = QaliDomain.worldClock(now: now, others: others, primary: zone, use24h: use24h)
+      WorldClockRow(
+        entries: clockIncludesYours ? entries : entries.filter { !$0.isWorkingZone },
+        showsDetails: clockDetails,
+        showsIcons: clockIcons
+      )
     }
   }
 
@@ -106,18 +114,23 @@ struct MenuBarPanel: View {
 }
 
 /// A tile per zone: day or night there, its code, its time, and its day and
-/// offset from yours. Yours comes first, a shade stronger.
+/// offset from yours. Yours comes first, a shade stronger. The icons and the
+/// day line can be turned off in Settings.
 private struct WorldClockRow: View {
   let entries: [WorldClockEntry]
+  let showsDetails: Bool
+  let showsIcons: Bool
 
   var body: some View {
     HStack(spacing: 6) {
       ForEach(entries, id: \.identifier) { entry in
         VStack(alignment: .leading, spacing: 2) {
           HStack(spacing: 4) {
-            Image(systemName: entry.isDaytime ? "sun.max.fill" : "moon.fill")
-              .font(.system(size: 9, weight: .semibold))
-              .foregroundStyle(entry.isDaytime ? AnyShapeStyle(Palette.event(3)) : AnyShapeStyle(.secondary))
+            if showsIcons {
+              Image(systemName: entry.isDaytime ? "sun.max.fill" : "moon.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(entry.isDaytime ? AnyShapeStyle(Palette.event(3)) : AnyShapeStyle(.secondary))
+            }
             Text(entry.code)
               .font(.sans(TextSize.xs, .semibold))
               .tracking(0.4)
@@ -128,10 +141,12 @@ private struct WorldClockRow: View {
             .monospacedDigit()
             .lineLimit(1)
             .minimumScaleFactor(0.8)
-          Text(entry.offset.map { "\(entry.day) · \($0)" } ?? entry.day)
-            .font(.sans(TextSize.xs))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
+          if showsDetails {
+            Text(entry.offset.map { "\(entry.day) · \($0)" } ?? entry.day)
+              .font(.sans(TextSize.xs))
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+          }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)

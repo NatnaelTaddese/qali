@@ -9,6 +9,9 @@ struct MenuBarLabel: View {
   @AppStorage(MenuBarPrefs.showTitles) private var showTitles = true
   @AppStorage(MenuBarPrefs.lookahead) private var lookahead = 180
   @AppStorage(MenuBarPrefs.joinPill) private var joinPill = true
+  @AppStorage(MenuBarPrefs.clockZone) private var clockZone = ""
+  @AppStorage(MenuBarPrefs.clockIcons) private var clockIcons = true
+  @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
 
   var body: some View {
     TimelineView(.periodic(from: .now, by: 15)) { context in
@@ -48,6 +51,21 @@ struct MenuBarLabel: View {
       }
     } else if style == .icon {
       Image(systemName: "calendar")
+    } else if style == .worldClock, let other = MenuBarPrefs.clockZone(clockZone, rail: railZones) {
+      // With no rail zones to show, it falls back to the date below.
+      let entry = QaliDomain.worldClock(
+        now: now, others: [other], primary: zone, use24h: data?.preferences?.use24h ?? false
+      )[1]
+      HStack(spacing: 4) {
+        if clockIcons {
+          Image(systemName: entry.isDaytime ? "sun.max.fill" : "moon.fill")
+            .font(.system(size: 10, weight: .semibold))
+        }
+        Text("\(entry.code) \(entry.time)")
+          .monospacedDigit()
+      }
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel("\(zoneShortLabel(entry.identifier)): \(entry.time), \(entry.day)")
     } else {
       // Just the day, in the app's serif.
       Text(zone.format(now, "d"))

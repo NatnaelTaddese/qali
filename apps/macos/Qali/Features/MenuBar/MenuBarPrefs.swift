@@ -35,7 +35,7 @@ enum MenuBarPrefs {
 enum MenuBarStyle: String, CaseIterable, Identifiable {
   /// The next event's title and countdown; today's date when nothing is near.
   case nextUp
-  /// A calendar glyph and today's date.
+  /// Today's day number, in the app's serif.
   case date
   /// The calendar glyph alone.
   case icon
@@ -45,7 +45,7 @@ enum MenuBarStyle: String, CaseIterable, Identifiable {
   var label: String {
     switch self {
     case .nextUp: "Next event"
-    case .date: "Icon and date"
+    case .date: "Date"
     case .icon: "Icon only"
     }
   }

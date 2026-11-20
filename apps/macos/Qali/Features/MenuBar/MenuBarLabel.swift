@@ -49,12 +49,10 @@ struct MenuBarLabel: View {
     } else if style == .icon {
       Image(systemName: "calendar")
     } else {
-      HStack(spacing: 4) {
-        Image(systemName: "calendar")
-        Text(zone.format(now, "d"))
-          .font(.system(size: 13, weight: .semibold))
-          .monospacedDigit()
-      }
+      // Just the day, in the app's serif.
+      Text(zone.format(now, "d"))
+        .font(.display(15, .bold))
+        .accessibilityLabel(zone.format(now, "EEEE, MMMM d"))
     }
   }
 

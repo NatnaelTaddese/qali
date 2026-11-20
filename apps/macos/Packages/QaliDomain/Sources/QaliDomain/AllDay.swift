@@ -30,17 +30,29 @@ public func allDayColumnSpan(
   days: [Date],
   zone: WorkingZone
 ) -> (startIdx: Int, endIdx: Int) {
+  guard !days.isEmpty else { return (0, 0) }
+  let raw = allDayRawSpan(startMs: startMs, endMs: endMs, days: days, zone: zone)
+  return (max(raw.startIdx, 0), min(raw.endIdx, days.count - 1))
+}
+
+/// `allDayColumnSpan` before clamping: a start before the first day is
+/// negative, an end past the last day is past `days.count - 1`.
+func allDayRawSpan(
+  startMs: Double,
+  endMs: Double,
+  days: [Date],
+  zone: WorkingZone
+) -> (startIdx: Int, endIdx: Int) {
   guard let first = days.first else { return (0, 0) }
   let parts = zone.calendar.dateComponents([.year, .month, .day], from: first)
   var utc = Calendar(identifier: .gregorian)
   utc.timeZone = TimeZone(identifier: "UTC")!
   let base = utc.date(from: DateComponents(year: parts.year, month: parts.month, day: parts.day))!.ms
-  let lastIdx = days.count - 1
   let startIdx = Int(jsRound((startMs - base) / msPerDay))
   // endMs is the exclusive UTC midnight after the last day; step back to the
   // last day the event actually occupies.
   let endIdx = Int(jsRound((endMs - msPerDay - base) / msPerDay))
-  return (max(startIdx, 0), min(max(endIdx, startIdx), lastIdx))
+  return (startIdx, max(endIdx, startIdx))
 }
 
 public struct AllDayEventLayout<E: CalendarEventLike> {

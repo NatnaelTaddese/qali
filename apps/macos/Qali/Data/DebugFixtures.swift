@@ -40,6 +40,14 @@
         allDay("a2", "Birthday", day: 2, days: 1, color: "4"),
         allDay("a3", "Offsite", day: 2, days: 1, color: "5"),
         allDay("a4", "Public holiday", day: 0, days: 1, color: "10"),
+        // Spans that run across week rows in the month, and a crowded
+        // Wednesday that overflows into "+N more".
+        allDay("a5", "Sprint", day: 1, days: 3, color: "7"),
+        allDay("a6", "Ski trip", day: 5, days: 4, color: "2"),
+        allDay("a7", "Release freeze", day: -2, days: 4, color: "11"),
+        timed("t9", "Planning", day: 2, 9, 10, color: "9"),
+        timed("t10", "1:1", day: 2, 11, 11.5, color: "6"),
+        timed("t11", "Retro", day: 2, 15, 16, color: "3"),
         timed("t1", "Roadmap review", day: 0, 9, 11, color: "9"),
         timed("t2", "Design critique", day: 0, 9.5, 10.5, color: "6"),
         timed("t3", "Interview loop", day: 0, 10, 12, color: "3"),

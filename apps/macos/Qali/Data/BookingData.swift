@@ -188,6 +188,9 @@ final class BookingData {
 
   var pendingLoaded: Bool { pendingQuery.value != nil || isFixture }
 
+  /// True for the debug fixture, whose writes stay local.
+  var isFixtureData: Bool { isFixture }
+
   private var isFixture: Bool {
     #if DEBUG
       BookingFixture.shared != nil
@@ -292,6 +295,50 @@ final class BookingData {
         ]
         if !title.isEmpty { args["title"] = title }
         return args
+    }
+  }
+
+  /// A Live switch flipped and not yet confirmed, drawn at once.
+  private(set) var pendingLive: Bool?
+
+  /// Whether the saved page is taking requests, with an unconfirmed flip
+  /// on top; nil without a page.
+  var isLive: Bool? {
+    guard case .some(.some(let page)) = page else { return nil }
+    return pendingLive ?? page.enabled
+  }
+
+  /// Turns the page on or off from the island. Everything else goes back
+  /// exactly as saved, in the page's own zone and with all of its spans,
+  /// so the switch never re-bases or trims the hours.
+  func setLive(_ live: Bool) {
+    guard case .some(.some(let page)) = page, pendingLive == nil || isFixture else { return }
+    pendingLive = live
+    if isFixture { return }
+    Task {
+      do {
+        let _: SavedSlug = try await Self.mutate(client, ConvexAPI.upsertBookingPage) {
+          var args: [String: ConvexEncodable?] = [
+            "slug": page.slug,
+            "timeZone": page.timeZone,
+            "rules": page.rules.map { rule -> ConvexEncodable? in
+              ["weekday": rule.weekday, "startMin": rule.startMin, "endMin": rule.endMin] as [String: ConvexEncodable?]
+            },
+            "slotMinutes": page.slotMinutes,
+            "bufferMinutes": page.bufferMinutes,
+            "minNoticeMinutes": page.minNoticeMinutes,
+            "horizonDays": page.horizonDays,
+            "enabled": live,
+          ]
+          if let title = page.title { args["title"] = title }
+          if let description = page.description { args["description"] = description }
+          return args
+        }
+        announce?(live ? "Your booking link is live." : "Your booking link is paused.")
+      } catch {
+        announce?("Couldn't \(live ? "turn on" : "pause") your booking link. \(bookingErrorMessage(error))")
+      }
+      pendingLive = nil
     }
   }
 

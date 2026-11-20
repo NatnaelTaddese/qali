@@ -128,17 +128,26 @@ struct BookingPanel: View {
   /// Live or paused, and the link with copy and open.
   private func linkCard(_ page: BookingPage) -> some View {
     let url = BookingData.publicURL(slug: page.slug)
+    let live = booking.isLive ?? page.enabled
     return VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 6) {
         Circle()
-          .fill(page.enabled ? Palette.available : Palette.mutedForeground.opacity(0.4))
+          .fill(live ? Palette.available : Palette.mutedForeground.opacity(0.4))
           .frame(width: 7, height: 7)
-        Text(page.enabled ? "Live" : "Paused")
+        Text(live ? "Live" : "Paused")
           .font(.sans(TextSize.xs, .medium))
-        Text(page.enabled ? "People can request a time" : "Hidden, not taking requests")
+        Text(live ? "People can request a time" : "Hidden, not taking requests")
           .font(.sans(TextSize.xs))
           .foregroundStyle(Palette.mutedForeground)
           .lineLimit(1)
+        Spacer(minLength: 4)
+        Toggle(live ? "Pause booking link" : "Turn on booking link", isOn: Binding(get: { live }, set: { booking.setLive($0) }))
+          .toggleStyle(.switch)
+          .controlSize(.mini)
+          .labelsHidden()
+          .tint(Palette.available)
+          .disabled(booking.pendingLive != nil && !booking.isFixtureData)
+          .help(live ? "Pause: the link stays yours but stops taking requests" : "Turn on: people can request a time")
       }
       HStack(spacing: 4) {
         Image(systemName: "link")

@@ -1,3 +1,4 @@
+import QaliDomain
 import ServiceManagement
 import SwiftUI
 
@@ -9,12 +10,28 @@ struct MenuBarPane: View {
   @AppStorage(MenuBarPrefs.lookahead) private var lookahead = 180
   @AppStorage(MenuBarPrefs.joinPill) private var joinPill = true
   @AppStorage(MenuBarPrefs.includeTomorrow) private var includeTomorrow = true
+  @AppStorage(MenuBarPrefs.worldClock) private var worldClock = true
+  @AppStorage(MenuBarPrefs.clockIncludesYours) private var clockIncludesYours = true
+  @AppStorage(MenuBarPrefs.clockDetails) private var clockDetails = true
+  @AppStorage(MenuBarPrefs.clockIcons) private var clockIcons = true
+  @AppStorage(MenuBarPrefs.clockZone) private var clockZone = ""
+  @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
   @AppStorage(MenuBarPrefs.hideDockIcon) private var hideDockIcon = false
 
   @State private var openAtLogin = SMAppService.mainApp.status == .enabled
   @State private var loginError: String?
 
   private var style: MenuBarStyle { MenuBarStyle(rawValue: styleRaw) ?? .nextUp }
+  private var railIdentifiers: [String] { ZoneRailPrefs.zones(railZones).map(\.identifier) }
+
+  /// The picked zone, or the rail's first while none is picked (or the
+  /// picked one has left the rail), as the menu bar item reads it.
+  private var clockZoneBinding: Binding<String> {
+    Binding(
+      get: { MenuBarPrefs.clockZone(clockZone, rail: railZones)?.identifier ?? "" },
+      set: { clockZone = $0 }
+    )
+  }
 
   var body: some View {
     Form {
@@ -55,6 +72,23 @@ struct MenuBarPane: View {
             Text("From a minute before a call with a video link")
           }
         }
+
+        if style == .worldClock {
+          if railIdentifiers.isEmpty {
+            Text("Add time zones in Date & Time › Other time zones; until then the menu bar shows the date.")
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+          } else {
+            Picker(selection: clockZoneBinding) {
+              ForEach(railIdentifiers, id: \.self) { id in
+                Text("\(zoneCode(id)) · \(zoneShortLabel(id))").tag(id)
+              }
+            } label: {
+              Text("Time zone")
+              Text("One of your other time zones")
+            }
+          }
+        }
       }
       .disabled(!enabled)
 
@@ -65,6 +99,37 @@ struct MenuBarPane: View {
         }
       }
       .disabled(!enabled)
+
+      Section {
+        Toggle(isOn: $worldClock) {
+          Text("Show a world clock in the panel")
+          Text("A clock for each of your time zones under the date")
+        }
+        Group {
+          Toggle(isOn: $clockIncludesYours) {
+            Text("Include your time zone")
+            Text("Off shows only your other time zones")
+          }
+          Toggle(isOn: $clockDetails) {
+            Text("Show day and offset")
+            Text("“Today · +1h” under each time")
+          }
+          Toggle(isOn: $clockIcons) {
+            Text("Show day and night icons")
+            Text("A sun from 6 AM to 6 PM there, otherwise a moon; also in the menu bar item")
+          }
+        }
+        .disabled(!worldClock)
+      } header: {
+        Text("World clock")
+      } footer: {
+        if railIdentifiers.isEmpty {
+          Text("Add time zones in Date & Time › Other time zones to see them here.")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .disabled(!enabled || railIdentifiers.isEmpty)
 
       Section("App") {
         Toggle(isOn: $hideDockIcon) {

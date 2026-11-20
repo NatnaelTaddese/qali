@@ -226,3 +226,35 @@ public func zoneOffsetPhrase(_ other: WorkingZone, from primary: WorkingZone, at
     : "\(hours.formatted(.number.precision(.fractionLength(0...2)).locale(Locale(identifier: "en_US_POSIX")))) hours"
   return "\(amount) \(seconds > 0 ? "ahead" : "behind")"
 }
+
+// MARK: World clock
+
+/// One zone's clock for the menu bar panel.
+public struct WorldClockEntry: Equatable, Sendable {
+  public let identifier: String
+  public let code: String
+  public let time: String
+  /// "Today" when its date is the working zone's, else its weekday ("Sat").
+  public let day: String
+  /// "+14h" from the working zone; nil for the working zone itself.
+  public let offset: String?
+  public let isDaytime: Bool
+  public let isWorkingZone: Bool
+}
+
+/// The working zone's clock, then each other zone's, at `now`.
+public func worldClock(now: Date, others: [WorkingZone], primary: WorkingZone, use24h: Bool) -> [WorldClockEntry] {
+  let pattern = timePattern(use24h: use24h)
+  return ([primary] + others).enumerated().map { index, zone in
+    let hour = zone.calendar.component(.hour, from: now)
+    return WorldClockEntry(
+      identifier: zone.identifier,
+      code: zoneCode(zone.identifier),
+      time: zone.format(now, pattern),
+      day: calendarDayOffset(now, of: zone, from: primary) == 0 ? "Today" : zone.format(now, "EEE"),
+      offset: index == 0 ? nil : zoneOffsetLabel(zone, from: primary, at: now),
+      isDaytime: (6..<18).contains(hour),
+      isWorkingZone: index == 0
+    )
+  }
+}

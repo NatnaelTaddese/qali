@@ -20,6 +20,11 @@ struct MenuBarPanel: View {
   let actions: MenuBarActions
   @Environment(AppModel.self) private var model
   @AppStorage(MenuBarPrefs.includeTomorrow) private var includeTomorrow = true
+  @AppStorage(MenuBarPrefs.worldClock) private var showsWorldClock = true
+  @AppStorage(MenuBarPrefs.clockIncludesYours) private var clockIncludesYours = true
+  @AppStorage(MenuBarPrefs.clockDetails) private var clockDetails = true
+  @AppStorage(MenuBarPrefs.clockIcons) private var clockIcons = true
+  @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
 
   var body: some View {
     TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -55,6 +60,7 @@ struct MenuBarPanel: View {
         title: zone.format(now, "EEEE"),
         detail: left == 0 ? zone.format(now, "d MMM") : "\(zone.format(now, "d MMM")) · \(left) to go"
       )
+      worldClock(now: now, zone: zone, use24h: use24h)
       if !day.allDay.isEmpty {
         AllDayChips(events: day.allDay, data: data)
           .padding(.horizontal, 10)
@@ -77,7 +83,22 @@ struct MenuBarPanel: View {
       }
     } else {
       Header(title: zone.format(now, "EEEE"), detail: zone.format(now, "d MMM"))
+      worldClock(now: now, zone: zone, use24h: use24h)
       ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 60)
+    }
+  }
+
+  /// Your zone's clock and each time-rail zone's, when there are any.
+  @ViewBuilder
+  private func worldClock(now: Date, zone: WorkingZone, use24h: Bool) -> some View {
+    let others = ZoneRailPrefs.zones(railZones)
+    if showsWorldClock, !others.isEmpty {
+      let entries = QaliDomain.worldClock(now: now, others: others, primary: zone, use24h: use24h)
+      WorldClockRow(
+        entries: clockIncludesYours ? entries : entries.filter { !$0.isWorkingZone },
+        showsDetails: clockDetails,
+        showsIcons: clockIcons
+      )
     }
   }
 
@@ -89,6 +110,57 @@ struct MenuBarPanel: View {
       PanelDivider()
       MenuRow("Quit qali Completely", shortcut: "⌘Q", action: actions.quit)
     }
+  }
+}
+
+/// A tile per zone: day or night there, its code, its time, and its day and
+/// offset from yours. Yours comes first, a shade stronger. The icons and the
+/// day line can be turned off in Settings.
+private struct WorldClockRow: View {
+  let entries: [WorldClockEntry]
+  let showsDetails: Bool
+  let showsIcons: Bool
+
+  var body: some View {
+    HStack(spacing: 6) {
+      ForEach(entries, id: \.identifier) { entry in
+        VStack(alignment: .leading, spacing: 2) {
+          HStack(spacing: 4) {
+            if showsIcons {
+              Image(systemName: entry.isDaytime ? "sun.max.fill" : "moon.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(entry.isDaytime ? AnyShapeStyle(Palette.event(3)) : AnyShapeStyle(.secondary))
+            }
+            Text(entry.code)
+              .font(.sans(TextSize.xs, .semibold))
+              .tracking(0.4)
+              .foregroundStyle(entry.isWorkingZone ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+          }
+          Text(entry.time)
+            .font(.sans(15, .semibold))
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+          if showsDetails {
+            Text(entry.offset.map { "\(entry.day) · \($0)" } ?? entry.day)
+              .font(.sans(TextSize.xs))
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+          }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(entry.isWorkingZone ? 0.08 : 0.04), in: .rect(cornerRadius: 10))
+        .help(zoneShortLabel(entry.identifier))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+          "\(zoneShortLabel(entry.identifier)): \(entry.time), \(entry.day)\(entry.isDaytime ? "" : ", night")"
+        )
+      }
+    }
+    .padding(.horizontal, 10)
+    .padding(.bottom, 10)
   }
 }
 

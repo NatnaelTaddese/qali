@@ -8,6 +8,9 @@ import SwiftUI
 enum ZoneRailPrefs {
   /// IANA identifiers, comma-separated, in rail order (left to right).
   static let zones = "zoneRail.zones"
+  /// Whether hovering over the hours shows the time there in every zone.
+  /// Off unless turned on in Settings; kept per Mac.
+  static let hoverReadout = "zoneRail.hoverReadout"
   /// How many fit beside the working zone's hours.
   static let limit = 2
 
@@ -334,9 +337,10 @@ struct ZoneDividers: View {
   var y: CGFloat?
 }
 
-/// With other zones on the rail, the time under the pointer in every column,
-/// in 5-minute steps: a neutral pill in each, as the now pill is red. Read
-/// off the page's first day, like the rail's labels.
+/// With other zones on the rail and the readout turned on in Settings, the
+/// time under the pointer in every column, in 5-minute steps: a neutral pill
+/// in each, as the now pill is red. Read off the page's first day, like the
+/// rail's labels.
 struct RailHoverReadout: View {
   let hover: RailHover
   let hour: CGFloat
@@ -344,6 +348,7 @@ struct RailHoverReadout: View {
   let navigation: CalendarNavigation
 
   @AppStorage(ZoneRailPrefs.zones) private var raw = ""
+  @AppStorage(ZoneRailPrefs.hoverReadout) private var enabled = false
 
   /// `-QaliHoverAt 16.5` holds the readout at that hour, for a capture.
   private var debugY: CGFloat? {
@@ -357,7 +362,9 @@ struct RailHoverReadout: View {
 
   var body: some View {
     let others = ZoneRailPrefs.zones(raw)
-    if !others.isEmpty, let y = hover.y ?? debugY, hour > 0 {
+    // Checked before the pointer is read, so that while it is off, moving the
+    // pointer redraws nothing.
+    if enabled, !others.isEmpty, let y = hover.y ?? debugY, hour > 0 {
       let minutes = min(max((y / hour * 60 / 5).rounded() * 5, 0), 24 * 60 - 5)
       let at = navigation.zone.startOfDay(day).addingTimeInterval(minutes * 60)
       let pillY = minutes / 60 * hour

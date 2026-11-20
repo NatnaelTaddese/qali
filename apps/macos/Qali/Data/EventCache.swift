@@ -11,7 +11,7 @@ import Foundation
 ///
 /// It also keeps the calendar list, which the events take their colours
 /// from: without it, cached events would draw in fallback hues until the
-/// live list arrived.
+/// live list arrived; and the preferences, which decide how the grid is cut.
 nonisolated final class EventCache {
   private struct Window: Codable {
     var startMs: Double
@@ -29,11 +29,28 @@ nonisolated final class EventCache {
   private var saveTask: Task<Void, Never>?
   /// The calendar list last loaded.
   private(set) var calendars: [CalendarListItem]?
+  /// The preferences row last loaded, applied at launch so the zone, week
+  /// start, clock and time rail are already the account's when the window
+  /// opens, instead of switching from the device's once the row arrives.
+  private(set) var preferences: StoredPreferences?
 
   init() {
     windows = Self.readDisk()
     if let url = Self.calendarsURL, let data = try? Data(contentsOf: url) {
       calendars = try? JSONDecoder().decode([CalendarListItem].self, from: data)
+    }
+    if let url = Self.preferencesURL, let data = try? Data(contentsOf: url) {
+      preferences = try? JSONDecoder().decode(StoredPreferences.self, from: data)
+    }
+  }
+
+  /// Stores the live preferences row.
+  func record(preferences next: StoredPreferences) {
+    guard next != preferences else { return }
+    preferences = next
+    Task.detached(priority: .utility) {
+      guard let url = Self.preferencesURL, let data = try? JSONEncoder().encode(next) else { return }
+      try? data.write(to: url, options: .atomic)
     }
   }
 
@@ -93,6 +110,8 @@ nonisolated final class EventCache {
 
   private static var calendarsURL: URL? { cacheURL("calendars") }
 
+  private static var preferencesURL: URL? { cacheURL("preferences") }
+
   private static func readDisk() -> [Window] {
     guard let url = fileURL, let data = try? Data(contentsOf: url) else { return [] }
     return (try? JSONDecoder().decode([Window].self, from: data)) ?? []
@@ -115,6 +134,6 @@ nonisolated final class EventCache {
   /// Forgets everything, on disk too (sign-out: the next account must not
   /// see this one's events).
   static func clear() {
-    for url in [fileURL, calendarsURL].compactMap(\.self) { try? FileManager.default.removeItem(at: url) }
+    for url in [fileURL, calendarsURL, preferencesURL].compactMap(\.self) { try? FileManager.default.removeItem(at: url) }
   }
 }

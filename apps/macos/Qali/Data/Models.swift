@@ -216,7 +216,7 @@ nonisolated struct NotificationRow: Decodable, Hashable, Identifiable, Sendable 
 
 /// The `getMyPreferences` DTO. Every field is optional: absent means
 /// "automatic" and the client resolves it (see `ResolvedPreferences`).
-nonisolated struct StoredPreferences: Decodable, Hashable, Sendable {
+nonisolated struct StoredPreferences: Codable, Hashable, Sendable {
   var timeZone: String?
   /// The time rail's other zones, in order; nil when never set.
   var otherTimeZones: [String]?

@@ -37,9 +37,11 @@ enum ConvexAPI {
 /// and a live event window. Created once per signed-in session.
 @Observable
 final class CalendarData {
-  /// Nil until the first real preferences row arrives; afterwards a transient
-  /// `null` (an auth-token blip) keeps the last resolved value, so the
-  /// calendar never re-cuts its days in the device zone mid-session.
+  /// The row cached from the last session until the live one arrives, nil
+  /// when there is none (the calendar then runs on the device's zone and
+  /// defaults). Afterwards a transient `null` (an auth-token blip) keeps the
+  /// last resolved value, so the calendar never re-cuts its days in the
+  /// device zone mid-session.
   var preferences: ResolvedPreferences? {
     if let stored = preferencesQuery.value ?? nil {
       lastPreferences = ResolvedPreferences(stored)
@@ -79,11 +81,18 @@ final class CalendarData {
     notificationsQuery = LiveQuery(client, ConvexAPI.listNotifications)
     unreadCountQuery = LiveQuery(client, ConvexAPI.unreadNotificationCount)
     peopleQuery = LiveQuery(client, ConvexAPI.listPeople)
+    lastPreferences = eventCache.preferences.map(ResolvedPreferences.init)
     eventsQuery.onResult = { [weak self, eventCache] events in
       guard let window = self?.eventWindow else { return }
       eventCache.record(events, startMs: window.startMs, endMs: window.endMs)
     }
     calendarsQuery.onResult = { [eventCache] calendars in eventCache.record(calendars: calendars) }
+    preferencesQuery.onResult = { [weak self, eventCache] stored in
+      guard let self, let stored else { return }
+      eventCache.record(preferences: stored)
+      ZoneRailPrefs.sync(stored, data: self, live: true)
+    }
+    if let cached = eventCache.preferences { ZoneRailPrefs.sync(cached, data: self, live: false) }
     eventsQuery.onChange = { [weak self] in self?.refreshEvents() }
     refreshEvents()
     booking.announce = { [weak self] message in self?.announce(message) }

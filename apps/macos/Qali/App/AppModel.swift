@@ -92,6 +92,8 @@ final class AppModel {
 
   func signOut() async {
     EventCache.clear()
+    // The rail's zones are the account's; the next one brings its own.
+    UserDefaults.standard.removeObject(forKey: ZoneRailPrefs.zones)
     await convex.logout()
   }
 

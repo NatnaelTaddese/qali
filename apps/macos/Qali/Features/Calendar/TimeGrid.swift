@@ -62,7 +62,7 @@ struct TimeGrid: View {
         HeaderBand {
           VStack(spacing: 0) {
             HStack(spacing: 0) {
-              ZoneRailHeader(zone: zone).frame(width: gutter)
+              ZoneRailHeader(zone: zone, data: data).frame(width: gutter)
               StripTrack(scroller: scroller, geometry: track) {
                 HStack(spacing: 0) {
                   ForEach(Array(strip.enumerated()), id: \.element) { index, day in

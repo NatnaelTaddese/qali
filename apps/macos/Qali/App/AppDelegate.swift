@@ -101,6 +101,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     NSApp.activate()
   }
 
+  /// Opens Settings on one pane, as the calendar's shortcuts into it do.
+  func showSettings(pane: SettingsPane) {
+    showSettings(nil)
+    settingsWindow?.navigation.show(pane)
+  }
+
   @objc func checkForUpdates(_ sender: Any?) {
     AppUpdater.shared.checkForUpdates()
   }

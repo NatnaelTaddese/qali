@@ -144,3 +144,30 @@ private let friday = midnight(2026, 11, 20, in: newYork)
     #expect(times[0].days == nil)
   }
 }
+
+@Suite struct RailEditTests {
+  @Test func makingAZonePrimaryPutsTheWorkingZoneInItsSlot() {
+    let rail = ["Asia/Tokyo", "Europe/London"]
+    #expect(zonesAfterMakingPrimary(rail, other: "Europe/London", working: "Asia/Shanghai") == ["Asia/Tokyo", "Asia/Shanghai"])
+    #expect(zonesAfterMakingPrimary(rail, other: "Asia/Tokyo", working: "Asia/Shanghai") == ["Asia/Shanghai", "Europe/London"])
+    // Never twice, should the working zone already be on the rail.
+    #expect(zonesAfterMakingPrimary(rail, other: "Asia/Tokyo", working: "Europe/London") == ["Europe/London"])
+  }
+
+  @Test func movingHoldsAtTheEnds() {
+    let rail = ["Asia/Tokyo", "Europe/London"]
+    #expect(zonesMoving(rail, "Europe/London", by: -1) == ["Europe/London", "Asia/Tokyo"])
+    #expect(zonesMoving(rail, "Asia/Tokyo", by: 1) == ["Europe/London", "Asia/Tokyo"])
+    #expect(zonesMoving(rail, "Asia/Tokyo", by: -1) == rail)
+    #expect(zonesMoving(rail, "Pacific/Fiji", by: 1) == rail)
+  }
+
+  @Test func offsetsInWords() {
+    let at = friday.addingTimeInterval(12 * 3600)
+    #expect(zoneOffsetPhrase(tokyo, from: newYork, at: at) == "14 hours ahead")
+    #expect(zoneOffsetPhrase(losAngeles, from: newYork, at: at) == "3 hours behind")
+    #expect(zoneOffsetPhrase(kolkata, from: newYork, at: at) == "10.5 hours ahead")
+    #expect(zoneOffsetPhrase(newYork, from: newYork, at: at) == "Same time")
+    #expect(zoneOffsetPhrase(WorkingZone(identifier: "America/Chicago")!, from: newYork, at: at) == "1 hour behind")
+  }
+}

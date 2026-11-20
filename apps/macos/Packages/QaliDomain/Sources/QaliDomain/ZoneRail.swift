@@ -192,3 +192,37 @@ public func eventTimesInZones(
     )
   }
 }
+
+// MARK: Rail edits
+
+/// The other zones once `other` becomes the working zone: the old working
+/// zone takes its slot, so the rail keeps its order and size.
+public func zonesAfterMakingPrimary(_ identifiers: [String], other: String, working: String) -> [String] {
+  identifiers
+    .map { $0 == other ? working : $0 }
+    .reduce(into: [String]()) { kept, id in if !kept.contains(id) { kept.append(id) } }
+}
+
+/// The zones with `identifier` moved `offset` places (−1 left, +1 right),
+/// held at the ends.
+public func zonesMoving(_ identifiers: [String], _ identifier: String, by offset: Int) -> [String] {
+  guard let from = identifiers.firstIndex(of: identifier) else { return identifiers }
+  let to = min(max(from + offset, 0), identifiers.count - 1)
+  var moved = identifiers
+  moved.remove(at: from)
+  moved.insert(identifier, at: to)
+  return moved
+}
+
+/// How far `other` runs from the working zone, in words: "5 hours ahead",
+/// "1 hour behind", "10.5 hours ahead", "Same time".
+public func zoneOffsetPhrase(_ other: WorkingZone, from primary: WorkingZone, at date: Date) -> String {
+  let seconds = other.timeZone.secondsFromGMT(for: date) - primary.timeZone.secondsFromGMT(for: date)
+  if seconds == 0 { return "Same time" }
+  let hours = Double(abs(seconds)) / 3600
+  let amount =
+    hours == hours.rounded()
+    ? "\(Int(hours)) hour\(hours == 1 ? "" : "s")"
+    : "\(hours.formatted(.number.precision(.fractionLength(0...2)).locale(Locale(identifier: "en_US_POSIX")))) hours"
+  return "\(amount) \(seconds > 0 ? "ahead" : "behind")"
+}

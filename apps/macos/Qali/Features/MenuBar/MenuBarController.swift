@@ -158,8 +158,14 @@ final class MenuBarController: NSObject {
           panel?.contentSize = size
           panel?.place()
         }
+        // Top-aligned in the host, so that if the host and the content ever
+        // disagree on height, the bottom gives and never the date header or
+        // the glass's top edge (centred, a shorter host cut off the top).
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     )
     host.sizingOptions = []
+    host.autoresizingMask = [.width, .height]
+    panel.host = host
     // AppKit's own Liquid Glass, as Control Center's menus use: it draws the
     // material, the edge highlight and follows the system's glass settings
     // (Reduce Transparency, Clear/Tinted); the window shadow follows its shape.
@@ -185,6 +191,10 @@ final class MenuBarWindow: NSPanel {
   var anchor: NSRect = .zero
   var contentSize: CGSize = .zero
   var onResignKey: (() -> Void)?
+  /// The SwiftUI content, sized to the window on every placement, so it can't
+  /// keep an older, shorter height inside a taller window (the content was
+  /// then centred in it, cutting off the top and leaving the bottom empty).
+  weak var host: NSView?
 
   init() {
     super.init(
@@ -221,6 +231,10 @@ final class MenuBarWindow: NSPanel {
     x = min(max(x, visible.minX + 8), visible.maxX - contentSize.width - 8)
     let y = anchor.minY - 4 - contentSize.height
     setFrame(NSRect(x: x, y: y, width: contentSize.width, height: contentSize.height), display: true)
+    if let glass = contentView, let host {
+      glass.frame = NSRect(origin: .zero, size: contentSize)
+      host.frame = glass.bounds
+    }
     // Re-trace the shadow from the rounded glass after a resize.
     invalidateShadow()
   }

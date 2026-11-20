@@ -9,6 +9,8 @@ struct MenuBarPane: View {
   @AppStorage(MenuBarPrefs.lookahead) private var lookahead = 180
   @AppStorage(MenuBarPrefs.joinPill) private var joinPill = true
   @AppStorage(MenuBarPrefs.includeTomorrow) private var includeTomorrow = true
+  @AppStorage(MenuBarPrefs.worldClock) private var worldClock = true
+  @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
   @AppStorage(MenuBarPrefs.hideDockIcon) private var hideDockIcon = false
 
   @State private var openAtLogin = SMAppService.mainApp.status == .enabled
@@ -63,6 +65,11 @@ struct MenuBarPane: View {
           Text("Include tomorrow")
           Text("List tomorrow's events under today's")
         }
+        Toggle(isOn: $worldClock) {
+          Text("Show other time zones")
+          Text("A clock for your zone and each one in Date & Time › Other time zones")
+        }
+        .disabled(ZoneRailPrefs.zones(railZones).isEmpty)
       }
       .disabled(!enabled)
 

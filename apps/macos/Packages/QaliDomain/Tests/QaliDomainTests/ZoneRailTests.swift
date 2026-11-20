@@ -171,3 +171,26 @@ private let friday = midnight(2026, 11, 20, in: newYork)
     #expect(zoneOffsetPhrase(WorkingZone(identifier: "America/Chicago")!, from: newYork, at: at) == "1 hour behind")
   }
 }
+
+@Suite struct WorldClockTests {
+  @Test func readsEachZoneAtTheSameInstant() {
+    // Fri 20 Nov 2026, 2:40 PM in New York.
+    let now = friday.addingTimeInterval(14 * 3600 + 40 * 60)
+    let clock = worldClock(now: now, others: [london, tokyo], primary: newYork, use24h: false)
+    #expect(clock.map(\.code) == ["NYC", "LDN", "TYO"])
+    #expect(clock.map(\.time) == ["2:40 PM", "7:40 PM", "4:40 AM"])
+    #expect(clock.map(\.day) == ["Today", "Today", "Sat"])
+    #expect(clock.map(\.offset) == [nil, "+5h", "+14h"])
+    #expect(clock.map(\.isDaytime) == [true, false, false])
+    #expect(clock.map(\.isWorkingZone) == [true, false, false])
+  }
+
+  @Test func aZoneBehindCanStillBeYesterday() {
+    // Fri 1:00 AM in New York is Thu 10:00 PM in Los Angeles.
+    let now = friday.addingTimeInterval(3600)
+    let clock = worldClock(now: now, others: [losAngeles], primary: newYork, use24h: true)
+    #expect(clock[1].time == "22:00")
+    #expect(clock[1].day == "Thu")
+    #expect(clock[1].offset == "−3h")
+  }
+}

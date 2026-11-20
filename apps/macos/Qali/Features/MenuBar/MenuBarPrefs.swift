@@ -13,6 +13,8 @@ enum MenuBarPrefs {
   static let lookahead = "menuBar.lookahead"
   static let joinPill = "menuBar.joinPill"
   static let includeTomorrow = "menuBar.includeTomorrow"
+  /// A clock per zone (yours and the time rail's) under the panel's date.
+  static let worldClock = "menuBar.worldClock"
   static let hideDockIcon = "menuBar.hideDockIcon"
 
   static func registerDefaults() {
@@ -23,6 +25,7 @@ enum MenuBarPrefs {
       lookahead: 180,
       joinPill: true,
       includeTomorrow: true,
+      worldClock: true,
       hideDockIcon: false,
     ])
   }

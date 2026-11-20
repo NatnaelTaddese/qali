@@ -3,7 +3,8 @@ name: macOS release
 # Builds the shareable Mac app (apps/macos) when a push's head commit message
 # carries [release-macos]. Any branch gets the zip as a workflow artifact; a
 # push to main also publishes it as a GitHub release tagged macos-v<version>,
-# so bump MARKETING_VERSION in apps/macos/project.yml for each release (a
+# so bump MARKETING_VERSION in apps/macos/project.yml for each release and
+# add its notes as apps/macos/ReleaseNotes/<version>.md (a
 # version that is already released fails before the build). A merged PR's
 # head commit is the merge commit, whose message includes the PR title, so a
 # PR titled "... [release-macos]" releases when it merges. Run it by hand from
@@ -170,7 +171,18 @@ jobs:
           DMG: ${{ steps.build.outputs.dmg }}
         working-directory: .
         run: |
+          # The version's notes (apps/macos/ReleaseNotes/<version>.md), when
+          # there are any, above the install instructions. The appcast links
+          # this page as the update's full release notes.
+          NOTES="$RUNNER_TEMP/release-notes.md"
+          CHANGES="apps/macos/ReleaseNotes/$VERSION.md"
+          : > "$NOTES"
+          if [ -f "$CHANGES" ]; then
+            cat "$CHANGES" >> "$NOTES"
+            printf '\n## Install\n\n' >> "$NOTES"
+          fi
+          echo "Download the .dmg, open it and drag Qali into Applications. Apple silicon, macOS 26.2 or later. The app isn't notarized: after the first launch is blocked, open System Settings → Privacy & Security and choose Open Anyway. Once installed, Qali updates itself." >> "$NOTES"
           gh release create "macos-v$VERSION" "$DMG" "$ZIP" apps/macos/dist/appcast.xml \
             --target "$GITHUB_SHA" \
             --title "Qali for Mac $VERSION" \
-            --notes "Download the .dmg, open it and drag Qali into Applications. Apple silicon, macOS 26.2 or later. The app isn't notarized: after the first launch is blocked, open System Settings → Privacy & Security and choose Open Anyway. Once installed, Qali updates itself."
+            --notes-file "$NOTES"

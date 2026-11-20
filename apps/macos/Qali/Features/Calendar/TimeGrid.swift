@@ -926,6 +926,7 @@ private struct TimedEvents: View {
       dayHeight: dayHeight,
       zone: navigation.zone
     )
+    let photos = data.contactPhotos
     // One flat list keyed by event, not a list per day: a card dragged to
     // another day keeps its identity, and so its gesture.
     ZStack(alignment: .topLeading) {
@@ -939,6 +940,8 @@ private struct TimedEvents: View {
           hue: Palette.event(data.colorKey(for: item.event)),
           time: timeText(item.event),
           size: box.size,
+          guests: data.capabilities(for: item.event).canSeeGuests ? Array((item.event.attendees ?? []).prefix(3)) : [],
+          photos: photos,
           lifted: dragging
         )
         .frame(width: box.width, height: box.height)
@@ -1066,12 +1069,17 @@ private struct TimedEvents: View {
 
 /// A timed event on the grid: tinted fill, the 3pt colour rail, title and
 /// time. Like the web card, it sheds detail as it gets shorter: two title
-/// lines, then one, then the title alone in small type.
+/// lines, then one, then the title alone in small type. A card with room
+/// for it ends in a row of its first guests' avatars and the video glyph.
 private struct EventCard: View {
   let event: CalendarEvent
   let hue: Color
   let time: String
   let size: CGSize
+  /// The first few guests, or none when the user can't see them.
+  let guests: [EventAttendee]
+  /// Contact photos by lowercased email.
+  let photos: [String: String]
   /// Being dragged: drawn raised, with the web's primary ring.
   var lifted = false
 
@@ -1092,13 +1100,32 @@ private struct EventCard: View {
           .foregroundStyle(Palette.mutedForeground)
           .lineLimit(1)
       }
-      if height >= 80, event.conferenceUrl != nil {
+      // The web's `.event-card-meta` row, only on a card tall and wide
+      // enough to keep the title and time above it.
+      if height >= 80, size.width >= 72, !guests.isEmpty || event.conferenceUrl != nil {
         Spacer(minLength: 0)
-        Image(systemName: "video")
-          .font(.system(size: 11))
-          .foregroundStyle(Palette.mutedForeground.opacity(0.6))
-          .frame(maxWidth: .infinity, alignment: .trailing)
-          .accessibilityLabel("Video call attached")
+        HStack(spacing: 4) {
+          // Two avatars still make a stack in a narrow week column.
+          HStack(spacing: -6) {
+            ForEach(guests.prefix(size.width <= 91 ? 2 : 3), id: \.email) { guest in
+              PersonAvatar(
+                name: guest.displayName,
+                email: guest.email,
+                photoUrl: photos[guest.email.lowercased()],
+                size: 20
+              )
+              .overlay { Circle().strokeBorder(Palette.background.opacity(0.8), lineWidth: 1) }
+            }
+          }
+          Spacer(minLength: 0)
+          if event.conferenceUrl != nil {
+            Image(systemName: "video")
+              .font(.system(size: 11))
+              .foregroundStyle(Palette.mutedForeground.opacity(0.6))
+              .accessibilityLabel("Video call attached")
+          }
+        }
+        .padding(.top, 4)
       }
     }
     .padding(.leading, 12)

@@ -387,6 +387,14 @@ final class CalendarData {
 
   var people: [PersonRow] { peopleQuery.value ?? [] }
 
+  /// Contact photos by lowercased email, for guest avatars.
+  var contactPhotos: [String: String] {
+    Dictionary(
+      people.compactMap { person in person.photoUrl.map { (person.email.lowercased(), $0) } },
+      uniquingKeysWith: { first, _ in first }
+    )
+  }
+
   /// Repeating series' rules in words, by series and zone, from the last
   /// time a panel read them: shown at once when one of the series' events
   /// opens again, while its subscription catches up.

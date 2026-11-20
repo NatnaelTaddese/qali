@@ -218,6 +218,8 @@ nonisolated struct NotificationRow: Decodable, Hashable, Identifiable, Sendable 
 /// "automatic" and the client resolves it (see `ResolvedPreferences`).
 nonisolated struct StoredPreferences: Decodable, Hashable, Sendable {
   var timeZone: String?
+  /// The time rail's other zones, in order; nil when never set.
+  var otherTimeZones: [String]?
   /// date-fns convention: 0 = Sunday, 1 = Monday, 6 = Saturday.
   var weekStartsOn: Double?
   /// "12h" | "24h".

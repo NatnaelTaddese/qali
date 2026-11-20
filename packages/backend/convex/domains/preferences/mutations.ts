@@ -8,10 +8,11 @@ import { internal } from "../../_generated/api";
 import { mutation, type MutationCtx } from "../../_generated/server";
 import { authComponent } from "../../auth";
 import { WRITABLE_ACCESS_ROLES } from "../calendar/mutations";
-import { preferenceFields } from "./tables";
+import { OTHER_TIME_ZONES_LIMIT, preferenceFields } from "./tables";
 
 const resettableField = v.union(
   v.literal("timeZone"),
+  v.literal("otherTimeZones"),
   v.literal("weekStartsOn"),
   v.literal("timeFormat"),
   v.literal("defaultView"),
@@ -42,6 +43,12 @@ export async function updatePreferencesCore(
     } catch {
       throw new Error("Unknown time zone");
     }
+  }
+  if (args.otherTimeZones !== undefined) {
+    args = {
+      ...args,
+      otherTimeZones: normalizeOtherTimeZones(args.otherTimeZones),
+    };
   }
   if (args.defaultCalendarId !== undefined) {
     const calendar = await ctx.db.get(args.defaultCalendarId);
@@ -111,6 +118,23 @@ export async function updatePreferencesCore(
     );
   }
   return null;
+}
+
+/** Valid, distinct IANA zones, in the order given. Throws on an unknown zone
+ * or more than the rail shows. */
+export function normalizeOtherTimeZones(zones: string[]): string[] {
+  const distinct = [...new Set(zones)];
+  if (distinct.length > OTHER_TIME_ZONES_LIMIT) {
+    throw new Error(`At most ${OTHER_TIME_ZONES_LIMIT} other time zones`);
+  }
+  for (const zone of distinct) {
+    try {
+      new Intl.DateTimeFormat(undefined, { timeZone: zone });
+    } catch {
+      throw new Error("Unknown time zone");
+    }
+  }
+  return distinct;
 }
 
 export const updatePreferences = mutation({

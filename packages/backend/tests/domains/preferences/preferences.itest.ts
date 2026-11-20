@@ -69,6 +69,61 @@ describe("user preferences", () => {
     );
   });
 
+  test("stores other time zones in order, deduped, and resets them", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_other_zones";
+    const row = () =>
+      t.run((ctx) =>
+        ctx.db
+          .query("userPreferences")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .unique(),
+      );
+
+    await t.run((ctx) =>
+      updatePreferencesCore(ctx, userId, {
+        otherTimeZones: ["Asia/Tokyo", "Europe/London", "Asia/Tokyo"],
+      }),
+    );
+    expect((await row())?.otherTimeZones).toEqual([
+      "Asia/Tokyo",
+      "Europe/London",
+    ]);
+
+    await t.run((ctx) =>
+      updatePreferencesCore(ctx, userId, { otherTimeZones: [] }),
+    );
+    expect((await row())?.otherTimeZones).toEqual([]);
+
+    await t.run((ctx) =>
+      updatePreferencesCore(ctx, userId, {
+        otherTimeZones: ["Asia/Kolkata"],
+      }),
+    );
+    await t.run((ctx) =>
+      updatePreferencesCore(ctx, userId, { reset: ["otherTimeZones"] }),
+    );
+    expect((await row())?.otherTimeZones).toBeUndefined();
+  });
+
+  test("rejects an unknown or third other time zone", async () => {
+    const t = convexTest(schema, modules);
+    await expect(
+      t.run((ctx) =>
+        updatePreferencesCore(ctx, "user_bad_zones", {
+          otherTimeZones: ["Asia/Tokyo", "Not/AZone"],
+        }),
+      ),
+    ).rejects.toThrow("Unknown time zone");
+    await expect(
+      t.run((ctx) =>
+        updatePreferencesCore(ctx, "user_bad_zones", {
+          otherTimeZones: ["Asia/Tokyo", "Europe/London", "America/New_York"],
+        }),
+      ),
+    ).rejects.toThrow("At most 2 other time zones");
+  });
+
   test("defaultCalendarId must be an owned, writable, non-shared calendar", async () => {
     const t = convexTest(schema, modules);
     const userId = "user_default_cal";

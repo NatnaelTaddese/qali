@@ -11,7 +11,7 @@ struct DateTimePane: View {
   @State private var error: String?
   @State private var showZones = false
   @State private var showAddZone = false
-  /// The time rail's other zones, kept on this Mac.
+  /// The time rail's other zones, mirrored from the account.
   @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
 
   private var stored: StoredPreferences? { data.preferences?.raw }
@@ -62,7 +62,7 @@ struct DateTimePane: View {
         ForEach(railIdentifiers, id: \.self) { id in
           LabeledContent {
             Button {
-              railZones = ZoneRailPrefs.encode(railIdentifiers.filter { $0 != id })
+              setRailZones(railIdentifiers.filter { $0 != id })
             } label: {
               Image(systemName: "minus.circle.fill")
                 .foregroundStyle(.secondary)
@@ -81,14 +81,14 @@ struct DateTimePane: View {
               TimeZoneList(current: nil, includesAutomatic: false) { zone in
                 showAddZone = false
                 guard let zone, !railIdentifiers.contains(zone) else { return }
-                railZones = ZoneRailPrefs.encode(railIdentifiers + [zone])
+                setRailZones(railIdentifiers + [zone])
               }
             }
         }
       } header: {
         Text("Other time zones")
       } footer: {
-        Text("Shown beside your hours in day and week view, up to two. Kept on this Mac.")
+        Text("Shown beside your hours in day and week view, up to two.")
           .font(.footnote)
           .foregroundStyle(.secondary)
       }
@@ -113,6 +113,15 @@ struct DateTimePane: View {
           next == "auto" ? PreferencesPatch(reset: [.timeFormat]) : PreferencesPatch(timeFormat: next)
         )
       }
+    }
+  }
+
+  /// Shows the zones at once and saves them to the account, whose copy then
+  /// comes back through `ZoneRailPrefs.sync`.
+  private func setRailZones(_ identifiers: [String]) {
+    railZones = ZoneRailPrefs.encode(identifiers)
+    save("Couldn't save your time zones.", into: $error) {
+      try await data.updatePreferences(PreferencesPatch(otherTimeZones: identifiers))
     }
   }
 

@@ -70,6 +70,7 @@ nonisolated struct PreferencesPatch: Sendable {
   var timeFormat: String?
   var defaultView: String?
   var timeZone: String?
+  var otherTimeZones: [String]?
   var defaultCalendarId: String?
   var defaultReminderMinutes: [Double]?
   var defaultAllDayReminderMinutes: [Double]?
@@ -81,6 +82,7 @@ nonisolated struct PreferencesPatch: Sendable {
     if let timeFormat { args["timeFormat"] = timeFormat }
     if let defaultView { args["defaultView"] = defaultView }
     if let timeZone { args["timeZone"] = timeZone }
+    if let otherTimeZones { args["otherTimeZones"] = otherTimeZones.map { $0 as ConvexEncodable? } }
     if let defaultCalendarId { args["defaultCalendarId"] = defaultCalendarId }
     if let defaultReminderMinutes {
       args["defaultReminderMinutes"] = defaultReminderMinutes.map { $0 as ConvexEncodable? }

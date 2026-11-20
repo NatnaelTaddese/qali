@@ -1,8 +1,9 @@
 import QaliDomain
 import SwiftUI
 
-/// The other time zones shown in the time rail, stored per Mac in
-/// UserDefaults. Read them with `@AppStorage(ZoneRailPrefs.zones)` and
+/// The other time zones shown in the time rail. The account's preferences
+/// hold them (`otherTimeZones`); `sync` mirrors them into UserDefaults, where
+/// the views read them with `@AppStorage(ZoneRailPrefs.zones)` and
 /// `ZoneRailPrefs.zones(_:)`.
 enum ZoneRailPrefs {
   /// IANA identifiers, comma-separated, in rail order (left to right).
@@ -20,6 +21,21 @@ enum ZoneRailPrefs {
 
   static func encode(_ identifiers: [String]) -> String {
     identifiers.joined(separator: ",")
+  }
+
+  /// Mirrors the account's zones into UserDefaults. An account that has never
+  /// set any takes the zones this Mac kept on its own before they synced.
+  @MainActor static func sync(_ stored: StoredPreferences, data: CalendarData) {
+    let defaults = UserDefaults.standard
+    let local = identifiers(defaults.string(forKey: zones) ?? "")
+    guard let account = stored.otherTimeZones else {
+      guard !local.isEmpty else { return }
+      let upload = Array(local.prefix(limit))
+      Task { try? await data.updatePreferences(PreferencesPatch(otherTimeZones: upload)) }
+      return
+    }
+    let mirrored = Array(account.prefix(limit))
+    if mirrored != local { defaults.set(encode(mirrored), forKey: zones) }
   }
 }
 

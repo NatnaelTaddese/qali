@@ -1,6 +1,9 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
 
+/** How many other time zones the time rail shows beside the working zone. */
+export const OTHER_TIME_ZONES_LIMIT = 2;
+
 /** The user-settable preference fields. Every one is optional: an absent
  * field means "automatic" (follow the browser, or the app default) — clearing
  * a preference removes the field rather than storing a sentinel. Shared by the
@@ -8,6 +11,9 @@ import { v } from "convex/values";
 export const preferenceFields = {
   // IANA zone used for new events and the booking page; absent = browser's.
   timeZone: v.optional(v.string()),
+  // Other IANA zones shown beside the working zone's hours (the time rail),
+  // in display order, at most OTHER_TIME_ZONES_LIMIT. Absent or [] = none.
+  otherTimeZones: v.optional(v.array(v.string())),
   // date-fns weekStartsOn convention: 0 = Sunday, 1 = Monday, 6 = Saturday.
   weekStartsOn: v.optional(v.union(v.literal(0), v.literal(1), v.literal(6))),
   timeFormat: v.optional(v.union(v.literal("12h"), v.literal("24h"))),

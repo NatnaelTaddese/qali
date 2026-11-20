@@ -24,7 +24,10 @@ struct CalendarScreen: View {
       }
       .background { shortcuts }
       .onChange(of: data.preferences, initial: true) { _, preferences in
-        if let preferences { navigation.apply(preferences) }
+        if let preferences {
+          navigation.apply(preferences)
+          ZoneRailPrefs.sync(preferences.raw, data: data)
+        }
       }
       .onChange(of: navigation.eventRange, initial: true) { _, range in
         data.setEventWindow(startMs: range.lowerBound, endMs: range.upperBound)

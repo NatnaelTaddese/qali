@@ -31,6 +31,7 @@ export async function getMyPreferencesHandler(ctx: QueryCtx) {
 export function preferencesDto(prefs: Doc<"userPreferences"> | null) {
   return {
     timeZone: prefs?.timeZone,
+    otherTimeZones: prefs?.otherTimeZones,
     weekStartsOn: prefs?.weekStartsOn,
     timeFormat: prefs?.timeFormat,
     defaultView: prefs?.defaultView,

@@ -104,6 +104,7 @@ struct TimeGrid: View {
             }
             .allowsHitTesting(false)
           }
+          .overlay { RailEdge(fadeIn: GridMetrics.headerDividerFade) }
         }
         .animation(.snappy(duration: 0.2), value: height)
         }
@@ -159,6 +160,14 @@ struct TimeGrid: View {
                   .coordinateSpace(.named(EventDrag.space))
                 }
               }
+              // Over the strip, so cards swiped past the rail slide under it;
+              // carried on above midnight like the day dividers.
+              RailEdge()
+                .overlay(alignment: .top) {
+                  RailEdge()
+                    .frame(height: GridMetrics.overscrollRoom)
+                    .offset(y: -GridMetrics.overscrollRoom)
+                }
               NowMarker(hour: hour, navigation: navigation)
             }
             .frame(height: hour * 24)
@@ -172,6 +181,7 @@ struct TimeGrid: View {
               }
             }
             .frame(height: GridMetrics.bottomRunout)
+            .overlay { RailEdge() }
             .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom))
             .allowsHitTesting(false)
             }
@@ -704,6 +714,32 @@ private struct DayDividers: View {
       }
     }
     .accessibilityHidden(true)
+  }
+}
+
+/// The time rail's trailing edge: a 1pt line in the system separator colour,
+/// as AppKit draws a split view's divider. It sits on the first day column's
+/// leading divider and stays put while the days scroll, so the rail keeps its
+/// edge mid-swipe. With `fadeIn`, it fades in from the top like the header's
+/// day dividers.
+private struct RailEdge: View {
+  var fadeIn: CGFloat = 0
+
+  var body: some View {
+    Rectangle()
+      .fill(GridEdge.separator)
+      .frame(width: 1)
+      .mask {
+        VStack(spacing: 0) {
+          LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+            .frame(height: fadeIn)
+          Color.black
+        }
+      }
+      .padding(.leading, GridMetrics.gutter)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
   }
 }
 

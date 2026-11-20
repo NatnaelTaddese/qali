@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The Settings window's panes, in sidebar order. The web's settings panel
@@ -24,7 +25,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Hashable {
   var symbol: String {
     switch self {
     case .general: "gearshape"
-    case .accounts: "person.crop.circle"
+    case .accounts: "person"
     case .calendars: "calendar"
     case .dateTime: "clock"
     case .events: "bell"
@@ -73,8 +74,22 @@ struct SettingsView: View {
     NavigationSplitView {
       List(selection: Binding(get: { navigation.pane }, set: { $0.map(navigation.show) })) {
         ForEach(SettingsPane.allCases) { pane in
-          Label(pane.title, systemImage: pane.symbol)
-            .tag(pane)
+          // Monochrome outline glyphs in the label's colour and the selected
+          // pane in semibold, like the system's own settings sidebars. A
+          // plain row, since a sidebar tints and fills a Label's icon.
+          HStack(spacing: 8) {
+            Image(systemName: pane.symbol)
+              .font(.system(size: 14))
+              .frame(width: 20)
+            Text(pane.title)
+              .fontWeight(navigation.pane == pane ? .semibold : .regular)
+              // Centred on its capitals, not its line box: room for
+              // descenders otherwise lifts the letters about a point.
+              .alignmentGuide(VerticalAlignment.center) { d in
+                d[.firstTextBaseline] - NSFont.systemFont(ofSize: NSFont.systemFontSize).capHeight / 2
+              }
+          }
+          .tag(pane)
         }
       }
       .listStyle(.sidebar)

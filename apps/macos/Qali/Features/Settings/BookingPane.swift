@@ -99,16 +99,20 @@ struct BookingPane: View {
   @ViewBuilder private func form(_ draft: BookingPageDraft) -> some View {
     Form {
       Section {
-        Toggle(isOn: binding.enabled) {
-          Text(draft.enabled ? "Live" : "Paused")
-          Text(draft.enabled ? "People can request a time" : "Hidden, not taking requests")
+        SettingsRow(draft.enabled ? "Live" : "Paused", detail: draft.enabled ? "People can request a time" : "Hidden, not taking requests") {
+          Toggle("Live", isOn: binding.enabled)
+            .toggleStyle(.switch)
+            .labelsHidden()
         }
 
-        TextField(text: binding.slug, prompt: Text("your-name")) {
-          Text("Link name")
-          Text(BookingData.publicPrefix + (normalized.isEmpty ? "your-name" : normalized))
+        SettingsRow("Link name", detail: BookingData.publicPrefix + (normalized.isEmpty ? "your-name" : normalized)) {
+          TextField("Link name", text: binding.slug, prompt: Text("your-name"))
+            .textFieldStyle(.plain)
+            .multilineTextAlignment(.trailing)
+            .labelsHidden()
+            .autocorrectionDisabled()
+            .frame(maxWidth: 240)
         }
-        .autocorrectionDisabled()
 
         if let problem = slugProblem {
           Label(problem, systemImage: "exclamationmark.circle")
@@ -116,7 +120,7 @@ struct BookingPane: View {
             .font(.callout)
         }
 
-        LabeledContent {
+        SettingsRow("Share", detail: "Anyone with the link can request a time") {
           HStack {
             Button(copied ? "Copied" : "Copy Link", systemImage: copied ? "checkmark" : "doc.on.doc", action: copyLink)
             ShareLink(
@@ -129,9 +133,6 @@ struct BookingPane: View {
             .disabled(page == nil || !slugUnchanged)
           }
           .disabled(!slugReady)
-        } label: {
-          Text("Share")
-          Text("Anyone with the link can request a time")
         }
       }
 
@@ -140,20 +141,21 @@ struct BookingPane: View {
           Text("Title")
         }
 
-        Picker(selection: binding.slotMinutes) {
+        SettingsRow("Length", detail: "Each slot people can pick") {
+        Picker("Length", selection: binding.slotMinutes) {
           ForEach(BookingPageDraft.slotChoices, id: \.self) { minutes in
             Text("\(minutes) min").tag(minutes)
           }
           if !BookingPageDraft.slotChoices.contains(draft.slotMinutes) {
             Text("\(draft.slotMinutes) min").tag(draft.slotMinutes)
           }
-        } label: {
-          Text("Length")
-          Text("Each slot people can pick")
+        }
+        .labelsHidden()
+        .fixedSize()
         }
 
-        NumberRow(title: "Minimum notice", detail: "Hours before a slot starts that it can still be booked", unit: "hours", value: binding.noticeHours, range: 0...720)
-        NumberRow(title: "Days ahead", detail: "How many days ahead people can book", unit: "days", value: binding.horizonDays, range: 1...365)
+        NumberRow(title: "Minimum notice", detail: "How soon before a slot it can still be booked", unit: "hours", value: binding.noticeHours, range: 0...720)
+        NumberRow(title: "Days ahead", detail: "How far ahead people can book", unit: "days", value: binding.horizonDays, range: 1...365)
       }
 
       Section {
@@ -178,21 +180,15 @@ struct BookingPane: View {
       }
 
       Section("Specific dates") {
-        LabeledContent {
+        SettingsRow("Change single days", detail: "Drag on the calendar to set a day's own hours") {
           Button("Paint on Calendar…", action: paint)
             .disabled(page == nil || !canSave)
             .help(page == nil ? "Save your booking link first, then you can change single days" : blockedReason ?? "")
-        } label: {
-          Text("Change single days")
-          Text("Drag on the calendar to set a day's own hours")
         }
         ForEach(booking.upcomingOverrides(zone: zone), id: \.key) { override in
-          LabeledContent {
+          SettingsRow(dateLabel(override.key), detail: override.intervals.isEmpty ? "Unavailable" : intervalsLabel(override.intervals)) {
             Button("Use Weekly Hours") { booking.resetDate(key: override.key) }
               .buttonStyle(.link)
-          } label: {
-            Text(dateLabel(override.key))
-            Text(override.intervals.isEmpty ? "Unavailable" : intervalsLabel(override.intervals))
           }
         }
       }
@@ -320,6 +316,35 @@ struct BookingPane: View {
 
 /// A whole number with its unit, a field and a stepper (System Settings'
 /// numeric rows).
+/// A form row with a title over a detail line and its control centred on
+/// the pair. Grouped forms pin a control to a two-line label's first line,
+/// which reads as sitting high.
+private struct SettingsRow<Control: View>: View {
+  let title: String
+  let detail: String
+  @ViewBuilder var control: Control
+
+  init(_ title: String, detail: String, @ViewBuilder control: () -> Control) {
+    self.title = title
+    self.detail = detail
+    self.control = control()
+  }
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 12) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title)
+        Text(detail)
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+      }
+      .lineLimit(1)
+      Spacer(minLength: 8)
+      control
+    }
+  }
+}
+
 private struct NumberRow: View {
   let title: String
   let detail: String
@@ -328,14 +353,17 @@ private struct NumberRow: View {
   let range: ClosedRange<Int>
 
   var body: some View {
-    LabeledContent {
+    SettingsRow(title, detail: detail) {
       // The Repeat editor's count, so both forms step numbers the same way.
-      // The unit is in the detail line, so every stepper ends on the
-      // form's trailing edge like the controls above it.
-      CountField(value: value, range: range, label: "\(title) in \(unit)") { value = $0 }
-    } label: {
-      Text(title)
-      Text(detail)
+      // The unit follows in a fixed-width slot, so both steppers line up
+      // and the units end together at the trailing edge.
+      HStack(spacing: 8) {
+        CountField(value: value, range: range, label: "\(title) in \(unit)") { value = $0 }
+        Text(unit)
+          .font(.sans(TextSize.sm))
+          .foregroundStyle(Palette.mutedForeground)
+          .frame(width: 40, alignment: .leading)
+      }
     }
   }
 }

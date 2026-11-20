@@ -105,3 +105,42 @@ private let friday = midnight(2026, 11, 20, in: newYork)
     }
   }
 }
+
+@Suite struct EventTimesInZonesTests {
+  /// Tue 17 Nov 2026, 6:30–7:30 PM in New York.
+  private let start = midnight(2026, 11, 17, in: newYork).addingTimeInterval(18.5 * 3600).ms
+  private var end: Double { start + 3_600_000 }
+
+  @Test func readsTheEventInEachZone() {
+    let times = eventTimesInZones(
+      startMs: start, endMs: end, zones: [tokyo, london, losAngeles], primary: newYork, use24h: false)
+    #expect(times.map(\.code) == ["TYO", "LDN", "LAX"])
+    // Tokyo: the next morning, a day on.
+    #expect(times[0].time == "8:30 AM – 9:30 AM")
+    #expect(times[0].days == "Wed")
+    #expect(times[0].isDaytime)
+    // London: runs past its midnight.
+    #expect(times[1].time == "11:30 PM – 12:30 AM")
+    #expect(times[1].days == "Tue → Wed")
+    #expect(!times[1].isDaytime)
+    // Los Angeles: the same afternoon.
+    #expect(times[2].time == "3:30 PM – 4:30 PM")
+    #expect(times[2].days == nil)
+    #expect(times[2].isDaytime)
+  }
+
+  @Test func twentyFourHourClockAndHalfHourZones() {
+    let times = eventTimesInZones(startMs: start, endMs: end, zones: [kolkata], primary: newYork, use24h: true)
+    #expect(times[0].time == "05:00 – 06:00")
+    #expect(times[0].days == "Wed")
+    #expect(!times[0].isDaytime)
+  }
+
+  @Test func anEventEndingAtMidnightThereStaysOnItsDay() {
+    // 6–7 PM New York is 11 PM – midnight in London.
+    let six = midnight(2026, 11, 17, in: newYork).addingTimeInterval(18 * 3600).ms
+    let times = eventTimesInZones(startMs: six, endMs: six + 3_600_000, zones: [london], primary: newYork, use24h: false)
+    #expect(times[0].time == "11:00 PM – 12:00 AM")
+    #expect(times[0].days == nil)
+  }
+}

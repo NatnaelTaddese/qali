@@ -478,6 +478,9 @@ private struct StripTrack<Content: View>: View {
       // reveals, stays visible.
       // (A clip, not a mask: a mask renders offscreen every frame.)
       .clipShape(StripClip())
+      // A clip only cuts the drawing: without this, a card running in from
+      // a buffered day still takes clicks meant for the rail beside it.
+      .contentShape(StripClip())
   }
 }
 
@@ -560,6 +563,8 @@ private struct AllDayBand: View {
         }
       }
       .frame(width: GridMetrics.gutter, alignment: .topLeading)
+      // Above the strip, so the toggle stays the rail's to click.
+      .zIndex(1)
 
       StripTrack(scroller: scroller, geometry: track) {
         ZStack(alignment: .topLeading) {

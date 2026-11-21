@@ -33,6 +33,9 @@ targets:
     platform: macOS
     sources:
       - path: Qali
+      # Each version's notes, for the What's New sheet after an update.
+      - path: ReleaseNotes
+        buildPhase: resources
     dependencies:
       - package: ConvexMobile
       - package: QaliDomain

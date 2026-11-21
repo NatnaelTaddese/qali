@@ -21,6 +21,9 @@ final class AppModel {
   /// The signed-in user's calendar data; nil while signed out.
   private(set) var calendarData: CalendarData?
   var signInError: String?
+  /// This version's notes while they wait to be shown once, after an
+  /// update; decided as the app starts, before its window opens.
+  var whatsNew: ReleaseNotes? = WhatsNew.pending()
 
   let auth: BetterAuthClient
   let convex: ConvexClientWithAuth<String>

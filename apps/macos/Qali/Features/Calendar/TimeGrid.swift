@@ -515,7 +515,10 @@ private struct StripTrack<Content: View>: View {
       .clipShape(StripClip())
       // A clip only cuts the drawing: without this, a card running in from
       // a buffered day still takes clicks meant for the rail beside it.
-      .contentShape(StripClip())
+      // Only its own frame, though, not the clip's overscroll reach: the
+      // all-day band's strip sits on top of the date row, and reaching up
+      // over it took the clicks meant for the day's "Use Weekly".
+      .contentShape(.rect)
   }
 }
 

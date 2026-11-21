@@ -203,14 +203,19 @@ struct UseWeeklyButton: View {
   let action: () -> Void
 
   var body: some View {
-    Button("Use Weekly", action: action)
-      .buttonStyle(.plain)
-      .font(.sans(TextSize.xs, .medium))
-      .foregroundStyle(Palette.mutedForeground)
-      .padding(.horizontal, 6)
-      .frame(height: 20)
-      .background(Palette.background.opacity(0.9), in: .rect(cornerRadius: 6, style: .continuous))
-      .overlay { RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Palette.border) }
-      .help("This day has its own hours. Click to go back to your weekly hours.")
+    Button(action: action) {
+      // The pill is the label, so all of it takes the click, not just the
+      // words.
+      Text("Use Weekly")
+        .font(.sans(TextSize.xs, .medium))
+        .foregroundStyle(Palette.mutedForeground)
+        .padding(.horizontal, 6)
+        .frame(height: 20)
+        .background(Palette.background.opacity(0.9), in: .rect(cornerRadius: 6, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Palette.border) }
+        .contentShape(.rect(cornerRadius: 6, style: .continuous))
+    }
+    .buttonStyle(.plain)
+    .help("This day has its own hours. Click to go back to your weekly hours.")
   }
 }

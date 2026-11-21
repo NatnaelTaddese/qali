@@ -178,6 +178,9 @@ export async function collectBusy(
       // The host marked this one "free" in their own calendar, so it is not a
       // reason to withhold the time. Absent `busy` means busy.
       if (event.busy === false) continue;
+      // All-day events are ignored unless the host turned that off: a holiday
+      // or a trip on the calendar shouldn't close the hours they set.
+      if (event.allDay && page.ignoreAllDayEvents !== false) continue;
       busy.push(
         event.allDay
           ? allDayBusyInterval(event.startMs, event.endMs, page.timeZone)

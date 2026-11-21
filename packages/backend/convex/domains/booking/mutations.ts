@@ -333,6 +333,7 @@ export async function upsertBookingPageHandler(
     bufferMinutes: number;
     minNoticeMinutes: number;
     horizonDays: number;
+    ignoreAllDayEvents?: boolean;
     enabled: boolean;
   },
 ): Promise<{ slug: string }> {
@@ -402,6 +403,11 @@ export async function upsertBookingPageHandler(
     bufferMinutes: args.bufferMinutes,
     minNoticeMinutes: args.minNoticeMinutes,
     horizonDays: args.horizonDays,
+    // A client that doesn't send it (an older app) keeps what is saved: an
+    // undefined in a patch would clear the field.
+    ...(args.ignoreAllDayEvents !== undefined && {
+      ignoreAllDayEvents: args.ignoreAllDayEvents,
+    }),
     enabled: args.enabled,
     targetConnectionId: target.connection._id,
     targetCalendarId: target.calendar._id,
@@ -430,6 +436,8 @@ export const upsertBookingPage = mutation({
       }),
     ),
     ...slotSettingsValidator,
+    /** Omitted keeps the saved choice (ignore, for a page that never set it). */
+    ignoreAllDayEvents: v.optional(v.boolean()),
     enabled: v.boolean(),
   },
   handler: (ctx, args) => upsertBookingPageHandler(ctx, args),

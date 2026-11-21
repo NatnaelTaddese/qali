@@ -50,32 +50,74 @@ struct AccountPanel: View {
         .accessibilityLabel("Theme")
       }
 
-      Button {
-        guard !isSigningOut else { return }
-        isSigningOut = true
-        Task { await model.signOut() }
-      } label: {
-        HStack(spacing: 10) {
-          if isSigningOut {
-            ProgressView().controlSize(.small)
-          } else {
-            Image(systemName: "rectangle.portrait.and.arrow.right")
-              .font(.system(size: 13, weight: .medium))
+      // Settings and Sign out share one card, a hairline apart, as on the web.
+      VStack(spacing: 0) {
+        AccountRow(hoverTint: Palette.foreground.opacity(0.05)) {
+          // The window is the place to work now; the panel steps aside.
+          island.close()
+          model.openSettings?()
+        } label: {
+          Image(systemName: "gearshape")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(Palette.mutedForeground)
+            .frame(width: 16)
+          Text("Settings")
+            .font(.sans(TextSize.sm, .medium))
+          Spacer(minLength: 0)
+        }
+        .help("Settings (⌘,)")
+
+        Rectangle()
+          .fill(Palette.foreground.opacity(0.08))
+          .frame(height: 1)
+          .padding(.horizontal, 12)
+
+        AccountRow(hoverTint: Palette.destructive.opacity(0.1)) {
+          guard !isSigningOut else { return }
+          isSigningOut = true
+          Task { await model.signOut() }
+        } label: {
+          Group {
+            if isSigningOut {
+              ProgressView().controlSize(.small)
+            } else {
+              Image(systemName: "rectangle.portrait.and.arrow.right")
+                .font(.system(size: 13, weight: .medium))
+            }
           }
+          .frame(width: 16)
           Text(isSigningOut ? "Signing out…" : "Sign out")
             .font(.sans(TextSize.sm, .medium))
           Spacer(minLength: 0)
         }
         .foregroundStyle(Palette.destructive)
-        .padding(.horizontal, 12)
-        .frame(height: 38)
-        .background(Palette.foreground.opacity(0.05), in: .rect(cornerRadius: 10, style: .continuous))
-        .contentShape(.rect)
+        .disabled(isSigningOut)
       }
-      .buttonStyle(.plain)
-      .disabled(isSigningOut)
+      .background(Palette.foreground.opacity(0.05))
+      .clipShape(.rect(cornerRadius: 10, style: .continuous))
     }
     .foregroundStyle(Palette.foreground)
+  }
+}
+
+/// One row of the account card: a full-width button that tints on hover.
+private struct AccountRow<Label: View>: View {
+  let hoverTint: Color
+  let action: () -> Void
+  @ViewBuilder let label: Label
+
+  @State private var hovering = false
+
+  var body: some View {
+    Button(action: action) {
+      HStack(spacing: 10) { label }
+        .padding(.horizontal, 12)
+        .frame(height: 38)
+        .background { if hovering { hoverTint } }
+        .contentShape(.rect)
+    }
+    .buttonStyle(.plain)
+    .onHover { hovering = $0 }
   }
 }
 

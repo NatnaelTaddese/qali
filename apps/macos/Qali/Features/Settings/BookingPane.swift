@@ -156,6 +156,12 @@ struct BookingPane: View {
 
         NumberRow(title: "Minimum notice", detail: "How soon before a slot it can still be booked", unit: "hours", value: binding.noticeHours, range: 0...720)
         NumberRow(title: "Days ahead", detail: "How far ahead people can book", unit: "days", value: binding.horizonDays, range: 1...365)
+
+        SettingsRow("Ignore all-day events", detail: "Holidays and trips don't block your hours") {
+          Toggle("Ignore all-day events", isOn: binding.ignoreAllDayEvents)
+            .toggleStyle(.switch)
+            .labelsHidden()
+        }
       }
 
       Section {

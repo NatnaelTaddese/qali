@@ -48,11 +48,14 @@ nonisolated struct BookingPage: Decodable, Hashable, Sendable {
   var rules: [WeeklyRule]
   /// False keeps the row and its slug while the page reads as missing.
   var enabled: Bool
+  /// Whether all-day events leave the day open; nil (never set) ignores
+  /// them, as does true.
+  var ignoreAllDayEvents: Bool? = nil
 
   enum CodingKeys: String, CodingKey {
     case id = "_id"
     case slug, displayName, timeZone, title, description, slotMinutes, bufferMinutes
-    case minNoticeMinutes, horizonDays, rules, enabled
+    case minNoticeMinutes, horizonDays, rules, enabled, ignoreAllDayEvents
   }
 }
 
@@ -279,6 +282,7 @@ final class BookingData {
     let slot = Double(draft.slotMinutes)
     let notice = Double(max(0, draft.noticeHours) * 60)
     let horizon = Double(draft.horizonDays)
+    let ignoreAllDay = draft.ignoreAllDayEvents
     let enabled = draft.enabled
     let _: SavedSlug = try await Self.mutate(client, ConvexAPI.upsertBookingPage) {
         var args: [String: ConvexEncodable?] = [
@@ -291,6 +295,7 @@ final class BookingData {
           "bufferMinutes": 0.0,
           "minNoticeMinutes": notice,
           "horizonDays": horizon,
+          "ignoreAllDayEvents": ignoreAllDay,
           "enabled": enabled,
         ]
         if !title.isEmpty { args["title"] = title }
@@ -332,6 +337,8 @@ final class BookingData {
           ]
           if let title = page.title { args["title"] = title }
           if let description = page.description { args["description"] = description }
+          // Left out when never set, which keeps the server's default.
+          if let ignore = page.ignoreAllDayEvents { args["ignoreAllDayEvents"] = ignore }
           return args
         }
         announce?(live ? "Your booking link is live." : "Your booking link is paused.")
@@ -581,6 +588,8 @@ nonisolated struct BookingPageDraft: Equatable, Sendable {
   var slotMinutes: Int
   var noticeHours: Int
   var horizonDays: Int
+  /// All-day events leave the day open (on unless the host turned it off).
+  var ignoreAllDayEvents: Bool
   var enabled: Bool
 
   /// Weekdays in the grid's Monday-first order.
@@ -602,6 +611,7 @@ nonisolated struct BookingPageDraft: Equatable, Sendable {
     slotMinutes = Int(page?.slotMinutes ?? defaults?.slotMinutes ?? 30)
     noticeHours = Int(((page?.minNoticeMinutes ?? defaults?.minNoticeMinutes ?? 120) / 60).rounded())
     horizonDays = Int(page?.horizonDays ?? defaults?.horizonDays ?? 60)
+    ignoreAllDayEvents = page?.ignoreAllDayEvents != false
     enabled = page?.enabled ?? false
   }
 

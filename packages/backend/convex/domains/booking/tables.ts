@@ -26,6 +26,10 @@ export const bookingTables = {
     minNoticeMinutes: v.number(),
     // How far ahead the page offers slots at all.
     horizonDays: v.number(),
+    // Whether all-day events (holidays, trips, reminders) leave the day open.
+    // Absent means ignore them: only an explicit false lets a busy all-day
+    // event withhold its whole day.
+    ignoreAllDayEvents: v.optional(v.boolean()),
     // The weekly schedule. `weekday` is 0 (Sunday) through 6, and the bounds
     // are minutes from that day's midnight in `timeZone`.
     rules: v.array(

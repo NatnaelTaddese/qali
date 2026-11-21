@@ -270,6 +270,10 @@ function AvailabilityForm({
   const [horizonDays, setHorizonDays] = useState(
     () => initial?.horizonDays ?? 60,
   );
+  // On unless the host turned it off: a page that never set it ignores them.
+  const [ignoreAllDay, setIgnoreAllDay] = useState(
+    () => page?.ignoreAllDayEvents !== false,
+  );
   const [enabled, setEnabled] = useState(() => page?.enabled ?? false);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -300,6 +304,7 @@ function AvailabilityForm({
     setSlotMinutes(initial.slotMinutes);
     setNoticeHours(Math.round(initial.minNoticeMinutes / 60));
     setHorizonDays(initial.horizonDays);
+    setIgnoreAllDay(page?.ignoreAllDayEvents !== false);
     setEnabled(page?.enabled ?? false);
   }, [initial, page, defaults]);
 
@@ -432,6 +437,7 @@ function AvailabilityForm({
         bufferMinutes: 0,
         minNoticeMinutes: Math.max(0, Math.round(noticeHours * 60)),
         horizonDays,
+        ignoreAllDayEvents: ignoreAllDay,
         enabled,
       });
       if (editVersion.current === savedVersion) {
@@ -827,6 +833,25 @@ function AvailabilityForm({
                 />
               </div>
             </div>
+
+            <label className="flex items-center gap-2.5 px-2">
+              <Switch
+                checked={ignoreAllDay}
+                onCheckedChange={(checked) => {
+                  markDirty();
+                  setIgnoreAllDay(checked);
+                }}
+                aria-label="Ignore all-day events"
+              />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">
+                  Ignore all-day events
+                </span>
+                <span className="block truncate text-xs font-normal text-muted-foreground">
+                  Holidays and trips don't block your hours
+                </span>
+              </span>
+            </label>
 
             {zoneChanged && (
               <p className="px-2 text-xs text-muted-foreground">

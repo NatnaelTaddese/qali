@@ -1076,6 +1076,56 @@ describe("booking context conflict detection", () => {
     });
     expect(ctxRow!.conflict).toBe(true);
   });
+
+  /** A busy all-day event (UTC midnights) covering the day before through the
+   * day after `start`, and a pending booking at `start`. */
+  async function allDayAroundBooking(
+    t: ReturnType<typeof convexTest>,
+    target: Awaited<ReturnType<typeof seedHost>>,
+  ) {
+    const DAY = 24 * 60 * 60_000;
+    const start = future();
+    const end = start + 30 * 60_000;
+    const midnight = Math.floor(start / DAY) * DAY;
+    return await t.run(async (ctx) => {
+      await ctx.db.insert("events", {
+        ...eventDoc(HOST, target, midnight - DAY, midnight + 2 * DAY, "holiday"),
+        allDay: true,
+      });
+      return ctx.db.insert("bookings", bookingDoc(HOST, start, end));
+    });
+  }
+
+  test("an all-day event leaves the day open by default", async () => {
+    const t = convexTest(schema, modules);
+    const target = await seedHost(t);
+    const bookingId = await allDayAroundBooking(t, target);
+
+    const ctxRow = await t.query(internal.domains.booking.queries.getBookingContext, {
+      bookingId,
+      hostUserId: HOST,
+    });
+    expect(ctxRow!.conflict).toBe(false);
+  });
+
+  test("an all-day event withholds the day once the host stops ignoring them", async () => {
+    const t = convexTest(schema, modules);
+    const target = await seedHost(t);
+    await t.run(async (ctx) => {
+      const page = await ctx.db
+        .query("bookingPages")
+        .withIndex("by_user", (q) => q.eq("userId", HOST))
+        .unique();
+      await ctx.db.patch(page!._id, { ignoreAllDayEvents: false });
+    });
+    const bookingId = await allDayAroundBooking(t, target);
+
+    const ctxRow = await t.query(internal.domains.booking.queries.getBookingContext, {
+      bookingId,
+      hostUserId: HOST,
+    });
+    expect(ctxRow!.conflict).toBe(true);
+  });
 });
 
 describe("anonymous request hardening", () => {

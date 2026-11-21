@@ -3,7 +3,7 @@
 
   /// `-QaliFixture events` swaps the live events for a fixed set in the
   /// current week that exercises what real data may not: overlapping events
-  /// (cascade, tiled and fanned), a 15-minute event, a video call, and
+  /// (cascade, tiled and fanned), a 15-minute event, a video call, guests, and
   /// all-day events stacked deeper than the band shows.
   enum DebugFixtures {
     static let events: [CalendarEvent]? = {
@@ -15,13 +15,21 @@
       let monday = local.dateInterval(of: .weekOfYear, for: .now)!.start
 
       /// A timed event on `day` (0 = Monday) between two wall-clock hours.
-      func timed(_ id: String, _ title: String, day: Int, _ from: Double, _ to: Double, color: String, call: Bool = false) -> [String: Any] {
+      func timed(
+        _ id: String, _ title: String, day: Int, _ from: Double, _ to: Double, color: String, call: Bool = false,
+        guests: [String] = []
+      ) -> [String: Any] {
         let start = local.date(byAdding: .day, value: day, to: monday)!.timeIntervalSince1970 * 1000
         var row: [String: Any] = [
           "_id": id, "summary": title, "allDay": false, "status": "confirmed", "color": color,
           "startMs": start + from * 3_600_000, "endMs": start + to * 3_600_000,
         ]
         if call { row["conferenceUrl"] = "https://meet.google.com/example" }
+        if !guests.isEmpty {
+          row["attendees"] = guests.map { name in
+            ["email": "\(name.lowercased())@example.com", "displayName": name, "responseStatus": "accepted"]
+          }
+        }
         return row
       }
 
@@ -47,14 +55,17 @@
         allDay("a7", "Release freeze", day: -2, days: 4, color: "11"),
         timed("t9", "Planning", day: 2, 9, 10, color: "9"),
         timed("t10", "1:1", day: 2, 11, 11.5, color: "6"),
-        timed("t11", "Retro", day: 2, 15, 16, color: "3"),
-        timed("t1", "Roadmap review", day: 0, 9, 11, color: "9"),
+        timed("t11", "Retro", day: 2, 15, 16.5, color: "3", guests: ["Hana", "Ivo"]),
+        timed("t1", "Roadmap review", day: 0, 9, 11, color: "9", guests: ["Ana", "Ben", "Cleo"]),
         timed("t2", "Design critique", day: 0, 9.5, 10.5, color: "6"),
         timed("t3", "Interview loop", day: 0, 10, 12, color: "3"),
         timed("t4", "Standup", day: 0, 14, 15, color: "2"),
         timed("t5", "Vendor call", day: 0, 14, 15, color: "11", call: true),
         timed("t6", "Check-in", day: 0, 16, 16.25, color: "7"),
-        timed("t7", "Workshop with the whole product and design group", day: 3, 13, 16, color: "5", call: true),
+        timed(
+          "t7", "Workshop with the whole product and design group", day: 3, 13, 16, color: "5", call: true,
+          guests: ["Dana", "Eli", "Fatima", "Gus"]
+        ),
         timed("t8", "Lunch", day: 3, 12.5, 13.5, color: "4"),
       ]
       let data = try! JSONSerialization.data(withJSONObject: rows)

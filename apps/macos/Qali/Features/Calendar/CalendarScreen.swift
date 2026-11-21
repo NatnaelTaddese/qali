@@ -5,8 +5,11 @@ import SwiftUI
 /// over the calendar grid, with the bottom island floating at its foot.
 struct CalendarScreen: View {
   let data: CalendarData
+  @Environment(AppModel.self) private var model
   @State private var navigation = CalendarNavigation()
   @State private var island = Island()
+  /// The update's notes, once the calendar has settled in.
+  @State private var whatsNew: ReleaseNotes?
 
   var body: some View {
     CalendarGrid(navigation: navigation, data: data)
@@ -41,6 +44,19 @@ struct CalendarScreen: View {
         else { return }
         data.booking.stopPainting()
         data.announce("Availability editing closed: your working time zone changed. Open it again to carry on in the new zone.")
+      }
+      // After an update: the new version's notes, once, a moment after the
+      // calendar is up rather than over the loader.
+      .task {
+        guard let notes = model.whatsNew else { return }
+        try? await Task.sleep(for: .seconds(0.8))
+        whatsNew = notes
+      }
+      .sheet(item: $whatsNew, onDismiss: {
+        if let notes = model.whatsNew { WhatsNew.markSeen(notes) }
+        model.whatsNew = nil
+      }) { notes in
+        WhatsNewSheet(notes: notes) { whatsNew = nil }
       }
       #if DEBUG
         // `-QaliCycle month,week,day,week` steps through views after launch,

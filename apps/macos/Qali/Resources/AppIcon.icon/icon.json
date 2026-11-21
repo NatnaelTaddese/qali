@@ -137,6 +137,7 @@
           }
         }
       ],
+      "name" : "Group",
       "shadow" : {
         "kind" : "neutral",
         "opacity" : 0.5

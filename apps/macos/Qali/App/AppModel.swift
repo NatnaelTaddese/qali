@@ -29,6 +29,9 @@ final class AppModel {
 
   /// Opens the Settings window on a pane; set by the app delegate.
   @ObservationIgnored var openSettingsPane: ((SettingsPane) -> Void)?
+  /// Opens the Settings window on whichever pane it last showed; set by the
+  /// app delegate.
+  @ObservationIgnored var openSettings: (() -> Void)?
   /// Brings the calendar window forward; set by the app delegate.
   @ObservationIgnored var showCalendar: (() -> Void)?
 

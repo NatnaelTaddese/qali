@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
       self?.showSettings(nil)
       self?.settingsWindow?.navigation.show(pane)
     }
+    model.openSettings = { [weak self] in self?.showSettings(nil) }
     model.showCalendar = { [weak self] in self?.showMainWindow() }
     showMainWindow()
     Task { await model.restoreSession() }

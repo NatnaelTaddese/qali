@@ -355,17 +355,27 @@ function PrivacyPage() {
             syncing.
           </li>
           <li>
-            <strong>Delete your account and all its data</strong> by emailing{" "}
-            <a href="mailto:privacy@myqali.com">privacy@myqali.com</a> from the
-            address you sign in with. Within 30 days we revoke qali&rsquo;s
-            access at Google and delete your account, your stored Google tokens,
-            and everything qali holds for you — events, calendars, contacts,
-            the people directory, booking pages and requests, assistant
-            conversations, reminders, notifications, preferences, and any
-            waitlist entry — and confirm by email. We keep only what the law
-            requires us to.
+            <strong>Delete your account</strong> from Settings &rsaquo;
+            Accounts &rsaquo; Delete account in the qali web app. Once you
+            confirm, we revoke qali&rsquo;s access at Google for every
+            connected account and delete your account, your stored Google
+            tokens, your sessions, and everything qali holds for you — events,
+            calendars, contacts, the people directory, booking pages and
+            requests, assistant conversations, reminders, notifications,
+            preferences, and any waitlist entry. This happens straight away
+            and can&rsquo;t be undone; you are signed out when it finishes.
+          </li>
+          <li>
+            <strong>Ask us to delete it</strong> if you can&rsquo;t sign in, by
+            emailing <a href="mailto:privacy@myqali.com">privacy@myqali.com</a>{" "}
+            from the address you sign in with. Within 30 days we carry out the
+            same deletion and confirm by email.
           </li>
         </ul>
+        <p>
+          Either way, we keep only what the law requires us to, and nothing
+          is deleted from your Google account itself.
+        </p>
       </LegalSection>
 
       <LegalSection heading="Your rights">

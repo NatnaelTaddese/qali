@@ -209,6 +209,10 @@ export function BottomIsland() {
     if (!expanded && !editing) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // A modal opened from a panel (the delete-account confirmation) holds
+      // focus; its own Escape closes just the modal, not the dock under it.
+      if ((e.target as Element | null)?.closest?.("[data-slot='alert-dialog-content']"))
+        return;
       // While painting, Escape leaves the mode (back to the panel) rather than
       // dismissing the dock outright.
       if (editing) setEditing(false);
@@ -227,7 +231,7 @@ export function BottomIsland() {
       // don't dismiss on them.
       if (
         target.closest(
-          "[data-slot='popover-content'],[data-slot='dropdown-menu-content'],[data-slot='goo-dropdown-content']",
+          "[data-slot='popover-content'],[data-slot='dropdown-menu-content'],[data-slot='goo-dropdown-content'],[data-slot='alert-dialog-content'],[data-slot='alert-dialog-backdrop']",
         )
       )
         return;

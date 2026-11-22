@@ -10,6 +10,7 @@
 
 import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
+import type * as domains_account_deletion from "../domains/account/deletion.js";
 import type * as domains_assistant_data from "../domains/assistant/data.js";
 import type * as domains_assistant_eventLogic from "../domains/assistant/eventLogic.js";
 import type * as domains_assistant_history from "../domains/assistant/history.js";
@@ -89,6 +90,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   crons: typeof crons;
+  "domains/account/deletion": typeof domains_account_deletion;
   "domains/assistant/data": typeof domains_assistant_data;
   "domains/assistant/eventLogic": typeof domains_assistant_eventLogic;
   "domains/assistant/history": typeof domains_assistant_history;

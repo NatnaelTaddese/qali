@@ -11,6 +11,14 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Google, MicrosoftOutlook } from "@thesvg/react";
 import { api } from "@qali/backend/convex/_generated/api";
 import type { Id } from "@qali/backend/convex/_generated/dataModel";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@qali/ui/components/alert-dialog";
 import { Button } from "@qali/ui/components/button";
 import { Checkbox } from "@qali/ui/components/checkbox";
 import { Input } from "@qali/ui/components/input";
@@ -426,6 +434,7 @@ function AccountsSection() {
   if (connections === undefined) return <SectionSkeleton />;
   if (connections.length === 0) {
     return (
+      <div className="space-y-3">
       <SettingCard>
         <div className="flex flex-col items-center gap-4 py-8">
           <p className="text-center text-xs text-muted-foreground">
@@ -434,6 +443,8 @@ function AccountsSection() {
           <AddAccountButton />
         </div>
       </SettingCard>
+      <DeleteAccountCard />
+      </div>
     );
   }
   return (
@@ -449,7 +460,93 @@ function AccountsSection() {
         />
       ))}
       <AddAccountButton />
+      <DeleteAccountCard />
     </div>
+  );
+}
+
+/** The last row of the accounts section: erase the whole qali account. A
+ * real modal rather than the dock's two-click confirm, because unlike
+ * disconnect there is no way back — every connection's grant is revoked and
+ * all synced data, booking pages and settings are deleted with the login. */
+function DeleteAccountCard() {
+  const deleteAccount = useAction(api.domains.account.deletion.deleteAccount);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const confirm = async () => {
+    setBusy(true);
+    try {
+      await deleteAccount({});
+    } catch (error: unknown) {
+      setBusy(false);
+      reportSaveError("Couldn't delete your account")(error);
+      return;
+    }
+    toast.success("Your qali account has been deleted");
+    // Signing out flips the workspace route to the login screen. The server
+    // already removed the session row, so if the call reports an error, a
+    // reload drops the stale local session instead.
+    const result = await authClient
+      .signOut()
+      .catch((error: unknown) => ({ error }));
+    if (result.error) window.location.assign("/");
+  };
+
+  return (
+    <SettingCard className="mt-6">
+      <SettingRow
+        title="Delete account"
+        description="Permanently delete your qali account and all of its data"
+        control={
+          <AlertDialog
+            open={open}
+            onOpenChange={(next) => {
+              if (!busy) setOpen(next);
+            }}
+          >
+            <AlertDialogTrigger
+              render={
+                <Button type="button" size="sm" variant="destructive" />
+              }
+            >
+              Delete account
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <div className="space-y-2">
+                <AlertDialogTitle>Delete your qali account?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This can&rsquo;t be undone. qali will revoke its access to
+                  every connected Google account and permanently delete your
+                  synced calendars and contacts, booking page, assistant
+                  history and settings. Events in Google Calendar itself are
+                  not affected.
+                </AlertDialogDescription>
+              </div>
+              <div className="flex justify-end gap-2">
+                <AlertDialogClose
+                  disabled={busy}
+                  render={<Button type="button" size="sm" variant="secondary" />}
+                >
+                  Cancel
+                </AlertDialogClose>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  disabled={busy}
+                  aria-busy={busy}
+                  onClick={() => void confirm()}
+                >
+                  {busy && <Spinner />}
+                  {busy ? "Deleting…" : "Delete account"}
+                </Button>
+              </div>
+            </AlertDialogContent>
+          </AlertDialog>
+        }
+      />
+    </SettingCard>
   );
 }
 

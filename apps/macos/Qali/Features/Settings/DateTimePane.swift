@@ -20,28 +20,30 @@ struct DateTimePane: View {
   var body: some View {
     Form {
       Section {
-        Picker(selection: $weekStart) {
-          Text("Monday").tag(1)
-          Text("Sunday").tag(0)
-          Text("Saturday").tag(6)
-        } label: {
-          Text("Week starts on")
-          Text("First day of the calendar week")
+        SettingsRow("Week starts on", detail: "First day of the calendar week") {
+          Picker("Week starts on", selection: $weekStart) {
+            Text("Monday").tag(1)
+            Text("Sunday").tag(0)
+            Text("Saturday").tag(6)
+          }
+          .labelsHidden()
+          .fixedSize()
         }
 
-        Picker(selection: $timeFormat) {
-          Text("Automatic").tag("auto")
-          Divider()
-          Text("12-hour (5:30 PM)").tag("12h")
-          Text("24-hour (17:30)").tag("24h")
-        } label: {
-          Text("Time format")
-          Text("Automatic follows the 12-hour clock")
+        SettingsRow("Time format", detail: "Automatic follows the 12-hour clock") {
+          Picker("Time format", selection: $timeFormat) {
+            Text("Automatic").tag("auto")
+            Divider()
+            Text("12-hour (5:30 PM)").tag("12h")
+            Text("24-hour (17:30)").tag("24h")
+          }
+          .labelsHidden()
+          .fixedSize()
         }
       }
 
       Section {
-        LabeledContent {
+        SettingsRow("Time zone", detail: "Your calendar and booking page run in this zone") {
           Button(zoneLabel) { showZones = true }
             .popover(isPresented: $showZones, arrowEdge: .bottom) {
               TimeZoneList(current: stored?.timeZone) { zone in
@@ -53,15 +55,12 @@ struct DateTimePane: View {
                 }
               }
             }
-        } label: {
-          Text("Time zone")
-          Text("Your calendar and booking page run in this zone")
         }
       }
 
       Section {
         ForEach(railIdentifiers, id: \.self) { id in
-          LabeledContent {
+          SettingsRow(id.zoneLabel, detail: railDetail(id)) {
             Button {
               setRailZones(railIdentifiers.filter { $0 != id })
             } label: {
@@ -71,9 +70,6 @@ struct DateTimePane: View {
             .buttonStyle(.borderless)
             .help("Remove \(zoneShortLabel(id))")
             .accessibilityLabel("Remove \(zoneShortLabel(id))")
-          } label: {
-            Text(id.zoneLabel)
-            Text(railDetail(id))
           }
         }
         if railIdentifiers.count < ZoneRailPrefs.limit {
@@ -86,9 +82,10 @@ struct DateTimePane: View {
               }
             }
         }
-        Toggle(isOn: $railHoverReadout) {
-          Text("Show times under the pointer")
-          Text("Hovering over the hours shows that time in each zone")
+        SettingsRow("Show times under the pointer", detail: "Hovering over the hours shows that time in each zone") {
+          Toggle("Show times under the pointer", isOn: $railHoverReadout)
+            .toggleStyle(.switch)
+            .labelsHidden()
         }
         .disabled(railIdentifiers.isEmpty)
       } header: {

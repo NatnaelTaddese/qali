@@ -280,6 +280,48 @@ struct SettingsView: View {
 
 // MARK: - Shared pieces
 
+/// A form row with a title over a detail line and its control centred on
+/// the pair. Grouped forms pin a control to a two-line label's first line,
+/// which reads as sitting high, so every two-line row in Settings uses this.
+struct SettingsRow<Title: View, Detail: View, Control: View>: View {
+  @ViewBuilder var title: Title
+  @ViewBuilder var detail: Detail
+  @ViewBuilder var control: Control
+
+  /// A disabled row dims its words, as the form does its own labels.
+  @Environment(\.isEnabled) private var isEnabled
+
+  init(
+    @ViewBuilder control: () -> Control,
+    @ViewBuilder title: () -> Title,
+    @ViewBuilder detail: () -> Detail
+  ) {
+    self.title = title()
+    self.detail = detail()
+    self.control = control()
+  }
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 12) {
+      VStack(alignment: .leading, spacing: 2) {
+        title
+          .foregroundStyle(isEnabled ? .primary : .tertiary)
+        detail
+          .font(.subheadline)
+          .foregroundStyle(isEnabled ? .secondary : .tertiary)
+      }
+      Spacer(minLength: 8)
+      control
+    }
+  }
+}
+
+extension SettingsRow where Title == Text, Detail == Text {
+  init(_ title: String, detail: String, @ViewBuilder control: () -> Control) {
+    self.init(control: control) { Text(title) } detail: { Text(detail) }
+  }
+}
+
 /// Shows a save failure under the form, the way the web toasts one.
 struct SaveErrorBanner: ViewModifier {
   @Binding var message: String?

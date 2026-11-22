@@ -36,9 +36,10 @@ struct MenuBarPane: View {
   var body: some View {
     Form {
       Section {
-        Toggle(isOn: $enabled) {
-          Text("Show qali in the menu bar")
-          Text("Your next event next to the clock, and today's agenda a click away")
+        SettingsRow("Show qali in the menu bar", detail: "Your next event next to the clock, and today's agenda a click away") {
+          Toggle("Show qali in the menu bar", isOn: $enabled)
+            .toggleStyle(.switch)
+            .labelsHidden()
         }
       }
 
@@ -52,24 +53,27 @@ struct MenuBarPane: View {
         }
 
         if style == .nextUp {
-          Picker(selection: $lookahead) {
-            Text("30 minutes ahead").tag(30)
-            Text("1 hour ahead").tag(60)
-            Text("3 hours ahead").tag(180)
-            Text("Any time today").tag(0)
-          } label: {
-            Text("Show the next event")
-            Text("Further out, the menu bar shows today's date")
+          SettingsRow("Show the next event", detail: "Further out, the menu bar shows today's date") {
+            Picker("Show the next event", selection: $lookahead) {
+              Text("30 minutes ahead").tag(30)
+              Text("1 hour ahead").tag(60)
+              Text("3 hours ahead").tag(180)
+              Text("Any time today").tag(0)
+            }
+            .labelsHidden()
+            .fixedSize()
           }
 
-          Toggle(isOn: $showTitles) {
-            Text("Show event titles")
-            Text("Off shows only the countdown, for screen sharing")
+          SettingsRow("Show event titles", detail: "Off shows only the countdown, for screen sharing") {
+            Toggle("Show event titles", isOn: $showTitles)
+              .toggleStyle(.switch)
+              .labelsHidden()
           }
 
-          Toggle(isOn: $joinPill) {
-            Text("Show Join before calls")
-            Text("From a minute before a call with a video link")
+          SettingsRow("Show Join before calls", detail: "From a minute before a call with a video link") {
+            Toggle("Show Join before calls", isOn: $joinPill)
+              .toggleStyle(.switch)
+              .labelsHidden()
           }
         }
 
@@ -79,13 +83,14 @@ struct MenuBarPane: View {
               .font(.footnote)
               .foregroundStyle(.secondary)
           } else {
-            Picker(selection: clockZoneBinding) {
-              ForEach(railIdentifiers, id: \.self) { id in
-                Text("\(zoneCode(id)) · \(zoneShortLabel(id))").tag(id)
+            SettingsRow("Time zone", detail: "One of your other time zones") {
+              Picker("Time zone", selection: clockZoneBinding) {
+                ForEach(railIdentifiers, id: \.self) { id in
+                  Text("\(zoneCode(id)) · \(zoneShortLabel(id))").tag(id)
+                }
               }
-            } label: {
-              Text("Time zone")
-              Text("One of your other time zones")
+              .labelsHidden()
+              .fixedSize()
             }
           }
         }
@@ -93,30 +98,35 @@ struct MenuBarPane: View {
       .disabled(!enabled)
 
       Section("Panel") {
-        Toggle(isOn: $includeTomorrow) {
-          Text("Include tomorrow")
-          Text("List tomorrow's events under today's")
+        SettingsRow("Include tomorrow", detail: "List tomorrow's events under today's") {
+          Toggle("Include tomorrow", isOn: $includeTomorrow)
+            .toggleStyle(.switch)
+            .labelsHidden()
         }
       }
       .disabled(!enabled)
 
       Section {
-        Toggle(isOn: $worldClock) {
-          Text("Show a world clock in the panel")
-          Text("A clock for each of your time zones under the date")
+        SettingsRow("Show a world clock in the panel", detail: "A clock for each of your time zones under the date") {
+          Toggle("Show a world clock in the panel", isOn: $worldClock)
+            .toggleStyle(.switch)
+            .labelsHidden()
         }
         Group {
-          Toggle(isOn: $clockIncludesYours) {
-            Text("Include your time zone")
-            Text("Off shows only your other time zones")
+          SettingsRow("Include your time zone", detail: "Off shows only your other time zones") {
+            Toggle("Include your time zone", isOn: $clockIncludesYours)
+              .toggleStyle(.switch)
+              .labelsHidden()
           }
-          Toggle(isOn: $clockDetails) {
-            Text("Show day and offset")
-            Text("“Today · +1h” under each time")
+          SettingsRow("Show day and offset", detail: "“Today · +1h” under each time") {
+            Toggle("Show day and offset", isOn: $clockDetails)
+              .toggleStyle(.switch)
+              .labelsHidden()
           }
-          Toggle(isOn: $clockIcons) {
-            Text("Show day and night icons")
-            Text("A sun from 6 AM to 6 PM there, otherwise a moon; also in the menu bar item")
+          SettingsRow("Show day and night icons", detail: "A sun from 6 AM to 6 PM there, otherwise a moon; also in the menu bar item") {
+            Toggle("Show day and night icons", isOn: $clockIcons)
+              .toggleStyle(.switch)
+              .labelsHidden()
           }
         }
         .disabled(!worldClock)
@@ -132,15 +142,17 @@ struct MenuBarPane: View {
       .disabled(!enabled || railIdentifiers.isEmpty)
 
       Section("App") {
-        Toggle(isOn: $hideDockIcon) {
-          Text("Hide the Dock icon when the window is closed")
-          Text("qali keeps running in the menu bar")
+        SettingsRow("Hide the Dock icon when the window is closed", detail: "qali keeps running in the menu bar") {
+          Toggle("Hide the Dock icon when the window is closed", isOn: $hideDockIcon)
+            .toggleStyle(.switch)
+            .labelsHidden()
         }
         .disabled(!enabled)
 
-        Toggle(isOn: Binding(get: { openAtLogin }, set: setOpenAtLogin)) {
-          Text("Open at login")
-          Text("Starts qali when you log in to this Mac")
+        SettingsRow("Open at login", detail: "Starts qali when you log in to this Mac") {
+          Toggle("Open at login", isOn: Binding(get: { openAtLogin }, set: setOpenAtLogin))
+            .toggleStyle(.switch)
+            .labelsHidden()
         }
       }
     }

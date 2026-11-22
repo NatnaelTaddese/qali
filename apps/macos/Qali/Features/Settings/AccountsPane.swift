@@ -27,13 +27,10 @@ struct AccountsPane: View {
           )
         }
         Section {
-          LabeledContent {
+          SettingsRow("Another account", detail: "Linking opens qali on the web, then the account shows up here.") {
             Button("Add Google Account…") {
               NSWorkspace.shared.open(AppConfig.webAppURL)
             }
-          } label: {
-            Text("Another account")
-            Text("Linking opens qali on the web, then the account shows up here.")
           }
         }
       } else {
@@ -77,33 +74,35 @@ private struct ConnectionSection: View {
     Section {
       identity
 
-      Toggle(isOn: Binding(
-        get: { activeOverride ?? !paused },
-        set: { next in
-          activeOverride = next
-          save("Couldn't update the connection.", into: $error) {
-            try await data.setConnection(connection, active: next)
+      SettingsRow("Calendar", detail: "View, create, and update events") {
+        Toggle("Calendar", isOn: Binding(
+          get: { activeOverride ?? !paused },
+          set: { next in
+            activeOverride = next
+            save("Couldn't update the connection.", into: $error) {
+              try await data.setConnection(connection, active: next)
+            }
           }
-        }
-      )) {
-        Text("Calendar")
-        Text("View, create, and update events")
+        ))
+        .toggleStyle(.switch)
+        .labelsHidden()
       }
 
-      Toggle(isOn: Binding(
-        get: { contactsOverride ?? (connection.contactsEnabled ?? false) },
-        set: { next in
-          contactsOverride = next
-          save("Couldn't update contacts sync.", into: $error) {
-            try await data.setContacts(connection, enabled: next)
+      SettingsRow("Contacts", detail: "Suggests and ranks the people you invite") {
+        Toggle("Contacts", isOn: Binding(
+          get: { contactsOverride ?? (connection.contactsEnabled ?? false) },
+          set: { next in
+            contactsOverride = next
+            save("Couldn't update contacts sync.", into: $error) {
+              try await data.setContacts(connection, enabled: next)
+            }
           }
-        }
-      )) {
-        Text("Contacts")
-        Text("Suggests and ranks the people you invite")
+        ))
+        .toggleStyle(.switch)
+        .labelsHidden()
       }
 
-      LabeledContent {
+      SettingsRow {
         if errored {
           Button("Resume") {
             save("Couldn't resume the connection.", into: $error) {
@@ -125,13 +124,14 @@ private struct ConnectionSection: View {
           }
           .disabled(paused || data.isSyncing)
         }
-      } label: {
+      } title: {
         HStack(spacing: 6) {
           Text("Sync")
           Circle()
             .fill(errored ? Color.red : paused ? Color.secondary.opacity(0.5) : Color.green)
             .frame(width: 7, height: 7)
         }
+      } detail: {
         TimelineView(.everyMinute) { context in
           Text(syncDescription(now: context.date))
             .foregroundStyle(errored ? Color.red : Color.secondary)
@@ -139,14 +139,11 @@ private struct ConnectionSection: View {
       }
 
       if canDisconnect {
-        LabeledContent {
+        SettingsRow("Disconnect", detail: "Removes this account and everything it synced") {
           Button(disconnecting ? "Disconnecting…" : "Disconnect…", role: .destructive) {
             confirmDisconnect = true
           }
           .disabled(disconnecting)
-        } label: {
-          Text("Disconnect")
-          Text("Removes this account and everything it synced")
         }
       }
     }

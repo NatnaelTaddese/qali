@@ -17,10 +17,10 @@ export const Route = createFileRoute("/terms")({
 
 function TermsPage() {
   return (
-    <LegalPage title="Terms of Service" updated="August 16, 2026">
+    <LegalPage title="Terms of Service" updated="November 23, 2026">
       <p>
         These Terms of Service (&ldquo;Terms&rdquo;) govern your use of qali, a
-        calendar client for Google Calendar. By signing in or otherwise using
+        calendar client for Google Calendar, on the web and as a Mac app. By signing in or otherwise using
         qali, you agree to these Terms. If you do not agree, do not use qali.
       </p>
 
@@ -50,10 +50,12 @@ function TermsPage() {
         <p>
           To work, qali needs the Google permissions you grant at sign-in,
           including read and write access to your Google Calendar and read-only
-          access to your contacts. You can revoke these permissions at any time
-          from your{" "}
+          access to your contacts. We use that access only as described in the{" "}
+          <a href="/privacy">Privacy Policy</a>, in line with Google&rsquo;s API
+          Services User Data Policy. You can revoke these permissions at any
+          time from your{" "}
           <a
-            href="https://myaccount.google.com/permissions"
+            href="https://myaccount.google.com/connections"
             target="_blank"
             rel="noreferrer"
           >
@@ -105,7 +107,8 @@ function TermsPage() {
           reviewing them before they apply to your calendar. When you use the
           assistant, request context is processed by our model provider as
           described in the{" "}
-          <a href="/privacy">Privacy Policy</a>.
+          <a href="/privacy">Privacy Policy</a>. We do not use your calendar or
+          contacts data to train AI models.
         </p>
       </LegalSection>
 
@@ -151,8 +154,9 @@ function TermsPage() {
 
       <LegalSection heading="Termination">
         <p>
-          You may stop using qali at any time by disconnecting your Google
-          account or deleting your account. We may suspend or terminate your
+          You may stop using qali at any time by revoking its access to your
+          Google account, and you can ask us to delete your account and its data
+          as described in the <a href="/privacy">Privacy Policy</a>. We may suspend or terminate your
           access if you violate these Terms or if we discontinue the service. On
           termination, we handle your data as described in the{" "}
           <a href="/privacy">Privacy Policy</a>.

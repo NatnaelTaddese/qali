@@ -99,7 +99,7 @@ export const connectLinkedAccounts = action({
 /** A live access token for the grant about to be removed, or undefined when
  * Google won't issue one (the grant is already dead, so there is nothing to
  * revoke). Read before the Better Auth row goes: the broker needs that row. */
-async function accessTokenForRevoke(
+export async function accessTokenForRevoke(
   ctx: ActionCtx,
   userId: string,
   credentialRef: string,
@@ -122,7 +122,7 @@ async function accessTokenForRevoke(
  * removal must go ahead regardless. Irreversible, so it runs only once the
  * local unlink has succeeded; revoking first would leave a connection that
  * still looks active but can never sync again if the unlink then fails. */
-async function revokeGoogleGrant(accessToken: string): Promise<void> {
+export async function revokeGoogleGrant(accessToken: string): Promise<void> {
   try {
     const response = await fetch("https://oauth2.googleapis.com/revoke", {
       method: "POST",

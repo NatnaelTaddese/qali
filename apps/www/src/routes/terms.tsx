@@ -155,8 +155,9 @@ function TermsPage() {
       <LegalSection heading="Termination">
         <p>
           You may stop using qali at any time by revoking its access to your
-          Google account, and you can ask us to delete your account and its data
-          as described in the <a href="/privacy">Privacy Policy</a>. We may suspend or terminate your
+          Google account, and you can delete your account and its data from
+          Settings in qali, or ask us to, as described in the{" "}
+          <a href="/privacy">Privacy Policy</a>. We may suspend or terminate your
           access if you violate these Terms or if we discontinue the service. On
           termination, we handle your data as described in the{" "}
           <a href="/privacy">Privacy Policy</a>.

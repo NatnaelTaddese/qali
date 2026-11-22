@@ -22,16 +22,51 @@ enum SettingsPane: String, CaseIterable, Identifiable, Hashable {
     }
   }
 
+  /// The white glyph on the pane's tile.
   var symbol: String {
     switch self {
-    case .general: "gearshape"
-    case .accounts: "person"
+    case .general: "gearshape.fill"
+    case .accounts: "person.fill"
     case .calendars: "calendar"
-    case .dateTime: "clock"
-    case .events: "bell"
-    case .booking: "calendar.badge.clock"
+    case .dateTime: "clock.fill"
+    case .events: "bell.fill"
+    case .booking: "link"
     case .menuBar: "menubar.rectangle"
     }
+  }
+
+  /// The tile's colour, as System Settings colours its panes: grey for the
+  /// general pane, the calendar's red, and no two neighbours alike.
+  var tint: Color {
+    switch self {
+    case .general: .gray
+    case .accounts: .blue
+    case .calendars: .red
+    case .dateTime: .indigo
+    case .events: .orange
+    case .booking: .green
+    case .menuBar: Color(white: 0.32)
+    }
+  }
+}
+
+/// A pane's sidebar icon: its glyph in white on a rounded tile of the pane's
+/// colour, lit from above, like the system's own settings sidebars.
+struct SettingsPaneIcon: View {
+  let pane: SettingsPane
+
+  var body: some View {
+    let tile = RoundedRectangle(cornerRadius: 5.5, style: .continuous)
+    Image(systemName: pane.symbol)
+      .font(.system(size: 11.5, weight: .semibold))
+      .foregroundStyle(.white)
+      .shadow(color: .black.opacity(0.15), radius: 0.5, y: 0.5)
+      .frame(width: 22, height: 22)
+      .background(pane.tint.gradient, in: tile)
+      // A hairline of light on the rim, as on the system's tiles.
+      .overlay(tile.strokeBorder(.white.opacity(0.18), lineWidth: 0.5))
+      .shadow(color: .black.opacity(0.12), radius: 0.5, y: 0.5)
+      .accessibilityHidden(true)
   }
 }
 
@@ -74,13 +109,11 @@ struct SettingsView: View {
     NavigationSplitView {
       List(selection: Binding(get: { navigation.pane }, set: { $0.map(navigation.show) })) {
         ForEach(SettingsPane.allCases) { pane in
-          // Monochrome outline glyphs in the label's colour and the selected
-          // pane in semibold, like the system's own settings sidebars. A
-          // plain row, since a sidebar tints and fills a Label's icon.
+          // Each pane on its own coloured tile and the selected pane in
+          // semibold, like the system's own settings sidebars. A plain row,
+          // since a sidebar tints and fills a Label's icon.
           HStack(spacing: 8) {
-            Image(systemName: pane.symbol)
-              .font(.system(size: 14))
-              .frame(width: 20)
+            SettingsPaneIcon(pane: pane)
             Text(pane.title)
               .fontWeight(navigation.pane == pane ? .semibold : .regular)
               // Centred on its capitals, not its line box: room for

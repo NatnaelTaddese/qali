@@ -107,7 +107,7 @@ private struct GhostEvent: Identifiable {
 private struct GhostEventCard: View {
   let ghost: GhostEvent
 
-  private let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+  private let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
 
   var body: some View {
     VStack(alignment: .leading, spacing: 1) {

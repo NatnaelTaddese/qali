@@ -77,7 +77,7 @@ private struct BookingBlock: View {
 
   @State private var hovering = false
 
-  private let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+  private let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
 
   var body: some View {
     // Below an hour there is room for one line, as on the web.

@@ -50,6 +50,72 @@ enum SettingsPane: String, CaseIterable, Identifiable, Hashable {
   }
 }
 
+extension SettingsPane {
+  /// The settings this pane holds, by the names its rows show, for the
+  /// sidebar's search. Keep in step with the panes.
+  var settings: [String] {
+    switch self {
+    case .general:
+      ["Account", "Sign Out", "Theme", "Default view", "Check for updates automatically",
+       "Download and install updates automatically", "Version"]
+    case .accounts: ["Google account", "Another account", "Calendar access", "Contacts access", "Sync", "Disconnect"]
+    case .calendars: ["Show or hide calendars", "Rename calendars"]
+    case .dateTime:
+      ["Time zone", "Week starts on", "Time format", "Other time zones", "Show times under the pointer"]
+    case .events: ["Default calendar", "Timed event reminders", "All-day event reminders"]
+    case .booking:
+      ["Link name", "Share", "Live", "Title", "Length", "Minimum notice", "Days ahead",
+       "Ignore all-day events", "Weekly hours", "Change single days"]
+    case .menuBar:
+      ["Show qali in the menu bar", "Show the next event", "Show event titles", "Show Join before calls",
+       "Include tomorrow", "World clock", "Show day and night icons", "Show day and offset",
+       "Include your time zone", "Open at login", "Hide the Dock icon when the window is closed"]
+    }
+  }
+
+  /// Other words people may search by, each with the setting it finds
+  /// (nil for the pane as a whole).
+  private var keywords: [String: String?] {
+    switch self {
+    case .general:
+      ["appearance": "Theme", "dark": "Theme", "light": "Theme", "mode": "Theme",
+       "log out": "Sign Out", "update": "Check for updates automatically",
+       "day": "Default view", "week": "Default view", "month": "Default view"]
+    case .accounts:
+      ["google": "Google account", "connect": "Another account", "link": "Another account",
+       "permissions": "Calendar access", "unlink": "Disconnect", "remove": "Disconnect"]
+    case .calendars:
+      ["colour": nil, "color": nil, "visible": "Show or hide calendars", "name": "Rename calendars"]
+    case .dateTime:
+      ["timezone": "Time zone", "clock": "Time format", "24-hour": "Time format", "12-hour": "Time format",
+       "am": "Time format", "pm": "Time format", "monday": "Week starts on", "sunday": "Week starts on"]
+    case .events:
+      ["reminder": "Timed event reminders", "notification": "Timed event reminders",
+       "alert": "Timed event reminders", "new event": "Default calendar"]
+    case .booking:
+      ["availability": "Weekly hours", "schedule": "Weekly hours", "slots": "Length", "booking page": nil,
+       "appointments": nil, "url": "Link name", "holiday": "Ignore all-day events"]
+    case .menuBar:
+      ["status bar": nil, "menubar": nil, "dock": "Hide the Dock icon when the window is closed",
+       "login": "Open at login", "startup": "Open at login", "join": "Show Join before calls",
+       "video": "Show Join before calls", "countdown": "Show event titles", "agenda": "Show the next event"]
+    }
+  }
+
+  /// What a search finds here: nil when nothing does, else the settings it
+  /// names (empty when only the pane itself matched).
+  func matches(_ query: String) -> [String]? {
+    let query = query.trimmingCharacters(in: .whitespaces)
+    guard !query.isEmpty else { return [] }
+    var found = settings.filter { $0.localizedStandardContains(query) }
+    let words = keywords.filter { $0.key.localizedStandardContains(query) }
+    for case let setting? in words.values where !found.contains(setting) { found.append(setting) }
+    if !found.isEmpty { return found }
+    if title.localizedStandardContains(query) || !words.isEmpty { return [] }
+    return nil
+  }
+}
+
 /// A pane's sidebar icon: its glyph in white on a rounded tile of the pane's
 /// colour, lit from above, like the system's own settings sidebars.
 struct SettingsPaneIcon: View {
@@ -105,27 +171,66 @@ struct SettingsView: View {
   @Environment(AppModel.self) private var model
   @Environment(SettingsNavigation.self) private var navigation
 
+  /// The sidebar's search, which narrows the panes to those holding a
+  /// matching setting, as System Settings' does.
+  @State private var query: String = {
+    #if DEBUG
+      // `-QaliSettingsSearch zone` opens with that search typed, for captures.
+      UserDefaults.standard.string(forKey: "QaliSettingsSearch") ?? ""
+    #else
+      ""
+    #endif
+  }()
+
   var body: some View {
+    let results = SettingsPane.allCases.compactMap { pane in pane.matches(query).map { (pane, $0) } }
     NavigationSplitView {
       List(selection: Binding(get: { navigation.pane }, set: { $0.map(navigation.show) })) {
-        ForEach(SettingsPane.allCases) { pane in
+        ForEach(results, id: \.0) { pane, found in
           // Each pane on its own coloured tile and the selected pane in
           // semibold, like the system's own settings sidebars. A plain row,
           // since a sidebar tints and fills a Label's icon.
           HStack(spacing: 8) {
             SettingsPaneIcon(pane: pane)
-            Text(pane.title)
-              .fontWeight(navigation.pane == pane ? .semibold : .regular)
-              // Centred on its capitals, not its line box: room for
-              // descenders otherwise lifts the letters about a point.
-              .alignmentGuide(VerticalAlignment.center) { d in
-                d[.firstTextBaseline] - NSFont.systemFont(ofSize: NSFont.systemFontSize).capHeight / 2
+            VStack(alignment: .leading, spacing: 1) {
+              Text(pane.title)
+                .fontWeight(navigation.pane == pane ? .semibold : .regular)
+              // While searching, the settings that matched, under the pane
+              // that holds them.
+              if !found.isEmpty {
+                Text(found.prefix(3).joined(separator: ", "))
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+                  .lineLimit(2)
               }
+            }
+            // Centred on its capitals, not its line box: room for
+            // descenders otherwise lifts the letters about a point.
+            .alignmentGuide(VerticalAlignment.center) { d in
+              found.isEmpty
+                ? d[.firstTextBaseline] - NSFont.systemFont(ofSize: NSFont.systemFontSize).capHeight / 2
+                : d[VerticalAlignment.center]
+            }
           }
           .tag(pane)
         }
       }
       .listStyle(.sidebar)
+      // A quiet line, as System Settings shows; the full empty state is too
+      // big for the sidebar.
+      .overlay(alignment: .top) {
+        if results.isEmpty {
+          Text("No Results")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.top, 24)
+        }
+      }
+      .searchable(text: $query, placement: .sidebar, prompt: "Search")
+      // Return opens the first result.
+      .onSubmit(of: .search) {
+        if let first = results.first?.0 { navigation.show(first) }
+      }
       .toolbar(removing: .sidebarToggle)
       .navigationSplitViewColumnWidth(min: 190, ideal: 200, max: 240)
     } detail: {

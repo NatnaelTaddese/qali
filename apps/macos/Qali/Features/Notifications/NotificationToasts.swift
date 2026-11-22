@@ -95,15 +95,17 @@ private struct MorphingToast: View {
   var body: some View {
     let card = NotificationToasts.cardSize
     let bubble = NotificationToasts.bellDiameter
-    let size = expanded ? card : CGSize(width: bubble, height: bubble)
-    let shape = RoundedRectangle(cornerRadius: expanded ? 22 : bubble / 2, style: .continuous)
+    // With Reduce Motion the card keeps its shape and place and only fades.
+    let grown = expanded || reduceMotion
+    let size = grown ? card : CGSize(width: bubble, height: bubble)
+    let shape = RoundedRectangle(cornerRadius: grown ? 22 : bubble / 2, style: .continuous)
 
     ToastContent(row: row, detail: detail)
       .frame(width: card.width, height: card.height)
       // The words come in as the glass makes room, and go first on the way
       // back; with Reduce Motion the whole card just fades.
-      .opacity(expanded ? 1 : 0)
-      .blur(radius: expanded || reduceMotion ? 0 : 6)
+      .opacity(grown ? 1 : 0)
+      .blur(radius: grown ? 0 : 6)
       .frame(width: size.width, height: size.height)
       .clipShape(shape)
       .contentShape(shape)
@@ -132,7 +134,7 @@ private struct MorphingToast: View {
         }
       }
       .opacity(reduceMotion && !expanded ? 0 : 1)
-      .position(expanded ? slot : bell)
+      .position(grown ? slot : bell)
       .allowsHitTesting(expanded)
       .onHover { inside in withAnimation(.easeOut(duration: 0.12)) { hovering = inside } }
       .onTapGesture(perform: open)

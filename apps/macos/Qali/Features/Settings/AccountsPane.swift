@@ -5,6 +5,8 @@ struct AccountsPane: View {
   let data: CalendarData
   @Environment(AppModel.self) private var model
   @State private var error: String?
+  @State private var confirmDelete = false
+  @State private var deleting = false
 
   var body: some View {
     Form {
@@ -33,12 +35,40 @@ struct AccountsPane: View {
             }
           }
         }
+        Section {
+          SettingsRow("Delete account", detail: "Permanently deletes your qali account and all of its data") {
+            Button(deleting ? "Deleting…" : "Delete Account…", role: .destructive) {
+              confirmDelete = true
+            }
+            .disabled(deleting)
+          }
+        }
       } else {
         Section { ProgressView().frame(maxWidth: .infinity) }
       }
     }
     .formStyle(.grouped)
     .saveErrors($error)
+    .confirmationDialog("Delete your qali account?", isPresented: $confirmDelete) {
+      Button("Delete Account", role: .destructive) {
+        deleting = true
+        Task {
+          do {
+            try await data.deleteAccount()
+            // The server already ended the session; this clears it here and
+            // returns the app to the sign-in screen.
+            await model.signOut()
+          } catch {
+            self.error = "Couldn't delete your account."
+          }
+          deleting = false
+        }
+      }
+    } message: {
+      Text(
+        "This can't be undone. qali revokes its access to every connected Google account and permanently deletes your synced calendars and contacts, booking page, assistant history and settings. Nothing is deleted from Google Calendar itself."
+      )
+    }
   }
 
   private func isPrimary(_ connection: ConnectionListItem, sole: Bool) -> Bool {

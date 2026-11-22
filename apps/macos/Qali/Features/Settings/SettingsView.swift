@@ -58,7 +58,7 @@ extension SettingsPane {
     case .general:
       ["Account", "Sign Out", "Theme", "Default view", "Check for updates automatically",
        "Download and install updates automatically", "Version"]
-    case .accounts: ["Google account", "Another account", "Calendar access", "Contacts access", "Sync", "Disconnect"]
+    case .accounts: ["Google account", "Another account", "Calendar access", "Contacts access", "Sync", "Disconnect", "Delete account"]
     case .calendars: ["Show or hide calendars", "Rename calendars"]
     case .dateTime:
       ["Time zone", "Week starts on", "Time format", "Other time zones", "Show times under the pointer"]
@@ -83,7 +83,9 @@ extension SettingsPane {
        "day": "Default view", "week": "Default view", "month": "Default view"]
     case .accounts:
       ["google": "Google account", "connect": "Another account", "link": "Another account",
-       "permissions": "Calendar access", "unlink": "Disconnect", "remove": "Disconnect"]
+       "permissions": "Calendar access", "unlink": "Disconnect", "remove": "Disconnect",
+       "delete": "Delete account", "erase": "Delete account", "close account": "Delete account",
+       "privacy": "Delete account"]
     case .calendars:
       ["colour": nil, "color": nil, "visible": "Show or hide calendars", "name": "Rename calendars"]
     case .dateTime:

@@ -930,8 +930,8 @@ const decideBookingRequest = writeTool({
 });
 
 /** Registration order is the order these serialize into the request prefix, so
- * it is deliberately fixed: reordering the array would invalidate DeepSeek's
- * automatic context cache for every existing conversation. */
+ * it is deliberately fixed: reordering the array would invalidate Fireworks'
+ * automatic prompt cache for every existing conversation. */
 export const ASSISTANT_TOOLS: AssistantTool[] = [
   listEvents,
   findFreeTime,

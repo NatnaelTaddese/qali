@@ -81,13 +81,14 @@ cd ../..
 
 ## 4. Configure the AI assistant (optional)
 
-qali's calendar assistant runs on [DeepSeek](https://platform.deepseek.com/).
+qali's calendar assistant runs DeepSeek V4.1 Flash on [Fireworks](https://fireworks.ai/),
+whose serverless API keeps no prompt or reply data by default.
 It is entirely optional: with no key set, the assistant's entry point is hidden
 and every other feature works exactly as it does without it.
 
 ```bash
 cd packages/backend
-bunx convex env set DEEPSEEK_API_KEY "<deepseek-api-key>"
+bunx convex env set FIREWORKS_API_KEY "<fireworks-api-key>"
 cd ../..
 ```
 

@@ -16,7 +16,7 @@ export const env = createEnv({
     // rest of the app must keep working, so this can never be required here:
     // `auth.ts` imports this module, so a failed validation would take down
     // every backend function rather than just the assistant.
-    DEEPSEEK_API_KEY: z.string().min(1).optional(),
+    FIREWORKS_API_KEY: z.string().min(1).optional(),
     // Web Push (VAPID). Optional for the same reason: without them reminders
     // still fire in-app and in an open tab, and the push toggle stays hidden.
     // Generate once with `bunx web-push generate-vapid-keys`; the pair must

@@ -6,7 +6,7 @@
  * `"use node";` later is a one-line change if the bundler ever objects to the
  * `openai` package. Everything reactive lives in `assistantData.ts`.
  *
- * DeepSeek speaks the OpenAI wire format, which means no SDK-supplied tool
+ * Fireworks speaks the OpenAI wire format, which means no SDK-supplied tool
  * runner — the request → execute → feed-back cycle below is ours to drive.
  */
 
@@ -43,11 +43,14 @@ import {
   toWireMessages,
 } from "./history";
 
-const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
-/** Fast tier. `deepseek-v4-pro` is the same API if this proves not smart
- * enough, but a dock assistant is latency-sensitive and these tasks are small. */
-const MODEL = "deepseek-v4-flash";
-/** The model's ceiling is 384K. A chat panel has no use for it, and a large cap
+/** Fireworks' serverless inference keeps no prompt or generation data for open
+ * models by default. The chat completions API is the zero-retention path — its
+ * Responses API stores conversations unless told not to, so stay off it. */
+const FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference/v1";
+/** DeepSeek V4.1 Flash, served by Fireworks. A dock assistant is
+ * latency-sensitive and these tasks are small, so the fast tier is enough. */
+const MODEL = "accounts/fireworks/models/deepseek-v4p1-flash";
+/** The model's ceiling is 1M. A chat panel has no use for it, and a large cap
  * only widens the blast radius of a runaway generation. */
 const MAX_TOKENS = 8000;
 /** Enough for a look-up-then-propose turn several times over; low enough that a
@@ -63,7 +66,7 @@ const REQUEST_TIMEOUT_MS = 60_000;
 
 /**
  * Frozen. Nothing derived from the clock, the user, or the request may appear
- * here: this is the front of the prefix DeepSeek's automatic context cache
+ * here: this is the front of the prefix Fireworks' automatic prompt cache
  * matches on, so a single varying byte costs a cache miss on every request of
  * every conversation. The current time and zone ride on the user turn instead.
  */
@@ -156,7 +159,7 @@ function userFacingTurnError(error: unknown): string {
 }
 
 function requireApiKey(): string {
-  const key = env.DEEPSEEK_API_KEY;
+  const key = env.FIREWORKS_API_KEY;
   if (!key) {
     // A typed code rather than prose: the panel is supposed to be hidden when
     // the key is absent, so reaching this means the UI got out of step and
@@ -166,9 +169,9 @@ function requireApiKey(): string {
   return key;
 }
 
-/** Dev stand-in. Setting DEEPSEEK_API_KEY to this literal keeps the panel
+/** Dev stand-in. Setting FIREWORKS_API_KEY to this literal keeps the panel
  * enabled, but a turn never leaves the deployment: the loop streams a canned
- * reply instead of calling DeepSeek, so the panel can be exercised — and its
+ * reply instead of calling the model, so the panel can be exercised — and its
  * UI worked on — without a real key. */
 const MOCK_API_KEY = "mock";
 
@@ -194,11 +197,12 @@ function outcomeOf(action: Doc<"assistantActions">): string {
 
 // --- The loop --------------------------------------------------------------
 
-/** DeepSeek adds two cache counters to the OpenAI usage object. */
-type DeepSeekUsage = {
+/** The OpenAI usage object as Fireworks fills it: cached prefix tokens are
+ * reported inside `prompt_tokens_details`. */
+type ProviderUsage = {
+  prompt_tokens?: number;
   completion_tokens?: number;
-  prompt_cache_hit_tokens?: number;
-  prompt_cache_miss_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number } | null;
 };
 
 /**
@@ -313,7 +317,7 @@ async function runAgentLoop(
 
   const client = new OpenAI({
     apiKey: run.apiKey,
-    baseURL: DEEPSEEK_BASE_URL,
+    baseURL: FIREWORKS_BASE_URL,
     timeout: REQUEST_TIMEOUT_MS,
     maxRetries: 1,
   });
@@ -371,10 +375,14 @@ async function runAgentLoop(
       max_tokens: MAX_TOKENS,
       stream: true,
       stream_options: { include_usage: true },
-      // DeepSeek's dual-mode models think by default. A scheduling panel is
-      // latency-sensitive, so ask for the fast path. Not in the OpenAI schema,
-      // hence the cast at the boundary rather than an `any` on the client.
+      // DeepSeek's dual-mode models think by default, on Fireworks too. A
+      // scheduling panel is latency-sensitive, so ask for the fast path. Not in
+      // the OpenAI schema, hence the cast at the boundary rather than an `any`
+      // on the client.
       thinking: { type: "disabled" },
+      // Keeps a conversation's steps on the replica that already holds its
+      // prefix, so each step after the first reads the history from cache.
+      prompt_cache_key: run.threadId,
     };
     const stream = await client.chat.completions.create(
       body as unknown as ChatCompletionCreateParamsStreaming,
@@ -396,14 +404,14 @@ async function runAgentLoop(
       });
     };
 
-    // DeepSeek's context cache is automatic, so the usage counters are the only
+    // Fireworks' prompt cache is automatic, so the usage counters are the only
     // way to tell whether the frozen system prompt and tool array are earning
     // their keep. Captured here and reported once the stream ends — including
     // when it never arrives, so a silent absence doesn't look like a cache miss.
-    let usage: DeepSeekUsage | null = null;
+    let usage: ProviderUsage | null = null;
 
     for await (const chunk of stream) {
-      if (chunk.usage) usage = chunk.usage as DeepSeekUsage;
+      if (chunk.usage) usage = chunk.usage as ProviderUsage;
 
       // The usage-carrying chunk has no choices.
       const choice = chunk.choices[0];
@@ -421,8 +429,8 @@ async function runAgentLoop(
 
     console.log(
       usage
-        ? `[assistant] step=${step} cache_hit=${usage.prompt_cache_hit_tokens ?? "n/a"} ` +
-            `cache_miss=${usage.prompt_cache_miss_tokens ?? "n/a"} out=${usage.completion_tokens ?? "n/a"}`
+        ? `[assistant] step=${step} prompt=${usage.prompt_tokens ?? "n/a"} ` +
+            `cached=${usage.prompt_tokens_details?.cached_tokens ?? "n/a"} out=${usage.completion_tokens ?? "n/a"}`
         : `[assistant] step=${step} no usage reported by the API`,
     );
 
@@ -526,7 +534,7 @@ async function runMockTurn(
     `- **Standup** — 9:00 to 9:15 AM\n`,
     `- **Deep work** — 10:00 AM to 12:00 PM\n`,
     `- **Design review** — 2:00 to 3:00 PM\n\n`,
-    `Set a real \`DEEPSEEK_API_KEY\` on the deployment to bring me to life.`,
+    `Set a real \`FIREWORKS_API_KEY\` on the deployment to bring me to life.`,
   ];
   let text = "";
   for (const chunk of chunks) {
@@ -564,7 +572,7 @@ async function generateFollowUps(
   }
   const client = new OpenAI({
     apiKey,
-    baseURL: DEEPSEEK_BASE_URL,
+    baseURL: FIREWORKS_BASE_URL,
     timeout: REQUEST_TIMEOUT_MS,
     maxRetries: 0,
   });

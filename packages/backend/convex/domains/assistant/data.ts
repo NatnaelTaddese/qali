@@ -90,7 +90,7 @@ async function ownedThread(
 export const isAvailable = query({
   args: {},
   handler: async (): Promise<boolean> => {
-    return env.DEEPSEEK_API_KEY !== undefined;
+    return env.FIREWORKS_API_KEY !== undefined;
   },
 });
 

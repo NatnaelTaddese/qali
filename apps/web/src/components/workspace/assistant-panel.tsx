@@ -295,7 +295,7 @@ export function AssistantPanel({
       }
       toast.error("The assistant couldn't reply", {
         description: message?.includes("ASSISTANT_UNCONFIGURED")
-          ? "No DeepSeek API key is configured on this deployment."
+          ? "No AI model key is configured on this deployment."
           : message,
       });
       setDraft(trimmed);

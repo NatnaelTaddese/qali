@@ -18,7 +18,7 @@ export const Route = createFileRoute("/privacy")({
 
 function PrivacyPage() {
   return (
-    <LegalPage title="Privacy Policy" updated="August 16, 2026">
+    <LegalPage title="Privacy Policy" updated="November 23, 2026">
       <p>
         qali (&ldquo;qali,&rdquo; &ldquo;we,&rdquo; &ldquo;us&rdquo;) is an
         AI-native calendar for Google Calendar. This policy
@@ -129,10 +129,12 @@ function PrivacyPage() {
           it a message, qali sends the content needed to answer your request —
           which can include relevant calendar events, people from your
           directory, and pending booking requests — to our model provider,{" "}
-          <a href="https://www.deepseek.com" target="_blank" rel="noreferrer">
-            DeepSeek
+          <a href="https://fireworks.ai" target="_blank" rel="noreferrer">
+            Fireworks AI
           </a>
-          , to generate a response. We send only what a given request needs, and
+          , to generate a response. Fireworks processes these requests without
+          storing them: it does not retain or log the content we send or the
+          replies it generates. We send only what a given request needs, and
           only when you actively use the assistant. If you never open it, none
           of your data is sent to the model provider.
         </p>
@@ -176,7 +178,7 @@ function PrivacyPage() {
             <strong>Cloudflare</strong> — hosts our website and application.
           </li>
           <li>
-            <strong>DeepSeek</strong> — our AI model provider, which receives
+            <strong>Fireworks AI</strong> — our AI model provider, which receives
             request context only when you use the assistant (see above).
           </li>
         </ul>

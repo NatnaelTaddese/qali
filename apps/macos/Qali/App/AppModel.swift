@@ -36,7 +36,11 @@ final class AppModel {
   /// app delegate.
   @ObservationIgnored var openSettings: (() -> Void)?
   /// Brings the calendar window forward; set by the app delegate.
-  @ObservationIgnored var showCalendar: (() -> Void)?
+  @ObservationIgnored var showCalendar: (() -> Void)? {
+    didSet { notifier.showCalendar = showCalendar }
+  }
+  /// Reminders and booking requests, in the window or Notification Center.
+  let notifier = Notifier()
 
   init() {
     let auth = BetterAuthClient()
@@ -62,7 +66,9 @@ final class AppModel {
         switch scene {
         case "signedOut": phase = .signedOut
         case "signedIn":
-          calendarData = CalendarData(client: convex)
+          let data = CalendarData(client: convex)
+          calendarData = data
+          notifier.start(data)
           phase = .signedIn
         default: break
         }
@@ -113,7 +119,9 @@ final class AppModel {
       // Token refreshes re-publish `.authenticated`; only a new session
       // creates the data model and runs the one-time sync bootstrap.
       if calendarData == nil {
-        calendarData = CalendarData(client: convex)
+        let data = CalendarData(client: convex)
+        calendarData = data
+        notifier.start(data)
         Task { [convex] in await SyncBootstrap.run(convex) }
       }
       phase = .signedIn
@@ -124,6 +132,7 @@ final class AppModel {
       if phase != .launching { phase = .signedOut }
       user = nil
       calendarData = nil
+      notifier.stop()
     }
   }
 }

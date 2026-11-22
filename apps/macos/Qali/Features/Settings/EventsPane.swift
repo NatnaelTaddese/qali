@@ -65,6 +65,8 @@ struct EventsPane: View {
           count: stored?.defaultAllDayReminderMinutes?.count
         )
       }
+
+      NotificationsSection()
     }
     .formStyle(.grouped)
     .saveErrors($error)
@@ -164,5 +166,52 @@ struct EventsPane: View {
       patch.defaultAllDayReminderMinutes = minutes
     }
     return patch
+  }
+}
+
+/// How reminders and booking requests reach the user: macOS's permission,
+/// which only System Settings can change, and qali's own sounds.
+private struct NotificationsSection: View {
+  @Environment(AppModel.self) private var model
+  @AppStorage(NotificationSound.enabledKey) private var sounds = true
+
+  private var notifier: Notifier { model.notifier }
+
+  var body: some View {
+    Section("Notifications") {
+      SettingsRow("System notifications", detail: statusDetail) {
+        switch notifier.authorization {
+        case .notDetermined:
+          Button("Turn On…") { Task { await notifier.requestAuthorization() } }
+        default:
+          Button("Open System Settings…", action: openSystemSettings)
+        }
+      }
+
+      SettingsRow("Play sounds", detail: "The web app's chime for reminders and booking requests") {
+        Toggle("Play sounds", isOn: $sounds)
+          .toggleStyle(.switch)
+          .labelsHidden()
+      }
+    }
+    .task { await notifier.refreshAuthorization() }
+  }
+
+  private var statusDetail: String {
+    switch notifier.authorization {
+    case .authorized, .provisional, .ephemeral:
+      "In qali while you're using it, otherwise in Notification Center"
+    case .denied:
+      "Off in System Settings, so they only show inside qali"
+    default:
+      "Show reminders and booking requests when qali isn't in front"
+    }
+  }
+
+  /// System Settings › Notifications, on qali's own page.
+  private func openSystemSettings() {
+    let id = Bundle.main.bundleIdentifier ?? ""
+    let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(id)")
+    if let url { NSWorkspace.shared.open(url) }
   }
 }

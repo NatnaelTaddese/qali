@@ -49,22 +49,29 @@ struct NotificationsButton: View {
     #endif
   }
 
-  /// As on the web: a reminder closes the feed, opens its event in the
-  /// island and reaches for it on the grid, which flashes it once there.
-  /// A booking request opens in the island and is reached for on the grid.
   private func open(_ row: NotificationRow) {
-    if !row.read { data.markRead(row) }
-    if row.type == "booking_requested", let booking = row.booking {
-      isOpen = false
-      island.open(.bookingRequest(booking))
-      navigation.reveal(booking: booking)
-      return
-    }
-    guard row.type == "event_reminder", let event = row.event else { return }
-    isOpen = false
-    island.open(.event(event))
-    navigation.reveal(event)
+    if openNotification(row, data: data, island: island, navigation: navigation) { isOpen = false }
   }
+}
+
+/// As on the web: a reminder opens its event in the island and reaches for
+/// it on the grid, which flashes it once there; a booking request opens in
+/// the island and is reached for on the grid. Marks the row read either way.
+/// Returns whether there was something to open (the feed then closes).
+@discardableResult
+func openNotification(
+  _ row: NotificationRow, data: CalendarData, island: Island, navigation: CalendarNavigation
+) -> Bool {
+  if !row.read { data.markRead(row) }
+  if row.type == "booking_requested", let booking = row.booking {
+    island.open(.bookingRequest(booking))
+    navigation.reveal(booking: booking)
+    return true
+  }
+  guard row.type == "event_reminder", let event = row.event else { return false }
+  island.open(.event(event))
+  navigation.reveal(event)
+  return true
 }
 
 private struct NotificationFeed: View {

@@ -75,7 +75,7 @@ function LoginComponent() {
                 Welcome to Qali
               </p>
               <p className="text-xs leading-tight text-muted-foreground">
-                Sign in with Google to sync your calendar and contacts
+                Sign in with Google to continue
               </p>
             </div>
             <Button

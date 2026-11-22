@@ -8,6 +8,7 @@ struct NotificationsButton: View {
   let data: CalendarData
   let navigation: CalendarNavigation
   let island: Island
+  let notifier: Notifier
   @State private var isOpen = false
 
   private var unread: Int { data.unreadNotificationCount }
@@ -19,6 +20,8 @@ struct NotificationsButton: View {
       Image(systemName: unread > 0 ? "bell.badge" : "bell")
         .symbolRenderingMode(.hierarchical)
         .contentTransition(.symbolEffect(.replace))
+        // Where the toasts morph out of and back into.
+        .background { WindowFrameReader { notifier.bellFrame = $0 } }
     }
     .accessibilityLabel(
       unread > 9 ? "Notifications, 10 or more unread" : unread > 0 ? "Notifications, \(unread) unread" : "Notifications"

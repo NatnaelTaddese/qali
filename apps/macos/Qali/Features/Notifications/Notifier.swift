@@ -13,6 +13,11 @@ import UserNotifications
 final class Notifier {
   /// Shown over the calendar, oldest first.
   private(set) var toasts: [NotificationRow] = []
+  /// Toasts on their way back into the bell; removed once they're there.
+  private(set) var leaving = Set<String>()
+  /// The toolbar bell's frame in the window's content (top-left origin),
+  /// which toasts morph out of and back into; nil until it's laid out.
+  var bellFrame: CGRect?
   /// A notification clicked in Notification Center, for the calendar window
   /// to open once it is forward.
   var pendingOpen: NotificationRow?
@@ -64,18 +69,26 @@ final class Notifier {
     #if DEBUG
       // `-QaliNotify reminder|booking` presents a sample after
       // `-QaliNotifyDelay` seconds (3 by default), in the window or in
-      // Notification Center depending on what's in front by then.
+      // Notification Center depending on what's in front by then (or as
+      // `-notificationStyle inApp|system` says).
       if let kind = UserDefaults.standard.string(forKey: "QaliNotify") {
         let delay = max(UserDefaults.standard.double(forKey: "QaliNotifyDelay"), 3)
         Task {
           try? await Task.sleep(for: .seconds(delay))
           let booking = kind == "booking"
-          present(NotificationRow(
+          let row = NotificationRow(
             id: "debug-\(kind)-\(Int(Date.now.ms))",
             type: booking ? "booking_requested" : "event_reminder",
             title: booking ? "Ana Silva requested a time" : "Design review",
             body: booking ? "Thu, Nov 26 · 2:00 – 2:30 PM" : "Starts in 10 min",
-            read: false, createdAt: Date.now.ms))
+            read: false, createdAt: Date.now.ms)
+          present(row)
+          // `-QaliNotifyDismiss n` sends it back into the bell n seconds on.
+          let dismissAfter = UserDefaults.standard.double(forKey: "QaliNotifyDismiss")
+          if dismissAfter > 0 {
+            try? await Task.sleep(for: .seconds(dismissAfter))
+            dismissToast(row)
+          }
         }
       }
     #endif
@@ -90,6 +103,7 @@ final class Notifier {
     presented = []
     inFeed = []
     toasts = []
+    leaving = []
     pendingOpen = nil
     UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: Array(posted))
     posted = []
@@ -123,9 +137,7 @@ final class Notifier {
       UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: Array(withdrawn))
       posted.subtract(withdrawn)
     }
-    if toasts.contains(where: { settled($0.id) }) {
-      toasts.removeAll { settled($0.id) }
-    }
+    for row in toasts where settled(row.id) { dismissToast(row) }
   }
 
   /// Where the user chose (`NotificationStyle`): by default in the window
@@ -141,15 +153,32 @@ final class Notifier {
       }
     if inWindow || !allowed {
       toasts.append(row)
-      if toasts.count > Self.maxToasts { toasts.removeFirst(toasts.count - Self.maxToasts) }
+      for old in toasts.filter({ !leaving.contains($0.id) }).dropLast(Self.maxToasts) { dismissToast(old) }
       NotificationSound(type: row.type).play()
     } else {
       post(row)
     }
   }
 
+  /// Sends a toast back into the bell, then lets it go.
   func dismissToast(_ row: NotificationRow) {
-    toasts.removeAll { $0.id == row.id }
+    guard toasts.contains(where: { $0.id == row.id }), !leaving.contains(row.id) else { return }
+    leaving.insert(row.id)
+    Task {
+      try? await Task.sleep(for: .seconds(Self.morphSeconds + 0.05))
+      toasts.removeAll { $0.id == row.id }
+      leaving.remove(row.id)
+    }
+  }
+
+  /// How long a toast takes to morph between the bell and its card.
+  static var morphSeconds: Double {
+    #if DEBUG
+      // `-QaliSlow n` slows it n times, for captures.
+      0.45 * max(UserDefaults.standard.double(forKey: "QaliSlow"), 1)
+    #else
+      0.45
+    #endif
   }
 
   /// The line under the title: the reader's own clock for a reminder whose

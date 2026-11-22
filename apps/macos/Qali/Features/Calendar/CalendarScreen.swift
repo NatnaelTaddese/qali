@@ -34,7 +34,7 @@ struct CalendarScreen: View {
         // The update status is read here, in a view's body, so the toolbar is
         // rebuilt when it changes.
         CalendarToolbar(
-          navigation: navigation, data: data, island: island, typing: island.isTyping,
+          navigation: navigation, data: data, island: island, notifier: model.notifier, typing: island.isTyping,
           update: AppUpdater.shared.status)
       }
       .background { shortcuts }
@@ -113,6 +113,8 @@ struct CalendarToolbar: ToolbarContent {
   let data: CalendarData
   /// Handed to the bell, whose reminders open their event in it.
   let island: Island
+  /// Told where the bell is, so toasts can morph out of it.
+  let notifier: Notifier
   /// A field in the island has the keyboard: T is a letter, not Today.
   var typing = false
   /// Shown as a pill before the view switch unless idle.
@@ -183,7 +185,7 @@ struct CalendarToolbar: ToolbarContent {
     ToolbarSpacer(.fixed, placement: .primaryAction)
 
     ToolbarItem(placement: .primaryAction) {
-      NotificationsButton(data: data, navigation: navigation, island: island)
+      NotificationsButton(data: data, navigation: navigation, island: island, notifier: notifier)
     }
   }
 

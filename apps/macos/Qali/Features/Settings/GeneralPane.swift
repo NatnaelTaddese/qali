@@ -73,13 +73,14 @@ private struct DefaultViewSection: View {
 
   var body: some View {
     Section("Calendar") {
-      Picker(selection: $view) {
-        Text("Day").tag("day")
-        Text("Week").tag("week")
-        Text("Month").tag("month")
-      } label: {
-        Text("Default view")
-        Text("What the calendar opens to")
+      SettingsRow("Default view", detail: "What the calendar opens to") {
+        Picker("Default view", selection: $view) {
+          Text("Day").tag("day")
+          Text("Week").tag("week")
+          Text("Month").tag("month")
+        }
+        .labelsHidden()
+        .fixedSize()
       }
     }
     .onChange(of: data.preferences?.raw.defaultView, initial: true) { _, stored in
@@ -108,12 +109,9 @@ private struct UpdatesSection: View {
         Toggle("Check for updates automatically", isOn: $updater.automaticallyChecks)
         Toggle("Download and install updates automatically", isOn: $updater.automaticallyDownloads)
           .disabled(!updater.automaticallyChecks)
-        LabeledContent {
+        SettingsRow("Last checked", detail: lastCheckText) {
           Button("Check Now") { updater.checkForUpdates() }
             .disabled(!updater.canCheckForUpdates)
-        } label: {
-          Text("Last checked")
-          Text(lastCheckText)
         }
       }
     }

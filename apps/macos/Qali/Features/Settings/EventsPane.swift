@@ -23,7 +23,8 @@ struct EventsPane: View {
     Form {
       if !data.writableCalendars.isEmpty {
         Section {
-          Picker(selection: $calendarTag) {
+          SettingsRow("Default calendar", detail: "Where new events land unless you pick one") {
+          Picker("Default calendar", selection: $calendarTag) {
             Text("Automatic · primary calendar").tag("auto")
             ForEach(writableGroups) { group in
               Section(group.label ?? "") {
@@ -37,9 +38,9 @@ struct EventsPane: View {
                 }
               }
             }
-          } label: {
-            Text("Default calendar")
-            Text("Where new events land unless you pick one")
+          }
+          .labelsHidden()
+          .fixedSize()
           }
         }
       }
@@ -114,7 +115,8 @@ struct EventsPane: View {
     allDay: Bool,
     count: Int?
   ) -> some View {
-    Picker(selection: selection) {
+    SettingsRow(title, detail: subtitle) {
+    Picker(title, selection: selection) {
       Text(automatic).tag("auto")
       Text("None").tag("none")
       Divider()
@@ -125,9 +127,9 @@ struct EventsPane: View {
         Divider()
         Text("\(count) reminders").tag("multi")
       }
-    } label: {
-      Text(title)
-      Text(subtitle)
+    }
+    .labelsHidden()
+    .fixedSize()
     }
   }
 

@@ -322,35 +322,6 @@ struct BookingPane: View {
 
 /// A whole number with its unit, a field and a stepper (System Settings'
 /// numeric rows).
-/// A form row with a title over a detail line and its control centred on
-/// the pair. Grouped forms pin a control to a two-line label's first line,
-/// which reads as sitting high.
-private struct SettingsRow<Control: View>: View {
-  let title: String
-  let detail: String
-  @ViewBuilder var control: Control
-
-  init(_ title: String, detail: String, @ViewBuilder control: () -> Control) {
-    self.title = title
-    self.detail = detail
-    self.control = control()
-  }
-
-  var body: some View {
-    HStack(alignment: .center, spacing: 12) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(title)
-        Text(detail)
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-      }
-      .lineLimit(1)
-      Spacer(minLength: 8)
-      control
-    }
-  }
-}
-
 private struct NumberRow: View {
   let title: String
   let detail: String

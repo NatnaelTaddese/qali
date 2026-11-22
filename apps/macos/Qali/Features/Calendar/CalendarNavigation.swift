@@ -327,14 +327,25 @@ final class CalendarNavigation {
   /// the strip and the hours at the current time; the month view shows this
   /// month.
   func goToToday() {
+    // Today's date pill (its whole cell in month view) flashes once the
+    // glide lands, as the web's Today does.
+    pendingFlash = Self.dayKey(.now, zone: zone)
     if view == .month, let monthStrip {
       // Glide when today's month is near, jump when it is not.
       let weeks = weeks(to: monthGridStart(.now))
-      if abs(weeks) <= 10 { return monthStrip.glide(weeks) }
+      if abs(weeks) <= 10 {
+        monthStrip.glide(weeks)
+        if !monthStrip.isMoving() { flashPending() }
+        return
+      }
     }
-    guard view != .month, let strip else { return jump(to: .now) }
+    guard view != .month, let strip else {
+      jump(to: .now)
+      return flashPending()
+    }
     strip.glide(zone.addingDays(-(viewColumns(view) / 2), to: zone.startOfDay(.now)))
     strip.revealNow()
+    if !strip.isMoving() { flashPending() }
   }
 
   /// Reaches for an event on the grid, as the web's `revealItem` does for a

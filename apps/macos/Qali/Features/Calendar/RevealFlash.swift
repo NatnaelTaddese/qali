@@ -27,14 +27,17 @@ extension View {
   /// Softly double-pulses a primary tint over this view when the active
   /// reveal targets any of `ids` (the web's `RevealFlash`, REVEAL_FLASH
   /// timing). Skipped with Reduce Motion.
-  func revealFlash(_ ids: [String], in shape: some Shape = Rectangle(), strength: Double = 0.45) -> some View {
-    modifier(RevealFlash(ids: ids, shape: shape, strength: strength))
+  func revealFlash(
+    _ ids: [String], in shape: some Shape = Rectangle(), color: Color = Palette.primary, strength: Double = 0.45
+  ) -> some View {
+    modifier(RevealFlash(ids: ids, shape: shape, color: color, strength: strength))
   }
 }
 
 private struct RevealFlash<S: Shape>: ViewModifier {
   let ids: [String]
   let shape: S
+  let color: Color
   let strength: Double
 
   @Environment(\.reveal) private var reveal
@@ -54,7 +57,7 @@ private struct RevealFlash<S: Shape>: ViewModifier {
       // going in the pulse's own animation, it fades as an opacity would.
       .overlay {
         if opacity > 0 {
-          shape.fill(Palette.primary.opacity(strength))
+          shape.fill(color.opacity(strength))
             .opacity(opacity)
             .allowsHitTesting(false)
         }

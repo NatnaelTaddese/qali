@@ -556,7 +556,18 @@ private struct DayHeader: View {
         .font(.sans(TextSize.lg, .semibold))
         .foregroundStyle(today ? Palette.primaryForeground : Palette.foreground)
         .frame(minWidth: 28, minHeight: 28)
-        .background { if today { Circle().fill(Palette.primary) } }
+        .background {
+          if today {
+            // A Today jump flashes the pill, under the number, as on the
+            // web; in the number's colour, so the dark pill pales and the
+            // light one (dark mode) dims.
+            Circle().fill(Palette.primary)
+              .revealFlash(
+                [CalendarNavigation.dayKey(day, zone: navigation.zone)], in: Circle(),
+                color: Palette.primaryForeground, strength: 0.5
+              )
+          }
+        }
         // Where this day's number in the month grid sets out from.
         .matchedGeometryEffect(id: onPage ? zoomID : "strip-\(zoomID)", in: zoom)
         .opacity(handedOver ? 0 : 1)

@@ -110,10 +110,16 @@ final class EventDrag {
   }
 
   /// Plays a haptic on a Force Touch trackpad (nothing with a mouse, or
-  /// with haptics off in System Settings); swapped out by the tests.
+  /// with haptics off in System Settings), unless turned off in Settings ›
+  /// General; swapped out by the tests.
   @ObservationIgnored var feedback: (NSHapticFeedbackManager.FeedbackPattern) -> Void = { pattern in
+    guard EventDrag.hapticsEnabled else { return }
     NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
   }
+
+  /// The Settings switch, per Mac; on unless turned off.
+  static let hapticsKey = "dragHaptics"
+  static var hapticsEnabled: Bool { UserDefaults.standard.object(forKey: hapticsKey) as? Bool ?? true }
 
   /// The button came up: saves the new times, unless nothing changed.
   func end(at point: CGPoint, in geometry: Geometry, save: @escaping (CalendarEvent, Times) async throws -> Void, failed: @escaping (Error) -> Void) {

@@ -274,10 +274,19 @@ enum NotificationSound: String {
 
   var file: String { rawValue + ".caf" }
 
+  /// Sounds still playing. An NSSound nothing holds on to is freed, and
+  /// falls silent, the moment `play()` returns.
+  private static var playing: [NSSound] = []
+
   func play() {
-    guard Self.isEnabled else { return }
-    // A copy each time, so two arriving together both sound.
-    (NSSound(named: rawValue)?.copy() as? NSSound)?.play()
+    // From the file itself: `NSSound(named:)` doesn't find a bundled CAF.
+    // A new one each time, so two arriving together both sound.
+    guard Self.isEnabled, let url = Bundle.main.url(forResource: rawValue, withExtension: "caf"),
+      let sound = NSSound(contentsOf: url, byReference: true)
+    else { return }
+    Self.playing.removeAll { !$0.isPlaying }
+    Self.playing.append(sound)
+    sound.play()
   }
 }
 

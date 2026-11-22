@@ -31,11 +31,9 @@ import {
 } from "../calendar/service";
 import {
   MS_PER_MINUTE,
-  addDaysToDateKey,
   type Interval,
   mergeIntervals,
   allDayBusyInterval,
-  utcToZoned,
   zonedToUtcMs,
 } from "@qali/domain/availability";
 import { subtractBusy } from "./history";
@@ -46,6 +44,7 @@ import {
   formatAssistantAllDayRange,
   formatAssistantRepeat,
   isDateKey,
+  localDateRange,
   type AssistantEventRange,
 } from "./eventLogic";
 
@@ -280,35 +279,60 @@ function isBusy(
 
 // --- The tools -------------------------------------------------------------
 
-const listEventsSchema = z.object({
-  fromMs: z.number().describe("Start of the range, Unix epoch milliseconds."),
-  toMs: z.number().describe("End of the range, Unix epoch milliseconds."),
-});
+const dateKeySchema = z
+  .string()
+  .refine(isDateKey, "Use a real calendar date in YYYY-MM-DD form");
+
+/** The read tools' range: local calendar dates, resolved against the turn's
+ * zone on the server. Models compute local midnight badly (UTC midnight, or a
+ * day off), so they only name days and never send instants here. */
+const localDaysFields = {
+  fromDate: dateKeySchema.describe(
+    "First day to include, as the user's local calendar date YYYY-MM-DD. For today, the date in the clock line.",
+  ),
+  toDate: dateKeySchema
+    .optional()
+    .describe(
+      "Last day to include, inclusive, local YYYY-MM-DD. Omit for a single day.",
+    ),
+};
+
+function resolveLocalDays(
+  tc: ToolContext,
+  args: { fromDate: string; toDate?: string },
+) {
+  return localDateRange(args.fromDate, args.toDate ?? args.fromDate, tc.timeZone);
+}
+
+const listEventsSchema = z.object(localDaysFields);
 
 const listEvents = readTool({
   name: "list_events",
   description:
-    "List the events on the user's calendar that overlap a time range. Call " +
+    "List the events on the user's calendar on one or more local calendar " +
+    "days, whole days from midnight to midnight in the user's time zone. Call " +
     "this whenever the user asks what is on their calendar, whether they are " +
     "free, or refers to an existing meeting you have not already looked up — " +
     "you need the eventId from here before you can change or cancel anything. " +
-    "Timed values are Unix epoch milliseconds; all-day results also include " +
+    "Pass dates, not instants; the server works out the zone. Results give " +
+    "timed values as Unix epoch milliseconds; all-day results also include " +
     "literal startDate and exclusive endDate values.",
   schema: listEventsSchema,
   async run(tc, args) {
+    const { fromMs, toMs } = resolveLocalDays(tc, args);
     // Personal events plus shared public-calendar events (holidays/birthdays),
     // which live in a separate deduplicated table. Merged so the assistant sees
     // holidays alongside the user's own events.
     const [personal, shared] = await Promise.all([
       tc.ctx.runQuery(internal.domains.assistant.data.listEventsForAssistant, {
         userId: tc.userId,
-        startMs: args.fromMs,
-        endMs: args.toMs,
+        startMs: fromMs,
+        endMs: toMs,
       }),
       tc.ctx.runQuery(internal.domains.calendar.queries.listSharedEventsForAssistant, {
         userId: tc.userId,
-        startMs: args.fromMs,
-        endMs: args.toMs,
+        startMs: fromMs,
+        endMs: toMs,
       }),
     ]);
     const rows = [...personal, ...shared].sort((a, b) => a.startMs - b.startMs);
@@ -335,8 +359,7 @@ const listEvents = readTool({
 });
 
 const findFreeTimeSchema = z.object({
-  fromMs: z.number().describe("Earliest instant to consider, epoch ms."),
-  toMs: z.number().describe("Latest instant to consider, epoch ms."),
+  ...localDaysFields,
   durationMinutes: z
     .number()
     .int()
@@ -362,10 +385,12 @@ const findFreeTimeSchema = z.object({
 const findFreeTime = readTool({
   name: "find_free_time",
   description:
-    "Find gaps of at least a given length on the user's calendar, restricted " +
-    "to daytime hours in their own time zone. Call this whenever the user asks " +
+    "Find gaps of at least a given length on the user's calendar across one " +
+    "or more local calendar days, restricted to daytime hours in their own " +
+    "time zone and never earlier than now. Call this whenever the user asks " +
     "when they are free, or asks you to schedule something without naming an " +
-    "exact time — do not guess at availability from list_events yourself.",
+    "exact time — do not guess at availability from list_events yourself. " +
+    "Pass dates, not instants; the server works out the zone.",
   schema: findFreeTimeSchema,
   async run(tc, args) {
     const dayStartMin = (args.dayStartHour ?? 9) * 60;
@@ -374,22 +399,23 @@ const findFreeTime = readTool({
       throw new Error("dayEndHour must be later than dayStartHour");
     }
     const durationMs = args.durationMinutes * MS_PER_MINUTE;
+    const { fromMs, toMs, days } = resolveLocalDays(tc, args);
 
     const [personal, shared, bookings] = await Promise.all([
       tc.ctx.runQuery(internal.domains.assistant.data.listEventsForAssistant, {
         userId: tc.userId,
-        startMs: args.fromMs,
-        endMs: args.toMs,
+        startMs: fromMs,
+        endMs: toMs,
       }),
       tc.ctx.runQuery(internal.domains.calendar.queries.listSharedEventsForAssistant, {
         userId: tc.userId,
-        startMs: args.fromMs,
-        endMs: args.toMs,
+        startMs: fromMs,
+        endMs: toMs,
       }),
       tc.ctx.runQuery(internal.domains.assistant.data.listBookingBlocksForAssistant, {
         userId: tc.userId,
-        startMs: args.fromMs,
-        endMs: args.toMs,
+        startMs: fromMs,
+        endMs: toMs,
       }),
     ]);
     // Holidays are marked free (busy === false), so isBusy drops them and they
@@ -404,8 +430,7 @@ const findFreeTime = readTool({
         ),
         ...bookings
           .filter(
-            (booking) =>
-              booking.startMs < args.toMs && booking.endMs > args.fromMs,
+            (booking) => booking.startMs < toMs && booking.endMs > fromMs,
           )
           .map((booking) => ({
             startMs: booking.startMs,
@@ -414,26 +439,19 @@ const findFreeTime = readTool({
       ],
     );
 
-    // Walk calendar days rather than fixed 24h blocks, so a DST change doesn't
-    // slide the working-hours window by an hour partway through the range.
+    // One window per local calendar day rather than fixed 24h blocks, so a DST
+    // change doesn't slide the working-hours window by an hour partway through.
     const windows: Interval[] = [];
-    const lastKey = utcToZoned(args.toMs, tc.timeZone).dateKey;
-    let key = utcToZoned(args.fromMs, tc.timeZone).dateKey;
-    for (let i = 0; i < 400 && key <= lastKey; i += 1) {
+    for (const key of days) {
       const startMs = Math.max(
         zonedToUtcMs(key, dayStartMin, tc.timeZone),
-        args.fromMs,
         // Never offer a slot in the past.
         tc.nowMs,
       );
-      const endMs = Math.min(
-        zonedToUtcMs(key, dayEndMin, tc.timeZone),
-        args.toMs,
-      );
+      const endMs = zonedToUtcMs(key, dayEndMin, tc.timeZone);
       if (endMs - startMs >= durationMs) {
         windows.push({ startMs, endMs });
       }
-      key = addDaysToDateKey(key, 1);
     }
 
     const free = windows
@@ -528,10 +546,6 @@ const timedRangeSchema = z
   .refine((range) => range.endMs > range.startMs, {
     message: "endMs must be later than startMs",
   });
-
-const dateKeySchema = z
-  .string()
-  .refine(isDateKey, "Use a real calendar date in YYYY-MM-DD form");
 
 const allDayRangeSchema = z
   .object({

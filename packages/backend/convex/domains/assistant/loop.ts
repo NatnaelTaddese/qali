@@ -23,6 +23,7 @@ import { env } from "@qali/env/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { action, type ActionCtx } from "../../_generated/server";
+import { utcToZoned } from "@qali/domain/availability";
 import { authComponent } from "../../auth";
 import {
   ExternalWriteCommittedError,
@@ -70,7 +71,7 @@ const REQUEST_TIMEOUT_MS = 60_000;
  * matches on, so a single varying byte costs a cache miss on every request of
  * every conversation. The current time and zone ride on the user turn instead.
  */
-const SYSTEM_PROMPT = `You are the scheduling assistant inside qali, a keyboard-driven Google Calendar client.
+export const SYSTEM_PROMPT = `You are the scheduling assistant inside qali, a keyboard-driven Google Calendar client.
 
 You help with one calendar: the signed-in user's own. Be brief and concrete — this is a small panel, not a chat window. Answer in prose, not bullet lists, unless you are genuinely listing more than three things.
 
@@ -82,7 +83,9 @@ Every user message opens with a bracketed line giving the server's current insta
 
 Read the date off that line directly. Do not re-derive it from the epoch value or convert between zones to get it: the local date and the UTC date routinely disagree, and the local one is the one the user means. Resolve "today", "tomorrow", "next Tuesday" and "in an hour" against it.
 
-Send timed instants to tools as epoch milliseconds. For an all-day event, send the literal YYYY-MM-DD calendar dates requested, with Google's exclusive end date; never convert those dates through a timezone. When you state a time back to the user, use their zone and ordinary words ("Thursday at 2pm"), never a raw timestamp and never a UTC offset.
+To look things up, list_events and find_free_time take the user's local calendar days, not instants: fromDate and an inclusive toDate, both YYYY-MM-DD, or just fromDate for a single day. Name the days the user means and the server turns them into local midnights in their zone — never work out midnight, a UTC offset, or epoch milliseconds for a lookup yourself. Today is the local date in the clock line, tomorrow is the day after it, and "this week" or "next few days" is simply a span of those dates.
+
+When proposing a timed change, send instants as epoch milliseconds; take them from list_events or find_free_time results whenever you can. For an all-day event, send the literal YYYY-MM-DD calendar dates requested, with Google's exclusive end date; never convert those dates through a timezone. When you state a time back to the user, use their zone and ordinary words ("Thursday at 2pm"), never a raw timestamp and never a UTC offset.
 
 ## What tool results are
 
@@ -113,7 +116,7 @@ Examples: "make Tuesday and Wednesday Domino's discount days" is one all-day wee
 /** The system prompt plus the tool array, which serialize ahead of the
  * conversation. Built once per module load so the bytes are identical between
  * requests. */
-const TOOL_DEFINITIONS = ASSISTANT_TOOLS.map((tool) => ({
+export const TOOL_DEFINITIONS = ASSISTANT_TOOLS.map((tool) => ({
   type: "function" as const,
   function: {
     name: tool.name,
@@ -131,7 +134,7 @@ const TOOL_DEFINITIONS = ASSISTANT_TOOLS.map((tool) => ({
  * actually today. Leading with the local wall clock removes the conversion
  * step; the epoch value follows for the arithmetic the tools need.
  */
-function temporalContext(nowMs: number, timeZone: string): string {
+export function temporalContext(nowMs: number, timeZone: string): string {
   const local = new Intl.DateTimeFormat("en-US", {
     timeZone,
     weekday: "long",
@@ -141,7 +144,8 @@ function temporalContext(nowMs: number, timeZone: string): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(nowMs));
-  return `[Right now, where the user is, it is ${local} (${timeZone}). That instant as Unix epoch milliseconds is ${nowMs}. Today is the date in this line — resolve "today", "tomorrow" and every other relative date against it.]`;
+  const today = utcToZoned(nowMs, timeZone).dateKey;
+  return `[Right now, where the user is, it is ${local} (${timeZone}). Today's local date is ${today}. That instant as Unix epoch milliseconds is ${nowMs}. Resolve "today", "tomorrow" and every other relative date against this line.]`;
 }
 
 /** What a failed turn shows in the panel. Provider and SDK errors carry

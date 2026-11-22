@@ -82,6 +82,47 @@ export function isDateKey(value: string): boolean {
   return date.toISOString().slice(0, 10) === value;
 }
 
+/** The widest span a read tool will resolve, in calendar days. Wider asks are
+ * refused rather than silently truncated, so the model narrows the range. */
+export const MAX_LOOKUP_DAYS = 92;
+
+/**
+ * Turn inclusive local calendar dates into the instants that bound them.
+ *
+ * The read tools take dates rather than epoch milliseconds because models get
+ * local midnight wrong: asked for "today" in Los Angeles they reliably send UTC
+ * midnight, which drops every evening event. Doing the zone maths here means
+ * the model only has to name the day it can already read off its clock line.
+ * `toMs` is the following local midnight, so the range is half-open and a DST
+ * day comes out 23 or 25 hours long.
+ */
+export function localDateRange(
+  fromDate: string,
+  toDate: string,
+  timeZone: string,
+): { fromMs: number; toMs: number; days: string[] } {
+  if (!isDateKey(fromDate) || !isDateKey(toDate)) {
+    throw new Error("Use real calendar dates in YYYY-MM-DD form");
+  }
+  if (toDate < fromDate) {
+    throw new Error("toDate must be on or after fromDate");
+  }
+  const days: string[] = [];
+  for (let key = fromDate; key <= toDate; key = addDaysToDateKey(key, 1)) {
+    if (days.length === MAX_LOOKUP_DAYS) {
+      throw new Error(
+        `That range is longer than ${MAX_LOOKUP_DAYS} days. Ask for a shorter one.`,
+      );
+    }
+    days.push(key);
+  }
+  return {
+    fromMs: zonedToUtcMs(fromDate, 0, timeZone),
+    toMs: zonedToUtcMs(addDaysToDateKey(toDate, 1), 0, timeZone),
+    days,
+  };
+}
+
 export function validateAssistantRange(range: AssistantEventRange): boolean {
   if (range.kind === "timed") {
     return (

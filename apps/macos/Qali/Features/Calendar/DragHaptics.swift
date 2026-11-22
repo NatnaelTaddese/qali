@@ -4,11 +4,8 @@ import QaliDomain
 /// The trackpad taps a drag plays, and how. macOS only offers three patterns
 /// with no strength of their own (the trackpad's Click setting scales them
 /// all), so the tuning is which pattern each moment gets, how often a moving
-/// card taps, and how taps are spaced.
-///
-/// While these are being tuned, Debug builds read each knob from
-/// UserDefaults (`hapticTune.*`, set from Settings › General › Haptics
-/// tuning); Release builds use the defaults below.
+/// card taps, and how taps are spaced. The values were chosen by feel on a
+/// debug tuner (f501686, removed since).
 enum DragHaptics {
   /// What happened in the drag.
   enum Moment: Equatable {
@@ -51,20 +48,21 @@ enum DragHaptics {
     var pickUp = Pattern.off
     var snap = Pattern.alignment
     var day = Pattern.levelChange
-    var resize = Pattern.alignment
+    /// Lighter than a snap: an edge is fine-tuning, not a move.
+    var resize = Pattern.generic
     var drop = Pattern.off
     /// A moving or resized card taps when it reaches (or jumps past) a
     /// multiple of this many minutes into the day; the grid snaps to 15.
     var stepMinutes = 15
     /// Snaps closer together than this are skipped, so a fast drag doesn't
     /// buzz. Day changes always play.
-    var minimumGapMs = 0.0
+    var minimumGapMs = 50.0
     /// A second day-change tap this long after the first, for a firmer
     /// knock; 0 plays just one.
-    var dayEchoMs = 0.0
+    var dayEchoMs = 120.0
     /// Times the tap to the next drawn frame, when the card is seen to
     /// land, rather than the moment the pointer moves.
-    var onFrame = false
+    var onFrame = true
 
     func pattern(for moment: Moment) -> Pattern {
       switch moment {
@@ -76,33 +74,7 @@ enum DragHaptics {
       }
     }
 
-    static let prefix = "hapticTune."
-
-    static var current: Tuning {
-      #if DEBUG
-        let defaults = UserDefaults.standard
-        func pattern(_ key: String, _ fallback: Pattern) -> Pattern {
-          defaults.string(forKey: prefix + key).flatMap(Pattern.init(rawValue:)) ?? fallback
-        }
-        func number(_ key: String, _ fallback: Double) -> Double {
-          defaults.object(forKey: prefix + key) as? Double ?? fallback
-        }
-        let base = Tuning()
-        return Tuning(
-          pickUp: pattern("pickUp", base.pickUp),
-          snap: pattern("snap", base.snap),
-          day: pattern("day", base.day),
-          resize: pattern("resize", base.resize),
-          drop: pattern("drop", base.drop),
-          stepMinutes: max(Int(number("stepMinutes", Double(base.stepMinutes))), 15),
-          minimumGapMs: number("minimumGapMs", base.minimumGapMs),
-          dayEchoMs: number("dayEchoMs", base.dayEchoMs),
-          onFrame: defaults.object(forKey: prefix + "onFrame") as? Bool ?? base.onFrame
-        )
-      #else
-        return Tuning()
-      #endif
-    }
+    static let current = Tuning()
   }
 
   /// Whether a card edge going from `before` to `after` reached or jumped

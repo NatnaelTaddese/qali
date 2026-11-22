@@ -4,8 +4,8 @@ import QaliDomain
 
 /// Direct manipulation of timed event cards, ported from the web's
 /// `useEventDrag`: a card is moved whole (across day columns) or has one edge
-/// dragged, snapping to the grid's quarter hours, and on release the new
-/// times are saved with `updateEventTime`.
+/// dragged, snapping to the grid's quarter hours (with a trackpad tap at each
+/// snap), and on release the new times are saved with `updateEventTime`.
 ///
 /// Both the live preview and the wait for the synced row are overrides on the
 /// event list, so the real card is laid out again where it is going (the
@@ -99,7 +99,20 @@ final class EventDrag {
   func move(to point: CGPoint, in geometry: Geometry) {
     guard let session, !session.cancelled else { return }
     let times = times(for: session, at: point, in: geometry)
-    if overrides[session.event.id] != times { overrides[session.event.id] = times }
+    let event = session.event
+    let previous = overrides[event.id] ?? Times(startMs: event.startMs, endMs: event.endMs)
+    if overrides[event.id] != times { overrides[event.id] = times }
+    guard times != previous else { return }
+    // A tap on the trackpad for each snap the card steps through, firmer
+    // when it lands on another day.
+    let changedDay = !geometry.zone.isSameDay(Date(ms: previous.startMs), Date(ms: times.startMs))
+    feedback(changedDay ? .levelChange : .alignment)
+  }
+
+  /// Plays a haptic on a Force Touch trackpad (nothing with a mouse, or
+  /// with haptics off in System Settings); swapped out by the tests.
+  @ObservationIgnored var feedback: (NSHapticFeedbackManager.FeedbackPattern) -> Void = { pattern in
+    NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
   }
 
   /// The button came up: saves the new times, unless nothing changed.

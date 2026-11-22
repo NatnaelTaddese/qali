@@ -156,22 +156,23 @@ private struct ThemeButton: View {
   }
 }
 
-/// The round close button every panel carries in its corner.
+/// The round close button every panel carries in its corner: a glass disc
+/// with the cross in it, as the system's own panels (Maps) draw theirs.
 struct IslandCloseButton: View {
   let action: () -> Void
-  @State private var hovering = false
 
   var body: some View {
     Button(action: action) {
       Image(systemName: "xmark")
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(hovering ? Palette.foreground : Palette.mutedForeground)
-        .frame(width: 28, height: 28)
-        .background { Circle().fill(Palette.foreground.opacity(hovering ? 0.08 : 0)) }
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundStyle(Palette.foreground)
+        .frame(width: 30, height: 30)
         .contentShape(.circle)
     }
     .buttonStyle(.plain)
-    .onHover { hovering = $0 }
+    // Interactive glass answers the pointer itself: it lifts on hover and
+    // gives under a press, so there's no hover fill of our own.
+    .glassEffect(.regular.interactive(), in: .circle)
     .accessibilityLabel("Close")
     .help("Close (Esc)")
   }

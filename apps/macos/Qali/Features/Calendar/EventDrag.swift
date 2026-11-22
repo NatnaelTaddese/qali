@@ -4,8 +4,8 @@ import QaliDomain
 
 /// Direct manipulation of timed event cards, ported from the web's
 /// `useEventDrag`: a card is moved whole (across day columns) or has one edge
-/// dragged, snapping to the grid's quarter hours, and on release the new
-/// times are saved with `updateEventTime`.
+/// dragged, snapping to the grid's quarter hours (with a trackpad tap at each
+/// snap), and on release the new times are saved with `updateEventTime`.
 ///
 /// Both the live preview and the wait for the synced row are overrides on the
 /// event list, so the real card is laid out again where it is going (the
@@ -87,6 +87,8 @@ final class EventDrag {
       durationMs: max(event.endMs - event.startMs, snapMs)
     )
     draggingId = event.id
+    lastTap = nil
+    feedback(.pickUp)
     // Escape puts the card back and ends the drag; the press itself carries
     // on until the button comes up, and is ignored.
     keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] key in
@@ -99,8 +101,45 @@ final class EventDrag {
   func move(to point: CGPoint, in geometry: Geometry) {
     guard let session, !session.cancelled else { return }
     let times = times(for: session, at: point, in: geometry)
-    if overrides[session.event.id] != times { overrides[session.event.id] = times }
+    let event = session.event
+    let previous = overrides[event.id] ?? Times(startMs: event.startMs, endMs: event.endMs)
+    if overrides[event.id] != times { overrides[event.id] = times }
+    guard times != previous else { return }
+    // A tap on the trackpad as the card steps through the grid, firmer when
+    // it lands on another day (DragHaptics).
+    if !geometry.zone.isSameDay(Date(ms: previous.startMs), Date(ms: times.startMs)) {
+      tap(.day)
+      return
+    }
+    let tuning = tuning()
+    let edge = { (t: Times) in session.mode == .resizeEnd ? t.endMs : t.startMs }
+    guard DragHaptics.crossesStep(from: edge(previous), to: edge(times), stepMinutes: tuning.stepMinutes, zone: geometry.zone)
+    else { return }
+    if let lastTap, ContinuousClock.now - lastTap < .milliseconds(tuning.minimumGapMs) { return }
+    tap(session.mode == .move ? .snap : .resize)
   }
+
+  private func tap(_ moment: DragHaptics.Moment) {
+    lastTap = .now
+    feedback(moment)
+  }
+
+  @ObservationIgnored private var lastTap: ContinuousClock.Instant?
+
+  /// The tuning in effect; swapped out by the tests.
+  @ObservationIgnored var tuning: () -> DragHaptics.Tuning = { .current }
+
+  /// Plays a moment's tap on a Force Touch trackpad, unless turned off in
+  /// Settings › General; swapped out by the tests.
+  @ObservationIgnored var feedback: (DragHaptics.Moment) -> Void = { moment in
+    guard EventDrag.hapticsEnabled else { return }
+    let tuning = DragHaptics.Tuning.current
+    DragHaptics.play(tuning.pattern(for: moment), echoMs: moment == .day ? tuning.dayEchoMs : 0, onFrame: tuning.onFrame)
+  }
+
+  /// The Settings switch, per Mac; on unless turned off.
+  static let hapticsKey = "dragHaptics"
+  static var hapticsEnabled: Bool { UserDefaults.standard.object(forKey: hapticsKey) as? Bool ?? true }
 
   /// The button came up: saves the new times, unless nothing changed.
   func end(at point: CGPoint, in geometry: Geometry, save: @escaping (CalendarEvent, Times) async throws -> Void, failed: @escaping (Error) -> Void) {
@@ -113,6 +152,7 @@ final class EventDrag {
       return
     }
     overrides[event.id] = times
+    feedback(.drop)
     hold(event.id)
     Task { @MainActor [weak self] in
       do {

@@ -70,6 +70,7 @@ private struct DefaultViewSection: View {
   let data: CalendarData
   @Binding var error: String?
   @State private var view = "week"
+  @AppStorage(EventDrag.hapticsKey) private var haptics = true
 
   var body: some View {
     Section("Calendar") {
@@ -81,6 +82,12 @@ private struct DefaultViewSection: View {
         }
         .labelsHidden()
         .fixedSize()
+      }
+
+      SettingsRow("Haptic feedback", detail: "Tap the trackpad as events snap while you drag them") {
+        Toggle("Haptic feedback", isOn: $haptics)
+          .toggleStyle(.switch)
+          .labelsHidden()
       }
     }
     .onChange(of: data.preferences?.raw.defaultView, initial: true) { _, stored in

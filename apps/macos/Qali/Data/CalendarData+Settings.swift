@@ -31,6 +31,13 @@ extension CalendarData {
     try await Self.act(client, ConvexAPI.disconnectAccount) { ["connectionId": id] }
   }
 
+  /// Deletes the whole qali account: revokes every Google grant, erases all
+  /// of its data, and removes the login with its sessions. The caller signs
+  /// out afterwards; the session it held is already gone server-side.
+  func deleteAccount() async throws {
+    try await Self.act(client, ConvexAPI.deleteAccount) { [:] }
+  }
+
   func setSelected(_ calendar: CalendarListItem, selected: Bool) async throws {
     let id = calendar.id
     try await Self.mutate(client, ConvexAPI.setCalendarSelected) { ["calendarId": id, "selected": selected] }

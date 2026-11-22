@@ -87,6 +87,8 @@ final class EventDrag {
       durationMs: max(event.endMs - event.startMs, snapMs)
     )
     draggingId = event.id
+    lastTap = nil
+    feedback(.pickUp)
     // Escape puts the card back and ends the drag; the press itself carries
     // on until the button comes up, and is ignored.
     keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] key in
@@ -103,18 +105,36 @@ final class EventDrag {
     let previous = overrides[event.id] ?? Times(startMs: event.startMs, endMs: event.endMs)
     if overrides[event.id] != times { overrides[event.id] = times }
     guard times != previous else { return }
-    // A tap on the trackpad for each snap the card steps through, firmer
-    // when it lands on another day.
-    let changedDay = !geometry.zone.isSameDay(Date(ms: previous.startMs), Date(ms: times.startMs))
-    feedback(changedDay ? .levelChange : .alignment)
+    // A tap on the trackpad as the card steps through the grid, firmer when
+    // it lands on another day (DragHaptics).
+    if !geometry.zone.isSameDay(Date(ms: previous.startMs), Date(ms: times.startMs)) {
+      tap(.day)
+      return
+    }
+    let tuning = tuning()
+    let edge = { (t: Times) in session.mode == .resizeEnd ? t.endMs : t.startMs }
+    guard DragHaptics.crossesStep(from: edge(previous), to: edge(times), stepMinutes: tuning.stepMinutes, zone: geometry.zone)
+    else { return }
+    if let lastTap, ContinuousClock.now - lastTap < .milliseconds(tuning.minimumGapMs) { return }
+    tap(session.mode == .move ? .snap : .resize)
   }
 
-  /// Plays a haptic on a Force Touch trackpad (nothing with a mouse, or
-  /// with haptics off in System Settings), unless turned off in Settings ›
-  /// General; swapped out by the tests.
-  @ObservationIgnored var feedback: (NSHapticFeedbackManager.FeedbackPattern) -> Void = { pattern in
+  private func tap(_ moment: DragHaptics.Moment) {
+    lastTap = .now
+    feedback(moment)
+  }
+
+  @ObservationIgnored private var lastTap: ContinuousClock.Instant?
+
+  /// The tuning in effect; swapped out by the tests.
+  @ObservationIgnored var tuning: () -> DragHaptics.Tuning = { .current }
+
+  /// Plays a moment's tap on a Force Touch trackpad, unless turned off in
+  /// Settings › General; swapped out by the tests.
+  @ObservationIgnored var feedback: (DragHaptics.Moment) -> Void = { moment in
     guard EventDrag.hapticsEnabled else { return }
-    NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
+    let tuning = DragHaptics.Tuning.current
+    DragHaptics.play(tuning.pattern(for: moment), echoMs: moment == .day ? tuning.dayEchoMs : 0, onFrame: tuning.onFrame)
   }
 
   /// The Settings switch, per Mac; on unless turned off.
@@ -132,6 +152,7 @@ final class EventDrag {
       return
     }
     overrides[event.id] = times
+    feedback(.drop)
     hold(event.id)
     Task { @MainActor [weak self] in
       do {

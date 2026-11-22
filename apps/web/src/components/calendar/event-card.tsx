@@ -112,7 +112,7 @@ export function EventCard({
         // hour, which cannot hold a legible line. `min-h` draws short events
         // slightly taller than their true duration so the title still reads —
         // the same trade every calendar makes for sub-hour events.
-        "event-card group absolute min-h-[20px] overflow-hidden rounded-lg shadow-sm ring-1 ring-border/60 inset-ring inset-ring-black/10 select-none dark:inset-ring-white/10",
+        "event-card group absolute min-h-[20px] overflow-hidden rounded-md shadow-sm ring-1 ring-border/60 inset-ring inset-ring-black/10 select-none dark:inset-ring-white/10",
         draggable ? "cursor-grab" : "cursor-pointer",
         isDragging &&
           "cursor-grabbing touch-none shadow-lg ring-2 ring-primary/60",
@@ -129,7 +129,7 @@ export function EventCard({
       <RevealFlash
         reveal={reveal}
         targetId={[event._id, event.providerEventId]}
-        className="rounded-lg bg-[color-mix(in_oklab,var(--primary)_45%,transparent)]"
+        className="rounded-md bg-[color-mix(in_oklab,var(--primary)_45%,transparent)]"
       />
       <span
         aria-hidden

@@ -46,7 +46,7 @@ function GhostEvent({
 }: (typeof GHOST_EVENTS)[number]) {
   return (
     <div
-      className="absolute hidden overflow-hidden rounded-lg opacity-55 shadow-sm ring-1 ring-border/60 inset-ring inset-ring-black/10 sm:block dark:inset-ring-white/10"
+      className="absolute hidden overflow-hidden rounded-md opacity-55 shadow-sm ring-1 ring-border/60 inset-ring inset-ring-black/10 sm:block dark:inset-ring-white/10"
       style={{
         left: `calc(50vw + ${col * COL + CELL_GAP}px)`,
         top: row * ROW + CELL_GAP,

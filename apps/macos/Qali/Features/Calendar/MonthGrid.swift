@@ -145,12 +145,17 @@ struct MonthGrid: View, Equatable {
     .onAppear(perform: configureScroller)
     #if DEBUG
       // `-QaliMonthStep 2` glides the rows two weeks after launch;
-      // `-QaliZoomDay 2026-11-20` zooms into that day, for captures.
+      // `-QaliZoomDay 2026-11-20` zooms into that day, for captures;
+      // `-QaliToday YES` presses Today.
       .task {
         let defaults = UserDefaults.standard
         try? await Task.sleep(for: .seconds(1.5))
         let weeks = defaults.integer(forKey: "QaliMonthStep")
         if weeks != 0 { scroller.step(days: weeks) }
+        if defaults.bool(forKey: "QaliToday") {
+          try? await Task.sleep(for: .seconds(1.5))
+          navigation.goToToday()
+        }
         if let text = defaults.string(forKey: "QaliZoomDay"),
           let day = bufferDays.first(where: { navigation.zone.format($0, "yyyy-MM-dd") == text })
         {

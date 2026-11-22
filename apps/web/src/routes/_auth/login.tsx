@@ -75,7 +75,7 @@ function LoginComponent() {
                 Welcome to Qali
               </p>
               <p className="text-xs leading-tight text-muted-foreground">
-                Sign in with Google to continue
+                Sign in with Google to sync your calendar and contacts
               </p>
             </div>
             <Button
@@ -91,13 +91,6 @@ function LoginComponent() {
             </Button>
           </div>
         </div>
-
-        <p className="max-w-[400px] text-center text-xs leading-snug text-balance text-muted-foreground">
-          Google will ask you to let qali see and edit your calendars and read
-          your contacts. qali uses them only to show your schedule, make the
-          changes you ask for, and put names to the people you meet — never for
-          ads or to train AI models.
-        </p>
 
         <p className="max-w-[400px] text-center text-xs leading-snug text-balance text-muted-foreground">
           By signing in, you agree to our{" "}

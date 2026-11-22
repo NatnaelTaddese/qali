@@ -1097,7 +1097,12 @@ private struct EventCard: View {
   /// Being dragged: drawn raised, with the web's primary ring.
   var lifted = false
 
-  private let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+  /// The all-day bars' corners, so its colour rail sits in them the same way.
+  private let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+
+  /// How far the rail's ends sit from the top and bottom: an all-day bar's
+  /// 4pt, less on a card too short to leave the rail any length.
+  private var railInset: CGFloat { min(4, max(size.height / 2 - 1.5, 0)) }
 
   var body: some View {
     let height = size.height
@@ -1149,7 +1154,7 @@ private struct EventCard: View {
     // The flash sits under the text, as on the web.
     .background { EventTint(hue: hue).revealFlash([event.id]) }
     .overlay(alignment: .leading) {
-      Capsule().fill(hue).frame(width: 3).padding(.vertical, 4).padding(.leading, 4)
+      Capsule().fill(hue).frame(width: 3).padding(.vertical, railInset).padding(.leading, 4)
     }
     .clipShape(shape)
     .overlay { shape.strokeBorder(.primary.opacity(0.1)) }

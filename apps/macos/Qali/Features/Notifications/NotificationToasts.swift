@@ -73,6 +73,9 @@ private struct NotificationToast: View {
     // The toolbar's and the island's own glass, untinted and as round as
     // their pills, so the card reads as one of them.
     .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22, style: .continuous))
+    // A blur under the glass, as macOS puts under the toolbar's pills, so
+    // the grid doesn't bend through the words.
+    .background(.ultraThinMaterial, in: .rect(cornerRadius: 22, style: .continuous))
     // The close button sits on the corner, as on the system's banners.
     .overlay(alignment: .topLeading) {
       if hovering {

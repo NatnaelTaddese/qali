@@ -174,11 +174,23 @@ struct EventsPane: View {
 private struct NotificationsSection: View {
   @Environment(AppModel.self) private var model
   @AppStorage(NotificationSound.enabledKey) private var sounds = true
+  @AppStorage(NotificationStyle.key) private var style = NotificationStyle.automatic
 
   private var notifier: Notifier { model.notifier }
 
   var body: some View {
     Section("Notifications") {
+      SettingsRow("Show notifications", detail: styleDetail) {
+        Picker("Show notifications", selection: $style) {
+          Text(NotificationStyle.automatic.label).tag(NotificationStyle.automatic)
+          Divider()
+          Text(NotificationStyle.inApp.label).tag(NotificationStyle.inApp)
+          Text(NotificationStyle.system.label).tag(NotificationStyle.system)
+        }
+        .labelsHidden()
+        .fixedSize()
+      }
+
       SettingsRow("System notifications", detail: statusDetail) {
         switch notifier.authorization {
         case .notDetermined:
@@ -197,10 +209,18 @@ private struct NotificationsSection: View {
     .task { await notifier.refreshAuthorization() }
   }
 
+  private var styleDetail: String {
+    switch style {
+    case .automatic: "In qali while you're using it, otherwise in Notification Center"
+    case .inApp: "In qali's window, waiting there if you're away"
+    case .system: "In Notification Center, even while you're using qali"
+    }
+  }
+
   private var statusDetail: String {
     switch notifier.authorization {
     case .authorized, .provisional, .ephemeral:
-      "In qali while you're using it, otherwise in Notification Center"
+      "Allowed in System Settings"
     case .denied:
       "Off in System Settings, so they only show inside qali"
     default:

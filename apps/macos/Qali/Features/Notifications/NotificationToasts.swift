@@ -33,6 +33,8 @@ private struct NotificationToast: View {
   let dismiss: () -> Void
 
   @State private var hovering = false
+  /// Inactive while another app or window is in front.
+  @Environment(\.controlActiveState) private var activeState
 
   /// Long enough to read and reach for; a reminder stays as long as the
   /// web's toast does.
@@ -93,9 +95,11 @@ private struct NotificationToast: View {
     }
     .onHover { inside in withAnimation(.easeOut(duration: 0.12)) { hovering = inside } }
     .onTapGesture(perform: open)
-    // Restarts whenever the pointer leaves, so a card being read stays.
-    .task(id: hovering) {
-      guard !hovering else { return }
+    // Restarts whenever the pointer leaves, so a card being read stays,
+    // and only runs while the window is in front: one that arrived while
+    // the user was away (Only in qali) is still there when they come back.
+    .task(id: [hovering, activeState == .inactive]) {
+      guard !hovering, activeState != .inactive else { return }
       try? await Task.sleep(for: lifetime)
       guard !Task.isCancelled else { return }
       dismiss()

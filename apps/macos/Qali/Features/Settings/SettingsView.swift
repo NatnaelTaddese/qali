@@ -62,7 +62,7 @@ extension SettingsPane {
     case .calendars: ["Show or hide calendars", "Rename calendars"]
     case .dateTime:
       ["Time zone", "Week starts on", "Time format", "Other time zones", "Show times under the pointer"]
-    case .events: ["Default calendar", "Timed event reminders", "All-day event reminders", "System notifications", "Play sounds"]
+    case .events: ["Default calendar", "Timed event reminders", "All-day event reminders", "Show notifications", "System notifications", "Play sounds"]
     case .booking:
       ["Link name", "Share", "Live", "Title", "Length", "Minimum notice", "Days ahead",
        "Ignore all-day events", "Weekly hours", "Change single days"]
@@ -91,7 +91,7 @@ extension SettingsPane {
        "am": "Time format", "pm": "Time format", "monday": "Week starts on", "sunday": "Week starts on"]
     case .events:
       ["reminder": "Timed event reminders", "alert": "System notifications", "banner": "System notifications",
-       "notification": "System notifications", "notification center": "System notifications", "sound": "Play sounds", "chime": "Play sounds",
+       "notification": "Show notifications", "in-app": "Show notifications", "toast": "Show notifications", "notification center": "System notifications", "sound": "Play sounds", "chime": "Play sounds",
        "mute": "Play sounds", "new event": "Default calendar"]
     case .booking:
       ["availability": "Weekly hours", "schedule": "Weekly hours", "slots": "Length", "booking page": nil,

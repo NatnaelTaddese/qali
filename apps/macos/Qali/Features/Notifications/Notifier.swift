@@ -128,11 +128,18 @@ final class Notifier {
     }
   }
 
-  /// In the window when the user is looking at it, else in Notification
-  /// Center; in the window anyway when macOS won't show it.
+  /// Where the user chose (`NotificationStyle`): by default in the window
+  /// when they're looking at it, else in Notification Center. In the window
+  /// anyway when macOS won't show it, so nothing is missed.
   func present(_ row: NotificationRow) {
     let allowed = authorization == .authorized || authorization == .provisional
-    if isCalendarFocused || !allowed {
+    let inWindow =
+      switch NotificationStyle.current {
+      case .automatic: isCalendarFocused
+      case .inApp: true
+      case .system: false
+      }
+    if inWindow || !allowed {
       toasts.append(row)
       if toasts.count > Self.maxToasts { toasts.removeFirst(toasts.count - Self.maxToasts) }
       NotificationSound(type: row.type).play()
@@ -225,6 +232,31 @@ private final class NotifierDelegate: NSObject, UNUserNotificationCenterDelegate
     guard response.actionIdentifier == UNNotificationDefaultActionIdentifier else { return }
     let id = response.notification.request.identifier
     await MainActor.run { notifier?.openFromSystem(id) }
+  }
+}
+
+/// Where notifications show, per device: the user's choice in Settings ›
+/// Events.
+enum NotificationStyle: String, CaseIterable, Identifiable {
+  /// In qali while its calendar window is in front, otherwise in
+  /// Notification Center.
+  case automatic
+  /// Always in qali's window; they wait there until the user comes back.
+  case inApp
+  /// Always in Notification Center, even with qali in front.
+  case system
+
+  var id: Self { self }
+
+  static let key = "notificationStyle"
+  static var current: Self { UserDefaults.standard.string(forKey: key).flatMap(Self.init(rawValue:)) ?? .automatic }
+
+  var label: String {
+    switch self {
+    case .automatic: "Automatic"
+    case .inApp: "Only in qali"
+    case .system: "Only in Notification Center"
+    }
   }
 }
 

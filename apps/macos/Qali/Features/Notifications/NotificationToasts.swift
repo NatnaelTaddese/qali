@@ -48,7 +48,7 @@ private struct NotificationToast: View {
         .font(.system(size: 13, weight: .semibold))
         .foregroundStyle(.white)
         .frame(width: 30, height: 30)
-        .background((isBooking ? Color.green : Color.orange).gradient, in: .rect(cornerRadius: 8, style: .continuous))
+        .background((isBooking ? Color.green : Color.orange).gradient, in: .circle)
       VStack(alignment: .leading, spacing: 2) {
         Text(row.title)
           .font(.sans(TextSize.sm, .medium))
@@ -66,15 +66,13 @@ private struct NotificationToast: View {
         .foregroundStyle(Palette.mutedForeground.opacity(0.8))
     }
     .padding(.leading, 10)
-    .padding(.trailing, 14)
+    .padding(.trailing, 16)
     .padding(.vertical, 10)
     .frame(width: 320)
-    .contentShape(.rect(cornerRadius: 16, style: .continuous))
-    // Tinted with the window's background, so the grid under it doesn't
-    // read through the words.
-    .glassEffect(
-      .regular.tint(Palette.background.opacity(0.6)).interactive(),
-      in: .rect(cornerRadius: 16, style: .continuous))
+    .contentShape(.rect(cornerRadius: 22, style: .continuous))
+    // The toolbar's and the island's own glass, untinted and as round as
+    // their pills, so the card reads as one of them.
+    .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22, style: .continuous))
     // The close button sits on the corner, as on the system's banners.
     .overlay(alignment: .topLeading) {
       if hovering {
@@ -87,7 +85,7 @@ private struct NotificationToast: View {
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .circle)
-        .offset(x: -6, y: -6)
+        .offset(x: -4, y: -4)
         .transition(.opacity)
         .accessibilityLabel("Dismiss")
         .help("Dismiss")

@@ -78,6 +78,11 @@ targets:
         com.apple.security.temporary-exception.mach-lookup.global-name:
           - $(PRODUCT_BUNDLE_IDENTIFIER)-spks
           - $(PRODUCT_BUNDLE_IDENTIFIER)-spki
+        # Notification Center only sounds files in ~/Library/Sounds, not the
+        # app's bundle, so the app copies its sounds there
+        # (NotificationSound.install).
+        com.apple.security.temporary-exception.files.home-relative-path.read-write:
+          - /Library/Sounds/
 
   QaliTests:
     type: bundle.unit-test

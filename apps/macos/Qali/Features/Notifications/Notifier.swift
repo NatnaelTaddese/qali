@@ -60,6 +60,7 @@ final class Notifier {
     inFeed = []
     data.onNotifications = { [weak self] rows in self?.receive(rows) }
     scheduler = ReminderScheduler(client: data.client)
+    NotificationSound.install()
     Task { await requestAuthorization() }
     #if DEBUG
       // `-QaliNotify reminder|booking` presents a sample after
@@ -183,7 +184,7 @@ final class Notifier {
     content.threadIdentifier = row.type
     content.userInfo = ["notificationId": row.id]
     if NotificationSound.isEnabled {
-      content.sound = UNNotificationSound(named: UNNotificationSoundName(NotificationSound(type: row.type).file))
+      content.sound = UNNotificationSound(named: UNNotificationSoundName(NotificationSound(type: row.type).installedName))
     }
     posted.insert(row.id)
     UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: row.id, content: content, trigger: nil)) {
@@ -272,7 +273,34 @@ enum NotificationSound: String {
   static let enabledKey = "notificationSounds"
   static var isEnabled: Bool { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
 
-  var file: String { rawValue + ".caf" }
+  /// The name Notification Center sounds it by. It only plays files from
+  /// the Sounds folders, never the app's bundle, and it remembers a name it
+  /// couldn't find until it restarts, so these aren't the bundle's names:
+  /// 0.1.8 asked for those and got the default sound.
+  var installedName: String { self == .reminder ? "Qali Reminder.caf" : "Qali Booking.caf" }
+
+  /// Copies the bundled sounds to ~/Library/Sounds, where Notification
+  /// Center finds them, replacing any copy that differs from what this
+  /// version bundles. The sandbox lets the app write there and nowhere else
+  /// outside its container (Qali.entitlements).
+  static func install() {
+    let files = FileManager.default
+    // The real home, not the container's.
+    guard let home = getpwuid(getuid())?.pointee.pw_dir else { return }
+    let folder = URL(filePath: String(cString: home), directoryHint: .isDirectory)
+      .appending(path: "Library/Sounds", directoryHint: .isDirectory)
+    try? files.createDirectory(at: folder, withIntermediateDirectories: true)
+    for sound in [Self.reminder, .booking] {
+      guard let source = Bundle.main.url(forResource: sound.rawValue, withExtension: "caf"),
+        let audio = try? Data(contentsOf: source)
+      else { continue }
+      let target = folder.appending(path: sound.installedName)
+      guard (try? Data(contentsOf: target)) != audio else { continue }
+      do { try audio.write(to: target, options: .atomic) } catch {
+        print("Couldn't install \(sound.installedName):", error)
+      }
+    }
+  }
 
   /// Sounds still playing. An NSSound nothing holds on to is freed, and
   /// falls silent, the moment `play()` returns.

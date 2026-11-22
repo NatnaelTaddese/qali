@@ -63,6 +63,8 @@ final class CalendarData {
   /// window the calendar grid is showing.
   private let agendaQuery: LiveQuery<[CalendarEvent]>
   private let notificationsQuery: LiveQuery<[NotificationRow]>
+  /// Every feed result, for the notifier (which outlives the window).
+  @ObservationIgnored var onNotifications: (([NotificationRow]) -> Void)?
   private let unreadCountQuery: LiveQuery<Double>
   /// The people directory (guest search and photos), kept for the session
   /// so panels opening again have it at once.
@@ -87,6 +89,7 @@ final class CalendarData {
       eventCache.record(events, startMs: window.startMs, endMs: window.endMs)
     }
     calendarsQuery.onResult = { [eventCache] calendars in eventCache.record(calendars: calendars) }
+    notificationsQuery.onResult = { [weak self] rows in self?.onNotifications?(rows) }
     preferencesQuery.onResult = { [weak self, eventCache] stored in
       guard let self, let stored else { return }
       eventCache.record(preferences: stored)

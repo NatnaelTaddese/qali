@@ -32,9 +32,12 @@ final class MainWindowController: NSWindowController {
     window.contentView = host
 
     window.center()
-    window.setFrameAutosaveName("QaliMainWindow")
+    window.setFrameAutosaveName(Self.autosaveName)
     super.init(window: window)
   }
+
+  /// Also how the notifier knows the calendar window is the one in front.
+  static let autosaveName = "QaliMainWindow"
 
   @available(*, unavailable)
   required init?(coder: NSCoder) {

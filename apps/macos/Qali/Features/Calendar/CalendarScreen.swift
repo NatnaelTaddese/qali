@@ -16,6 +16,18 @@ struct CalendarScreen: View {
       .overlay(alignment: .bottom) {
         BottomIsland(island: island, data: data, navigation: navigation)
       }
+      // Notifications that land while this window is in front.
+      .overlay(alignment: .topTrailing) {
+        NotificationToasts(notifier: model.notifier) { row in
+          openNotification(row, data: data, island: island, navigation: navigation)
+        }
+      }
+      // One clicked in Notification Center, once the window is forward.
+      .onChange(of: model.notifier.pendingOpen, initial: true) { _, row in
+        guard let row else { return }
+        model.notifier.pendingOpen = nil
+        openNotification(row, data: data, island: island, navigation: navigation)
+      }
       // For the event cards, which open themselves in the island.
       .environment(island)
       .toolbar {

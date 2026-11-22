@@ -263,7 +263,8 @@ export const purgeUserData = internalMutation({
         | "people"
         | "assistantUserState"
         | "assistantMessages"
-        | "pushSubscriptions",
+        | "pushSubscriptions"
+        | "userPreferences",
     ) =>
       ctx.db
         .query(table)
@@ -323,6 +324,7 @@ export const purgeUserData = internalMutation({
         .take(PURGE_BATCH),
     );
     await drain(await byUser("pushSubscriptions"));
+    await drain(await byUser("userPreferences"));
     await drain(
       await ctx.db
         .query("assistantThreads")

@@ -9,6 +9,7 @@ import { env } from "@qali/env/server";
 import { components } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
 import authConfig from "./auth.config";
+import { nativeLinkForwardURL } from "./shared/nativeLinkCallback";
 
 const siteUrl = env.SITE_URL;
 
@@ -44,8 +45,15 @@ function withErrorCode(url: string, code: string): string {
  * This hook runs before the callback handler, while the state row still
  * exists: if the state carries a `link`, the request must present a session
  * for that same user or the link is refused and the state consumed.
+ *
+ * A link started by a native app is the exception to refusing outright: the
+ * browser can't hold the app's session, so the callback is forwarded to the
+ * app's deep link with the state left in place, and the app replays it here
+ * with its own session (see shared/nativeLinkCallback.ts). The replay carries
+ * `expo-origin`, so a replay with the wrong session is refused, not
+ * forwarded again.
  */
-const bindLinkCallbackToSession = createAuthMiddleware(async (ctx) => {
+export const bindLinkCallbackToSession = createAuthMiddleware(async (ctx) => {
   if (ctx.path !== "/callback/:id") return;
   const state = ctx.query?.state;
   if (typeof state !== "string" || !state) return;
@@ -54,12 +62,15 @@ const bindLinkCallbackToSession = createAuthMiddleware(async (ctx) => {
   if (!row) return;
   let link: { userId: string } | undefined;
   let errorURL: string | undefined;
+  let callbackURL: string | undefined;
   try {
     const data = JSON.parse(row.value) as {
       link?: { userId?: unknown };
       errorURL?: unknown;
+      callbackURL?: unknown;
     };
     if (typeof data.errorURL === "string") errorURL = data.errorURL;
+    if (typeof data.callbackURL === "string") callbackURL = data.callbackURL;
     if (data.link && data.link.userId !== undefined) {
       link = { userId: String(data.link.userId) };
     }
@@ -69,6 +80,15 @@ const bindLinkCallbackToSession = createAuthMiddleware(async (ctx) => {
   if (!link) return;
   const session = await getSessionFromCtx(ctx);
   if (session?.user.id === link.userId) return;
+  if (!ctx.headers?.has("expo-origin")) {
+    const forward = nativeLinkForwardURL({
+      callbackURL,
+      providerId: ctx.params?.id,
+      query: ctx.query,
+      nativeOrigins,
+    });
+    if (forward) throw ctx.redirect(forward);
+  }
   await ctx.context.internalAdapter.deleteVerificationByIdentifier(state);
   throw ctx.redirect(
     withErrorCode(errorURL ?? `${siteUrl}/`, "link_session_mismatch"),

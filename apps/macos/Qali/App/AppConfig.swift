@@ -24,6 +24,6 @@ nonisolated enum AppConfig {
 
   static let marketingURL = URL(string: "https://myqali.com")!
 
-  /// The web app, where linking another Google account happens for now.
+  /// The web app, which serves booking pages.
   static let webAppURL = URL(string: "https://calendar.myqali.com")!
 }

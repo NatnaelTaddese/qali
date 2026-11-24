@@ -18,6 +18,8 @@ final class AppModel {
   private(set) var phase: Phase = .launching
   private(set) var user: SessionUser?
   private(set) var isSigningIn = false
+  /// A Google account is being linked from Settings › Accounts.
+  private(set) var isLinkingAccount = false
   /// The signed-in user's calendar data; nil while signed out.
   private(set) var calendarData: CalendarData?
   var signInError: String?
@@ -82,6 +84,9 @@ final class AppModel {
       // `-QaliSignOut YES` signs the restored session out at launch, the same
       // as choosing Sign Out from the menu.
       if UserDefaults.standard.bool(forKey: "QaliSignOut") { await signOut() }
+      // `-QaliLinkProbe YES` starts a Google account link and logs its URLs
+      // (BetterAuthClient.probeLink) without opening the browser.
+      if UserDefaults.standard.bool(forKey: "QaliLinkProbe") { await auth.probeLink() }
     #endif
   }
 
@@ -99,6 +104,28 @@ final class AppModel {
 
   /// Calls off a sign-in that is waiting on the browser.
   func cancelSignIn() {
+    auth.cancelSignIn()
+  }
+
+  /// Links another Google account to the signed-in user and turns it into a
+  /// connection whose calendars start syncing. Returns false when the user
+  /// backed out; throws when the link was refused.
+  @discardableResult
+  func linkAccount() async throws -> Bool {
+    guard !isLinkingAccount, let data = calendarData else { return false }
+    isLinkingAccount = true
+    defer { isLinkingAccount = false }
+    do {
+      try await auth.linkGoogleAccount()
+    } catch AuthError.cancelled {
+      return false
+    }
+    _ = try await data.connectLinkedAccounts()
+    return true
+  }
+
+  /// Calls off a link that is waiting on the browser.
+  func cancelLinkAccount() {
     auth.cancelSignIn()
   }
 

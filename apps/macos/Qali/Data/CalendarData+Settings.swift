@@ -31,6 +31,18 @@ extension CalendarData {
     try await Self.act(client, ConvexAPI.disconnectAccount) { ["connectionId": id] }
   }
 
+  /// Turns Google grants linked since the last call into connections and
+  /// starts their first sync (what the web runs on `?linked=google`).
+  /// Returns how many connections it created.
+  func connectLinkedAccounts() async throws -> Int {
+    try await Self.connectLinked(client)
+  }
+
+  private nonisolated static func connectLinked(_ client: ConvexClient) async throws -> Int {
+    let result: LinkedAccountsResult = try await client.action(ConvexAPI.connectLinkedAccounts)
+    return Int(result.created)
+  }
+
   /// Deletes the whole qali account: revokes every Google grant, erases all
   /// of its data, and removes the login with its sessions. The caller signs
   /// out afterwards; the session it held is already gone server-side.
@@ -61,6 +73,10 @@ extension CalendarData {
   ) async throws {
     let _: SettingsIgnored = try await client.mutation(name, with: args())
   }
+}
+
+private nonisolated struct LinkedAccountsResult: Decodable {
+  let created: Double
 }
 
 private nonisolated struct SettingsIgnored: Decodable {

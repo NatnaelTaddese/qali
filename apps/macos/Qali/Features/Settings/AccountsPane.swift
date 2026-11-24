@@ -29,9 +29,21 @@ struct AccountsPane: View {
           )
         }
         Section {
-          SettingsRow("Another account", detail: "Linking opens qali on the web, then the account shows up here.") {
-            Button("Add Google Account…") {
-              NSWorkspace.shared.open(AppConfig.webAppURL)
+          SettingsRow(
+            "Another account",
+            detail: model.isLinkingAccount
+              ? "Choose the account in your browser, then come back here."
+              : "Adds another Google account's calendars to qali"
+          ) {
+            if model.isLinkingAccount {
+              HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                // A browser other than Safari may not report its window
+                // being closed, so the wait needs a way out.
+                Button("Cancel") { model.cancelLinkAccount() }
+              }
+            } else {
+              Button("Add Google Account…") { linkAccount() }
             }
           }
         }
@@ -68,6 +80,34 @@ struct AccountsPane: View {
       Text(
         "This can't be undone. qali revokes its access to every connected Google account and permanently deletes your synced calendars and contacts, booking page, assistant history and settings. Nothing is deleted from Google Calendar itself."
       )
+    }
+  }
+
+  private func linkAccount() {
+    Task {
+      do {
+        try await model.linkAccount()
+      } catch AuthError.callback(let code) {
+        error = Self.linkErrorMessage(code)
+      } catch AuthError.browserUnavailable {
+        error = AuthError.browserUnavailable.localizedDescription
+      } catch {
+        self.error = "Couldn't connect the account. Please try again."
+      }
+    }
+  }
+
+  /// The web's `linkErrorMessage`, for the codes the link callback returns.
+  static func linkErrorMessage(_ code: String) -> String {
+    switch code {
+    case "account_already_linked_to_different_user":
+      "That Google account is already connected to a different user."
+    case "link_session_mismatch":
+      "Sign out and back in, then add the account again."
+    case "access_denied":
+      "Google didn't grant access, so the account wasn't added."
+    default:
+      "Couldn't connect the account. Please try again."
     }
   }
 

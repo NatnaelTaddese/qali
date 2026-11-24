@@ -31,6 +31,7 @@ enum ConvexAPI {
   static let setConnectionContacts = "domains/calendar/mutations:setConnectionContacts"
   static let setCalendarSummaryOverride = "domains/calendar/mutations:setCalendarSummaryOverride"
   static let disconnectAccount = "domains/calendar/connectionService:disconnectAccount"
+  static let connectLinkedAccounts = "domains/calendar/connectionService:connectLinkedAccounts"
   static let deleteAccount = "domains/account/deletion:deleteAccount"
 }
 

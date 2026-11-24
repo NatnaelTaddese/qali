@@ -93,7 +93,122 @@ nonisolated final class BetterAuthClient: Sendable {
     guard jar.hasSession else { throw AuthError.notSignedIn }
   }
 
-  /// Abandons a sign-in that is waiting on the browser; `signInWithGoogle`
+  // MARK: - Linking another account
+
+  /// How a link flow's deep link (or the replayed callback's redirect) ended.
+  enum LinkOutcome: Equatable {
+    /// The account is linked (`callbackURL`, `qali:///?linked=google`).
+    case linked
+    /// The link was refused (`errorCallbackURL`, `qali:///?linkError=google&error=<code>`).
+    case failed(String)
+    /// The browser had no session for this user, so the backend forwarded
+    /// Google's callback here (`qali:///link-callback/google?code=…&state=…`)
+    /// for the app to replay with its own session.
+    case replay(provider: String, query: String)
+    case unexpected
+  }
+
+  static func linkOutcome(_ url: URL) -> LinkOutcome {
+    let params = callbackParameters(url)
+    let path = url.path(percentEncoded: false)
+    if path.hasPrefix("/link-callback/") {
+      let provider = String(path.dropFirst("/link-callback/".count))
+      guard
+        !provider.isEmpty,
+        provider.allSatisfy({ $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == "-") }),
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedQuery,
+        params["state"] != nil
+      else { return .unexpected }
+      return .replay(provider: provider, query: query)
+    }
+    if params["linkError"] != nil || params["error"] != nil {
+      return .failed(params["error"] ?? "unknown")
+    }
+    if params["linked"] != nil { return .linked }
+    return .unexpected
+  }
+
+  /// Links another Google account to the signed-in user, the native
+  /// counterpart of the web's `authClient.linkSocial`. Google runs in an
+  /// `ASWebAuthenticationSession`; the browser never gets a session of its
+  /// own. Its callback is forwarded back here by `bindLinkCallbackToSession`
+  /// and replayed with the stored session, which is what attaches the grant.
+  /// Throws `.cancelled` when the user backs out.
+  func linkGoogleAccount() async throws {
+    let authorization = try await startLink()
+    let callback = try await WebAuthSession.start(url: authorization, callbackScheme: AppConfig.authScheme)
+    Logger.auth.debug("Link: browser returned \(callback.path(), privacy: .public)")
+
+    var outcome = Self.linkOutcome(callback)
+    if case .replay(let provider, let query) = outcome {
+      outcome = Self.linkOutcome(try await replayCallback(provider: provider, query: query))
+    }
+    switch outcome {
+    case .linked: return
+    case .failed(let code): throw AuthError.callback(code)
+    case .replay, .unexpected: throw AuthError.malformedResponse
+    }
+  }
+
+  /// `/link-social` for Google: stores the link's OAuth state server-side
+  /// (bound to the signed-in user) and returns Google's authorization URL.
+  private func startLink() async throws -> URL {
+    guard jar.hasSession else { throw AuthError.notSignedIn }
+    struct Body: Encodable {
+      let provider = "google"
+      let callbackURL = "\(AppConfig.authOrigin)/?linked=google"
+      let errorCallbackURL = "\(AppConfig.authOrigin)/?linkError=google"
+      let disableRedirect = true
+    }
+    struct Response: Decodable { let url: URL }
+    let response: Response = try await send("link-social", method: "POST", body: json(Body()))
+    Logger.auth.debug("Link: authorizing at \(response.url.host() ?? "?", privacy: .public)\(response.url.path(), privacy: .public)")
+    return response.url
+  }
+
+  #if DEBUG
+    /// `-QaliLinkProbe YES`: runs the first leg of a link against the
+    /// deployment and logs where it leads, without opening a browser.
+    func probeLink() async {
+      do {
+        let url = try await startLink()
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let redirect = items.first { $0.name == "redirect_uri" }?.value ?? "-"
+        let hasState = items.contains { $0.name == "state" && !($0.value ?? "").isEmpty }
+        Logger.auth.notice(
+          "Link probe: authorize=\(url.host() ?? "?", privacy: .public)\(url.path(), privacy: .public) redirect_uri=\(redirect, privacy: .public) state=\(hasState, privacy: .public)"
+        )
+      } catch {
+        Logger.auth.error("Link probe failed: \(String(describing: error), privacy: .public)")
+      }
+    }
+  #endif
+
+  /// Sends a forwarded OAuth callback to `/callback/<provider>` with the
+  /// stored session and returns where it redirects (a `qali://` URL, so the
+  /// redirect is read, not followed).
+  private func replayCallback(provider: String, query: String) async throws -> URL {
+    var components = URLComponents(
+      url: baseURL.appending(path: "callback/\(provider)"), resolvingAgainstBaseURL: false)!
+    components.percentEncodedQuery = query
+    var request = URLRequest(url: components.url!)
+    prepare(&request)
+    let (_, urlResponse) = try await session.data(for: request, delegate: NoRedirects())
+    guard let http = urlResponse as? HTTPURLResponse else { throw AuthError.malformedResponse }
+    if let setCookie = http.value(forHTTPHeaderField: "Set-Cookie") {
+      jar.merge(setCookie: setCookie)
+    }
+    guard (300..<400).contains(http.statusCode),
+      let location = http.value(forHTTPHeaderField: "Location"),
+      let url = URL(string: location)
+    else {
+      throw AuthError.server(status: http.statusCode, message: nil)
+    }
+    Logger.auth.debug("Link: callback redirected to \(url.path(), privacy: .public)")
+    return url
+  }
+
+  /// Abandons a sign-in or link that is waiting on the browser; the call
   /// then throws `.cancelled`.
   @MainActor
   func cancelSignIn() {
@@ -156,6 +271,16 @@ nonisolated final class BetterAuthClient: Sendable {
     try JSONEncoder().encode(value)
   }
 
+  /// The headers every request carries, like `@better-auth/expo`'s fetch plugin.
+  private func prepare(_ request: inout URLRequest) {
+    request.setValue(AppConfig.authOrigin, forHTTPHeaderField: "expo-origin")
+    request.setValue("true", forHTTPHeaderField: "x-skip-oauth-proxy")
+    request.setValue("application/json", forHTTPHeaderField: "accept")
+    if let cookie = jar.header() {
+      request.setValue(cookie, forHTTPHeaderField: "cookie")
+    }
+  }
+
   private func send<Response: Decodable>(
     _ path: String,
     method: String = "GET",
@@ -163,12 +288,7 @@ nonisolated final class BetterAuthClient: Sendable {
   ) async throws -> Response {
     var request = URLRequest(url: baseURL.appending(path: path))
     request.httpMethod = method
-    request.setValue(AppConfig.authOrigin, forHTTPHeaderField: "expo-origin")
-    request.setValue("true", forHTTPHeaderField: "x-skip-oauth-proxy")
-    request.setValue("application/json", forHTTPHeaderField: "accept")
-    if let cookie = jar.header() {
-      request.setValue(cookie, forHTTPHeaderField: "cookie")
-    }
+    prepare(&request)
     if let body {
       request.setValue("application/json", forHTTPHeaderField: "content-type")
       request.httpBody = body
@@ -188,6 +308,21 @@ nonisolated final class BetterAuthClient: Sendable {
     } catch {
       throw AuthError.malformedResponse
     }
+  }
+}
+
+/// Hands a redirect back as the response instead of following it.
+private nonisolated final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse,
+    newRequest request: URLRequest,
+    completionHandler: @escaping @Sendable (URLRequest?) -> Void
+  ) {
+    // The async form of this method crashes Swift 6.4's SILGen in this
+    // module (NonisolatedNonsendingByDefault), so it stays callback-based.
+    completionHandler(nil)
   }
 }
 

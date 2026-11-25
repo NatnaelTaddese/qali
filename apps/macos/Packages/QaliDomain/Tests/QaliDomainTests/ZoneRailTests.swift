@@ -194,3 +194,35 @@ private let friday = midnight(2026, 11, 20, in: newYork)
     #expect(clock[1].offset == "−3h")
   }
 }
+
+@Suite struct TravelTests {
+  private let now = ISO8601DateFormatter().date(from: "2026-11-20T12:00:00Z")!
+
+  @Test func offersTheMacsZoneWhenThePinnedZoneReadsDifferently() {
+    #expect(travelOffer(device: "Asia/Tokyo", working: "America/New_York", dismissed: nil, at: now) == "Asia/Tokyo")
+  }
+
+  @Test func staysQuietWhenThereIsNothingToSwitch() {
+    // Automatic already follows the Mac.
+    #expect(travelOffer(device: "Asia/Tokyo", working: nil, dismissed: nil, at: now) == nil)
+    #expect(travelOffer(device: "Asia/Tokyo", working: "Asia/Tokyo", dismissed: nil, at: now) == nil)
+    // Another city on the same clock.
+    #expect(travelOffer(device: "Asia/Singapore", working: "Asia/Shanghai", dismissed: nil, at: now) == nil)
+    // Turned down before.
+    #expect(travelOffer(device: "Asia/Tokyo", working: "America/New_York", dismissed: "Asia/Tokyo", at: now) == nil)
+  }
+
+  @Test func theOldZoneTakesTheNewOnesSlotOrJoinsBesideTheHours() {
+    #expect(
+      zonesAfterTravelling(["Asia/Tokyo", "Europe/London"], to: "Asia/Tokyo", from: "America/New_York", limit: 2)
+        == ["America/New_York", "Europe/London"])
+    #expect(zonesAfterTravelling([], to: "Asia/Tokyo", from: "America/New_York", limit: 2) == ["America/New_York"])
+    #expect(
+      zonesAfterTravelling(["Europe/London"], to: "Asia/Tokyo", from: "America/New_York", limit: 2)
+        == ["Europe/London", "America/New_York"])
+    // A full rail drops its oldest zone.
+    #expect(
+      zonesAfterTravelling(["Europe/Paris", "Europe/London"], to: "Asia/Tokyo", from: "America/New_York", limit: 2)
+        == ["Europe/London", "America/New_York"])
+  }
+}

@@ -43,9 +43,10 @@ struct MenuBarLabel: View {
             .frame(height: 16)
             .background(Palette.meet, in: .rect(cornerRadius: 4, style: .continuous))
         } else {
-          Circle()
+          // The event's colour rail, as on its cards and in the panel's list.
+          RoundedRectangle(cornerRadius: 1.5)
             .fill(Palette.event(data.colorKey(for: next)))
-            .frame(width: 7, height: 7)
+            .frame(width: 3, height: 13)
         }
         Text(text(for: next, now: now, joining: joinPill && isJoinable(next, now: now)))
       }

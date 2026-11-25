@@ -96,19 +96,9 @@ struct TravelOffer: View {
       }
       .lineLimit(1)
       Spacer(minLength: 16)
-      TravelSecondaryButton(title: "Keep \(home)") { dismissed = zone }
-      Button {
-        move(to: zone, from: working)
-      } label: {
-        HStack(spacing: 6) {
-          if switching { ProgressView().controlSize(.mini) }
-          Text("Switch to \(city)")
-        }
-        .font(.sans(TextSize.sm, .medium))
-        .padding(.horizontal, 4)
-      }
-      .modifier(PrimaryButton())
-      .disabled(switching)
+      TravelButton(title: "Keep \(home)", primary: false) { dismissed = zone }
+      TravelButton(title: "Switch to \(city)", primary: true, busy: switching) { move(to: zone, from: working) }
+        .disabled(switching)
     }
     .padding(.leading, 9)
     .padding(.trailing, 8)
@@ -138,22 +128,37 @@ struct TravelOffer: View {
   }
 }
 
-/// The offer's secondary button, as the island's Edit pill: a soft capsule
-/// in the qali font, a shade stronger on hover.
-private struct TravelSecondaryButton: View {
+/// The offer's buttons, the island's pills in the qali font: a soft one
+/// (as Edit) and the primary one in the brand colour. They stand as tall as
+/// the airplane's circle, so the card's 8pt inset runs evenly above, below
+/// and beside them, following the capsule.
+private struct TravelButton: View {
+  static let height: CGFloat = 30
+
   let title: String
+  let primary: Bool
+  var busy = false
   let action: () -> Void
   @State private var hovering = false
 
   var body: some View {
     Button(action: action) {
-      Text(title)
-        .font(.sans(TextSize.sm, .medium))
-        .foregroundStyle(Palette.foreground)
-        .padding(.horizontal, 12)
-        .frame(height: 28)
-        .background(Palette.foreground.opacity(hovering ? 0.14 : 0.08), in: .capsule)
-        .contentShape(.capsule)
+      HStack(spacing: 6) {
+        if busy { ProgressView().controlSize(.mini) }
+        Text(title)
+      }
+      .font(.sans(TextSize.sm, .medium))
+      .foregroundStyle(primary ? Palette.primaryForeground : Palette.foreground)
+      .padding(.horizontal, 14)
+      .frame(height: Self.height)
+      .background {
+        if primary {
+          Capsule().fill(Palette.primary.opacity(hovering ? 0.88 : 1))
+        } else {
+          Capsule().fill(Palette.foreground.opacity(hovering ? 0.14 : 0.08))
+        }
+      }
+      .contentShape(.capsule)
     }
     .buttonStyle(.plain)
     .onHover { hovering = $0 }

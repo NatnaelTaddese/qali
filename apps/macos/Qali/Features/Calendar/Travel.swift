@@ -77,35 +77,44 @@ struct TravelOffer: View {
 
   private func card(to zone: String, from working: String) -> some View {
     let city = zoneShortLabel(zone), home = zoneShortLabel(working)
-    return HStack(spacing: 12) {
+    // A pill like the island's own nav row: one line of each, sized to its
+    // words, and the island's buttons (a soft pill, then the primary one).
+    return HStack(spacing: 10) {
       Image(systemName: "airplane")
-        .font(.system(size: 13, weight: .semibold))
+        .font(.system(size: 12, weight: .semibold))
         .foregroundStyle(Palette.foreground)
         .frame(width: 30, height: 30)
         .background(Circle().fill(Palette.foreground.opacity(0.08)))
         .accessibilityHidden(true)
-      VStack(alignment: .leading, spacing: 2) {
+      VStack(alignment: .leading, spacing: 1) {
         Text("This Mac is on \(city) time")
           .font(.sans(TextSize.sm, .semibold))
           .foregroundStyle(Palette.foreground)
-        Text("Show your calendar in \(city) time? \(home) moves beside your hours.")
+        Text("Switching moves \(home) beside your hours.")
           .font(.sans(TextSize.xs))
           .foregroundStyle(Palette.mutedForeground)
-          .fixedSize(horizontal: false, vertical: true)
       }
-      Spacer(minLength: 8)
-      Button("Keep \(home)") { dismissed = zone }
-        .buttonStyle(.glass)
-      Button("Switch") { move(to: zone, from: working) }
-        .buttonStyle(.glassProminent)
-        .disabled(switching)
+      .lineLimit(1)
+      Spacer(minLength: 16)
+      TravelSecondaryButton(title: "Keep \(home)") { dismissed = zone }
+      Button {
+        move(to: zone, from: working)
+      } label: {
+        HStack(spacing: 6) {
+          if switching { ProgressView().controlSize(.mini) }
+          Text("Switch to \(city)")
+        }
+        .font(.sans(TextSize.sm, .medium))
+        .padding(.horizontal, 4)
+      }
+      .modifier(PrimaryButton())
+      .disabled(switching)
     }
-    .font(.sans(TextSize.xs, .medium))
-    .padding(.leading, 12)
-    .padding(.trailing, 10)
-    .padding(.vertical, 10)
-    .frame(width: 480)
-    .glassEffect(.regular, in: .rect(cornerRadius: 20, style: .continuous))
+    .padding(.leading, 9)
+    .padding(.trailing, 8)
+    .padding(.vertical, 8)
+    .fixedSize()
+    .glassEffect(.regular, in: .capsule)
     .accessibilityElement(children: .contain)
     .accessibilityLabel("This Mac is on \(city) time")
   }
@@ -126,5 +135,28 @@ struct TravelOffer: View {
       }
       switching = false
     }
+  }
+}
+
+/// The offer's secondary button, as the island's Edit pill: a soft capsule
+/// in the qali font, a shade stronger on hover.
+private struct TravelSecondaryButton: View {
+  let title: String
+  let action: () -> Void
+  @State private var hovering = false
+
+  var body: some View {
+    Button(action: action) {
+      Text(title)
+        .font(.sans(TextSize.sm, .medium))
+        .foregroundStyle(Palette.foreground)
+        .padding(.horizontal, 12)
+        .frame(height: 28)
+        .background(Palette.foreground.opacity(hovering ? 0.14 : 0.08), in: .capsule)
+        .contentShape(.capsule)
+    }
+    .buttonStyle(.plain)
+    .onHover { hovering = $0 }
+    .animation(.easeOut(duration: 0.12), value: hovering)
   }
 }

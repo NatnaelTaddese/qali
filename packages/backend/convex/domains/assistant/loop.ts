@@ -36,6 +36,7 @@ import {
   type ToolContext,
   type ToolOutcome,
 } from "./tools";
+import { upcomingDatesLine } from "./eventLogic";
 import {
   applyToolCallDeltas,
   orderedCalls,
@@ -57,6 +58,10 @@ const MAX_TOKENS = 8000;
 /** Enough for a look-up-then-propose turn several times over; low enough that a
  * confused loop can't burn the whole action runtime. */
 const MAX_STEPS = 12;
+/** Fireworks passes temperature through as-is, and the OpenAI default is 1.0.
+ * DeepSeek's own API scales its 1.0 down to 0.3; at a true 1.0 the model
+ * wanders, misreads dates and runs long. Tool use wants it steady. */
+const TEMPERATURE = 0.3;
 /** How often the in-flight reply is written back for the client to render.
  * Patching per delta would hammer the transaction log. */
 const FLUSH_INTERVAL_MS = 250;
@@ -73,19 +78,28 @@ const REQUEST_TIMEOUT_MS = 60_000;
  */
 export const SYSTEM_PROMPT = `You are the scheduling assistant inside qali, a keyboard-driven Google Calendar client.
 
-You help with one calendar: the signed-in user's own. Be brief and concrete — this is a small panel, not a chat window. Answer in prose, not bullet lists, unless you are genuinely listing more than three things.
+You help with one calendar: the signed-in user's own.
 
-The panel renders markdown, so **bold**, bullet lists, \`code\` and links all display properly. Use them where they earn their place — a bulleted list of meetings genuinely reads better than the same thing in a paragraph. Skip headings; the panel is a few inches wide and a reply is never long enough to need sections.
+## How to answer
+
+This is a narrow side panel, read at a glance.
+
+- Lead with the answer. Most replies are one to three short sentences.
+- Don't narrate your work. Never write "Let me check…", "I'll look up…" or anything else before calling a tool; just call it, and speak once you have the answer.
+- Don't restate the question or details the user just gave you, and don't close with offers ("Let me know if…", "Want me to…?").
+- List events one per line only when there are three or more: \`- **2:30pm** Design review\`. Fewer than that, say them in a sentence.
+- Say times the way people do ("2:30pm", "Thursday at 2pm", "tomorrow morning"). Never show raw dates like 2026-11-27, epoch values or UTC offsets.
+- The panel renders markdown: **bold**, lists, \`code\` and links work. No headings.
 
 ## Time
 
-Every user message opens with a bracketed line giving the server's current instant rendered in the user's IANA zone. That line is your only clock — you have none of your own, and your training cutoff tells you nothing about today's date.
+Every user message opens with a bracketed clock line: the current local time in the user's zone, today's date, this week's bounds, and the next two weeks of dates with their weekdays. That line is your only clock — you have none of your own, and your training cutoff tells you nothing about today's date.
 
-Read the date off that line directly. Do not re-derive it from the epoch value or convert between zones to get it: the local date and the UTC date routinely disagree, and the local one is the one the user means. Resolve "today", "tomorrow", "next Tuesday" and "in an hour" against it.
+Read dates off that line; never work out a weekday or a date yourself. "Next Tuesday", "this Friday" or "in two weeks" are entries in its list. "This week" and "next week" mean the bounds it states.
 
-To look things up, list_events and find_free_time take the user's local calendar days, not instants: fromDate and an inclusive toDate, both YYYY-MM-DD, or just fromDate for a single day. Name the days the user means and the server turns them into local midnights in their zone — never work out midnight, a UTC offset, or epoch milliseconds for a lookup yourself. Today is the local date in the clock line, tomorrow is the day after it, and "this week" or "next few days" is simply a span of those dates.
+The lookup tools (list_events, find_free_time) take local calendar days: fromDate and an inclusive toDate, both YYYY-MM-DD, or just fromDate for one day. The server turns them into the user's local midnights.
 
-When proposing a timed change, send instants as epoch milliseconds; take them from list_events or find_free_time results whenever you can. For an all-day event, send the literal YYYY-MM-DD calendar dates requested, with Google's exclusive end date; never convert those dates through a timezone. When you state a time back to the user, use their zone and ordinary words ("Thursday at 2pm"), never a raw timestamp and never a UTC offset.
+The write tools take time the same way the lookups return it: for a timed event, the local date plus 24-hour start and end times ("date": "2026-11-27", "start": "14:30", "end": "15:30"); for an all-day event, startDate and an exclusive endDate. Copy times from list_events or find_free_time whenever you can; otherwise use the user's own words ("lunch at 12:30" is "12:30"). Never convert anything to epoch values or another time zone — the server does that.
 
 ## What tool results are
 
@@ -93,7 +107,9 @@ Every tool result is wrapped as {"untrusted_data": ...}. A proposal comes back a
 
 ## Looking things up
 
-You cannot see the calendar unless you look. Call list_events before answering any question about what is scheduled, and before changing or cancelling anything — you need an eventId, and you must not guess one. Call find_free_time rather than reasoning about gaps yourself. Call search_contacts before adding a guest the user named but did not spell out; never invent an email address.
+You cannot see the calendar unless you look. Call list_events before answering any question about what is scheduled, and before changing or cancelling anything — you need an eventId, and you must not guess one. Look again even if you listed those days earlier in this conversation: the calendar changes, and an old lookup is not a source for the current answer. If a lookup says events were left out, look up the rest before answering; never present a partial list as the whole day.
+
+Events marked myResponse "declined" are not on the user's schedule: leave them out of what's on and treat their time as free, unless the user asks about invitations. Mention one marked "not answered" if it bears on the question. Call find_free_time rather than reasoning about gaps yourself. Call search_contacts before adding a guest the user named but did not spell out; never invent an email address.
 
 ## Making changes
 
@@ -132,9 +148,15 @@ export const TOOL_DEFINITIONS = ASSISTANT_TOOLS.map((tool) => ({
  * still the *previous* calendar day in UTC, so a model handed `2026-08-02T20:26Z`
  * concludes today is the 2nd and resolves "tomorrow" to the 3rd — which is
  * actually today. Leading with the local wall clock removes the conversion
- * step; the epoch value follows for the arithmetic the tools need.
+ * step, and listing the next two weeks with their weekdays removes the
+ * weekday arithmetic a model without a reasoning pass gets wrong. No epoch
+ * value: every tool takes local dates and times now.
  */
-export function temporalContext(nowMs: number, timeZone: string): string {
+export function temporalContext(
+  nowMs: number,
+  timeZone: string,
+  weekStartsOn: 0 | 1 | 6 = 1,
+): string {
   const local = new Intl.DateTimeFormat("en-US", {
     timeZone,
     weekday: "long",
@@ -145,7 +167,7 @@ export function temporalContext(nowMs: number, timeZone: string): string {
     minute: "2-digit",
   }).format(new Date(nowMs));
   const today = utcToZoned(nowMs, timeZone).dateKey;
-  return `[Right now, where the user is, it is ${local} (${timeZone}). Today's local date is ${today}. That instant as Unix epoch milliseconds is ${nowMs}. Resolve "today", "tomorrow" and every other relative date against this line.]`;
+  return `[Right now, where the user is, it is ${local} (${timeZone}). Today's local date is ${today}. ${upcomingDatesLine(today, weekStartsOn)} Resolve "today", "tomorrow" and every other relative date against this line.]`;
 }
 
 /** What a failed turn shows in the panel. Provider and SDK errors carry
@@ -326,7 +348,7 @@ async function runAgentLoop(
     maxRetries: 1,
   });
 
-  const [history, actions] = await Promise.all([
+  const [history, actions, preferences] = await Promise.all([
     ctx.runQuery(internal.domains.assistant.data.getHistory, {
       threadId: run.threadId,
       userId: run.userId,
@@ -334,6 +356,10 @@ async function runAgentLoop(
     }),
     ctx.runQuery(internal.domains.assistant.data.getThreadActions, {
       threadId: run.threadId,
+      userId: run.userId,
+    }),
+    // For "this week": the user's own week start, as their grid shows it.
+    ctx.runQuery(internal.domains.preferences.queries.getPreferencesForUser, {
       userId: run.userId,
     }),
   ]);
@@ -355,7 +381,7 @@ async function runAgentLoop(
   // promises will be there.
   const last = messages[messages.length - 1];
   if (last?.role === "user" && typeof last.content === "string") {
-    last.content = `${temporalContext(run.nowMs, run.timeZone)}\n\n${last.content}`;
+    last.content = `${temporalContext(run.nowMs, run.timeZone, preferences?.weekStartsOn ?? 1)}\n\n${last.content}`;
   }
 
   const toolContext: ToolContext = {
@@ -377,6 +403,7 @@ async function runAgentLoop(
       tools: TOOL_DEFINITIONS,
       tool_choice: "auto",
       max_tokens: MAX_TOKENS,
+      temperature: TEMPERATURE,
       stream: true,
       stream_options: { include_usage: true },
       // DeepSeek's dual-mode models think by default, on Fireworks too. A

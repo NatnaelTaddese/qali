@@ -152,9 +152,14 @@ describe("assistant read tools take local dates", () => {
       expect(iso(args.startMs!)).toBe("2026-11-23T08:00:00.000Z");
       expect(iso(args.endMs!)).toBe("2026-11-24T08:00:00.000Z");
     }
-    const rows = JSON.parse(outcome.content) as Array<{ when: string }>;
-    expect(rows[0]?.when).toContain("Nov 23");
-    expect(rows[0]?.when).toContain("7:00 PM–8:00 PM");
+    const { events } = JSON.parse(outcome.content) as {
+      events: Array<{ when: string; date: string; start: string; end: string }>;
+    };
+    expect(events[0]?.when).toContain("Nov 23");
+    expect(events[0]?.when).toContain("7:00 PM–8:00 PM");
+    // Local fields the write tools take back unchanged, and no epoch values.
+    expect(events[0]).toMatchObject({ date: "2026-11-23", start: "19:00", end: "20:00" });
+    expect(outcome.content).not.toContain("startMs");
   });
 
   test("list_events turns a backwards range into an error result", async () => {
@@ -198,14 +203,14 @@ describe("assistant read tools take local dates", () => {
     expect(iso(queries[0]!.startMs!)).toBe("2026-11-23T21:00:00.000Z");
     expect(iso(queries[0]!.endMs!)).toBe("2026-11-24T21:00:00.000Z");
     const result = JSON.parse(outcome.content) as {
-      openings: Array<{ startMs: number; latestStartMs: number }>;
+      openings: Array<{ date: string; from: string; until: string; latestStart: string }>;
     };
     expect(
-      result.openings.map((o) => [iso(o.startMs), iso(o.latestStartMs)]),
+      result.openings.map((o) => [o.date, o.from, o.until, o.latestStart]),
     ).toEqual([
       // 9–10am, then 11am–6pm local.
-      ["2026-11-24T06:00:00.000Z", "2026-11-24T06:00:00.000Z"],
-      ["2026-11-24T08:00:00.000Z", "2026-11-24T14:00:00.000Z"],
+      ["2026-11-24", "09:00", "10:00", "09:00"],
+      ["2026-11-24", "11:00", "18:00", "17:00"],
     ]);
   });
 
@@ -222,13 +227,13 @@ describe("assistant read tools take local dates", () => {
       durationMinutes: 30,
     });
     const result = JSON.parse(outcome.content) as {
-      openings: Array<{ startMs: number; latestStartMs: number }>;
+      openings: Array<{ date: string; from: string; latestStart: string }>;
     };
     expect(
-      result.openings.map((o) => [iso(o.startMs), iso(o.latestStartMs)]),
+      result.openings.map((o) => [o.date, o.from, o.latestStart]),
     ).toEqual([
-      ["2026-11-23T16:00:00.000Z", "2026-11-23T17:30:00.000Z"],
-      ["2026-11-24T09:00:00.000Z", "2026-11-24T17:30:00.000Z"],
+      ["2026-11-23", "16:00", "17:30"],
+      ["2026-11-24", "09:00", "17:30"],
     ]);
   });
 });

@@ -43,8 +43,10 @@ import {
   assistantRepeatToRRule,
   formatAssistantAllDayRange,
   formatAssistantRepeat,
+  instantsToLocalTimed,
   isDateKey,
   localDateRange,
+  localTimedRangeToInstants,
   type AssistantEventRange,
 } from "./eventLogic";
 
@@ -77,7 +79,12 @@ export interface AssistantTool {
   ): Promise<ToolOutcome>;
 }
 
-const MAX_TOOL_RESULT_CHARS = 8_000;
+const MAX_TOOL_RESULT_CHARS = 16_000;
+/** list_events stops adding rows past this and says how many it left out,
+ * rather than failing the whole lookup. */
+const LIST_EVENTS_BUDGET_CHARS = 13_000;
+/** Guests named on a listed event; the rest are counted. */
+const LISTED_GUEST_NAMES = 5;
 /** The most guests an assistant proposal may invite. Google emails each one
  * the moment the user confirms, and the confirm card has to show every
  * address in full for that confirmation to mean anything — a list that
@@ -150,10 +157,16 @@ function readTool<S extends z.ZodType>(spec: {
  * result, so the user is told why instead of being handed a confirm button that
  * fails when they press it. No proposal row is written when it throws.
  */
-function writeTool<S extends z.ZodType>(spec: {
+function writeTool<S extends z.ZodType, M extends z.ZodType = S>(spec: {
   name: string;
   description: string;
+  /** The stored form: what a confirm click re-validates and applies. */
   schema: S;
+  /** What the model sends, when it differs from the stored form (local
+   * wall-clock times instead of instants). Defaults to `schema`. */
+  modelSchema?: M;
+  /** Model form → stored form. Throws with a reason the model can read. */
+  normalize?(tc: ToolContext, args: z.infer<M>): unknown;
   preview(tc: ToolContext, args: z.infer<S>): Promise<string> | string;
   storedArgs?(
     tc: ToolContext,
@@ -164,9 +177,31 @@ function writeTool<S extends z.ZodType>(spec: {
     name: spec.name,
     kind: "write",
     description: spec.description,
-    parameters: jsonSchema(spec.schema),
+    parameters: jsonSchema(spec.modelSchema ?? spec.schema),
     async run(tc, toolCallId, rawArgs) {
-      const parsed = spec.schema.safeParse(rawArgs);
+      const fromModel = (spec.modelSchema ?? spec.schema).safeParse(rawArgs);
+      if (!fromModel.success) {
+        return {
+          kind: "result",
+          content: `Invalid arguments: ${fromModel.error.message}`,
+          isError: true,
+        };
+      }
+      // Stored in the form a confirm applies: proposals already waiting, and
+      // the clients that read a proposal's time, never see the model's form.
+      let normalized: unknown;
+      try {
+        normalized = spec.normalize
+          ? spec.normalize(tc, fromModel.data as z.infer<M>)
+          : fromModel.data;
+      } catch (error) {
+        return {
+          kind: "result",
+          content: error instanceof Error ? error.message : String(error),
+          isError: true,
+        };
+      }
+      const parsed = spec.schema.safeParse(normalized);
       if (!parsed.success) {
         return {
           kind: "result",
@@ -306,17 +341,75 @@ function resolveLocalDays(
 
 const listEventsSchema = z.object(localDaysFields);
 
+/** One event as the model reads it: local times it can pass straight back
+ * to a write tool, and only what a scheduling answer needs. Guests are named
+ * (a few, then counted), not listed by address: no write may reuse an
+ * address from a tool result anyway, and a long guest list would crowd the
+ * other events out of the lookup. */
+function compactEvent(
+  // Shared public-calendar rows (holidays) have their own id table.
+  e: Pick<
+    Doc<"events">,
+    | "summary" | "startMs" | "endMs" | "allDay" | "location" | "providerSeriesId"
+    | "organizer" | "attendees" | "conferenceUrl" | "busy"
+  > & { _id: string },
+  timeZone: string,
+): Record<string, unknown> {
+  const self = e.attendees?.find((a) => a.self);
+  const others = (e.attendees ?? []).filter((a) => !a.self);
+  const isOrganizer = e.organizer?.self ?? self?.organizer ?? false;
+  const response = !isOrganizer ? self?.responseStatus : undefined;
+  return {
+    eventId: e._id,
+    summary: e.summary ?? "(No title)",
+    when: formatRange(e.startMs, e.endMs, timeZone, e.allDay),
+    ...(e.allDay
+      ? {
+          allDay: true,
+          startDate: new Date(e.startMs).toISOString().slice(0, 10),
+          endDate: new Date(e.endMs).toISOString().slice(0, 10),
+        }
+      : instantsToLocalTimed(e.startMs, e.endMs, timeZone)),
+    ...(e.location ? { location: e.location } : {}),
+    ...(e.providerSeriesId ? { recurring: true } : {}),
+    ...(self && !isOrganizer ? { role: "guest" } : {}),
+    ...(response === "declined"
+      ? { myResponse: "declined" }
+      : response === "tentative"
+        ? { myResponse: "maybe" }
+        : response === "needsAction"
+          ? { myResponse: "not answered" }
+          : {}),
+    ...(e.busy === false ? { showAs: "free" } : {}),
+    ...(others.length
+      ? {
+          guests: others
+            .slice(0, LISTED_GUEST_NAMES)
+            .map((a) => a.displayName || a.email),
+          ...(others.length > LISTED_GUEST_NAMES
+            ? { moreGuests: others.length - LISTED_GUEST_NAMES }
+            : {}),
+        }
+      : {}),
+    ...(e.conferenceUrl ? { meetLink: e.conferenceUrl } : {}),
+  };
+}
+
 const listEvents = readTool({
   name: "list_events",
   description:
     "List the events on the user's calendar on one or more local calendar " +
     "days, whole days from midnight to midnight in the user's time zone. Call " +
     "this whenever the user asks what is on their calendar, whether they are " +
-    "free, or refers to an existing meeting you have not already looked up — " +
-    "you need the eventId from here before you can change or cancel anything. " +
-    "Pass dates, not instants; the server works out the zone. Results give " +
-    "timed values as Unix epoch milliseconds; all-day results also include " +
-    "literal startDate and exclusive endDate values.",
+    "free, or refers to an existing meeting — even one you looked up earlier " +
+    "in the conversation, since the calendar may have changed. You need the " +
+    "eventId from here before you can change or cancel anything. Pass dates, " +
+    "not instants. Timed events come back as a local date with 24-hour start " +
+    "and end times (and endDate when they end on a later day), all-day events " +
+    "as startDate and exclusive endDate — the same shapes the write tools " +
+    "take. myResponse marks invitations the user declined, answered maybe, or " +
+    "hasn't answered; a declined event is not on their schedule. If the " +
+    "result says events were left out, look up the remaining days separately.",
   schema: listEventsSchema,
   async run(tc, args) {
     const { fromMs, toMs } = resolveLocalDays(tc, args);
@@ -336,25 +429,27 @@ const listEvents = readTool({
       }),
     ]);
     const rows = [...personal, ...shared].sort((a, b) => a.startMs - b.startMs);
-    return rows.map((e) => ({
-      eventId: e._id,
-      summary: e.summary ?? "(No title)",
-      startMs: e.startMs,
-      endMs: e.endMs,
-      ...(e.allDay
-        ? {
-            startDate: new Date(e.startMs).toISOString().slice(0, 10),
-            endDate: new Date(e.endMs).toISOString().slice(0, 10),
-          }
-        : {}),
-      when: formatRange(e.startMs, e.endMs, tc.timeZone, e.allDay),
-      allDay: e.allDay,
-      location: e.location,
-      recurring: Boolean(e.providerSeriesId),
-      isOrganizer: e.organizer?.self ?? false,
-      guests: e.attendees?.map((a) => a.email) ?? [],
-      meetLink: e.conferenceUrl,
-    }));
+    const events: Record<string, unknown>[] = [];
+    let used = 0;
+    for (const row of rows) {
+      const event = compactEvent(row, tc.timeZone);
+      const size = JSON.stringify(event).length + 1;
+      if (used + size > LIST_EVENTS_BUDGET_CHARS) break;
+      events.push(event);
+      used += size;
+    }
+    const omitted = rows.length - events.length;
+    if (omitted === 0) return { events };
+    // Cut short in time order: everything from this event on is missing.
+    const next = rows[events.length];
+    const from = next.allDay
+      ? new Date(next.startMs).toISOString().slice(0, 10)
+      : instantsToLocalTimed(next.startMs, next.endMs, tc.timeZone).date;
+    return {
+      events,
+      omitted,
+      note: `Cut short: ${omitted} more events from ${from} on were left out. Look up from ${from} separately before answering.`,
+    };
   },
 });
 
@@ -387,7 +482,9 @@ const findFreeTime = readTool({
   description:
     "Find gaps of at least a given length on the user's calendar across one " +
     "or more local calendar days, restricted to daytime hours in their own " +
-    "time zone and never earlier than now. Call this whenever the user asks " +
+    "time zone and never earlier than now. Openings come back as a local date " +
+    "with 24-hour from/until times and the latest start that still fits. " +
+    "Call this whenever the user asks " +
     "when they are free, or asks you to schedule something without naming an " +
     "exact time — do not guess at availability from list_events yourself. " +
     "Pass dates, not instants; the server works out the zone.",
@@ -462,12 +559,17 @@ const findFreeTime = readTool({
     return {
       durationMinutes: args.durationMinutes,
       timeZone: tc.timeZone,
-      openings: free.map((gap) => ({
-        startMs: gap.startMs,
-        // The latest this meeting could start and still fit in the gap.
-        latestStartMs: gap.endMs - durationMs,
-        when: formatRange(gap.startMs, gap.endMs, tc.timeZone),
-      })),
+      openings: free.map((gap) => {
+        const local = instantsToLocalTimed(gap.startMs, gap.endMs, tc.timeZone);
+        return {
+          when: formatRange(gap.startMs, gap.endMs, tc.timeZone),
+          date: local.date,
+          from: local.start,
+          until: local.end,
+          // The latest this meeting could start and still fit in the gap.
+          latestStart: instantsToLocalTimed(gap.endMs - durationMs, gap.endMs, tc.timeZone).start,
+        };
+      }),
     };
   },
 });
@@ -530,7 +632,6 @@ const listPendingBookings = readTool({
       bookingId: b._id,
       requesterName: b.requesterName,
       requesterEmail: b.requesterEmail,
-      startMs: b.startMs,
       when: formatRange(b.startMs, b.endMs, tc.timeZone),
       note: b.note,
     }));
@@ -560,6 +661,38 @@ const allDayRangeSchema = z
   });
 
 const eventRangeSchema = z.union([timedRangeSchema, allDayRangeSchema]);
+
+/** A timed range as the model sends it: local date and wall-clock times. */
+const localTimedRangeSchema = z.object({
+  kind: z.literal("timed"),
+  date: dateKeySchema.describe("Local calendar date the event starts on, YYYY-MM-DD."),
+  start: z.string().describe('Local start time, 24-hour "HH:mm", e.g. "14:30".'),
+  end: z
+    .string()
+    .describe('Local end time, 24-hour "HH:mm". An end at or before the start runs past midnight.'),
+  endDate: dateKeySchema
+    .optional()
+    .describe("Local date the event ends on. Only for timed events that span days."),
+});
+
+/** What the write tools take from the model. Timed values are local; the
+ * server works out the instants in the user's zone. */
+const modelEventRangeSchema = z.union([localTimedRangeSchema, allDayRangeSchema]);
+
+const MODEL_TIME_DESCRIPTION =
+  "Timed events: the local date and 24-hour start/end times in the user's " +
+  "zone, exactly as list_events and find_free_time give them — never epoch " +
+  "values or UTC offsets. All-day events: startDate and exclusive endDate; " +
+  "for one day, endDate is the following date.";
+
+function toStoredRange(
+  range: z.infer<typeof modelEventRangeSchema>,
+  timeZone: string,
+): AssistantEventRange {
+  return range.kind === "timed" && "date" in range
+    ? localTimedRangeToInstants(range, timeZone)
+    : (range as AssistantEventRange);
+}
 
 const repeatEndSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("never") }),
@@ -652,6 +785,10 @@ const createEventSchema = z.object({
   repeat: repeatSchema.optional(),
 });
 
+const createEventModelSchema = createEventSchema.extend({
+  time: modelEventRangeSchema.describe(MODEL_TIME_DESCRIPTION),
+});
+
 const createEvent = writeTool({
   name: "create_event",
   description:
@@ -659,6 +796,8 @@ const createEvent = writeTool({
     "for any request to schedule, book, or block out time. The event is not " +
     "created and no invitations are sent until the user confirms.",
   schema: createEventSchema,
+  modelSchema: createEventModelSchema,
+  normalize: (tc, args) => ({ ...args, time: toStoredRange(args.time, tc.timeZone) }),
   preview(tc, args) {
     const parts = [`at ${formatAssistantRange(args.time, tc.timeZone)}`];
     if (args.description !== undefined) {
@@ -725,6 +864,10 @@ async function requireEditable(tc: ToolContext, eventId: string): Promise<Doc<"e
   return row;
 }
 
+const updateEventModelSchema = updateEventSchema.extend({
+  time: modelEventRangeSchema.optional().describe(`Replacement time. ${MODEL_TIME_DESCRIPTION}`),
+});
+
 const updateEvent = writeTool({
   name: "update_event",
   description:
@@ -733,6 +876,9 @@ const updateEvent = writeTool({
     "Requires an eventId from list_events. Nothing changes and no guest is " +
     "notified until the user confirms.",
   schema: updateEventSchema,
+  modelSchema: updateEventModelSchema,
+  normalize: (tc, args) =>
+    args.time === undefined ? args : { ...args, time: toStoredRange(args.time, tc.timeZone) },
   async preview(tc, args) {
     const { row, capabilities } = await resolveEventForWrite(
       tc.ctx,
@@ -823,6 +969,10 @@ const moveEventSchema = z.object({
   ),
 });
 
+const moveEventModelSchema = moveEventSchema.extend({
+  time: modelEventRangeSchema.describe(`New time. ${MODEL_TIME_DESCRIPTION}`),
+});
+
 const moveEvent = writeTool({
   name: "move_event",
   description:
@@ -830,6 +980,8 @@ const moveEvent = writeTool({
     "same. Prefer this over update_event when only the time changes. The event " +
     "does not move until the user confirms.",
   schema: moveEventSchema,
+  modelSchema: moveEventModelSchema,
+  normalize: (tc, args) => ({ ...args, time: toStoredRange(args.time, tc.timeZone) }),
   async preview(tc, args) {
     const row = await requireEditable(tc, args.eventId);
     return (

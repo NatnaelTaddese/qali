@@ -99,18 +99,26 @@ func agendaDay(_ events: [CalendarEvent], dayStart: Date, zone: WorkingZone) -> 
   return (allDay, timed)
 }
 
-/// The event the menu bar points at: one that started under 10 minutes ago
-/// (you may be joining late), else the next to start. Nil when nothing
-/// starts within `lookahead` minutes (0 = before the end of today).
+/// The event the menu bar points at, in this order:
+/// - one that started under 10 minutes ago (you may be joining late);
+/// - the next to start, once it is 10 minutes away (a heads-up, and its Join
+///   pill);
+/// - one still going (the latest started), counting down what's left;
+/// - the next to start within `lookahead` minutes (0 = before the end of
+///   today).
+/// Nil when none of these: the menu bar then shows the date.
 func nextUpEvent(_ events: [CalendarEvent], now: Date, lookahead: Int, zone: WorkingZone) -> CalendarEvent? {
   let nowMs = now.ms
+  let soon = 10 * msPerMinute
   let horizon = lookahead > 0
     ? nowMs + Double(lookahead) * msPerMinute
     : zone.addingDays(1, to: zone.startOfDay(now)).ms
-  return events
-    .filter { countsForAgenda($0) && !$0.allDay }
-    .filter { $0.endMs > nowMs && $0.startMs > nowMs - 10 * msPerMinute && $0.startMs <= horizon }
-    .min { $0.startMs < $1.startMs }
+  let live = events.filter { countsForAgenda($0) && !$0.allDay && $0.endMs > nowMs }
+  let ongoing = live.filter { $0.startMs <= nowMs }.max { $0.startMs < $1.startMs }
+  let upcoming = live.filter { $0.startMs > nowMs && $0.startMs <= horizon }.min { $0.startMs < $1.startMs }
+  if let ongoing, ongoing.startMs > nowMs - soon { return ongoing }
+  if let upcoming, upcoming.startMs - nowMs <= soon { return upcoming }
+  return ongoing ?? upcoming
 }
 
 /// True from a minute before a call starts until 10 minutes in.

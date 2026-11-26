@@ -297,12 +297,15 @@ struct AssistantPane: View {
 
   // MARK: - Header
 
+  /// Qali's photo in the header; the side buttons centre on it.
+  private static let headerAvatar: CGFloat = 38
+
   /// A Messages conversation header: Qali's photo centred with the name
   /// beneath it, which opens Qali's contact card; earlier conversations on
   /// the left and a new one on the right. The corner ghost and Esc close the
   /// panel, so it needs no close button of its own.
   private var header: some View {
-    ZStack {
+    ZStack(alignment: .top) {
       HStack {
         historyMenu
         Spacer(minLength: 0)
@@ -312,9 +315,11 @@ struct AssistantPane: View {
         }
         .disabled(assistant.busy || assistant.isEmpty)
       }
+      // Level with the photo's centre, not the photo and name together.
+      .padding(.top, (Self.headerAvatar - 30) / 2)
       Button { showingContact = true } label: {
         VStack(spacing: 3) {
-          AssistantAvatar(size: 38)
+          AssistantAvatar(size: Self.headerAvatar)
           HStack(spacing: 2) {
             Text("Qali")
               .font(.sans(TextSize.xs, .medium))

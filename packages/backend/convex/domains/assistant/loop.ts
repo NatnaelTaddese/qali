@@ -72,7 +72,7 @@ const PREAMBLE_HOLD_CHARS = 160;
  * things up and then writes "I've proposed…" without ever proposing, which
  * leaves the user a promise and no confirm card. */
 export const CLAIMS_A_CHANGE =
-  /\b(?:i(?:'|’)ve|i have|i)\s+(?:just\s+)?(?:proposed|drafted|scheduled|booked|created|moved|rescheduled|cancell?ed|added|set up|put)\b|(?:waiting|awaiting)\s+(?:for\s+)?(?:your\s+)?confirm|confirm to (?:send|add|create|book|move)/i;
+  /\b(?:i(?:'|’)ve|i have|i)\s+(?:just\s+)?(?:proposed|drafted|scheduled|booked|created|moved|rescheduled|cancell?ed|added|set up|put)\b|(?:waiting|awaiting)\s+(?:for\s+)?(?:your\s+)?confirm|confirm to (?:send|add|create|book|move)|confirm and (?:i(?:'|’)ll|it(?:'|’)s|it will)/i;
 /** What the model is told when it claims a change it never proposed. */
 const UNBACKED_CLAIM_NOTE =
   "[Automatic check, not from the user: nothing was proposed in this turn — no write tool was called, so there is no confirm card. If the user asked for a change, call the write tool now. Otherwise answer again without saying anything was proposed, scheduled or changed.]";
@@ -125,6 +125,8 @@ Every tool result is wrapped as {"untrusted_data": ...}. A proposal comes back a
 ## Looking things up
 
 You cannot see the calendar unless you look. Call list_events before answering any question about what is scheduled, and before changing or cancelling anything — you need an eventId, and you must not guess one. Look again even if you listed those days earlier in this conversation: the calendar changes, and an old lookup is not a source for the current answer. If a lookup says events were left out, look up the rest before answering; never present a partial list as the whole day.
+
+Events with no calendar field are on the user's main calendar. One marked shared is on a calendar someone else owns — a colleague's or a team's — so it isn't the user's own plan: when they ask about their own day, leave it out, or say whose it is ("Ana's calendar has a 2pm"). One marked public (holidays, birthdays) is context, worth a mention only when it matters.
 
 Events marked myResponse "declined" are not on the user's schedule: leave them out of what's on and treat their time as free, unless the user asks about invitations. Mention one marked "not answered" if it bears on the question. Call find_free_time rather than reasoning about gaps yourself. Call search_contacts before adding a guest the user named but did not spell out; never invent an email address.
 
@@ -624,16 +626,24 @@ async function runMockTurn(
 
 /** The follow-up generator's frozen instruction. Kept lean and strict: the panel
  * only ever wants a short JSON array, and most turns should yield none. */
-const FOLLOWUP_SYSTEM = `You suggest what the user of a calendar scheduling assistant might naturally ask next.
+const FOLLOWUP_SYSTEM = `You suggest what the user of a calendar assistant might text next, after its reply. The suggestions appear as tappable replies under the conversation, so each must read as the user's own words.
 
-Return ONLY a JSON array of strings — nothing else, no prose, no code fences. 0 to 3 items. Each item is a short prompt written as the user would type it (imperative or question), at most 8 words, no trailing punctuation beyond a question mark.
+Return ONLY a JSON array of strings — no prose, no code fences. 0 to 2 items.
 
-Suggest only genuinely useful next steps that follow from the reply. If nothing useful follows — the reply already closed the thread, or was a simple acknowledgement — return []. Prefer [] over filler. Never restate what was just answered.`;
+Each item:
+- is something the user would actually type: casual, plain, at most 6 words, no trailing period ("book the 2:30 one", "what about Monday?", "move it to 4 instead");
+- follows from what the user is doing: take a slot the reply offered, sort out a clash or tight gap it pointed out, or look at the next day or week when that's the natural next question;
+- never invents a change the user gave no sign of wanting — no moving, adding or cancelling events just because the reply listed them;
+- never asks the assistant to repeat, show, list or explain something its reply already covered (links, guests, details, "the full schedule");
+- is never generic ("What else is on my calendar?", "Anything else?").
+
+Most replies need none — a plain answer, an acknowledgement, or a reply that already asked the user a question. Prefer [] over filler.`;
 
 /** One cheap, non-streaming call for follow-up prompts. Isolated from the turn:
  * its own client, its own try/catch upstream, and it returns [] on anything it
  * can't cleanly parse. */
-async function generateFollowUps(
+/** Exported for the side-by-side evaluation harness; not a Convex function. */
+export async function generateFollowUps(
   apiKey: string,
   context: FollowUpContext,
 ): Promise<string[]> {
@@ -661,6 +671,7 @@ async function generateFollowUps(
       },
     ],
     thinking: { type: "disabled" },
+    temperature: TEMPERATURE,
   };
   const completion = await client.chat.completions.create(
     body as unknown as ChatCompletionCreateParamsNonStreaming,
@@ -684,8 +695,8 @@ function parseSuggestions(raw: string): string[] {
   return parsed
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
-    .filter((item) => item.length > 0 && item.length <= 80)
-    .slice(0, 3);
+    .filter((item) => item.length > 0 && item.length <= 60)
+    .slice(0, 2);
 }
 
 /** Tool outcomes are data the model reads, never instructions it follows.

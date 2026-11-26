@@ -352,7 +352,12 @@ function compactEvent(
     Doc<"events">,
     | "summary" | "startMs" | "endMs" | "allDay" | "location" | "providerSeriesId"
     | "organizer" | "attendees" | "conferenceUrl" | "busy"
-  > & { _id: string },
+  > & {
+    _id: string;
+    calendarName?: string;
+    calendarShared?: boolean;
+    calendarPublic?: boolean;
+  },
   timeZone: string,
 ): Record<string, unknown> {
   const self = e.attendees?.find((a) => a.self);
@@ -370,6 +375,9 @@ function compactEvent(
           endDate: new Date(e.endMs).toISOString().slice(0, 10),
         }
       : instantsToLocalTimed(e.startMs, e.endMs, timeZone)),
+    ...(e.calendarName ? { calendar: e.calendarName } : {}),
+    ...(e.calendarShared ? { shared: true } : {}),
+    ...(e.calendarPublic ? { public: true } : {}),
     ...(e.location ? { location: e.location } : {}),
     ...(e.providerSeriesId ? { recurring: true } : {}),
     ...(self && !isOrganizer ? { role: "guest" } : {}),
@@ -408,7 +416,10 @@ const listEvents = readTool({
     "and end times (and endDate when they end on a later day), all-day events " +
     "as startDate and exclusive endDate — the same shapes the write tools " +
     "take. myResponse marks invitations the user declined, answered maybe, or " +
-    "hasn't answered; a declined event is not on their schedule. If the " +
+    "hasn't answered; a declined event is not on their schedule. Events " +
+    "on the user's main calendar have no calendar field; others name their " +
+    "calendar, with shared (someone else owns it) or public (holidays and " +
+    "the like) when it isn't the user's own. If the " +
     "result says events were left out, look up the remaining days separately.",
   schema: listEventsSchema,
   async run(tc, args) {

@@ -210,6 +210,22 @@ describe("list_events rows", () => {
     expect(outcome.content).not.toContain("@example.com");
   });
 
+  test("say which calendar an event is on when it isn't the user's main one", async () => {
+    const { tc } = contextFor("UTC", [
+      { ...base, _id: "mine", summary: "Standup" },
+      { ...base, _id: "team", summary: "Sprint review", calendarName: "Team", calendarShared: true },
+      { ...base, _id: "side", summary: "Gym", calendarName: "Personal" },
+    ]);
+    const outcome = await tool("list_events").run(tc, "call-1", { fromDate: "2026-11-27" });
+    const { events } = JSON.parse(outcome.content);
+    const byId = Object.fromEntries(events.map((e: { eventId: string }) => [e.eventId, e]));
+    expect(byId.mine.calendar).toBeUndefined();
+    expect(byId.mine.shared).toBeUndefined();
+    expect(byId.team).toMatchObject({ calendar: "Team", shared: true });
+    expect(byId.side).toMatchObject({ calendar: "Personal" });
+    expect(byId.side.shared).toBeUndefined();
+  });
+
   test("cut a crowded range short with a note instead of failing", async () => {
     const many = Array.from({ length: 200 }, (_, i) => ({
       ...base,
@@ -241,6 +257,8 @@ describe("the unbacked-claim check", () => {
       "It's waiting for your confirmation.",
       "Confirm to send the invite.",
       "I have moved the 1:1 to Friday.",
+      "Lunch with Sam, Tuesday 12:30 to 1:30. Confirm and I'll send Sam the invite.",
+      "Retro moves to Friday at 5. Confirm and it's done.",
     ]) {
       expect(CLAIMS_A_CHANGE.test(claim)).toBe(true);
     }

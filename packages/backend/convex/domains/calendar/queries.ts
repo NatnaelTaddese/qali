@@ -27,14 +27,14 @@ import { eventIdArg } from "./validators";
 export async function listSharedEventsForAssistantHandler(
   ctx: QueryCtx,
   args: { userId: string; startMs: number; endMs: number },
-): Promise<EventView[]> {
+): Promise<Array<EventView & { calendarName?: string; calendarPublic?: boolean }>> {
   const calendars = await ctx.db
     .query("calendars")
     .withIndex("by_user", (q) => q.eq("userId", args.userId))
     .collect();
   const sharedCalendars = calendars.filter((c) => c.selected && c.isShared);
 
-  const out: EventView[] = [];
+  const out: Array<EventView & { calendarName?: string; calendarPublic?: boolean }> = [];
   for (const calendar of sharedCalendars) {
     const connectionId = calendar.connectionId;
     const providerCalendarId = calendar.providerCalendarId;
@@ -52,9 +52,16 @@ export async function listSharedEventsForAssistantHandler(
           .gt("endMs", args.startMs),
       )
       .take(ASSISTANT_SHARED_EVENT_LIMIT);
+    // Public calendars (holidays, birthdays): named, so the assistant reads
+    // them as context rather than the user's own plans.
+    const calendarName = calendar.summaryOverride ?? calendar.summary;
     for (const r of rows) {
       if (r.startMs < args.endMs) {
-        out.push(sharedAsEvent(r, args.userId, calendar));
+        out.push({
+          ...sharedAsEvent(r, args.userId, calendar),
+          ...(calendarName ? { calendarName } : {}),
+          calendarPublic: true,
+        });
       }
     }
   }

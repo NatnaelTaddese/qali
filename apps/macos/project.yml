@@ -49,7 +49,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         ENABLE_HARDENED_RUNTIME: YES
         CURRENT_PROJECT_VERSION: 1
-        MARKETING_VERSION: 0.1.9
+        MARKETING_VERSION: 0.1.10
     info:
       path: Qali/Info.plist
       properties:

@@ -26,6 +26,15 @@ nonisolated enum AssistantBlock: Decodable, Equatable, Sendable {
   /// A block type this build doesn't know; skipped when drawing.
   case unknown
 
+  /// Something the panel draws: prose with words in it, or a proposal.
+  var isVisible: Bool {
+    switch self {
+    case .text(let text): !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    case .proposal: true
+    default: false
+    }
+  }
+
   private enum CodingKeys: String, CodingKey {
     case type, text, toolCallId, name, isError, actionId
   }

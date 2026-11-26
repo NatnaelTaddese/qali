@@ -132,8 +132,9 @@
           try? await Task.sleep(for: .milliseconds(160))
         }
       }
-      try? await Task.sleep(for: .seconds(0.8))
-      await stream("Let me look at Friday for you.")
+      // The backend drops a step's narration before a lookup, so the reply
+      // opens on the typing dots and then the lookup, as it does live.
+      try? await Task.sleep(for: .seconds(1.2))
       update { $0.blocks.append(.toolCall(id: "f1", name: "list_events")) }
       try? await Task.sleep(for: .seconds(1.2))
       update { $0.blocks.append(.toolResult(id: "f1", isError: false)) }

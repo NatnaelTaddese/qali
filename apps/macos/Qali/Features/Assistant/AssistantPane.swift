@@ -92,6 +92,8 @@ struct AssistantPane: View {
   @State private var following = true
   /// "Delete Conversation…" was chosen: its confirmation is up.
   @State private var confirmingDelete = false
+  /// Qali's contact card, opened from the name in the header.
+  @State private var showingContact = false
 
   private var assistant: AssistantData { data.assistant }
   private var zoneId: String { navigation.zone.identifier }
@@ -138,6 +140,12 @@ struct AssistantPane: View {
         }
         try? await Task.sleep(for: .seconds(1))
         send(text)
+      }
+      // `-QaliAssistantContact YES` opens Qali's contact card after launch.
+      .task {
+        guard UserDefaults.standard.bool(forKey: "QaliAssistantContact") else { return }
+        try? await Task.sleep(for: .seconds(2))
+        showingContact = true
       }
       // `-QaliAssistantDelete ask|now` puts up the delete confirmation, or
       // deletes the conversation on show, a moment after launch.
@@ -217,6 +225,12 @@ struct AssistantPane: View {
       ) { send($0) }
     case .thinking:
       HStack { TypingBubble(); Spacer(minLength: 0) }
+    case .receipt(let text):
+      Text(text)
+        .font(.sans(10.5, .medium))
+        .foregroundStyle(Palette.mutedForeground)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.trailing, BubbleShape.tailWidth + 2)
     }
   }
 
@@ -283,32 +297,60 @@ struct AssistantPane: View {
 
   // MARK: - Header
 
-  /// Qali's name and the conversation on show, with the conversation tools:
-  /// earlier conversations, a new one, and close.
+  /// A Messages conversation header: Qali's photo centred with the name
+  /// beneath it, which opens Qali's contact card; earlier conversations on
+  /// the left and a new one on the right. The corner ghost and Esc close the
+  /// panel, so it needs no close button of its own.
   private var header: some View {
-    HStack(spacing: 8) {
-      AssistantAvatar(size: 30)
-      VStack(alignment: .leading, spacing: 1) {
-        Text("Qali")
-          .font(.sans(TextSize.sm, .semibold))
-          .foregroundStyle(Palette.foreground)
-        Text(assistant.threads?.first { $0.id == assistant.threadId }?.title ?? "New conversation")
-          .font(.sans(TextSize.xs))
-          .foregroundStyle(Palette.mutedForeground)
-          .lineLimit(1)
+    ZStack {
+      HStack {
+        historyMenu
+        Spacer(minLength: 0)
+        HeaderDisc(symbol: "square.and.pencil", label: "New conversation") {
+          assistant.newChat()
+          composerFocused = true
+        }
+        .disabled(assistant.busy || assistant.isEmpty)
       }
-      Spacer(minLength: 8)
-      historyMenu
-      HeaderDisc(symbol: "square.and.pencil", label: "New conversation") {
-        assistant.newChat()
-        composerFocused = true
+      Button { showingContact = true } label: {
+        VStack(spacing: 3) {
+          AssistantAvatar(size: 38)
+          HStack(spacing: 2) {
+            Text("Qali")
+              .font(.sans(TextSize.xs, .medium))
+              .foregroundStyle(Palette.foreground)
+            Image(systemName: "chevron.right")
+              .font(.system(size: 8, weight: .bold))
+              .foregroundStyle(Palette.mutedForeground)
+          }
+        }
+        .contentShape(.rect)
       }
-      .disabled(assistant.busy || assistant.isEmpty)
-      IslandCloseButton(action: close)
+      .buttonStyle(.plain)
+      .accessibilityLabel("Qali, contact details")
+      .help("About Qali")
+      .popover(isPresented: $showingContact, arrowEdge: .bottom) {
+        AssistantContactCard(
+          assistant: assistant,
+          newConversation: {
+            showingContact = false
+            assistant.newChat()
+            composerFocused = true
+          },
+          deleteConversation: {
+            showingContact = false
+            // After the popover has gone, or the alert has nothing to sit on.
+            Task {
+              try? await Task.sleep(for: .milliseconds(250))
+              confirmingDelete = true
+            }
+          }
+        )
+      }
     }
-    .padding(.leading, 14)
-    .padding(.trailing, 10)
-    .padding(.vertical, 10)
+    .padding(.horizontal, 10)
+    .padding(.top, 10)
+    .padding(.bottom, 6)
   }
 
   private var historyMenu: some View {
@@ -419,6 +461,9 @@ struct TranscriptRow: Identifiable {
     case turn(AssistantMessage, isLast: Bool)
     /// Sent, and nothing from the server yet.
     case thinking
+    /// "Read" under the user's latest message while Qali is typing a reply,
+    /// as Messages shows until the answer arrives.
+    case receipt(String)
   }
 
   var id: String
@@ -444,7 +489,7 @@ struct TranscriptRow: Identifiable {
         removal: .opacity)
     case .turn, .thinking:
       .asymmetric(insertion: .scale(scale: 0.85, anchor: .bottomLeading).combined(with: .opacity), removal: .opacity)
-    case .stamp:
+    case .stamp, .receipt:
       .opacity
     }
   }
@@ -485,6 +530,15 @@ struct TranscriptRow: Identifiable {
             id: key, kind: .turn(message, isLast: index == messages.count - 1 && assistant.pending == nil),
             gapAbove: gap(.assistant)))
       }
+    }
+
+    // Read, while the reply after the latest user message has nothing to
+    // show yet: the turn has started, so Qali has it.
+    if let last = messages.last, last.role == .assistant, last.status == .streaming,
+      !last.blocks.contains(where: \.isVisible),
+      let userIndex = rows.lastIndex(where: { if case .user = $0.kind { true } else { false } })
+    {
+      rows.insert(TranscriptRow(id: rows[userIndex].id + "-receipt", kind: .receipt("Read"), gapAbove: 2), at: userIndex + 1)
     }
 
     if let pending = assistant.pending, acknowledged == nil {

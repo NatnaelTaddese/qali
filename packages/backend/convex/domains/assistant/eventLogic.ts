@@ -300,3 +300,115 @@ export function formatAssistantAllDayRange(
     ? `${formatDateKey(startDate)} (all day)`
     : `${formatDateKey(startDate)}–${formatDateKey(lastDay)} (all day)`;
 }
+
+// --- Local wall-clock times ------------------------------------------------
+
+/** A timed range the way the model states it: a local calendar date and
+ * 24-hour wall-clock times in the user's zone. The server turns it into
+ * instants, so the model never does epoch or offset arithmetic. */
+export interface AssistantLocalTimedRange {
+  kind: "timed";
+  date: string;
+  start: string;
+  end: string;
+  /** The local date the event ends on, when it isn't `date`. */
+  endDate?: string;
+}
+
+/** Minutes past midnight for "HH:mm" (24-hour), or null. "24:00" is the end
+ * of the day. */
+export function parseClockTime(value: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (minutes > 59 || hours > 24 || (hours === 24 && minutes !== 0)) return null;
+  return hours * 60 + minutes;
+}
+
+/**
+ * The instants of a local timed range in `timeZone`. Without an `endDate`,
+ * an end at or before the start means the next day ("23:00"–"01:00"); a
+ * zero-length range is refused.
+ */
+export function localTimedRangeToInstants(
+  range: AssistantLocalTimedRange,
+  timeZone: string,
+): AssistantTimedRange {
+  if (!isDateKey(range.date) || (range.endDate !== undefined && !isDateKey(range.endDate))) {
+    throw new Error("Use real calendar dates in YYYY-MM-DD form");
+  }
+  const startMin = parseClockTime(range.start);
+  const endMin = parseClockTime(range.end);
+  if (startMin === null || endMin === null) {
+    throw new Error('Use 24-hour local times like "09:30" or "17:00"');
+  }
+  let endDate = range.endDate ?? range.date;
+  if (range.endDate === undefined && endMin <= startMin) {
+    if (endMin === startMin) throw new Error("The event must end after it starts");
+    endDate = addDaysToDateKey(range.date, 1);
+  }
+  const startMs = zonedToUtcMs(range.date, startMin, timeZone);
+  const endMs = zonedToUtcMs(endDate, endMin, timeZone);
+  if (endMs <= startMs) throw new Error("The event must end after it starts");
+  return { kind: "timed", startMs, endMs };
+}
+
+/** "HH:mm" in `timeZone`, 24-hour. */
+export function localClockTime(ms: number, timeZone: string): string {
+  const minutes = utcToZoned(ms, timeZone).minutes;
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+/** The local date, start and end of a timed instant range, in the shape the
+ * write tools take back, so a looked-up time can be passed on unchanged. */
+export function instantsToLocalTimed(
+  startMs: number,
+  endMs: number,
+  timeZone: string,
+): { date: string; start: string; end: string; endDate?: string } {
+  const date = utcToZoned(startMs, timeZone).dateKey;
+  const lastDate = utcToZoned(endMs, timeZone).dateKey;
+  const end = localClockTime(endMs, timeZone);
+  // Ending exactly at the next midnight reads as 24:00 on the same day.
+  if (lastDate === addDaysToDateKey(date, 1) && end === "00:00") {
+    return { date, start: localClockTime(startMs, timeZone), end: "24:00" };
+  }
+  return {
+    date,
+    start: localClockTime(startMs, timeZone),
+    end,
+    ...(lastDate === date ? {} : { endDate: lastDate }),
+  };
+}
+
+// --- The calendar the model reads -------------------------------------------
+
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * The next fortnight as weekday-and-date pairs, with this week's bounds by
+ * the user's own week start. A model without a reasoning pass gets weekday
+ * arithmetic wrong ("next Tuesday" a week off); reading the answer off a
+ * list it doesn't have to compute.
+ */
+export function upcomingDatesLine(
+  todayKey: string,
+  weekStartsOn: 0 | 1 | 6 = 1,
+): string {
+  const weekday = (key: string) => new Date(`${key}T00:00:00.000Z`).getUTCDay();
+  const offset = (weekday(todayKey) - weekStartsOn + 7) % 7;
+  const weekStart = addDaysToDateKey(todayKey, -offset);
+  const weekEnd = addDaysToDateKey(weekStart, 6);
+  const days: string[] = [];
+  for (let i = 0; i < 14; i += 1) {
+    const key = addDaysToDateKey(todayKey, i);
+    const label = i === 0 ? " (today)" : i === 1 ? " (tomorrow)" : "";
+    days.push(`${WEEKDAY_SHORT[weekday(key)]} ${key}${label}`);
+  }
+  return (
+    `This week runs ${WEEKDAY_SHORT[weekday(weekStart)]} ${weekStart} to ` +
+    `${WEEKDAY_SHORT[weekday(weekEnd)]} ${weekEnd}; next week is the seven days after. ` +
+    `Upcoming dates: ${days.join(", ")}.`
+  );
+}

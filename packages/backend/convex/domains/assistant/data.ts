@@ -400,6 +400,14 @@ export const getHistory = internalQuery({
   },
 });
 
+/** An event row with the calendar it sits on, when that isn't the user's
+ * primary: the assistant must not pass a colleague's meeting off as theirs. */
+export type AssistantEventRow = Doc<"events"> & {
+  calendarName?: string;
+  /** On a calendar someone else owns (a colleague's or a team's). */
+  calendarShared?: boolean;
+};
+
 /** Bounded calendar read for assistant tools. Public calendar range queries are
  * optimized for the visible grid and may collect a dense range in full. */
 export const listEventsForAssistant = internalQuery({
@@ -408,7 +416,7 @@ export const listEventsForAssistant = internalQuery({
     startMs: v.number(),
     endMs: v.number(),
   },
-  handler: async (ctx, args): Promise<Doc<"events">[]> => {
+  handler: async (ctx, args): Promise<AssistantEventRow[]> => {
     if (
       !Number.isFinite(args.startMs) ||
       !Number.isFinite(args.endMs) ||
@@ -425,7 +433,7 @@ export const listEventsForAssistant = internalQuery({
       throw new Error("Too many calendars to search safely");
     }
 
-    const rows: Doc<"events">[] = [];
+    const rows: AssistantEventRow[] = [];
     for (const calendar of calendars) {
       const connectionId = calendar.connectionId;
       if (!calendar.selected || connectionId === undefined) continue;
@@ -448,7 +456,22 @@ export const listEventsForAssistant = internalQuery({
       if (calendarRows.length > remaining) {
         throw new Error("That calendar range is too dense; use a smaller range");
       }
-      rows.push(...calendarRows);
+      if (calendar.primary) {
+        rows.push(...calendarRows);
+      } else {
+        // Only an owner's calendar is the user's own; a reader or writer
+        // role is someone else's calendar they can see (or edit).
+        const owned = calendar.accessRole === "owner";
+        const calendarName =
+          calendar.summaryOverride ?? calendar.summary ?? calendar.providerCalendarId;
+        rows.push(
+          ...calendarRows.map((event) => ({
+            ...event,
+            ...(calendarName ? { calendarName } : {}),
+            ...(owned ? {} : { calendarShared: true }),
+          })),
+        );
+      }
     }
     return rows.sort((a, b) => a.startMs - b.startMs);
   },

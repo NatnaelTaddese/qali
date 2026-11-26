@@ -63,6 +63,10 @@ struct AssistantContactCard: View {
     }
     .padding(16)
     .frame(width: 280)
+    // Solid, not the popover's glass: the conversation's blue bubbles showed
+    // through and washed out the card's text.
+    .background(Palette.popover.ignoresSafeArea())
+    .presentationBackground(Palette.popover)
   }
 }
 

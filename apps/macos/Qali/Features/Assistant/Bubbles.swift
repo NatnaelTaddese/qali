@@ -5,13 +5,9 @@ import SwiftUI
 /// accent colour) and the received grey, in both appearances.
 enum BubbleColors {
   static let sent = Color(nsColor: .systemBlue)
-  static let received = Color(
-    nsColor: NSColor(name: "assistantReceived") { appearance in
-      appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        ? NSColor(srgbRed: 59 / 255, green: 59 / 255, blue: 61 / 255, alpha: 1)
-        : NSColor(srgbRed: 233 / 255, green: 233 / 255, blue: 235 / 255, alpha: 1)
-    }
-  )
+  /// A tint of the foreground rather than a fixed grey, so the bubble sits
+  /// in the glass the way the island's own fields and chips do.
+  static let received = Palette.foreground.opacity(0.09)
 }
 
 /// A Messages bubble: a rounded body with, on the last bubble of a run, the

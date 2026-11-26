@@ -18,14 +18,12 @@ struct AssistantPanel: View {
   static let cornerInset: CGFloat = 22
 
   var body: some View {
-    let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+    // The island's own shell: a Liquid Glass card with the island panels'
+    // corners, and no border or shadow of its own.
+    let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
     AssistantPane(data: data, navigation: navigation, close: close)
-      // Messages' conversation pane is the window's own white (or black),
-      // which the grey bubbles need to stand out against.
-      .background(Palette.background, in: shape)
       .clipShape(shape)
-      .overlay { shape.strokeBorder(Palette.foreground.opacity(0.1)) }
-      .shadow(color: .black.opacity(0.14), radius: 18, y: 6)
+      .glassEffect(.regular, in: shape)
       .frame(width: Self.width)
       .padding(.top, 6)
       .padding(.trailing, 10)
@@ -70,23 +68,26 @@ struct AssistantPane: View {
   /// The thread whose transcript animates its changes: set a beat after a
   /// thread loads, so opening one doesn't fly every bubble in.
   @State private var liveThread: String?
+  /// More of the transcript above or below the view: its edge fades, as the
+  /// island's own scrolling panels do.
+  @State private var fade = (top: false, bottom: false)
 
   private var assistant: AssistantData { data.assistant }
   private var zoneId: String { navigation.zone.identifier }
 
   var body: some View {
-    Group {
-      if assistant.isEmpty {
-        EmptyConversation(assistant: assistant) { send($0) }
-      } else {
-        transcript
+    VStack(spacing: 0) {
+      header
+      Group {
+        if assistant.isEmpty {
+          EmptyConversation(assistant: assistant) { send($0) }
+        } else {
+          transcript
+        }
       }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      composer
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    // Bars, not plain insets: the transcript scrolls under them through
-    // the system's soft scroll-edge blur, as under a window's toolbar.
-    .safeAreaBar(edge: .top, spacing: 0) { header }
-    .safeAreaBar(edge: .bottom, spacing: 0) { composer }
     .onExitCommand(perform: close)
     .onAppear {
       assistant.activate()
@@ -143,12 +144,14 @@ struct AssistantPane: View {
     }
     .scrollPosition($position)
     .defaultScrollAnchor(.bottom)
-    .scrollEdgeEffectStyle(.soft, for: .all)
+    .mask { EdgeFade(top: fade.top, bottom: fade.bottom) }
     // Follow a reply as it streams, unless the user has scrolled up to read.
     .onScrollGeometryChange(for: ScrollGeometry.self) { $0 } action: { old, new in
       let grew = new.contentSize.height > old.contentSize.height + 0.5
       let wasAtBottom = old.visibleRect.maxY >= old.contentSize.height - 48
       if grew, wasAtBottom { position.scrollTo(edge: .bottom) }
+      let next = (top: new.visibleRect.minY > 1, bottom: new.visibleRect.maxY < new.contentSize.height - 1)
+      if next != fade { withAnimation(.easeOut(duration: 0.15)) { fade = next } }
     }
     .onChange(of: assistant.pending?.key) { _, key in
       guard key != nil else { return }
@@ -220,14 +223,13 @@ struct AssistantPane: View {
       }
       .frame(minHeight: 32)
       .padding(.trailing, assistant.draft.isEmpty ? 10 : 0)
-      .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16, style: .continuous))
+      .background(Palette.foreground.opacity(0.06), in: .rect(cornerRadius: 16, style: .continuous))
       .animation(.snappy(duration: 0.2), value: assistant.draft.isEmpty)
     }
     .font(.sans(TextSize.xs))
     .padding(.horizontal, 12)
     .padding(.top, 6)
     .padding(.bottom, 12)
-    .background { EdgeBlur(edge: .bottom) }
   }
 
   private func send(_ text: String?) {
@@ -263,7 +265,6 @@ struct AssistantPane: View {
     .padding(.leading, 14)
     .padding(.trailing, 10)
     .padding(.vertical, 10)
-    .background { EdgeBlur(edge: .top) }
   }
 
   private var historyMenu: some View {
@@ -298,35 +299,21 @@ struct AssistantPane: View {
   }
 }
 
-/// The gradient blur under the panel's header and over its composer, as
-/// under a window's toolbar: the transcript blurs and fades into the
-/// panel's own colour toward the edge, and runs past the bar's foot so
-/// there's no hard line where it ends. (The system's scroll-edge effect
-/// doesn't draw inside this floating card.)
-private struct EdgeBlur: View {
-  let edge: VerticalEdge
-  /// How far the fade runs past the bar.
-  private let overhang: CGFloat = 22
+/// The transcript's edges fading out where there's more to scroll, so a
+/// message slips under the header and composer instead of being cut.
+private struct EdgeFade: View {
+  var top: Bool
+  var bottom: Bool
+  private let length: CGFloat = 18
 
   var body: some View {
-    let toEdge = edge == .top
-    ZStack {
-      Rectangle().fill(.regularMaterial)
-      Palette.background.opacity(0.72)
+    VStack(spacing: 0) {
+      LinearGradient(colors: [top ? .clear : .black, .black], startPoint: .top, endPoint: .bottom)
+        .frame(height: length)
+      Color.black
+      LinearGradient(colors: [.black, bottom ? .clear : .black], startPoint: .top, endPoint: .bottom)
+        .frame(height: length)
     }
-    .mask {
-      LinearGradient(
-        stops: [
-          .init(color: .black, location: 0),
-          .init(color: .black, location: 0.55),
-          .init(color: .clear, location: 1),
-        ],
-        startPoint: toEdge ? .top : .bottom,
-        endPoint: toEdge ? .bottom : .top
-      )
-    }
-    .padding(toEdge ? .bottom : .top, -overhang)
-    .allowsHitTesting(false)
   }
 }
 

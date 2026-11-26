@@ -69,12 +69,11 @@ struct ProposalCard: View {
     .padding(.vertical, 10)
     .background {
       ZStack(alignment: .leading) {
-        shape.fill(Palette.card)
-        shape.fill(hue.opacity(0.22))
+        shape.fill(Palette.foreground.opacity(0.05))
+        shape.fill(hue.opacity(0.2))
         Capsule().fill(hue).frame(width: 3).padding(.vertical, 9).padding(.leading, 6)
       }
     }
-    .overlay { shape.strokeBorder(Palette.foreground.opacity(0.08)) }
     .padding(.leading, BubbleShape.tailWidth)
     .accessibilityElement(children: .contain)
     .accessibilityLabel("Proposed calendar change")

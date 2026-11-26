@@ -569,9 +569,22 @@ enum ScrollShield {
 }
 
 extension View {
-  /// Keeps the grid's scrolling out of this view's frame while it's shown.
-  func shieldsScrolls(_ name: String) -> some View {
-    onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { ScrollShield.rects[name] = $0 }
+  /// Keeps the grid's scrolling out of this view's frame while it's shown
+  /// and `active`.
+  func shieldsScrolls(_ name: String, active: Bool = true) -> some View {
+    modifier(ScrollShieldModifier(name: name, active: active))
+  }
+}
+
+private struct ScrollShieldModifier: ViewModifier {
+  let name: String
+  let active: Bool
+  @State private var frame: CGRect = .zero
+
+  func body(content: Content) -> some View {
+    content
+      .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
+      .onChange(of: active ? frame : nil, initial: true) { _, rect in ScrollShield.rects[name] = rect }
       .onDisappear { ScrollShield.rects[name] = nil }
   }
 }

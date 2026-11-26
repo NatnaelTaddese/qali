@@ -75,19 +75,11 @@ struct MenuBarLabel: View {
     }
   }
 
-  /// Short enough that macOS doesn't push the item into the menu bar's
-  /// overflow on a crowded bar; the Join pill leaves room for less.
   private func text(for event: CalendarEvent, now: Date, joining: Bool) -> String {
-    let countdown = countdownText(to: event.startMs, now: now)
-    let when = countdown == "now" ? "now" : "in \(countdown)"
-    guard showTitles else {
-      if joining { return countdown == "now" ? "now" : when }
-      return countdown == "now" ? "Event now" : "Event \(when)"
-    }
-    let limit = joining ? 12 : 20
-    var title = (event.summary?.trimmingCharacters(in: .whitespaces)).flatMap { $0.isEmpty ? nil : $0 } ?? "(No title)"
-    if title.count > limit { title = String(title.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…" }
-    return joining ? title : "\(title) · \(countdown)"
+    nextUpText(
+      summary: event.summary, startMs: event.startMs, endMs: event.endMs,
+      now: now, showTitles: showTitles, joining: joining
+    )
   }
 }
 

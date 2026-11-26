@@ -120,6 +120,28 @@ func isJoinable(_ event: CalendarEvent, now: Date) -> Bool {
   return nowMs >= event.startMs - msPerMinute && nowMs <= min(event.endMs, event.startMs + 10 * msPerMinute)
 }
 
+/// What the menu bar item says of its event, saying which way the time
+/// runs: "Standup · in 25m" before it starts, "Standup · 25m left" once it
+/// has ("Event in 25m" / "Event · 25m left" without titles). Beside the Join
+/// pill there is room for less: the title, or the time alone. Short enough
+/// that macOS doesn't push the item into a crowded bar's overflow.
+func nextUpText(
+  summary: String?, startMs: Double, endMs: Double, now: Date, showTitles: Bool, joining: Bool
+) -> String {
+  let started = now.ms >= startMs
+  let timing = started
+    ? "\(countdownText(to: endMs, now: now)) left"
+    : "in \(countdownText(to: startMs, now: now))"
+  guard showTitles else {
+    if joining { return timing }
+    return started ? "Event · \(timing)" : "Event \(timing)"
+  }
+  let limit = joining ? 12 : 20
+  var title = (summary?.trimmingCharacters(in: .whitespaces)).flatMap { $0.isEmpty ? nil : $0 } ?? "(No title)"
+  if title.count > limit { title = String(title.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…" }
+  return joining ? title : "\(title) · \(timing)"
+}
+
 /// "now", "12m", "1h 5m", "2h".
 func countdownText(to startMs: Double, now: Date) -> String {
   let minutes = Int(((startMs - now.ms) / msPerMinute).rounded(.up))

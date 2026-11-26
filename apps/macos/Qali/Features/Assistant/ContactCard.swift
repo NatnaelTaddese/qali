@@ -17,9 +17,11 @@ struct AssistantContactCard: View {
           Text("Qali")
             .font(.display(TextSize.xl2))
             .foregroundStyle(Palette.foreground)
+          // Straight on the glass: the system's vibrant secondary keeps
+          // its contrast there, where the flat muted grey faded.
           Text("Your calendar assistant")
-            .font(.sans(TextSize.xs))
-            .foregroundStyle(Palette.mutedForeground)
+            .font(.sans(TextSize.xs, .medium))
+            .foregroundStyle(.secondary)
         }
       }
 
@@ -59,14 +61,27 @@ struct AssistantContactCard: View {
         }
       }
       .font(.sans(TextSize.xs))
-      .background(Palette.foreground.opacity(0.05), in: .rect(cornerRadius: 12, style: .continuous))
+      .modifier(CardSurface())
     }
     .padding(16)
     .frame(width: 280)
-    // Solid, not the popover's glass: the conversation's blue bubbles showed
-    // through and washed out the card's text.
-    .background(Palette.popover.ignoresSafeArea())
-    .presentationBackground(Palette.popover)
+  }
+}
+
+/// What the card's tiles and info box sit on: the popover stays clear glass,
+/// but text gets a mostly solid backing, so the conversation's blue bubbles
+/// behind it don't wash it out.
+private struct CardSurface: ViewModifier {
+  var highlight = 0.0
+
+  func body(content: Content) -> some View {
+    let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+    content.background {
+      ZStack {
+        shape.fill(Palette.popover.opacity(0.82))
+        shape.fill(Palette.foreground.opacity(0.04 + highlight))
+      }
+    }
   }
 }
 
@@ -90,10 +105,7 @@ private struct CardAction: View {
       .foregroundStyle(destructive ? Palette.destructive : BubbleColors.sent)
       .frame(maxWidth: .infinity)
       .frame(height: 52)
-      .background(
-        Palette.foreground.opacity(hovering ? 0.09 : 0.05),
-        in: .rect(cornerRadius: 12, style: .continuous)
-      )
+      .modifier(CardSurface(highlight: hovering ? 0.04 : 0))
       .contentShape(.rect(cornerRadius: 12))
       .opacity(isEnabled ? 1 : 0.4)
     }

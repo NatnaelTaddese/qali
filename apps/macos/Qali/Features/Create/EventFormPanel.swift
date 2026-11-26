@@ -217,6 +217,17 @@ struct EventFormPanel: View {
 
   private var times: some View {
     VStack(spacing: 6) {
+      if !draft.allDay {
+        EventZoneRow(
+          timeZone: $draft.timeZone,
+          working: navigation.zone,
+          startMs: draft.startMs,
+          endMs: draft.endMs,
+          eventZone: zone,
+          use24h: navigation.use24h
+        )
+        .transition(.opacity)
+      }
       TimeRow(
         label: "Starts",
         ms: draft.startMs,
@@ -235,16 +246,6 @@ struct EventFormPanel: View {
         navigation: navigation,
         set: { draft.endMs = $0 }
       )
-      if !draft.allDay {
-        EventZoneRow(
-          timeZone: $draft.timeZone,
-          working: navigation.zone,
-          startMs: draft.startMs,
-          endMs: draft.endMs,
-          use24h: navigation.use24h
-        )
-        .transition(.opacity)
-      }
     }
     .padding(10)
     .background(Palette.foreground.opacity(0.06), in: .rect(cornerRadius: 12, style: .continuous))
@@ -759,14 +760,17 @@ private struct TimeRow: View {
   }
 }
 
-/// The zone a timed event is set in, under its times: your zone by default,
+/// The zone a timed event is set in, above its times: your zone by default,
 /// one of the time rail's, or any other. Switching keeps the event's moment
-/// and relabels its times; set in another zone, a line gives them in yours.
+/// and relabels its times; set in another zone, the row gives them in yours.
 private struct EventZoneRow: View {
   @Binding var timeZone: String?
   let working: WorkingZone
   let startMs: Double
   let endMs: Double
+  /// The zone the times above read in, to tell whether "for you" falls on
+  /// another day.
+  let eventZone: WorkingZone
   let use24h: Bool
 
   @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
@@ -775,60 +779,56 @@ private struct EventZoneRow: View {
   private var chosen: String { timeZone ?? working.identifier }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 8) {
-        Text("Zone")
-          .foregroundStyle(Palette.mutedForeground)
-          .frame(width: 44, alignment: .leading)
-        Menu {
-          ForEach(choices, id: \.self) { id in
-            Button {
-              pick(id)
-            } label: {
-              if id == chosen {
-                Label(title(id), systemImage: "checkmark")
-              } else {
-                Text(title(id))
-              }
+    HStack(spacing: 8) {
+      Menu {
+        ForEach(choices, id: \.self) { id in
+          Button {
+            pick(id)
+          } label: {
+            if id == chosen {
+              Label(title(id), systemImage: "checkmark")
+            } else {
+              Text(title(id))
             }
           }
-          Divider()
-          Button("Other Time Zone…") { choosingOther = true }
-        } label: {
-          HStack(spacing: 5) {
-            Image(systemName: "globe")
-              .font(.system(size: 11, weight: .medium))
-            Text("\(zoneShortLabel(chosen)) time")
-            Image(systemName: "chevron.up.chevron.down")
-              .font(.system(size: 8, weight: .semibold))
-              .foregroundStyle(Palette.mutedForeground)
-          }
-          .padding(.horizontal, 8)
-          .frame(height: 24)
-          .background(Palette.foreground.opacity(0.08), in: .capsule)
-          .contentShape(.capsule)
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .popover(isPresented: $choosingOther, arrowEdge: .top) {
-          TimeZoneList(current: timeZone, includesAutomatic: false) { id in
-            choosingOther = false
-            if let id { pick(id) }
-          }
+        Divider()
+        Button("Other Time Zone…") { choosingOther = true }
+      } label: {
+        HStack(spacing: 5) {
+          Image(systemName: "globe")
+            .font(.system(size: 11, weight: .medium))
+          Text("\(zoneShortLabel(chosen)) time")
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(Palette.mutedForeground)
         }
-        .accessibilityLabel("Time zone: \(zoneShortLabel(chosen))")
-        Spacer(minLength: 0)
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background(Palette.foreground.opacity(0.08), in: .capsule)
+        .contentShape(.capsule)
       }
+      .menuStyle(.button)
+      .buttonStyle(.plain)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .popover(isPresented: $choosingOther, arrowEdge: .top) {
+        TimeZoneList(current: timeZone, includesAutomatic: false) { id in
+          choosingOther = false
+          if let id { pick(id) }
+        }
+      }
+      .accessibilityLabel("Time zone: \(zoneShortLabel(chosen))")
+      Spacer(minLength: 8)
       if chosen != working.identifier {
         Text(forYou)
           .font(.sans(TextSize.xs))
           .foregroundStyle(Palette.mutedForeground)
-          .padding(.leading, 52)
           .lineLimit(1)
+          .truncationMode(.head)
       }
     }
+    .frame(minHeight: 26)
   }
 
   /// Yours, then the time rail's, then the one picked from the full list.
@@ -846,13 +846,17 @@ private struct EventZoneRow: View {
     timeZone = id == working.identifier ? nil : id
   }
 
-  /// "Tue, Nov 17, 6:30 PM – 7:30 PM for you", in the working zone, written
-  /// like the day chips above it.
+  /// "6:30 PM – 7:30 PM for you" in the working zone, with the day ("Tue,
+  /// Nov 17,") when it isn't the one the event reads on, written like the
+  /// day chips below.
   private var forYou: String {
     let pattern = timePattern(use24h: use24h)
     let start = Date(ms: startMs), end = Date(ms: endMs)
-    let endText = working.format(end, working.isSameDay(start, end) ? pattern : "EEE, MMM d, \(pattern)")
-    return "\(working.format(start, "EEE, MMM d, \(pattern)")) – \(endText) for you"
+    let dated = "EEE, MMM d, \(pattern)"
+    let sameDay = calendarDayOffset(start, of: working, from: eventZone) == 0
+    let startText = working.format(start, sameDay ? pattern : dated)
+    let endText = working.format(end, working.isSameDay(start, end) ? pattern : dated)
+    return "\(startText) – \(endText) for you"
   }
 }
 

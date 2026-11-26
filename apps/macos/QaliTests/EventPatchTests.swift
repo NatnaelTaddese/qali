@@ -65,6 +65,29 @@ struct EventPatchTests {
     #expect(patch.times == .init(startMs: start, endMs: start + 5_400_000, allDay: false))
   }
 
+  @Test func aZoneChangeAloneStillSendsTheTimes() {
+    // The provider stamps the zone on both ends, so it travels with them.
+    let event = event()
+    let initial = EventDraft(event: event, zone: zone)
+    var next = initial
+    next.timeZone = "Asia/Tokyo"
+    let patch = EventPatch(from: initial, to: next, event: event, zone: next.zone(working: zone))
+    #expect(patch.times == EventPatch.Times(startMs: start, endMs: start + 3_600_000, allDay: false))
+  }
+
+  @Test func aDraftsZoneIsItsOwnForTimedEventsOnly() {
+    var draft = EventDraft(startMs: start, endMs: start + 3_600_000)
+    #expect(draft.zone(working: zone) == zone)
+    draft.timeZone = "Asia/Tokyo"
+    #expect(draft.zone(working: zone).identifier == "Asia/Tokyo")
+    // All-day days are the working zone's; an unknown zone falls back too.
+    draft.allDay = true
+    #expect(draft.zone(working: zone) == zone)
+    draft.allDay = false
+    draft.timeZone = "Not/AZone"
+    #expect(draft.zone(working: zone) == zone)
+  }
+
   @Test func anAllDayEventRoundTripsToUtcMidnights() {
     // 18–19 Nov, stored as UTC midnights with an exclusive end.
     let day = 1_795_478_400_000.0

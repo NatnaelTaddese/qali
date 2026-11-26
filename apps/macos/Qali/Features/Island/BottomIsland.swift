@@ -113,6 +113,8 @@ struct BottomIsland: View {
           if UserDefaults.standard.bool(forKey: "QaliAllDay") { island.draft?.allDay = true }
           // `-QaliMeet YES` switches its Where row to a Google Meet.
           if UserDefaults.standard.bool(forKey: "QaliMeet") { island.draft?.meet = true }
+          // `-QaliEventZone Asia/Tokyo` sets the new event in that zone.
+          if let zone = UserDefaults.standard.string(forKey: "QaliEventZone") { island.draft?.timeZone = zone }
         case "edit":
           // `-QaliEventTitle Lunch` picks the event, as for `event`.
           while data.isLoadingEvents { try? await Task.sleep(for: .milliseconds(100)) }

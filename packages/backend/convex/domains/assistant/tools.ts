@@ -84,7 +84,7 @@ const MAX_TOOL_RESULT_CHARS = 16_000;
  * rather than failing the whole lookup. */
 const LIST_EVENTS_BUDGET_CHARS = 13_000;
 /** Guests named on a listed event; the rest are counted. */
-const LISTED_GUEST_NAMES = 5;
+const LISTED_GUEST_NAMES = 12;
 /** The most guests an assistant proposal may invite. Google emails each one
  * the moment the user confirms, and the confirm card has to show every
  * address in full for that confirmation to mean anything — a list that

@@ -190,7 +190,7 @@ describe("list_events rows", () => {
   test("name a few guests, count the rest, and mark the user's response", async () => {
     const attendees = [
       { email: "me@example.com", self: true, responseStatus: "declined" },
-      ...["Ana", "Ben", "Cleo", "Dev", "Eve", "Fay", "Gus"].map((name) => ({
+      ...["Ana", "Ben", "Cleo", "Dev", "Eve", "Fay", "Gus", "Hal", "Ida", "Jon", "Kim", "Lou", "Max", "Ned"].map((name) => ({
         email: `${name.toLowerCase()}@example.com`,
         displayName: name,
       })),
@@ -204,7 +204,7 @@ describe("list_events rows", () => {
       summary: "All hands",
       role: "guest",
       myResponse: "declined",
-      guests: ["Ana", "Ben", "Cleo", "Dev", "Eve"],
+      guests: ["Ana", "Ben", "Cleo", "Dev", "Eve", "Fay", "Gus", "Hal", "Ida", "Jon", "Kim", "Lou"],
       moreGuests: 2,
     });
     expect(outcome.content).not.toContain("@example.com");

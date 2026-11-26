@@ -30,6 +30,9 @@ nonisolated struct EventDraft: Equatable, Sendable {
   var repeatRule: Recurrence?
   /// Popup offsets in minutes. Nil is the calendar's default; empty is none.
   var reminders: [Double]?
+  /// The time zone a timed event is set in (IANA), sent to the provider with
+  /// its times; nil is the working zone. All-day events ignore it.
+  var timeZone: String?
 
   init(startMs: Double, endMs: Double) {
     self.startMs = startMs
@@ -37,6 +40,14 @@ nonisolated struct EventDraft: Equatable, Sendable {
   }
 
   var isValid: Bool { endMs > startMs }
+
+  /// The zone the times are shown, picked and written in: the event's own for
+  /// a timed event set in one, else the working zone. The instants don't
+  /// change with it; only how they read does.
+  func zone(working: WorkingZone) -> WorkingZone {
+    guard !allDay, let timeZone, let zone = WorkingZone(identifier: timeZone) else { return working }
+    return zone
+  }
 
   /// The form filled from an existing event (the web's `formValueFromEvent`).
   /// An all-day event's times become working-zone midnights of its first and
@@ -157,7 +168,8 @@ nonisolated struct EventPatch: Equatable, Sendable {
   var isEmpty: Bool { self == EventPatch() }
 
   /// The changes from `initial` (the form as it opened) to `next`, for
-  /// `event`. `zone` is the working zone the times were composed in.
+  /// `event`. `zone` is the zone the times were composed in: the event's own
+  /// (`EventDraft.zone(working:)`), sent along with them.
   init(from initial: EventDraft, to next: EventDraft, event: CalendarEvent, zone: WorkingZone) {
     if next.summary != initial.summary {
       let title = next.summary.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -181,6 +193,11 @@ nonisolated struct EventPatch: Equatable, Sendable {
     let before = initial.eventTimes(zone: zone)
     if times != before || next.allDay != initial.allDay {
       self.times = Times(startMs: times.startMs, endMs: times.endMs, allDay: next.allDay)
+    }
+    // A new zone alone still has to reach the provider, which stamps it on
+    // both ends: send the (unchanged) times so the zone goes with them.
+    if self.times == nil, !next.allDay, next.timeZone != initial.timeZone {
+      self.times = Times(startMs: times.startMs, endMs: times.endMs, allDay: false)
     }
 
     if next.repeatRule != initial.repeatRule {

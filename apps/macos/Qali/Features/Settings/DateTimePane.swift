@@ -169,7 +169,7 @@ extension String {
 }
 
 /// A searchable list of every time zone, Automatic first.
-private struct TimeZoneList: View {
+struct TimeZoneList: View {
   let current: String?
   var includesAutomatic = true
   let pick: (String?) -> Void

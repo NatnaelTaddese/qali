@@ -71,6 +71,9 @@ struct AssistantPane: View {
   /// More of the transcript above or below the view: its edge fades, as the
   /// island's own scrolling panels do.
   @State private var fade = (top: false, bottom: false)
+  /// The view is at the foot of the transcript, so a growing reply keeps it
+  /// there; false once the user scrolls up to read.
+  @State private var following = true
 
   private var assistant: AssistantData { data.assistant }
   private var zoneId: String { navigation.zone.identifier }
@@ -119,6 +122,10 @@ struct AssistantPane: View {
 
   // MARK: - Transcript
 
+  /// How the transcript moves as rows arrive and a reply grows: an even
+  /// glide with no overshoot, since any bounce rocks the whole list.
+  static let growth = Animation.smooth(duration: 0.28)
+
   private var animates: Bool { assistant.threadId == nil || liveThread == assistant.threadId }
 
   private var transcript: some View {
@@ -140,21 +147,29 @@ struct AssistantPane: View {
       .padding(.horizontal, 12)
       .padding(.top, 8)
       .padding(.bottom, 10)
-      .animation(animates ? .spring(duration: 0.35, bounce: 0.18) : nil, value: rows.map(\.signature))
+      .animation(animates ? Self.growth : nil, value: rows.map(\.signature))
     }
     .scrollPosition($position)
     .defaultScrollAnchor(.bottom)
+    // As a reply grows, what's on screen stays put and the view then glides
+    // down to the new foot: the list eases up a line instead of jumping.
+    .defaultScrollAnchor(.top, for: .sizeChanges)
     .mask { EdgeFade(top: fade.top, bottom: fade.bottom) }
     // Follow a reply as it streams, unless the user has scrolled up to read.
     .onScrollGeometryChange(for: ScrollGeometry.self) { $0 } action: { old, new in
-      let grew = new.contentSize.height > old.contentSize.height + 0.5
-      let wasAtBottom = old.visibleRect.maxY >= old.contentSize.height - 48
-      if grew, wasAtBottom { position.scrollTo(edge: .bottom) }
+      let grew = new.contentSize.height != old.contentSize.height
+      let atBottom = { (g: ScrollGeometry) in g.visibleRect.maxY >= g.contentSize.height - 48 }
+      // A size change says nothing about where the user wants to be; only
+      // their own scrolling does.
+      let nextFollowing = grew ? following || atBottom(new) : atBottom(new)
+      if nextFollowing != following { following = nextFollowing }
+      if grew, nextFollowing { withAnimation(Self.growth) { position.scrollTo(edge: .bottom) } }
       let next = (top: new.visibleRect.minY > 1, bottom: new.visibleRect.maxY < new.contentSize.height - 1)
       if next != fade { withAnimation(.easeOut(duration: 0.15)) { fade = next } }
     }
     .onChange(of: assistant.pending?.key) { _, key in
       guard key != nil else { return }
+      following = true
       withAnimation(.snappy(duration: 0.3)) { position.scrollTo(edge: .bottom) }
     }
   }
@@ -601,7 +616,9 @@ private struct AssistantTurn: View {
   var body: some View {
     let streaming = message.status == .streaming
     let items = items
-    let typing = streaming && (items.isEmpty || activeTool != nil)
+    // The dots stay up from a tool call until the next words arrive, so the
+    // list doesn't drop between a lookup finishing and the reply resuming.
+    let typing = streaming && (items.isEmpty || awaitingWords)
     VStack(alignment: .leading, spacing: 3) {
       if !steps.isEmpty {
         FlowLayout(spacing: 4) {
@@ -618,7 +635,7 @@ private struct AssistantTurn: View {
         case .text(let index, let text):
           HStack(spacing: 0) {
             MessageBubble(trailing: false, tail: !typing && index == items.last?.id) {
-              AssistantMarkdown(text: text)
+              AssistantMarkdown(text: text, streaming: message.status == .streaming && index == items.last?.id)
             }
             Spacer(minLength: 36)
           }
@@ -657,6 +674,25 @@ private struct AssistantTurn: View {
         return nil
       }
     }
+  }
+
+  /// A tool has run since the last thing shown: more words are coming.
+  private var awaitingWords: Bool {
+    let lastShown = message.blocks.lastIndex { block in
+      switch block {
+      case .text(let text): !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      case .proposal: true
+      default: false
+      }
+    }
+    let lastTool = message.blocks.lastIndex { block in
+      switch block {
+      case .toolCall, .toolResult: true
+      default: false
+      }
+    }
+    guard let lastTool else { return false }
+    return lastShown.map { lastTool > $0 } ?? true
   }
 
   private var results: [String: Bool] {

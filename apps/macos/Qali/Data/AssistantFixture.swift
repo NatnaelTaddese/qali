@@ -111,25 +111,36 @@
         guard let index = messages.firstIndex(where: { $0.id == replyId }) else { return }
         change(&messages[index])
       }
-      try? await Task.sleep(for: .seconds(1.2))
-      update { $0.blocks.append(.toolCall(id: "f1", name: "list_events")) }
-      try? await Task.sleep(for: .seconds(1.4))
-      update { $0.blocks.append(.toolResult(id: "f1", isError: false)) }
-      let answer =
-        "You have **three things** on Friday: a standup at 9:30am, the roadmap review from 11am to noon, and a vendor call at 3pm. The afternoon after 3:30pm is open."
-      var written = ""
-      for word in answer.split(separator: " ", omittingEmptySubsequences: false) {
-        written += (written.isEmpty ? "" : " ") + word
-        let snapshot = written
-        update { message in
-          if case .text = message.blocks.last {
-            message.blocks[message.blocks.count - 1] = .text(snapshot)
-          } else {
-            message.blocks.append(.text(snapshot))
+      /// Streams `text` into a new text block a few words per patch, as the
+      /// backend's flushes arrive.
+      func stream(_ text: String) async {
+        let words = text.split(separator: " ", omittingEmptySubsequences: false)
+        var written = ""
+        var started = false
+        for (index, word) in words.enumerated() {
+          written += (index == 0 ? "" : " ") + word
+          guard index % 3 == 2 || index == words.count - 1 else { continue }
+          let snapshot = written
+          update { message in
+            if started {
+              message.blocks[message.blocks.count - 1] = .text(snapshot)
+            } else {
+              message.blocks.append(.text(snapshot))
+            }
           }
+          started = true
+          try? await Task.sleep(for: .milliseconds(160))
         }
-        try? await Task.sleep(for: .milliseconds(70))
       }
+      try? await Task.sleep(for: .seconds(0.8))
+      await stream("Let me look at Friday for you.")
+      update { $0.blocks.append(.toolCall(id: "f1", name: "list_events")) }
+      try? await Task.sleep(for: .seconds(1.2))
+      update { $0.blocks.append(.toolResult(id: "f1", isError: false)) }
+      try? await Task.sleep(for: .seconds(0.3))
+      await stream(
+        "You have **three things** on Friday:\n\n- **Standup** at 9:30am\n- **Roadmap review** from 11am to noon\n- **Vendor call** at 3pm on Google Meet\n\nThe afternoon after 3:30pm is open, so that's the best window for anything new."
+      )
       update {
         $0.status = .complete
         $0.suggestions = ["Block the afternoon for focus", "What about next week?"]

@@ -9,10 +9,13 @@ import SwiftUI
 /// link text can't pass one address off as another.
 struct AssistantMarkdown: View {
   let text: String
+  /// Still arriving: a half-written marker is held back rather than drawn
+  /// and then reflowed, which would make the bubble jump.
+  var streaming = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
-      ForEach(Array(MarkdownBlock.parse(text).enumerated()), id: \.offset) { _, block in
+      ForEach(Array(MarkdownBlock.parse(streaming ? Self.settled(text) : text).enumerated()), id: \.offset) { _, block in
         view(for: block)
       }
     }
@@ -50,6 +53,22 @@ struct AssistantMarkdown: View {
     case .rule:
       Divider()
     }
+  }
+
+  /// A streaming reply as it will settle (the web's `completeMarkdown`): a
+  /// last line that is only a list marker waits for its words, and an open
+  /// `**` is closed, so bold text is bold as it arrives.
+  static func settled(_ text: String) -> String {
+    var lines = text.components(separatedBy: "\n")
+    if let last = lines.last?.trimmingCharacters(in: .whitespaces),
+      ["-", "*", "•", "#", ">"].contains(last) || last.range(of: #"^\d{1,3}[.)]?$"#, options: .regularExpression) != nil
+    {
+      lines.removeLast()
+    }
+    var out = lines.joined(separator: "\n")
+    while out.hasSuffix("\n") { out.removeLast() }
+    if out.components(separatedBy: "**").count % 2 == 0 { out += "**" }
+    return out
   }
 
   /// Inline markdown, with every non-web link dropped and the host shown

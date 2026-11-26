@@ -145,6 +145,30 @@ private let friday = midnight(2026, 11, 20, in: newYork)
   }
 }
 
+@Suite struct EventDetailZonesTests {
+  @Test func theEventsOwnZoneLeadsAndIsTagged() {
+    let detail = eventDetailZones(rail: [london, tokyo], eventZone: "Asia/Tokyo", working: newYork)
+    #expect(detail.zones.map(\.identifier) == ["Asia/Tokyo", "Europe/London"])
+    #expect(detail.setIn == "Asia/Tokyo")
+  }
+
+  @Test func aZoneOffTheRailIsStillShown() {
+    let detail = eventDetailZones(rail: [london], eventZone: "Asia/Kolkata", working: newYork)
+    #expect(detail.zones.map(\.identifier) == ["Asia/Kolkata", "Europe/London"])
+    #expect(detail.setIn == "Asia/Kolkata")
+    // Even with no rail zones at all.
+    #expect(eventDetailZones(rail: [], eventZone: "Asia/Kolkata", working: newYork).zones.count == 1)
+  }
+
+  @Test func theWorkingZoneOrNoneLeavesTheRailAlone() {
+    for zone in [nil, "America/New_York", "Not/AZone"] {
+      let detail = eventDetailZones(rail: [london, tokyo], eventZone: zone, working: newYork)
+      #expect(detail.zones == [london, tokyo])
+      #expect(detail.setIn == nil)
+    }
+  }
+}
+
 @Suite struct RailEditTests {
   @Test func makingAZonePrimaryPutsTheWorkingZoneInItsSlot() {
     let rail = ["Asia/Tokyo", "Europe/London"]

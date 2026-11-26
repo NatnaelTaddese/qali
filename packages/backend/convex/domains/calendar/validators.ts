@@ -116,6 +116,10 @@ export const storedEventBaseValidator = v.object({
   startMs: v.number(),
   endMs: v.number(),
   allDay: v.boolean(),
+  // The IANA zone the provider says the event is set in (Google:
+  // `start.timeZone`). Absent = the provider named none, so the event follows
+  // its calendar's zone; all-day events usually carry none.
+  timeZone: v.optional(v.string()),
   status: v.string(),
   htmlLink: v.optional(v.string()),
   // The provider's per-event color override (Google: palette key "1".."11");

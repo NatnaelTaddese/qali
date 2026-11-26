@@ -75,6 +75,11 @@ function sameGoogleTime(
   if (!expected) return true;
   if (expected.date !== undefined) return actual?.date === expected.date;
   if (expected.dateTime === undefined || actual?.dateTime === undefined) return false;
+  // Moving an event to another zone can keep its instants (two zones on the
+  // same offset), so the zone must match too or that edit is never sent.
+  if (expected.timeZone !== undefined && actual.timeZone !== expected.timeZone) {
+    return false;
+  }
   return new Date(actual.dateTime).getTime() === new Date(expected.dateTime).getTime();
 }
 

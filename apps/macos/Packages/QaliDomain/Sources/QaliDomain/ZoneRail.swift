@@ -193,6 +193,20 @@ public func eventTimesInZones(
   }
 }
 
+/// The zones an event's detail lists beside its main time: the zone it is
+/// set in first, when that is not the working zone, then the rail's other
+/// zones without it. `setIn` is that zone's identifier, for its tag.
+public func eventDetailZones(
+  rail: [WorkingZone],
+  eventZone: String?,
+  working: WorkingZone
+) -> (zones: [WorkingZone], setIn: String?) {
+  guard let eventZone, let own = WorkingZone(identifier: eventZone),
+        own.timeZone != working.timeZone
+  else { return (rail, nil) }
+  return ([own] + rail.filter { $0.timeZone != own.timeZone }, own.identifier)
+}
+
 // MARK: Rail edits
 
 /// The other zones once `other` becomes the working zone: the old working

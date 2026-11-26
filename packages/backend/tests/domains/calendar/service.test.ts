@@ -321,6 +321,87 @@ describe("event creation", () => {
   });
 });
 
+describe("event time zone", () => {
+  test("the action DTO carries the zone the provider reports", () => {
+    const result = calendarActionEvent({
+      id: "provider-id",
+      calendarId: "primary",
+      startMs: 1,
+      endMs: 2,
+      allDay: false,
+      timeZone: "Asia/Tokyo",
+      status: "confirmed",
+      updatedMs: 3,
+    });
+    expect(result.timeZone).toBe("Asia/Tokyo");
+  });
+
+  test("a create mirrors the zone it was set in", async () => {
+    const { ctx, mutations } = createContext();
+    let body: Record<string, unknown> = {};
+    globalThis.fetch = (async (_input, init) => {
+      body = JSON.parse(String(init?.body));
+      return Response.json(
+        createdGoogleEvent({
+          start: { dateTime: "2026-09-01T01:00:00.000Z", timeZone: "Asia/Tokyo" },
+          end: { dateTime: "2026-09-01T02:00:00.000Z", timeZone: "Asia/Tokyo" },
+        }),
+      );
+    }) as typeof fetch;
+    const event = await createEventOp(ctx, "user-1", "token", {
+      ...CREATE_ARGS,
+      timeZone: "Asia/Tokyo",
+    });
+    expect(body.start).toMatchObject({ timeZone: "Asia/Tokyo" });
+    expect(event.timeZone).toBe("Asia/Tokyo");
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        localCalendarId: "local-calendar-1",
+        event: expect.objectContaining({ id: "new-google-id", timeZone: "Asia/Tokyo" }),
+      }),
+    );
+  });
+
+  test("an update mirrors the event's new zone", async () => {
+    const row = eventRow({ timeZone: "Asia/Shanghai" });
+    const { ctx, mutations } = actionContext(row);
+    let patched: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (_input, init) => {
+      if (init?.method === "PATCH") {
+        patched = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return Response.json(
+          liveGoogleEvent(row, {
+            updated: "2026-08-11T00:01:00.000Z",
+            start: { dateTime: new Date(row.startMs).toISOString(), timeZone: "Europe/Paris" },
+            end: { dateTime: new Date(row.endMs).toISOString(), timeZone: "Europe/Paris" },
+          }),
+        );
+      }
+      return Response.json(liveGoogleEvent(row));
+    }) as typeof fetch;
+
+    await updateEventOp(ctx, row.userId, "access-token", {
+      eventId: row._id,
+      startMs: row.startMs,
+      endMs: row.endMs,
+      timeZone: "Europe/Paris",
+      operationId: "operation-zone",
+      expectedProviderUpdatedMs: row.providerUpdatedMs,
+    });
+
+    expect(patched?.start).toMatchObject({ timeZone: "Europe/Paris" });
+    expect(mutations).toContainEqual(
+      expect.objectContaining({
+        localCalendarId: row.localCalendarId,
+        event: expect.objectContaining({
+          id: row.providerEventId,
+          timeZone: "Europe/Paris",
+        }),
+      }),
+    );
+  });
+});
+
 describe("invitation response", () => {
   const guestRow = () =>
     eventRow({

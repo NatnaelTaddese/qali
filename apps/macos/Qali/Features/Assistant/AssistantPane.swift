@@ -297,7 +297,7 @@ struct AssistantPane: View {
 
   // MARK: - Header
 
-  /// Qali's photo in the header; the side buttons centre on it.
+  /// Qali's photo in the header.
   private static let headerAvatar: CGFloat = 38
   /// The side buttons' inset from the panel's top and side edges.
   private static let headerInset: CGFloat = 10
@@ -317,8 +317,7 @@ struct AssistantPane: View {
         }
         .disabled(assistant.busy || assistant.isEmpty)
       }
-      // Level with the photo's centre, not the photo and name together.
-      .padding(.top, (Self.headerAvatar - 30) / 2)
+
       Button { showingContact = true } label: {
         VStack(spacing: 3) {
           AssistantAvatar(size: Self.headerAvatar)
@@ -355,10 +354,10 @@ struct AssistantPane: View {
         )
       }
     }
-    // The side buttons sit as far from the top as from the sides, and the
-    // photo rises to stay level with them.
+    // The side buttons sit as far from the top as from the sides, level
+    // with the top of the photo.
     .padding(.horizontal, Self.headerInset)
-    .padding(.top, Self.headerInset - (Self.headerAvatar - 30) / 2)
+    .padding(.top, Self.headerInset)
     .padding(.bottom, 6)
   }
 

@@ -25,6 +25,7 @@ struct AssistantPanel: View {
       .clipShape(shape)
       .glassEffect(.regular, in: shape)
       .frame(width: Self.width)
+      .shieldsScrolls("assistant")
       .padding(.top, 6)
       .padding(.trailing, 10)
       // Ends just above its corner button, which stays to close it.

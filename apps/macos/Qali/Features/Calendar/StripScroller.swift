@@ -504,15 +504,21 @@ struct StripScrollCatcher: NSViewRepresentable {
       guard window != nil else { return }
       // Local monitors run on the main thread, inside `NSApp.sendEvent`.
       monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-        guard let self, let scroller = self.scroller, event.window === self.window else { return event }
-        let point = self.convert(event.locationInWindow, from: nil)
-        guard self.bounds.contains(point) else { return event }
+        guard let self, let scroller = self.scroller, self.takes(event) else { return event }
         return scroller.handle(event)
       }
       #if DEBUG
         if let script = UserDefaults.standard.string(forKey: "QaliSwipe") { DebugSwipe.run(script, in: self) }
         if UserDefaults.standard.bool(forKey: "QaliFrameLog"), !FrameMeter.running { meter = FrameMeter(view: self) }
       #endif
+    }
+
+    /// A scroll the strip should take: over this grid, in its window, and
+    /// not over a panel floating on it (which scrolls itself).
+    func takes(_ event: NSEvent) -> Bool {
+      guard let window, event.window === window else { return false }
+      guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return false }
+      return !ScrollShield.covers(event.locationInWindow, in: window)
     }
 
     func stop() {
@@ -542,6 +548,31 @@ struct StripScrollCatcher: NSViewRepresentable {
       lastFrame = now
       scroller?.tick(CGFloat(dt), at: link.targetTimestamp)
     }
+  }
+}
+
+/// Panels floating over the calendar grid (the assistant) whose scrolls are
+/// their own. The grid takes scroll-wheel events through a window-wide
+/// monitor, ahead of any view, so without this a scroll over a panel moved
+/// the grid behind it.
+@MainActor
+enum ScrollShield {
+  /// Each panel's frame in SwiftUI's global space (the window's content,
+  /// measured down from the top), by name.
+  static var rects: [String: CGRect] = [:]
+
+  static func covers(_ pointInWindow: NSPoint, in window: NSWindow) -> Bool {
+    guard let content = window.contentView, !rects.isEmpty else { return false }
+    let point = CGPoint(x: pointInWindow.x, y: content.bounds.height - pointInWindow.y)
+    return rects.values.contains { $0.contains(point) }
+  }
+}
+
+extension View {
+  /// Keeps the grid's scrolling out of this view's frame while it's shown.
+  func shieldsScrolls(_ name: String) -> some View {
+    onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { ScrollShield.rects[name] = $0 }
+      .onDisappear { ScrollShield.rects[name] = nil }
   }
 }
 

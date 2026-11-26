@@ -398,6 +398,35 @@ final class CalendarNavigation {
     if !strip.isMoving() { flashPending() }
   }
 
+  /// Reaches for a moment the way `reveal(_:)` does for a timed event, for
+  /// a change the assistant made that may not have synced back yet: the
+  /// day among the columns, the hours eased to `atMs`, and a flash on the
+  /// card `id` once it is there. The month view flashes the day cell.
+  func reveal(id: String?, atMs: Double) {
+    let day = Date(ms: atMs)
+    if view == .month {
+      pendingFlash = Self.dayKey(day, zone: zone)
+      let weeks = weeks(to: monthGridStart(day))
+      if let monthStrip, abs(weeks) <= 10 {
+        if weeks != 0 { monthStrip.glide(weeks) }
+        if !monthStrip.isMoving() { flashPending() }
+      } else {
+        jump(to: day)
+        flashPending()
+      }
+      return
+    }
+    pendingFlash = id
+    guard let strip else {
+      jump(to: day)
+      return flashPending()
+    }
+    let lead = zone.addingDays(-(viewColumns(view) / 2), to: zone.startOfDay(day))
+    if days(to: lead) != 0 { strip.glide(lead) }
+    strip.revealHour(day.timeIntervalSince(zone.startOfDay(day)) / 3600)
+    if !strip.isMoving() { flashPending() }
+  }
+
   /// The grids call this when a swipe or glide lands.
   func stripSettled() {
     if pendingFlash != nil { flashPending() }

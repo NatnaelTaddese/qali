@@ -62,6 +62,20 @@ const MAX_STEPS = 12;
  * DeepSeek's own API scales its 1.0 down to 0.3; at a true 1.0 the model
  * wanders, misreads dates and runs long. Tool use wants it steady. */
 const TEMPERATURE = 0.3;
+/** A step's opening text is held back until it's clearly part of the answer:
+ * past this length, or once it starts a second paragraph. A step that goes on
+ * to call a tool opens with narration ("Let me check…") the prompt forbids
+ * but the model still writes, and the panel shouldn't show it. */
+const PREAMBLE_HOLD_CHARS = 160;
+/** A reply that says a change was made or proposed. Checked against turns
+ * that called no write tool: without a reasoning pass the model often looks
+ * things up and then writes "I've proposed…" without ever proposing, which
+ * leaves the user a promise and no confirm card. */
+export const CLAIMS_A_CHANGE =
+  /\b(?:i(?:'|’)ve|i have|i)\s+(?:just\s+)?(?:proposed|drafted|scheduled|booked|created|moved|rescheduled|cancell?ed|added|set up|put)\b|(?:waiting|awaiting)\s+(?:for\s+)?(?:your\s+)?confirm|confirm to (?:send|add|create|book|move)/i;
+/** What the model is told when it claims a change it never proposed. */
+const UNBACKED_CLAIM_NOTE =
+  "[Automatic check, not from the user: nothing was proposed in this turn — no write tool was called, so there is no confirm card. If the user asked for a change, call the write tool now. Otherwise answer again without saying anything was proposed, scheduled or changed.]";
 /** How often the in-flight reply is written back for the client to render.
  * Patching per delta would hammer the transaction log. */
 const FLUSH_INTERVAL_MS = 250;
@@ -114,6 +128,8 @@ Events marked myResponse "declined" are not on the user's schedule: leave them o
 ## Making changes
 
 The tools that change things — create_event, update_event, move_event, delete_event, decide_booking_request — do not change anything. They put a proposal in front of the user with a confirm button, and nothing reaches Google or any guest's inbox until the user presses it.
+
+A change exists only once its write tool has returned "awaiting_confirmation" in this turn. When the user asks for a change, looking things up first is fine, but finish by calling the write tool — or by asking the one question you need answered. Never write that you proposed, drafted, scheduled, booked or moved something unless that call has returned; describing a change is not making one.
 
 So when a proposal tool returns, say what you proposed and that it is waiting for them. Never say an event was created, moved, or cancelled — it wasn't yet. Do not call the same proposal tool twice for one request; if the user asks again, the card is already there. If a proposal tool returns an error, tell the user plainly why the change isn't possible instead of trying a different tool to get around it.
 
@@ -324,7 +340,8 @@ export const sendMessage = action({
  * awaiting confirmation, or the turn produced no answer to build on. */
 type FollowUpContext = { userText: string; assistantText: string };
 
-async function runAgentLoop(
+/** Exported for the side-by-side evaluation harness; not a Convex function. */
+export async function runAgentLoop(
   ctx: ActionCtx,
   run: {
     apiKey: string;
@@ -395,6 +412,8 @@ async function runAgentLoop(
   // A turn that parks a proposal ends with a confirm card, so its natural next
   // action is confirm/decline — no follow-up prompts for those.
   let proposedThisTurn = false;
+  // The unbacked-claim check sends a reply back at most once.
+  let claimChecked = false;
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
     const body = {
@@ -423,6 +442,9 @@ async function runAgentLoop(
     let flushedText = "";
     let lastFlushAt = Date.now();
     const calls = new Map<number, PendingCall>();
+    // Whether this step's text has proved to be part of the answer (see
+    // PREAMBLE_HOLD_CHARS); until then nothing is shown.
+    let released = false;
 
     const flush = async (force: boolean) => {
       if (text === flushedText) return;
@@ -450,12 +472,19 @@ async function runAgentLoop(
 
       if (choice.delta?.content) {
         text += choice.delta.content;
-        await flush(false);
+        if (!released && (text.length > PREAMBLE_HOLD_CHARS || /\n\s*\n/.test(text.trim()))) {
+          released = true;
+        }
+        if (released) await flush(false);
       }
 
       applyToolCallDeltas(calls, choice.delta?.tool_calls);
     }
 
+    const pending = orderedCalls(calls);
+    // Text that never proved itself before a tool call is narration: dropped
+    // from the panel and from the history the model reads back.
+    if (pending.length > 0 && !released) text = "";
     await flush(true);
 
     console.log(
@@ -465,9 +494,20 @@ async function runAgentLoop(
         : `[assistant] step=${step} no usage reported by the API`,
     );
 
-    const pending = orderedCalls(calls);
-
     if (pending.length === 0) {
+      if (!proposedThisTurn && !claimChecked && CLAIMS_A_CHANGE.test(text)) {
+        // Take the claim back off the panel and let the model correct it:
+        // the next step's text replaces this block.
+        claimChecked = true;
+        console.log("[assistant] reply claimed a change with no proposal; asking again");
+        await ctx.runMutation(internal.domains.assistant.data.flushText, {
+          messageId: run.assistantMessageId,
+          text: "",
+        });
+        messages.push({ role: "assistant", content: text });
+        messages.push({ role: "user", content: UNBACKED_CLAIM_NOTE });
+        continue;
+      }
       // Natural end: the model answered instead of calling another tool. Offer
       // follow-ups only when it actually said something and left no proposal.
       return !proposedThisTurn && text.trim()

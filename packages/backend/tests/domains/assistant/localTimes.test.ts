@@ -230,3 +230,27 @@ describe("list_events rows", () => {
     expect(outcome.content.length).toBeLessThan(16_000);
   });
 });
+
+describe("the unbacked-claim check", () => {
+  test("catches a reply that says a change was made or proposed", async () => {
+    const { CLAIMS_A_CHANGE } = await import("../../../convex/domains/assistant/loop");
+    for (const claim of [
+      "I've proposed **Lunch with Sam**, Tuesday at 12:30.",
+      "I’ve put a proposal in front of you: Dentist, Monday 9am.",
+      "I scheduled it for Friday.",
+      "It's waiting for your confirmation.",
+      "Confirm to send the invite.",
+      "I have moved the 1:1 to Friday.",
+    ]) {
+      expect(CLAIMS_A_CHANGE.test(claim)).toBe(true);
+    }
+    for (const plain of [
+      "Tomorrow you have three things.",
+      "Friday at 2:30pm is free. Want me to move it there?",
+      "You declined the 4pm Hiring sync, so that hour is free.",
+      "The standup is scheduled daily at 9:30.",
+    ]) {
+      expect(CLAIMS_A_CHANGE.test(plain)).toBe(false);
+    }
+  });
+});

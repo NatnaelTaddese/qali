@@ -61,7 +61,8 @@ extension SettingsPane {
     case .accounts: ["Google account", "Another account", "Calendar access", "Contacts access", "Sync", "Disconnect", "Delete account"]
     case .calendars: ["Show or hide calendars", "Rename calendars"]
     case .dateTime:
-      ["Time zone", "Week starts on", "Time format", "Other time zones", "Show times under the pointer"]
+      ["Time zone", "Offer to switch when you travel", "Week starts on", "Time format", "Other time zones",
+       "Show times under the pointer"]
     case .events: ["Default calendar", "Timed event reminders", "All-day event reminders", "Show notifications", "System notifications", "Play sounds"]
     case .booking:
       ["Link name", "Share", "Live", "Title", "Length", "Minimum notice", "Days ahead",
@@ -92,7 +93,9 @@ extension SettingsPane {
       ["colour": nil, "color": nil, "visible": "Show or hide calendars", "name": "Rename calendars"]
     case .dateTime:
       ["timezone": "Time zone", "clock": "Time format", "24-hour": "Time format", "12-hour": "Time format",
-       "am": "Time format", "pm": "Time format", "monday": "Week starts on", "sunday": "Week starts on"]
+       "am": "Time format", "pm": "Time format", "monday": "Week starts on", "sunday": "Week starts on",
+       "travel": "Offer to switch when you travel", "trip": "Offer to switch when you travel",
+       "flight": "Offer to switch when you travel"]
     case .events:
       ["reminder": "Timed event reminders", "alert": "System notifications", "banner": "System notifications",
        "notification": "Show notifications", "in-app": "Show notifications", "toast": "Show notifications", "notification center": "System notifications", "sound": "Play sounds", "chime": "Play sounds",

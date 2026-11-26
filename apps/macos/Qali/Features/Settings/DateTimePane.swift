@@ -14,6 +14,7 @@ struct DateTimePane: View {
   /// The time rail's other zones, mirrored from the account.
   @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
   @AppStorage(ZoneRailPrefs.hoverReadout) private var railHoverReadout = false
+  @AppStorage(TravelPrefs.offer) private var travelOffer = true
 
   private var stored: StoredPreferences? { data.preferences?.raw }
 
@@ -56,6 +57,17 @@ struct DateTimePane: View {
               }
             }
         }
+        SettingsRow(
+          "Offer to switch when you travel",
+          detail: stored?.timeZone == nil
+            ? "Automatic already follows this Mac's time zone"
+            : "When this Mac's time zone changes, ask before moving your calendar"
+        ) {
+          Toggle("Offer to switch when you travel", isOn: $travelOffer)
+            .toggleStyle(.switch)
+            .labelsHidden()
+        }
+        .disabled(stored?.timeZone == nil)
       }
 
       Section {

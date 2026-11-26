@@ -29,6 +29,7 @@ struct BottomIsland: View {
 
   var body: some View {
     VStack(spacing: 10) {
+      TravelOffer(data: data)
       if let notice = data.notice {
         Text(notice)
           .font(.sans(TextSize.xs, .medium))

@@ -258,3 +258,31 @@ public func worldClock(now: Date, others: [WorkingZone], primary: WorkingZone, u
     )
   }
 }
+
+// MARK: Travel
+
+/// The zone to offer moving the calendar to when this Mac's zone changes:
+/// the Mac's own zone, when the calendar is pinned to another one (not
+/// Automatic, which already follows the Mac) whose clock reads differently
+/// at `date`, and the user hasn't already turned that zone down.
+public func travelOffer(device: String, working: String?, dismissed: String?, at date: Date) -> String? {
+  guard
+    let working, working != device, device != dismissed,
+    let deviceZone = TimeZone(identifier: device), let workingZone = TimeZone(identifier: working),
+    deviceZone.secondsFromGMT(for: date) != workingZone.secondsFromGMT(for: date)
+  else { return nil }
+  return device
+}
+
+/// The rail once the calendar moves from `origin` to `destination`: the
+/// origin takes the destination's slot when that is on the rail; otherwise it
+/// joins at the end, beside the hours, and the oldest zone makes room when
+/// the rail is full.
+public func zonesAfterTravelling(_ identifiers: [String], to destination: String, from origin: String, limit: Int) -> [String] {
+  if identifiers.contains(destination) {
+    return zonesAfterMakingPrimary(identifiers, other: destination, working: origin)
+  }
+  var next = identifiers.filter { $0 != origin } + [origin]
+  if next.count > limit { next.removeFirst(next.count - limit) }
+  return next
+}

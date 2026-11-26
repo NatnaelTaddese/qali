@@ -299,6 +299,8 @@ struct AssistantPane: View {
 
   /// Qali's photo in the header; the side buttons centre on it.
   private static let headerAvatar: CGFloat = 38
+  /// The side buttons' inset from the panel's top and side edges.
+  private static let headerInset: CGFloat = 10
 
   /// A Messages conversation header: Qali's photo centred with the name
   /// beneath it, which opens Qali's contact card; earlier conversations on
@@ -353,8 +355,10 @@ struct AssistantPane: View {
         )
       }
     }
-    .padding(.horizontal, 10)
-    .padding(.top, 10)
+    // The side buttons sit as far from the top as from the sides, and the
+    // photo rises to stay level with them.
+    .padding(.horizontal, Self.headerInset)
+    .padding(.top, Self.headerInset - (Self.headerAvatar - 30) / 2)
     .padding(.bottom, 6)
   }
 

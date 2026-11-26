@@ -74,6 +74,9 @@ struct EventFormPanel: View {
     #endif
   }
 
+  /// The time rail's other zones: the zone chip is for people who keep some.
+  @AppStorage(ZoneRailPrefs.zones) private var railZones = ""
+
   /// The zone the form reads and writes times in: the one the event is set
   /// in, else the working zone.
   private var zone: WorkingZone { draft.zone(working: navigation.zone) }
@@ -217,7 +220,9 @@ struct EventFormPanel: View {
 
   private var times: some View {
     VStack(spacing: 6) {
-      if !draft.allDay {
+      // Only for people with other time zones set, or an event already set in
+      // one (so its zone is never hidden from view).
+      if !draft.allDay, !ZoneRailPrefs.identifiers(railZones).isEmpty || draft.timeZone != nil {
         EventZoneRow(
           timeZone: $draft.timeZone,
           working: navigation.zone,

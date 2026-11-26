@@ -48,6 +48,9 @@ nonisolated struct CalendarEvent: Codable, Hashable, Identifiable, Sendable, Cal
   var startMs: Double
   var endMs: Double
   var allDay: Bool
+  /// The IANA zone the provider says the event is set in; nil when it named
+  /// none (all-day events, or one that follows its calendar's zone).
+  var timeZone: String?
   var summary: String?
   var description: String?
   var location: String?
@@ -79,7 +82,7 @@ nonisolated struct CalendarEvent: Codable, Hashable, Identifiable, Sendable, Cal
 
   enum CodingKeys: String, CodingKey {
     case id = "_id"
-    case startMs, endMs, allDay, summary, description, location, status, htmlLink, color
+    case startMs, endMs, allDay, timeZone, summary, description, location, status, htmlLink, color
     case visibility, busy, attendees, attendeesOmitted, organizer, creator
     case guestsCanModify, guestsCanInviteOthers, guestsCanSeeOtherGuests, locked, eventType
     case providerSeriesId, conferenceUrl, conferenceName, conferenceType, reminders

@@ -717,6 +717,7 @@ export async function mirrorProviderEventHandler(
     startMs: event.startMs,
     endMs: event.endMs,
     allDay: event.allDay,
+    timeZone: event.timeZone,
     status: event.status,
     htmlLink: event.htmlLink,
     color: event.color,

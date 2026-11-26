@@ -88,6 +88,36 @@ struct EventPatchTests {
     #expect(draft.zone(working: zone) == zone)
   }
 
+  @Test func anEventSetInAnotherZoneOpensInIt() {
+    let draft = EventDraft(event: event { $0.timeZone = "Asia/Tokyo" }, zone: zone)
+    #expect(draft.timeZone == "Asia/Tokyo")
+    #expect(draft.zone(working: zone).identifier == "Asia/Tokyo")
+    // Opening it changes nothing: saving untouched sends no zone.
+    let patch = EventPatch(from: draft, to: draft, event: event(), zone: draft.zone(working: zone))
+    #expect(patch.isEmpty)
+  }
+
+  @Test func anEventInTheWorkingZoneOrAllDayOpensWithoutOne() {
+    #expect(EventDraft(event: event { $0.timeZone = "Europe/Berlin" }, zone: zone).timeZone == nil)
+    #expect(EventDraft(event: event(), zone: zone).timeZone == nil)
+    #expect(EventDraft(event: event { $0.timeZone = "Not/AZone" }, zone: zone).timeZone == nil)
+    let allDay = event {
+      $0.allDay = true
+      $0.timeZone = "Asia/Tokyo"
+      $0.startMs = 1_795_478_400_000
+      $0.endMs = 1_795_478_400_000 + 86_400_000
+    }
+    #expect(EventDraft(event: allDay, zone: zone).timeZone == nil)
+  }
+
+  @Test func theEventDecodesItsZone() throws {
+    let json = #"{"_id":"e1","startMs":1,"endMs":2,"allDay":false,"status":"confirmed","timeZone":"Asia/Tokyo"}"#
+    let event = try JSONDecoder().decode(CalendarEvent.self, from: Data(json.utf8))
+    #expect(event.timeZone == "Asia/Tokyo")
+    let bare = #"{"_id":"e1","startMs":1,"endMs":2,"allDay":false,"status":"confirmed"}"#
+    #expect(try JSONDecoder().decode(CalendarEvent.self, from: Data(bare.utf8)).timeZone == nil)
+  }
+
   @Test func anAllDayEventRoundTripsToUtcMidnights() {
     // 18–19 Nov, stored as UTC midnights with an exclusive end.
     let day = 1_795_478_400_000.0

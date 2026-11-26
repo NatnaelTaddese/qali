@@ -114,18 +114,20 @@ struct EventDetailPanel: View {
               .font(.sans(TextSize.xs))
           }
         }
-        let others = ZoneRailPrefs.zones(railZones)
-        if !event.allDay, !others.isEmpty {
+        let others = eventDetailZones(
+          rail: ZoneRailPrefs.zones(railZones), eventZone: event.timeZone, working: navigation.zone
+        )
+        if !event.allDay, !others.zones.isEmpty {
           DetailRow(symbol: "globe") {
             VStack(alignment: .leading, spacing: 4) {
               ForEach(
                 eventTimesInZones(
-                  startMs: event.startMs, endMs: event.endMs, zones: others,
+                  startMs: event.startMs, endMs: event.endMs, zones: others.zones,
                   primary: navigation.zone, use24h: navigation.use24h
                 ),
                 id: \.identifier
               ) { time in
-                ZoneTimeRow(time: time)
+                ZoneTimeRow(time: time, setIn: time.identifier == others.setIn)
               }
             }
           }
@@ -303,9 +305,11 @@ private struct DetailRow<Content: View>: View {
 }
 
 /// The event in one of the rail's other zones: day or night there, the
-/// zone's code, its times and, when they differ, its days.
+/// zone's code, its times and, when they differ, its days. The zone the
+/// event is set in says so.
 private struct ZoneTimeRow: View {
   let time: ZoneEventTime
+  var setIn = false
 
   var body: some View {
     HStack(spacing: 6) {
@@ -323,12 +327,20 @@ private struct ZoneTimeRow: View {
         Text(days)
           .font(.sans(TextSize.xs))
       }
+      if setIn {
+        Text("set in")
+          .font(.sans(TextSize.xs, .medium))
+          .foregroundStyle(Palette.mutedForeground)
+          .padding(.horizontal, 5)
+          .padding(.vertical, 1)
+          .background(Palette.muted, in: Capsule())
+      }
     }
     .lineLimit(1)
-    .help(zoneShortLabel(time.identifier))
+    .help(setIn ? "Set in \(zoneShortLabel(time.identifier))" : zoneShortLabel(time.identifier))
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(
-      "\(zoneShortLabel(time.identifier)): \(time.time)\(time.days.map { ", \($0)" } ?? ""), \(time.isDaytime ? "daytime" : "night")"
+      "\(zoneShortLabel(time.identifier)): \(time.time)\(time.days.map { ", \($0)" } ?? ""), \(time.isDaytime ? "daytime" : "night")\(setIn ? ", the zone it is set in" : "")"
     )
   }
 }

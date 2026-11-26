@@ -52,7 +52,7 @@ nonisolated struct EventDraft: Equatable, Sendable {
   /// The form filled from an existing event (the web's `formValueFromEvent`).
   /// An all-day event's times become working-zone midnights of its first and
   /// last day. Repeating rows are expanded instances that carry no rule, so
-  /// the repeat stays unset.
+  /// the repeat stays unset. A timed event set in another zone opens in it.
   init(event: CalendarEvent, zone: WorkingZone) {
     if event.allDay {
       startMs = fromUtcMidnight(event.startMs, zone: zone)
@@ -74,6 +74,10 @@ nonisolated struct EventDraft: Equatable, Sendable {
       DraftGuest(email: $0.email, displayName: $0.displayName, isSelf: $0.isSelf == true)
     }
     reminders = event.reminders.map { $0.filter { $0.method == "popup" }.map(\.minutes).sorted() }
+    if !event.allDay, let own = event.timeZone, let ownZone = WorkingZone(identifier: own),
+       ownZone.timeZone != zone.timeZone {
+      timeZone = ownZone.identifier
+    }
   }
 
   /// The instants sent to the provider. All-day events are date-only: UTC

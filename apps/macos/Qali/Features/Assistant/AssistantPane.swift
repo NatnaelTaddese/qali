@@ -508,19 +508,73 @@ private struct SentMessage: View {
 
 // MARK: - A turn
 
-/// What each tool did, in the user's terms: while it runs, and once done.
-private let toolLabels: [String: (running: String, done: String)] = [
-  "list_events": ("Checking your calendar", "Checked your calendar"),
-  "find_free_time": ("Looking for open time", "Looked for open time"),
-  "search_contacts": ("Looking up contacts", "Looked up contacts"),
-  "get_availability_settings": ("Reading your booking settings", "Read your booking settings"),
-  "list_pending_booking_requests": ("Checking booking requests", "Checked booking requests"),
-  "create_event": ("Drafting an event", "Drafted an event"),
-  "update_event": ("Drafting a change", "Drafted a change"),
-  "move_event": ("Drafting a reschedule", "Drafted a reschedule"),
-  "delete_event": ("Drafting a cancellation", "Drafted a cancellation"),
-  "decide_booking_request": ("Drafting a reply", "Drafted a reply"),
-]
+/// What each tool does, in the user's terms: a symbol, what it says while
+/// it runs, and once it's done. Short, because they sit in chips.
+private struct ToolStep {
+  let symbol: String
+  let running: String
+  let done: String
+
+  static func of(_ name: String) -> ToolStep {
+    table[name] ?? ToolStep(symbol: "sparkle", running: "Working", done: "Worked")
+  }
+
+  private static let table: [String: ToolStep] = [
+    "list_events": .init(symbol: "calendar", running: "Checking calendar", done: "Checked calendar"),
+    "find_free_time": .init(symbol: "clock", running: "Finding free time", done: "Searched free time"),
+    "search_contacts": .init(symbol: "person.crop.circle", running: "Looking up contacts", done: "Looked up contacts"),
+    "get_availability_settings": .init(
+      symbol: "slider.horizontal.3", running: "Reading booking settings", done: "Read booking settings"),
+    "list_pending_booking_requests": .init(symbol: "tray", running: "Checking requests", done: "Checked requests"),
+    "create_event": .init(symbol: "calendar.badge.plus", running: "Drafting event", done: "Drafted event"),
+    "update_event": .init(symbol: "pencil", running: "Drafting change", done: "Drafted change"),
+    "move_event": .init(symbol: "arrow.forward", running: "Drafting reschedule", done: "Drafted reschedule"),
+    "delete_event": .init(symbol: "calendar.badge.minus", running: "Drafting cancellation", done: "Drafted cancellation"),
+    "decide_booking_request": .init(symbol: "envelope", running: "Drafting reply", done: "Drafted reply"),
+  ]
+}
+
+/// One step of a turn as a chip: what was looked up or drafted, the one
+/// running with a spinner, a failed one in red. Chips wrap whole, never
+/// mid-phrase.
+private struct StepChip: View {
+  enum State: Equatable { case running, done, failed }
+
+  let step: ToolStep
+  let state: State
+  /// The same step run several times in a row.
+  var count = 1
+
+  var body: some View {
+    let tint = state == .failed ? Palette.destructive : state == .running ? Palette.foreground : Palette.mutedForeground
+    HStack(spacing: 4) {
+      Group {
+        switch state {
+        case .running: ProgressView().controlSize(.mini).scaleEffect(0.8)
+        case .failed: Image(systemName: "exclamationmark.triangle.fill")
+        case .done: Image(systemName: step.symbol)
+        }
+      }
+      .font(.system(size: 9.5, weight: .semibold))
+      .frame(width: 12, height: 12)
+      Text(state == .running ? step.running + "…" : step.done)
+      if count > 1 {
+        Text("×\(count)").monospacedDigit().opacity(0.7)
+      }
+    }
+    .font(.sans(TextSize.xs, .medium))
+    .foregroundStyle(tint)
+    .padding(.leading, 6)
+    .padding(.trailing, 8)
+    .padding(.vertical, 3)
+    .background(
+      state == .failed ? Palette.destructive.opacity(0.12) : Palette.foreground.opacity(state == .running ? 0.09 : 0.06),
+      in: .capsule
+    )
+    .fixedSize()
+    .accessibilityElement(children: .combine)
+  }
+}
 
 /// One of Qali's turns. Its prose becomes grey bubbles (the last with the
 /// tail), its proposals confirm cards; what it looked up is a quiet line
@@ -547,11 +601,17 @@ private struct AssistantTurn: View {
   var body: some View {
     let streaming = message.status == .streaming
     let items = items
-    let active = activeTool
-    let typing = streaming && (items.isEmpty || active != nil)
+    let typing = streaming && (items.isEmpty || activeTool != nil)
     VStack(alignment: .leading, spacing: 3) {
-      if !steps.isEmpty, !(typing && items.isEmpty) {
-        stepsLine
+      if !steps.isEmpty {
+        FlowLayout(spacing: 4) {
+          ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+            StepChip(step: step.step, state: step.state, count: step.count)
+              .transition(.scale(scale: 0.8, anchor: .leading).combined(with: .opacity))
+          }
+        }
+        .padding(.leading, BubbleShape.tailWidth)
+        .padding(.bottom, 3)
       }
       ForEach(items) { item in
         switch item {
@@ -570,13 +630,6 @@ private struct AssistantTurn: View {
       }
       if typing {
         TypingBubble()
-        if let active {
-          Text((toolLabels[active]?.running ?? "Working") + "…")
-            .font(.sans(TextSize.xs))
-            .foregroundStyle(Palette.mutedForeground)
-            .padding(.leading, BubbleShape.tailWidth + 4)
-            .transition(.opacity)
-        }
       }
       if message.status == .error {
         Label(message.error ?? "Something went wrong.", systemImage: "exclamationmark.circle.fill")
@@ -622,27 +675,29 @@ private struct AssistantTurn: View {
     return nil
   }
 
-  /// What was looked up and drafted, in order, without repeats in a row.
-  private var steps: [(label: String, failed: Bool)] {
+  /// What it looked up and drafted, in order, the one still running last;
+  /// the same step run again straight after is counted, not repeated.
+  private var steps: [(step: ToolStep, state: StepChip.State, count: Int)] {
     let results = results
-    var out: [(String, Bool)] = []
+    let streaming = message.status == .streaming
+    var out: [(step: ToolStep, state: StepChip.State, count: Int, name: String)] = []
     for case .toolCall(let id, let name) in message.blocks {
-      guard let failed = results[id] else { continue }
-      let label = toolLabels[name]?.done ?? "Worked"
-      if out.last?.0 != label { out.append((label, failed)) }
+      let state: StepChip.State
+      if let failed = results[id] {
+        state = failed ? .failed : .done
+      } else if streaming {
+        state = .running
+      } else {
+        continue
+      }
+      if let last = out.last, last.name == name, last.state == state || last.state == .done && state == .running {
+        out[out.count - 1].count += 1
+        out[out.count - 1].state = state
+      } else {
+        out.append((ToolStep.of(name), state, 1, name))
+      }
     }
-    return out
-  }
-
-  private var stepsLine: some View {
-    steps.enumerated().reduce(Text("")) { line, step in
-      let piece = Text(step.element.label).foregroundStyle(step.element.failed ? Palette.destructive : Palette.mutedForeground)
-      return step.offset == 0 ? piece : Text("\(line)  ·  \(piece)")
-    }
-    .foregroundStyle(Palette.mutedForeground)
-    .font(.sans(TextSize.xs))
-    .padding(.leading, BubbleShape.tailWidth + 4)
-    .padding(.bottom, 2)
+    return out.map { ($0.step, $0.state, $0.count) }
   }
 }
 

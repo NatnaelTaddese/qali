@@ -90,6 +90,9 @@ struct CalendarScreen: View {
         WhatsNewSheet(notes: notes) { whatsNew = nil }
       }
       #if DEBUG
+        .overlay {
+          if UserDefaults.standard.bool(forKey: "QaliAvatarGallery") { AvatarGallery() }
+        }
         // `-QaliAssistantToggle 3` opens or closes the assistant that many
         // seconds after launch, to watch it slide.
         .task {

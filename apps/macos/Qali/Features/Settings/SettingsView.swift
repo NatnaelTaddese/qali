@@ -56,7 +56,7 @@ extension SettingsPane {
   var settings: [String] {
     switch self {
     case .general:
-      ["Account", "Sign Out", "Theme", "Default view", "Haptic feedback", "Check for updates automatically",
+      ["Account", "Sign Out", "Theme", "Qali's photo", "Default view", "Haptic feedback", "Check for updates automatically",
        "Download and install updates automatically", "Version"]
     case .accounts: ["Google account", "Another account", "Calendar access", "Contacts access", "Sync", "Disconnect", "Delete account"]
     case .calendars: ["Show or hide calendars", "Rename calendars"]
@@ -83,7 +83,8 @@ extension SettingsPane {
        "log out": "Sign Out", "update": "Check for updates automatically",
        "day": "Default view", "week": "Default view", "month": "Default view",
        "haptics": "Haptic feedback", "trackpad": "Haptic feedback", "vibration": "Haptic feedback",
-       "drag": "Haptic feedback"]
+       "drag": "Haptic feedback", "assistant": "Qali's photo", "avatar": "Qali's photo",
+       "profile": "Qali's photo", "picture": "Qali's photo", "mascot": "Qali's photo"]
     case .accounts:
       ["google": "Google account", "connect": "Another account", "link": "Another account",
        "permissions": "Calendar access", "unlink": "Disconnect", "remove": "Disconnect",

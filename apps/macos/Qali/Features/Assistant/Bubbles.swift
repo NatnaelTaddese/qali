@@ -150,25 +150,3 @@ nonisolated struct MascotShape: Shape {
     return shape.applying(transform)
   }
 }
-
-/// Qali as a Messages contact photo: the ghost on the chroma gradient.
-struct AssistantAvatar: View {
-  var size: CGFloat
-
-  var body: some View {
-    ZStack {
-      LinearGradient(
-        colors: [Palette.chroma(1), Palette.chroma(3), Palette.chroma(5)],
-        startPoint: .topLeading, endPoint: .bottomTrailing
-      )
-      MascotShape()
-        .fill(.white)
-        .padding(size * 0.2)
-        .shadow(color: .black.opacity(0.15), radius: size * 0.03, y: size * 0.02)
-    }
-    .frame(width: size, height: size)
-    .clipShape(.circle)
-    .overlay { Circle().strokeBorder(.white.opacity(0.12)) }
-    .accessibilityHidden(true)
-  }
-}

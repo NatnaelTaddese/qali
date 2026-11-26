@@ -42,6 +42,10 @@ struct GeneralPane: View {
           }
         }
         .onChange(of: theme) { _, next in next.apply() }
+
+        SettingsRow("Qali's photo", detail: "How the assistant appears in its conversation") {
+          AvatarPicker()
+        }
       }
 
       if let data = model.calendarData {
@@ -127,5 +131,38 @@ private struct UpdatesSection: View {
   private var lastCheckText: String {
     guard let date = updater.lastCheck else { return "Never" }
     return date.formatted(.relative(presentation: .named))
+  }
+}
+
+/// Qali's three photos as round previews, the chosen one ringed, like the
+/// accent colour picker in System Settings.
+private struct AvatarPicker: View {
+  @AppStorage(AvatarStyle.key) private var stored = AvatarStyle.sticker.rawValue
+
+  var body: some View {
+    HStack(spacing: 14) {
+      ForEach(AvatarStyle.allCases) { style in
+        let selected = (AvatarStyle(rawValue: stored) ?? .sticker) == style
+        Button {
+          stored = style.rawValue
+        } label: {
+          VStack(spacing: 4) {
+            AssistantAvatar(size: 34, style: style)
+              .padding(2.5)
+              .overlay {
+                Circle().strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2.5)
+              }
+            Text(style.name)
+              .font(.system(size: 10.5))
+              .foregroundStyle(selected ? .primary : .secondary)
+          }
+          .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(style.name) photo")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(style.note)
+      }
+    }
   }
 }

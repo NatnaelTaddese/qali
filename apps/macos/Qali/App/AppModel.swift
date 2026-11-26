@@ -23,6 +23,11 @@ final class AppModel {
   /// The signed-in user's calendar data; nil while signed out.
   private(set) var calendarData: CalendarData?
   var signInError: String?
+  /// The assistant's inspector is out beside the calendar; remembered
+  /// across launches, as Messages remembers its layout.
+  var assistantOpen = UserDefaults.standard.bool(forKey: "assistantOpen") {
+    didSet { UserDefaults.standard.set(assistantOpen, forKey: "assistantOpen") }
+  }
   /// This version's notes while they wait to be shown once, after an
   /// update; decided as the app starts, before its window opens.
   var whatsNew: ReleaseNotes? = WhatsNew.pending()

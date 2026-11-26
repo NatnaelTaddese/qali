@@ -61,6 +61,9 @@ struct BottomIsland: View {
           }
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
+        // An open panel scrolls itself (search results, a long event); the
+        // nav pill at rest lets a scroll over it reach the grid as before.
+        .shieldsScrolls("island", active: island.view != nil)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Dock")
     }

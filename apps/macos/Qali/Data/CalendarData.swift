@@ -73,10 +73,13 @@ final class CalendarData {
   let peopleQuery: LiveQuery<[PersonRow]>
   /// The booking page, its date overrides and the requests waiting on it.
   let booking: BookingData
+  /// The assistant's conversations, kept warm for the session.
+  let assistant: AssistantData
 
   init(client: ConvexClient) {
     self.client = client
     booking = BookingData(client: client)
+    assistant = AssistantData(client: client)
     preferencesQuery = LiveQuery(client, ConvexAPI.getMyPreferences)
     calendarsQuery = LiveQuery(client, ConvexAPI.listCalendars)
     eventsQuery = LiveQuery(client, ConvexAPI.listEventsInRange, args: nil)

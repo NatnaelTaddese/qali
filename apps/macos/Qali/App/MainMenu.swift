@@ -60,6 +60,9 @@ enum MainMenu {
 
   private static func viewMenu() -> NSMenu {
     let menu = NSMenu(title: "View")
+    // Retitled Show/Hide by the app delegate's validation.
+    menu.addItem("Show Assistant", #selector(AppDelegate.toggleAssistant(_:)), "j")
+    menu.addItem(.separator())
     menu.addItem("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control])
     return menu
   }

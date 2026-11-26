@@ -133,15 +133,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     Task { await model.signOut() }
   }
 
+  /// Shows or hides the assistant beside the calendar (⌘J, as on the web).
+  @objc func toggleAssistant(_ sender: Any?) {
+    model.assistantOpen.toggle()
+    if model.assistantOpen { showMainWindow() }
+  }
+
   @objc func openWebsite(_ sender: Any?) {
     NSWorkspace.shared.open(AppConfig.marketingURL)
   }
 
   func validateMenuItem(_ item: NSMenuItem) -> Bool {
     switch item.action {
-    case #selector(signOut(_:)): model.phase == .signedIn
-    case #selector(checkForUpdates(_:)): AppUpdater.shared.canCheckForUpdates
-    default: true
+    case #selector(signOut(_:)):
+      return model.phase == .signedIn
+    case #selector(checkForUpdates(_:)):
+      return AppUpdater.shared.canCheckForUpdates
+    case #selector(toggleAssistant(_:)):
+      item.title = model.assistantOpen ? "Hide Assistant" : "Show Assistant"
+      return model.phase == .signedIn && model.calendarData?.assistant.isAvailable == true
+    default:
+      return true
     }
   }
 }

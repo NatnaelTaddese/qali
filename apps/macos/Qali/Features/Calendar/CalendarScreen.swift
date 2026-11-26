@@ -16,6 +16,25 @@ struct CalendarScreen: View {
       .overlay(alignment: .bottom) {
         BottomIsland(island: island, data: data, navigation: navigation)
       }
+      // The assistant, a Messages conversation floating over the calendar's
+      // trailing edge. It slides over the grid rather than docking beside it:
+      // resizing the grid on every frame of the slide made it judder.
+      .overlay(alignment: .trailing) {
+        if assistantOpen.wrappedValue {
+          AssistantPanel(data: data, navigation: navigation) { assistantOpen.wrappedValue = false }
+            .transition(.move(edge: .trailing).combined(with: .opacity))
+        }
+      }
+      // Its toggle: Qali's ghost in the bottom-right corner, where the web's
+      // assistant dock sits, level with the island.
+      .overlay(alignment: .bottomTrailing) {
+        if data.assistant.isAvailable {
+          AssistantCornerButton(isOpen: assistantOpen, unread: data.assistant.unread)
+            .padding(.trailing, AssistantPanel.cornerInset)
+            .padding(.bottom, AssistantPanel.cornerInset)
+        }
+      }
+      .animation(AssistantPanel.spring, value: assistantOpen.wrappedValue)
       // Notifications that land while this window is in front.
       .overlay(alignment: .topTrailing) {
         NotificationToasts(notifier: model.notifier) { row in
@@ -34,7 +53,7 @@ struct CalendarScreen: View {
         // The update status is read here, in a view's body, so the toolbar is
         // rebuilt when it changes.
         CalendarToolbar(
-          navigation: navigation, data: data, island: island, typing: island.isTyping,
+          navigation: navigation, data: data, island: island, typing: typing,
           update: AppUpdater.shared.status)
       }
       .background { shortcuts }
@@ -71,6 +90,17 @@ struct CalendarScreen: View {
         WhatsNewSheet(notes: notes) { whatsNew = nil }
       }
       #if DEBUG
+        .overlay {
+          if UserDefaults.standard.bool(forKey: "QaliAvatarGallery") { AvatarGallery() }
+        }
+        // `-QaliAssistantToggle 3` opens or closes the assistant that many
+        // seconds after launch, to watch it slide.
+        .task {
+          let delay = UserDefaults.standard.double(forKey: "QaliAssistantToggle")
+          guard delay > 0 else { return }
+          try? await Task.sleep(for: .seconds(delay))
+          model.assistantOpen.toggle()
+        }
         // `-QaliCycle month,week,day,week` steps through views after launch,
         // so their transitions can be watched without touching the toolbar.
         .task {
@@ -84,6 +114,17 @@ struct CalendarScreen: View {
       #endif
   }
 
+  /// Out beside the calendar, once this deployment has an assistant.
+  private var assistantOpen: Binding<Bool> {
+    Binding(
+      get: { model.assistantOpen && data.assistant.isAvailable },
+      set: { model.assistantOpen = $0 }
+    )
+  }
+
+  /// A field has the keyboard: bare keys are text, not shortcuts.
+  private var typing: Bool { island.isTyping || data.assistant.composerFocused }
+
   /// The web's single-key shortcuts. They have no visible control of their
   /// own (the view switch is one segmented control), so they hang off hidden
   /// buttons.
@@ -96,7 +137,7 @@ struct CalendarScreen: View {
       Button("Next") { navigation.step(1) }.keyboardShortcut(.rightArrow, modifiers: [])
     }
     // Bare keys are text while a panel with a field is up.
-    .disabled(island.isTyping)
+    .disabled(typing)
     .opacity(0)
     .allowsHitTesting(false)
     .accessibilityHidden(true)
@@ -292,3 +333,4 @@ struct ToolbarPillButtonStyle: ButtonStyle {
     #endif
   }
 }
+

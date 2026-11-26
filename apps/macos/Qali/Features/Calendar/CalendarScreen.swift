@@ -29,7 +29,7 @@ struct CalendarScreen: View {
       // assistant dock sits, level with the island.
       .overlay(alignment: .bottomTrailing) {
         if data.assistant.isAvailable {
-          AssistantCornerButton(isOpen: assistantOpen)
+          AssistantCornerButton(isOpen: assistantOpen, unread: data.assistant.unread)
             .padding(.trailing, AssistantPanel.cornerInset)
             .padding(.bottom, AssistantPanel.cornerInset)
         }

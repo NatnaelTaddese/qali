@@ -10,6 +10,7 @@ extension ConvexAPI {
   static let assistantActions = "domains/assistant/data:listPendingActions"
   static let assistantSend = "domains/assistant/loop:sendMessage"
   static let assistantConfirm = "domains/assistant/loop:confirmAction"
+  static let assistantDeleteThread = "domains/assistant/maintenance:deleteThread"
 }
 
 /// A message on its way: drawn at the foot of the conversation the moment
@@ -54,6 +55,17 @@ final class AssistantData {
   /// The composer has the keyboard: the calendar's bare-key shortcuts must
   /// leave the typing alone.
   var composerFocused = false
+  /// The panel is out. While it isn't, a reply that finishes marks the
+  /// conversation unread; opening it clears that.
+  var isPanelOpen = false {
+    didSet { if isPanelOpen, unread { unread = false } }
+  }
+  /// A reply finished while the panel was closed: the corner ghost wears a
+  /// dot, as Messages marks a conversation with something new in it.
+  private(set) var unread = false
+  /// Replies seen while they were still being written, so only one that
+  /// finishes now (not one that loads already finished) counts as new.
+  @ObservationIgnored private var streamingSeen: Set<String> = []
   /// Stored rows drawn under a pending send's key, so the bubble that flew
   /// in keeps its identity once the real row replaces it.
   @ObservationIgnored private(set) var rowKeys: [String: String] = [:]
@@ -190,6 +202,34 @@ final class AssistantData {
     setThread(thread.id)
   }
 
+  /// Deletes the conversation on show, with its messages and any unconfirmed
+  /// proposals, and starts an empty one. Throws with a reason to show.
+  func deleteCurrent() async throws {
+    guard !busy, let id = threadId else { return }
+    #if DEBUG
+      if let fixture {
+        fixture.threads.removeAll { $0.id == id }
+        fixture.messages = []
+        leaveDeleted()
+        return
+      }
+    #endif
+    try await Self.deleteThread(client, id: id)
+    leaveDeleted()
+  }
+
+  /// After a delete: an empty conversation, not the next-latest thread.
+  private func leaveDeleted() {
+    startFresh = true
+    pending = nil
+    previousLatestThreadId = threads?.first?.id
+    setThread(nil)
+  }
+
+  private nonisolated static func deleteThread(_ client: ConvexClient, id: String) async throws {
+    let _: String? = try await client.mutation(ConvexAPI.assistantDeleteThread, with: ["threadId": id])
+  }
+
   /// Starts an empty conversation; the next send creates its thread.
   func newChat() {
     guard !busy, threadId != nil || pending != nil else { return }
@@ -312,6 +352,7 @@ final class AssistantData {
   /// bubble to the user's row, and the typing dots to the reply's row, so
   /// neither re-enters when the subscription catches up.
   func messagesChanged() {
+    noteFinishedReplies()
     guard let pending, let id = acknowledgedPendingId, let messages else { return }
     rowKeys[id] = pending.key
     if let index = messages.firstIndex(where: { $0.id == id }), index + 1 < messages.count,
@@ -320,6 +361,19 @@ final class AssistantData {
       rowKeys[messages[index + 1].id] = pending.key + "-thinking"
     }
     if !sending { self.pending = nil }
+  }
+
+  /// Marks the conversation unread when a reply seen mid-stream has
+  /// finished while the panel is closed.
+  private func noteFinishedReplies() {
+    guard let messages else { return }
+    for message in messages where message.role == .assistant {
+      if message.status == .streaming {
+        streamingSeen.insert(message.id)
+      } else if streamingSeen.remove(message.id) != nil, !isPanelOpen {
+        unread = true
+      }
+    }
   }
 
   private nonisolated static func sendTurn(

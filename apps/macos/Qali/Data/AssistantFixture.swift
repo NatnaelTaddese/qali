@@ -145,6 +145,7 @@
         $0.status = .complete
         $0.suggestions = ["Block the afternoon for focus", "What about next week?"]
       }
+      data.messagesChanged()
     }
 
     func decide(_ id: String, confirm: Bool) async {

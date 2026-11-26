@@ -34,9 +34,11 @@ struct AssistantPanel: View {
 }
 
 /// The assistant's toggle in the window's bottom-right corner: a glass disc
-/// with Qali's ghost, outlined at rest and solid while the panel is out.
+/// with Qali's ghost, outlined at rest and solid while the panel is out, and
+/// a blue dot when a reply finished while it was closed.
 struct AssistantCornerButton: View {
   @Binding var isOpen: Bool
+  var unread = false
 
   var body: some View {
     Button {
@@ -50,7 +52,20 @@ struct AssistantCornerButton: View {
     }
     .buttonStyle(.plain)
     .glassEffect(.regular.interactive(), in: .circle)
-    .accessibilityLabel(isOpen ? "Hide assistant" : "Ask Qali")
+    // Messages' unread dot, sat on the disc's shoulder.
+    .overlay(alignment: .topTrailing) {
+      if unread {
+        Circle()
+          .fill(BubbleColors.sent)
+          .frame(width: 11, height: 11)
+          .overlay { Circle().strokeBorder(Palette.background, lineWidth: 2) }
+          .offset(x: -2, y: 2)
+          .transition(.scale(scale: 0.3).combined(with: .opacity))
+          .allowsHitTesting(false)
+      }
+    }
+    .animation(.spring(duration: 0.3, bounce: 0.3), value: unread)
+    .accessibilityLabel(isOpen ? "Hide assistant" : unread ? "Ask Qali, new reply" : "Ask Qali")
     .help(isOpen ? "Hide the assistant (⌘J)" : "Ask Qali (⌘J)")
   }
 }
@@ -75,6 +90,8 @@ struct AssistantPane: View {
   /// The view is at the foot of the transcript, so a growing reply keeps it
   /// there; false once the user scrolls up to read.
   @State private var following = true
+  /// "Delete Conversation…" was chosen: its confirmation is up.
+  @State private var confirmingDelete = false
 
   private var assistant: AssistantData { data.assistant }
   private var zoneId: String { navigation.zone.identifier }
@@ -95,10 +112,14 @@ struct AssistantPane: View {
     .onExitCommand(perform: close)
     .onAppear {
       assistant.activate()
+      assistant.isPanelOpen = true
       composerFocused = true
     }
     .onChange(of: composerFocused) { _, focused in assistant.composerFocused = focused }
-    .onDisappear { assistant.composerFocused = false }
+    .onDisappear {
+      assistant.composerFocused = false
+      assistant.isPanelOpen = false
+    }
     .task(id: assistant.threadId) {
       liveThread = nil
       // A new conversation has nothing to fly in but what's sent.
@@ -117,6 +138,13 @@ struct AssistantPane: View {
         }
         try? await Task.sleep(for: .seconds(1))
         send(text)
+      }
+      // `-QaliAssistantDelete ask|now` puts up the delete confirmation, or
+      // deletes the conversation on show, a moment after launch.
+      .task {
+        guard let mode = UserDefaults.standard.string(forKey: "QaliAssistantDelete") else { return }
+        try? await Task.sleep(for: .seconds(2))
+        if mode == "now" { try? await assistant.deleteCurrent() } else { confirmingDelete = true }
       }
     #endif
   }
@@ -301,6 +329,9 @@ struct AssistantPane: View {
       } else {
         Text("No conversations yet")
       }
+      Divider()
+      Button("Delete Conversation…", role: .destructive) { confirmingDelete = true }
+        .disabled(assistant.threadId == nil)
     } label: {
       HeaderDisc.icon("clock.arrow.circlepath")
     }
@@ -312,6 +343,22 @@ struct AssistantPane: View {
     .disabled(assistant.busy)
     .accessibilityLabel("Earlier conversations")
     .help("Earlier conversations")
+    // Permanent, so it asks first, as Messages does.
+    .alert("Delete this conversation?", isPresented: $confirmingDelete) {
+      Button("Delete", role: .destructive) {
+        Task {
+          do {
+            try await assistant.deleteCurrent()
+            composerFocused = true
+          } catch {
+            data.announce("Couldn't delete that conversation. \(bookingErrorMessage(error))")
+          }
+        }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("Its messages and any changes waiting for your confirmation are deleted too. This can't be undone.")
+    }
   }
 }
 

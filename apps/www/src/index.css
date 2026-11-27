@@ -26,6 +26,30 @@
   color: transparent;
 }
 
+/* The hero headline's last line as the drum locks on it: the chroma band
+ * passes over it once and leaves the letters in the ordinary text colour,
+ * the colour they already had while the drum spun. */
+.chroma-sweep-once {
+  background-image: linear-gradient(
+    90deg,
+    var(--foreground) 0,
+    var(--foreground) 33.33%,
+    var(--chroma-1) 40%,
+    var(--chroma-2) 45%,
+    var(--chroma-3) 50%,
+    var(--chroma-4) 55%,
+    var(--chroma-5) 60%,
+    var(--foreground) 66.67%,
+    var(--foreground)
+  );
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: chroma-sweep 1.6s ease-in-out forwards;
+}
+
 .chroma-text-animate {
   animation: chroma-sweep 2s ease-in-out 0.5s forwards;
   filter: blur(1px);
@@ -163,7 +187,8 @@
    * `.chroma-stream`. */
   .chroma-text,
   .chroma-text-animate,
-  .chroma-text-reveal {
+  .chroma-text-reveal,
+  .chroma-sweep-once {
     animation: none;
     filter: none;
     background: none;

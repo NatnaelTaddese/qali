@@ -183,6 +183,7 @@ function Hero() {
             final="all of your time."
             delay={0.6}
             preview={false}
+            settledClassName="chroma-sweep-once"
             // Full width, so the drum's window fits the longest phrase, not
             // just "One calendar for"; phones a size down so it fits there.
             className="w-full max-w-3xl font-display text-[2.1rem] font-medium tracking-tight sm:text-6xl"

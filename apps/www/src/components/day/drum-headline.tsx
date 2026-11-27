@@ -7,6 +7,8 @@ import { useState } from "react";
  * the chroma gradient. With `preview`, the next line shows below while it
  * spins, fading out (it needs the room below); without, the lines roll
  * through a single line's window. Reduced motion shows `final` at once.
+ * `settledClassName` styles `final` once it locks (the chroma gradient by
+ * default).
  */
 export function DrumHeadline({
   lead,
@@ -15,6 +17,7 @@ export function DrumHeadline({
   className,
   delay = 0.5,
   preview = true,
+  settledClassName = "concept-link",
 }: {
   lead: string;
   phrases: string[];
@@ -22,6 +25,7 @@ export function DrumHeadline({
   className?: string;
   delay?: number;
   preview?: boolean;
+  settledClassName?: string;
 }) {
   const reduce = useReducedMotion() ?? false;
   const [settled, setSettled] = useState(reduce);
@@ -57,7 +61,7 @@ export function DrumHeadline({
                 className={cn(
                   "block h-[1.15em] whitespace-nowrap",
                   index < lines.length - 1 && "opacity-45",
-                  index === lines.length - 1 && settled && "concept-link",
+                  index === lines.length - 1 && settled && settledClassName,
                 )}
               >
                 {line}

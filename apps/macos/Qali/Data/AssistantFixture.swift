@@ -39,7 +39,14 @@
           id: "a1", tool: "create_event",
           input: #"{"summary":"Lunch with Sam","guestEmails":["sam.rivera@example.com"],"location":"Tartine, 18th St","time":{"kind":"timed","startMs":\#(thursday),"endMs":\#(thursday + hour)}}"#,
           preview: "Create “Lunch with Sam” on Thursday, 12:30–1:30pm, inviting sam.rivera@example.com",
-          operationId: "op1", status: .pending, resultSummary: nil, createdAt: now - 0.2 * hour)
+          operationId: "op1", status: .pending, resultSummary: nil, createdAt: now - 0.2 * hour),
+        // A change already made, on a tinted card (the events fixture's red
+        // "Vendor call"), to check the card's text over an event colour.
+        AssistantAction(
+          id: "a2", tool: "move_event",
+          input: #"{"eventId":"t5","time":{"kind":"timed","startMs":\#(thursday + 4 * hour),"endMs":\#(thursday + 5 * hour)}}"#,
+          preview: "Move “Vendor call” from Mon 2:00 PM–3:00 PM to Thu 4:30 PM–5:30 PM",
+          operationId: nil, status: .applied, resultSummary: "Event rescheduled.", createdAt: now - 0.1 * hour),
       ]
       messages = [
         AssistantMessage(
@@ -73,6 +80,16 @@
             .text("I've drafted a lunch for **12:30–1:30pm** at Tartine. It's waiting for you to confirm."),
           ], status: .complete, suggestions: ["Make it 45 minutes instead", "Add a Google Meet link"],
           createdAt: now - 0.2 * hour + 5000),
+        AssistantMessage(
+          id: "m7", threadId: "t1", role: .user, blocks: [.text("Push the vendor call to Thursday afternoon")],
+          status: .complete, createdAt: now - 0.1 * hour),
+        AssistantMessage(
+          id: "m8", threadId: "t1", role: .assistant,
+          blocks: [
+            .toolCall(id: "c5", name: "move_event"), .toolResult(id: "c5", isError: false),
+            .proposal(toolCallId: "c5", actionId: "a2"),
+            .text("Moved the vendor call to Thursday at 4:30."),
+          ], status: .complete, createdAt: now - 0.1 * hour + 3000),
       ]
       if empty { messages = [] }
     }

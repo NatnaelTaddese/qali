@@ -12,6 +12,12 @@ struct ProposalCard: View {
   let data: CalendarData
   let navigation: CalendarNavigation
 
+  /// The card's secondary text (the kind label, details, status lines). Not
+  /// the theme's muted grey, which sank into the event tint behind it ("RESCHEDULE",
+  /// "Event rescheduled." on a red card): the text colour at reduced strength
+  /// keeps its contrast over any hue, in light and dark.
+  static let secondaryText = Palette.foreground.opacity(0.72)
+
   @State private var busy: Bool?
   @State private var showDetails = false
   @State private var error: String?
@@ -48,7 +54,7 @@ struct ProposalCard: View {
           .font(.sans(10, .semibold))
           .tracking(0.4)
       }
-      .foregroundStyle(Palette.mutedForeground)
+      .foregroundStyle(Self.secondaryText)
       .padding(.bottom, 5)
 
       Text(action.preview)
@@ -101,7 +107,7 @@ struct ProposalCard: View {
             .rotationEffect(.degrees(showDetails ? 90 : 0))
         }
         .font(.sans(TextSize.xs, .medium))
-        .foregroundStyle(Palette.mutedForeground)
+        .foregroundStyle(Self.secondaryText)
         .contentShape(.rect)
       }
       .buttonStyle(.plain)
@@ -110,7 +116,7 @@ struct ProposalCard: View {
           VStack(alignment: .leading, spacing: 1) {
             Text(row.label)
               .font(.sans(TextSize.xs, .medium))
-              .foregroundStyle(Palette.mutedForeground)
+              .foregroundStyle(Self.secondaryText)
             Text(row.value)
               .font(.sans(TextSize.xs))
               .foregroundStyle(Palette.foreground)
@@ -150,13 +156,13 @@ struct ProposalCard: View {
         Text(busy == false ? "Discarding…" : "Making the change…")
       }
       .font(.sans(TextSize.xs))
-      .foregroundStyle(Palette.mutedForeground)
+      .foregroundStyle(Self.secondaryText)
     } else {
       switch action.status {
       case .applied:
-        status(action.resultSummary ?? "Done.", symbol: "checkmark.circle.fill", tint: Palette.mutedForeground)
+        status(action.resultSummary ?? "Done.", symbol: "checkmark.circle.fill", tint: Self.secondaryText)
       case .rejected:
-        status("Discarded.", symbol: "xmark.circle", tint: Palette.mutedForeground)
+        status("Discarded.", symbol: "xmark.circle", tint: Self.secondaryText)
       case .failed:
         status(
           action.resultSummary ?? "That didn't work.", symbol: "exclamationmark.triangle.fill",

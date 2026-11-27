@@ -1038,6 +1038,10 @@ private struct TimedEvents: View {
   }
 
   /// The card's frame inside its day column (the web's `EventCard` geometry).
+  /// Each card's inset from its start and end: back-to-back events get twice
+  /// this between them.
+  static let eventVerticalInset: CGFloat = 1
+
   private static func box(
     for item: PositionedEvent<CalendarEvent>,
     column: CGFloat,
@@ -1063,13 +1067,17 @@ private struct TimedEvents: View {
       x = eventLeftGutter + indent + 2
       width = available - indent - 4
     }
+    // Inset a point top and bottom, as the sides are inset two, so an event
+    // that starts as another ends sits a hairline below it rather than
+    // touching it.
+    let gap = eventVerticalInset
     return CGRect(
       x: x,
-      y: item.topPct / 100 * dayHeight,
+      y: item.topPct / 100 * dayHeight + gap,
       width: max(width, 0),
       // Short events are drawn a little taller than their true length so the
       // title still reads, the trade every calendar makes.
-      height: max(item.heightPct / 100 * dayHeight, 20)
+      height: max(item.heightPct / 100 * dayHeight, 20) - 2 * gap
     )
   }
 
@@ -1105,7 +1113,10 @@ private struct EventCard: View {
   private var railInset: CGFloat { min(4, max(size.height / 2 - 1.5, 0)) }
 
   var body: some View {
-    let height = size.height
+    // Judged on the card's slot (start to end), not the drawn card, which is
+    // inset from it to leave a gap between back-to-back events: a one-hour
+    // event keeps its time line however it's spaced.
+    let height = size.height + 2 * TimedEvents.eventVerticalInset
     let compact = height <= 38
     VStack(alignment: .leading, spacing: 0) {
       Text(event.title)

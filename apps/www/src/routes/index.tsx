@@ -188,8 +188,11 @@ function Hero() {
             // just "One calendar for"; phones a size down so it fits there.
             className="w-full max-w-3xl font-display text-[2.1rem] font-medium tracking-tight sm:text-6xl"
           />
+          {/* Over the sky, not the page: the muted grey washed out against
+              blue and cloud, so it takes the heading's ink a touch lighter
+              with a soft white glow behind the letters. */}
           <p
-            className="hero-reveal-blur max-w-xl text-base text-muted-foreground text-balance sm:text-lg"
+            className="hero-reveal-blur max-w-xl text-base font-medium text-foreground/80 text-balance [text-shadow:0_1px_14px_rgb(255_255_255/0.9),0_0_3px_rgb(255_255_255/0.7)] sm:text-lg"
             style={{ "--hero-delay": "0.7s" } as CSSProperties}
           >
             Every calendar, booking and reminder in a single week, on the web

@@ -221,7 +221,10 @@
 
   /* Calendar event cards adapt to their rendered height: a size-query
    * container lets short events drop the time line and tighten the title so
-   * the name stays visible instead of being clipped. */
+   * the name stays visible instead of being clipped. The card is drawn 2px
+   * shorter than its slot (a 1px inset top and bottom keeps back-to-back
+   * events apart), so each height step below sits 2px under the slot height it
+   * was tuned for: a one-hour event keeps its time line however it's spaced. */
   .event-card {
     container-type: size;
   }
@@ -254,7 +257,9 @@
   .event-card-meta {
     display: none;
   }
-  @container (min-height: 80px) and (min-width: 72px) {
+  /* 77px, not 78: a two-hour card at the grid's 40px-an-hour floor renders
+   * at 77.8px once its 80px slot is rounded, and must still show the row. */
+  @container (min-height: 77px) and (min-width: 72px) {
     .event-card-meta {
       display: flex;
     }
@@ -268,7 +273,7 @@
   /* ...but a second line only earns its place when the card is tall enough for
    * two title lines plus the time line. Below that, collapse to one line so the
    * title never wraps into a clipped second row. */
-  @container (max-height: 52px) {
+  @container (max-height: 50px) {
     .event-card-title {
       -webkit-line-clamp: 1;
     }
@@ -280,7 +285,7 @@
    * a second, smaller step below 22px, but a 15-minute card only has ~10px of its
    * own and is floored to that min-height anyway — shrinking the type further just
    * made it unreadable without buying any room, so one step covers the range. */
-  @container (max-height: 38px) {
+  @container (max-height: 36px) {
     .event-card-time {
       display: none;
     }

@@ -111,15 +111,19 @@ export function EventCard({
         // A 15-minute event is only ~10px tall at the grid's floor of 40px an
         // hour, which cannot hold a legible line. `min-h` draws short events
         // slightly taller than their true duration so the title still reads —
-        // the same trade every calendar makes for sub-hour events.
-        "event-card group absolute min-h-[20px] overflow-hidden rounded-md shadow-sm ring-1 ring-border/60 inset-ring inset-ring-black/10 select-none dark:inset-ring-white/10",
+        // the same trade every calendar makes for sub-hour events. 18px: the
+        // 20px slot floor less the card's 1px top and bottom inset.
+        "event-card group absolute min-h-[18px] overflow-hidden rounded-md shadow-sm ring-1 ring-border/60 inset-ring inset-ring-black/10 select-none dark:inset-ring-white/10",
         draggable ? "cursor-grab" : "cursor-pointer",
         isDragging &&
           "cursor-grabbing touch-none shadow-lg ring-2 ring-primary/60",
       )}
       style={{
-        top: `${topPct}%`,
-        height: `${heightPct}%`,
+        // Inset a pixel top and bottom, as the sides are inset two, so an event
+        // that starts as another ends sits a hairline below it rather than
+        // touching it (the Mac grid does the same).
+        top: `calc(${topPct}% + 1px)`,
+        height: `calc(${heightPct}% - 2px)`,
         left: horizontal.left,
         width: horizontal.width,
         zIndex: isDragging ? 50 : 10 + elevation,

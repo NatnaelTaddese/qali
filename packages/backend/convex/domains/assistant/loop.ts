@@ -132,11 +132,13 @@ Events marked myResponse "declined" are not on the user's schedule: leave them o
 
 ## Making changes
 
-The tools that change things — create_event, update_event, move_event, delete_event, decide_booking_request — do not change anything. They put a proposal in front of the user with a confirm button, and nothing reaches Google or any guest's inbox until the user presses it.
+The tools that change things — create_event, update_event, move_event, delete_event, decide_booking_request — normally do not change anything. They put a proposal in front of the user with a confirm button, and nothing reaches Google or any guest's inbox until the user presses it.
 
-A change exists only once its write tool has returned "awaiting_confirmation" in this turn. When the user asks for a change, looking things up first is fine, but finish by calling the write tool — or by asking the one question you need answered. Never write that you proposed, drafted, scheduled, booked or moved something unless that call has returned; describing a change is not making one.
+The clock line says whether auto mode is on. When it is, a change that only touches the user's own calendar — nobody else invited or notified, nothing deleted, no repeating series — is made the moment you call the tool, and the result says status "applied". Everything else still comes back "awaiting_confirmation", with why_it_waits saying why. You decide when to ask anyway: pass confirmFirst: true when the request is ambiguous, you are guessing at a detail, the change would overlap something already on the calendar, or it is big (several events, a whole day cleared). After an "applied" result, say what you did in the past tense, in one short line ("Moved your 1:1 to Friday at 4."). After "apply_failed", say plainly that it didn't go through and why.
 
-So when a proposal tool returns, say in one short line what it will do and that it's theirs to confirm; the card already shows the details. For example: "Lunch with Sam, Tuesday 12:30 to 1:30. Confirm and I'll send Sam the invite." Never say an event was created, moved, or cancelled — it wasn't yet. Do not call the same proposal tool twice for one request; if the user asks again, the card is already there. If a proposal tool returns an error, tell the user plainly why the change isn't possible instead of trying a different tool to get around it.
+A change exists only once its write tool has returned "awaiting_confirmation" or "applied" in this turn. When the user asks for a change, looking things up first is fine, but finish by calling the write tool — or by asking the one question you need answered. Never write that you proposed, drafted, scheduled, booked or moved something unless that call has returned; describing a change is not making one.
+
+So when a proposal tool returns "awaiting_confirmation", say in one short line what it will do and that it's theirs to confirm; the card already shows the details. For example: "Lunch with Sam, Tuesday 12:30 to 1:30. Confirm and I'll send Sam the invite." Never say an event was created, moved, or cancelled unless its result says "applied". Do not call the same proposal tool twice for one request; if the user asks again, the card is already there. If a proposal tool returns an error, tell the user plainly why the change isn't possible instead of trying a different tool to get around it.
 
 Propose one change per thing the user asked for. If a request is ambiguous in a way that changes what you would propose — which of two meetings they meant, whether "the standup" means this week's or the whole series — ask before proposing rather than guessing.
 
@@ -177,6 +179,7 @@ export function temporalContext(
   nowMs: number,
   timeZone: string,
   weekStartsOn: 0 | 1 | 6 = 1,
+  autoApply = false,
 ): string {
   const local = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -188,7 +191,7 @@ export function temporalContext(
     minute: "2-digit",
   }).format(new Date(nowMs));
   const today = utcToZoned(nowMs, timeZone).dateKey;
-  return `[Right now, where the user is, it is ${local} (${timeZone}). Today's local date is ${today}. ${upcomingDatesLine(today, weekStartsOn)} Resolve "today", "tomorrow" and every other relative date against this line.]`;
+  return `[Right now, where the user is, it is ${local} (${timeZone}). Today's local date is ${today}. ${upcomingDatesLine(today, weekStartsOn)} Resolve "today", "tomorrow" and every other relative date against this line. ${autoApply ? "Auto mode is on." : "Auto mode is off."}]`;
 }
 
 /** What a failed turn shows in the panel. Provider and SDK errors carry
@@ -234,7 +237,7 @@ function outcomeOf(action: Doc<"assistantActions">): string {
     case "applying":
       return "The user confirmed this and it is being carried out now.";
     case "applied":
-      return `The user confirmed this. ${action.resultSummary ?? "Done."}`;
+      return `This was made. ${action.resultSummary ?? "Done."}`;
     case "rejected":
       return "The user declined this. Do not propose it again unless they ask.";
     case "failed":
@@ -358,6 +361,9 @@ export async function runAgentLoop(
     timeZone: string;
     nowMs: number;
   },
+  /** For the evaluation harness only: stands in for carrying a change out,
+   * which needs the calendar provider. Production never passes it. */
+  overrides: { applyNow?: (actionId: Id<"assistantActions">) => Promise<string> } = {},
 ): Promise<FollowUpContext | null> {
   if (run.apiKey === MOCK_API_KEY) {
     return runMockTurn(ctx, run);
@@ -403,15 +409,22 @@ export async function runAgentLoop(
   // promises will be there.
   const last = messages[messages.length - 1];
   if (last?.role === "user" && typeof last.content === "string") {
-    last.content = `${temporalContext(run.nowMs, run.timeZone, preferences?.weekStartsOn ?? 1)}\n\n${last.content}`;
+    last.content = `${temporalContext(run.nowMs, run.timeZone, preferences?.weekStartsOn ?? 1, preferences?.assistantAutoApply === true)}\n\n${last.content}`;
   }
 
+  const autoApply = preferences?.assistantAutoApply === true;
   const toolContext: ToolContext = {
     ctx,
     userId: run.userId,
     threadId: run.threadId,
     timeZone: run.timeZone,
     nowMs: run.nowMs,
+    autoApply,
+    applyNow: overrides.applyNow ?? (async (actionId) => {
+      const summary = await carryOut(ctx, run.userId, actionId);
+      if (summary === null) throw new Error("This change was already being made");
+      return summary;
+    }),
   };
 
   // A turn that parks a proposal ends with a confirm card, so its natural next
@@ -708,10 +721,24 @@ function parseSuggestions(raw: string): string[] {
  * each with the status field the system prompt describes. */
 function envelope(outcome: ToolOutcome): ToolOutcome {
   if (outcome.kind === "proposal") {
-    const content = JSON.stringify({
-      untrusted_data: outcome.content,
-      status: "awaiting_confirmation",
-    });
+    // Auto mode adds what became of it; the summary quotes calendar text, so
+    // it stays inside the data.
+    const content =
+      outcome.applied !== undefined
+        ? JSON.stringify({
+            untrusted_data: { change: outcome.content, result: outcome.applied },
+            status: "applied",
+          })
+        : outcome.applyError !== undefined
+          ? JSON.stringify({
+              untrusted_data: { change: outcome.content, error: outcome.applyError },
+              status: "apply_failed",
+            })
+          : JSON.stringify({
+              untrusted_data: outcome.content,
+              status: "awaiting_confirmation",
+              ...(outcome.held ? { why_it_waits: outcome.held } : {}),
+            });
     return { ...outcome, content };
   }
   if (outcome.isError) {
@@ -796,52 +823,68 @@ export const confirmAction = action({
       return null;
     }
 
-    // Claiming flips `pending` → `applying` inside one transaction. A second
-    // click finds it already claimed and returns null, so the guest list is
-    // never emailed twice.
-    const action = await ctx.runMutation(internal.domains.assistant.data.claimAction, {
-      actionId: args.actionId,
-      userId: user._id,
-    });
-    if (!action) {
-      return null;
-    }
+    await carryOut(ctx, user._id, args.actionId);
+    return null;
+  },
+});
 
-    try {
-      const summary = await applyProposal(ctx, user._id, action);
+/**
+ * Carry out a proposal: the one path from the assistant to the calendar
+ * provider, taken by a confirm click and by auto mode alike. Returns the
+ * result summary, or null when someone else already claimed it; throws when
+ * the change didn't go through (the row says whether it can be retried).
+ */
+async function carryOut(
+  ctx: ActionCtx,
+  userId: string,
+  actionId: Id<"assistantActions">,
+): Promise<string | null> {
+  // Claiming flips `pending` → `applying` inside one transaction. A second
+  // click finds it already claimed and returns null, so the guest list is
+  // never emailed twice.
+  const action = await ctx.runMutation(internal.domains.assistant.data.claimAction, {
+    actionId,
+    userId,
+  });
+  if (!action) {
+    return null;
+  }
+
+  try {
+    const summary = await applyProposal(ctx, userId, action);
+    await ctx.runMutation(internal.domains.assistant.data.settleClaimedAction, {
+      actionId,
+      attemptId: action.attemptId,
+      status: "applied",
+      resultSummary: summary,
+    });
+    return summary;
+  } catch (error) {
+    if (error instanceof ExternalWriteCommittedError) {
+      const summary = `${error.successSummary} The calendar provider accepted it; local sync is catching up.`;
       await ctx.runMutation(internal.domains.assistant.data.settleClaimedAction, {
-        actionId: args.actionId,
+        actionId,
         attemptId: action.attemptId,
         status: "applied",
         resultSummary: summary,
       });
-    } catch (error) {
-      if (error instanceof ExternalWriteCommittedError) {
-        await ctx.runMutation(internal.domains.assistant.data.settleClaimedAction, {
-          actionId: args.actionId,
-          attemptId: action.attemptId,
-          status: "applied",
-          resultSummary: `${error.successSummary} The calendar provider accepted it; local sync is catching up.`,
-        });
-        return null;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      if (isDefinitiveProviderFailure(error)) {
-        await ctx.runMutation(internal.domains.assistant.data.settleClaimedAction, {
-          actionId: args.actionId,
-          attemptId: action.attemptId,
-          status: "failed",
-          resultSummary: message,
-        });
-        throw error;
-      }
-      await ctx.runMutation(internal.domains.assistant.data.retryClaimedAction, {
-        actionId: args.actionId,
+      return summary;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    if (isDefinitiveProviderFailure(error)) {
+      await ctx.runMutation(internal.domains.assistant.data.settleClaimedAction, {
+        actionId,
         attemptId: action.attemptId,
+        status: "failed",
         resultSummary: message,
       });
       throw error;
     }
-    return null;
-  },
-});
+    await ctx.runMutation(internal.domains.assistant.data.retryClaimedAction, {
+      actionId,
+      attemptId: action.attemptId,
+      resultSummary: message,
+    });
+    throw error;
+  }
+}

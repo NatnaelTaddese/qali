@@ -232,6 +232,8 @@ nonisolated struct StoredPreferences: Codable, Hashable, Sendable {
   var defaultCalendarId: String?
   var defaultReminderMinutes: [Double]?
   var defaultAllDayReminderMinutes: [Double]?
+  /// The assistant's auto mode; nil or false = every change waits.
+  var assistantAutoApply: Bool?
 }
 
 /// Stored preferences with every "automatic" field replaced by its default,

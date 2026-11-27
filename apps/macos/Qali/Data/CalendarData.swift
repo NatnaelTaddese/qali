@@ -99,8 +99,13 @@ final class CalendarData {
       guard let self, let stored else { return }
       eventCache.record(preferences: stored)
       ZoneRailPrefs.sync(stored, data: self, live: true)
+      self.assistant.syncAutoMode(stored.assistantAutoApply == true)
     }
-    if let cached = eventCache.preferences { ZoneRailPrefs.sync(cached, data: self, live: false) }
+    if let cached = eventCache.preferences {
+      ZoneRailPrefs.sync(cached, data: self, live: false)
+      assistant.syncAutoMode(cached.assistantAutoApply == true)
+    }
+    assistant.savePreferences = { [weak self] patch in try await self?.updatePreferences(patch) }
     eventsQuery.onChange = { [weak self] in self?.refreshEvents() }
     refreshEvents()
     booking.announce = { [weak self] message in self?.announce(message) }

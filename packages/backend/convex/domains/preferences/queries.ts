@@ -38,6 +38,7 @@ export function preferencesDto(prefs: Doc<"userPreferences"> | null) {
     defaultCalendarId: prefs?.defaultCalendarId,
     defaultReminderMinutes: prefs?.defaultReminderMinutes,
     defaultAllDayReminderMinutes: prefs?.defaultAllDayReminderMinutes,
+    assistantAutoApply: prefs?.assistantAutoApply,
   };
 }
 

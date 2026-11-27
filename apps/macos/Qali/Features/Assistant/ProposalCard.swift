@@ -80,6 +80,13 @@ struct ProposalCard: View {
     .onChange(of: action.status) { old, new in
       if new == .applied, old != .applied { reveal() }
     }
+    // A change auto mode just made arrives already applied, with no
+    // transition to catch: reach for it if it's fresh.
+    .task(id: action.id) {
+      if action.status == .applied, Date.now.timeIntervalSince1970 * 1000 - action.createdAt < 20_000 {
+        reveal()
+      }
+    }
   }
 
   private var details: some View {

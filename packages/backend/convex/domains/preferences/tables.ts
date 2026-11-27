@@ -29,6 +29,10 @@ export const preferenceFields = {
   // Same for all-day events, as minutes before local midnight of the start
   // date (900 = 09:00 the day before). Absent = automatic (900); [] = none.
   defaultAllDayReminderMinutes: v.optional(v.array(v.number())),
+  // The assistant's auto mode: changes that only touch the user's own
+  // calendar (no guests notified, nothing deleted, no repeating series) apply
+  // without a confirm click. Absent or false = every change is a proposal.
+  assistantAutoApply: v.optional(v.boolean()),
 };
 
 /** Table definitions owned by the preferences domain, composed into schema.ts. */

@@ -16,12 +16,12 @@ export const Route = createRootRouteWithContext<RouterAppContext>()({
   head: () => ({
     meta: [
       {
-        title: "qali — the AI-native calendar",
+        title: "qali — one place to plan your time",
       },
       {
         name: "description",
         content:
-          "qali is an AI-native calendar for Google Calendar. Tell it what you need in plain language and it schedules, reschedules, and finds time for you.",
+          "qali brings your Google calendars, booking links, reminders and time zones into one planner, on the web and on your Mac.",
       },
     ],
   }),

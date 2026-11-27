@@ -11,14 +11,15 @@ import type { CSSProperties } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
+import { DrumHeadline } from "@/components/day/drum-headline";
 import { FeatureGrid } from "@/components/features/feature-grid";
 import { useInViewOnce } from "@/components/features/lib";
 import { Mascot } from "@/components/mascot";
 
 const SITE_URL = "https://myqali.com";
-const OG_TITLE = "qali — the AI-native calendar";
+const OG_TITLE = "qali — one place to plan your time";
 const OG_DESCRIPTION =
-  "qali is an AI-native calendar for Google Calendar. Tell it what you need in plain language and it schedules, reschedules, and finds time for you.";
+  "qali brings your Google calendars, booking links, reminders and time zones into one planner, on the web and on your Mac.";
 // Wire an absolute og:image now; drop the 1200×630 card at public/og.png later.
 const OG_IMAGE = `${SITE_URL}/og.png`;
 
@@ -34,7 +35,7 @@ export const Route = createFileRoute("/")({
       { property: "og:image", content: OG_IMAGE },
       {
         property: "og:image:alt",
-        content: "qali — the AI-native calendar for Google Calendar",
+        content: "qali — one place to plan your time, for Google Calendar",
       },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:title", content: OG_TITLE },
@@ -55,6 +56,17 @@ function LandingPage() {
     </main>
   );
 }
+
+/** What the hero's headline spins through before it settles on "all of
+ * your time": everything qali puts on the one calendar. */
+const HERO_PHRASES = [
+  "work.",
+  "home.",
+  "side projects.",
+  "every Google account.",
+  "booking links.",
+  "time zones.",
+];
 
 /** How far the page scrolls while the hero card grows to full size. */
 const HERO_GROW_SCROLL = 360;
@@ -165,15 +177,27 @@ function Hero() {
           >
             Now in beta for Google Calendar
           </span>
-          <h1 className="chroma-text chroma-text-animate max-w-3xl font-display text-[2.35rem] leading-[1.05] font-medium tracking-tight text-balance sm:text-6xl sm:leading-[1.1]">
-            Work and personal, one calendar
-          </h1>
+          <DrumHeadline
+            lead="One calendar for"
+            phrases={HERO_PHRASES}
+            final="all of your time."
+            delay={0.6}
+            preview={false}
+            settledClassName="chroma-sweep-once"
+            // Full width, so the drum's window fits the longest phrase, not
+            // just "One calendar for"; on phones the size follows the screen
+            // (capped at 2.1rem) so "every Google account." fits even at 320.
+            className="w-full max-w-3xl font-display text-[min(2.1rem,8vw)] font-medium tracking-tight sm:text-6xl"
+          />
+          {/* Over the sky, not the page: the muted grey washed out against
+              blue and cloud, so it takes the heading's ink a touch lighter
+              with a soft white glow behind the letters. */}
           <p
-            className="hero-reveal-blur max-w-xl text-base text-muted-foreground text-balance sm:text-lg"
+            className="hero-reveal-blur max-w-xl text-base font-medium text-foreground/80 text-balance [text-shadow:0_1px_14px_rgb(255_255_255/0.9),0_0_3px_rgb(255_255_255/0.7)] sm:text-lg"
             style={{ "--hero-delay": "0.7s" } as CSSProperties}
           >
-            Every Google account in a single week, with an assistant that
-            asks before it acts.
+            Every calendar, booking and reminder in a single week, on the web
+            and on your Mac.
           </p>
           <div
             className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"

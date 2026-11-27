@@ -16,8 +16,9 @@ import { useVisible } from "./use-loop";
  * of copy pinned to the bottom. Scenes only run while their cell is on screen
  * and motion is allowed; otherwise each rests on its richest frame.
  *
- * The grid is ten columns wide on `lg` (6+4 / 10 / 4+6), two on `sm`, one on
- * phones. Placement is explicit so DOM order (which is also the mobile order)
+ * The grid is ten columns wide on `lg` (4+6 / 10 / 6+4); on `sm` every cell
+ * spans both columns, so planning leads in the same order with no half-empty
+ * rows; one column on phones. Placement is explicit so DOM order (which is also the mobile order)
  * can differ from where a cell lands on the wide layout.
  */
 export function FeatureGrid() {
@@ -36,11 +37,11 @@ export function FeatureGrid() {
             title.inView && "chroma-text-reveal",
           )}
         >
-          Everything a calendar should do
+          Everything your week needs
         </h2>
         <p className="max-w-lg text-lg text-muted-foreground text-balance">
-          Ask for changes in plain words, share one link to get booked, and
-          keep every account in one place.
+          Every account in one week, one link to get booked, and help planning
+          it when you want it.
         </p>
       </div>
 
@@ -49,32 +50,19 @@ export function FeatureGrid() {
           the lines take the foreground at a higher alpha instead. */}
       <div className="mx-auto mt-12 grid max-w-6xl grid-cols-1 gap-px overflow-hidden rounded-3xl bg-foreground/15 ring-1 ring-foreground/15 sm:grid-cols-2 lg:grid-cols-10">
         <FeatureCell
-          title="Just tell it what you need"
-          blurb="Qali reads your whole week and makes the change for you."
-          interactive
-          className="sm:col-span-2 lg:col-span-6 lg:col-start-1 lg:row-start-1"
-        >
-          {(playing, still) => (
-            <AssistantScene playing={playing} still={still} />
-          )}
-        </FeatureCell>
-
-        <FeatureCell
-          title="Nothing changes without a yes"
-          blurb="Every edit arrives as a proposal you confirm before it touches Google Calendar."
-          className="lg:col-span-4 lg:col-start-7 lg:row-start-1"
-        >
-          {(playing) => <ProposalScene playing={playing} />}
-        </FeatureCell>
-
-        <FeatureCell
-          title="Link as many accounts as you need"
-          blurb="Link work and personal accounts and see them side by side."
-          className="lg:col-span-4 lg:col-start-1 lg:row-start-3"
+          title="Every account, one week"
+          blurb="Work and personal calendars from any number of Google accounts, side by side."
+          className="sm:col-span-2 lg:col-span-4 lg:col-start-1 lg:row-start-1"
         >
           {(playing) => <AccountsScene playing={playing} />}
         </FeatureCell>
-
+        <FeatureCell
+          title="Share a link, get booked"
+          blurb="Guests pick a slot in their own time zone and the request lands in your inbox."
+          className="sm:col-span-2 lg:col-span-6 lg:col-start-5 lg:row-start-1"
+        >
+          {(playing) => <BookingScene playing={playing} />}
+        </FeatureCell>
         <FeatureCell
           title="Paint when you're free"
           blurb="Draw availability straight onto the grid for the days that need it."
@@ -82,13 +70,22 @@ export function FeatureGrid() {
         >
           {(playing) => <PaintScene playing={playing} />}
         </FeatureCell>
-
         <FeatureCell
-          title="Share a link, get booked"
-          blurb="Guests pick a slot in their own time zone and the request lands in your inbox."
-          className="sm:col-span-2 lg:col-span-6 lg:col-start-5 lg:row-start-3"
+          title="Plan it in plain words"
+          blurb="Ask Qali to find time or move things around across your whole week."
+          interactive
+          className="sm:col-span-2 lg:col-span-6 lg:col-start-1 lg:row-start-3"
         >
-          {(playing) => <BookingScene playing={playing} />}
+          {(playing, still) => (
+            <AssistantScene playing={playing} still={still} />
+          )}
+        </FeatureCell>
+        <FeatureCell
+          title="Nothing changes without a yes"
+          blurb="Every edit arrives as a proposal you confirm before it touches Google Calendar."
+          className="sm:col-span-2 lg:col-span-4 lg:col-start-7 lg:row-start-3"
+        >
+          {(playing) => <ProposalScene playing={playing} />}
         </FeatureCell>
       </div>
     </section>

@@ -23,9 +23,9 @@ function PrivacyPage() {
   return (
     <LegalPage title="Privacy Policy" updated="November 23, 2026">
       <p>
-        qali (&ldquo;qali,&rdquo; &ldquo;we,&rdquo; &ldquo;us&rdquo;) is an
-        AI-native calendar for Google Calendar, available on the web and as a
-        Mac app. This policy explains what Google user data and other
+        qali (&ldquo;qali,&rdquo; &ldquo;we,&rdquo; &ldquo;us&rdquo;) is a
+        scheduling and planning app for Google Calendar, available on the web
+        and as a Mac app. This policy explains what Google user data and other
         information qali accesses, how we use it, who we share it with, how we
         protect it, how long we keep it, and how you can have it deleted. We
         designed qali to hold as little as it needs to run the calendar you

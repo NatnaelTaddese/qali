@@ -16,9 +16,9 @@ import { useInViewOnce } from "@/components/features/lib";
 import { Mascot } from "@/components/mascot";
 
 const SITE_URL = "https://myqali.com";
-const OG_TITLE = "qali — the AI-native calendar";
+const OG_TITLE = "qali — one place to plan your time";
 const OG_DESCRIPTION =
-  "qali is an AI-native calendar for Google Calendar. Tell it what you need in plain language and it schedules, reschedules, and finds time for you.";
+  "qali brings your Google calendars, booking links, reminders and time zones into one planner, on the web and on your Mac.";
 // Wire an absolute og:image now; drop the 1200×630 card at public/og.png later.
 const OG_IMAGE = `${SITE_URL}/og.png`;
 
@@ -34,7 +34,7 @@ export const Route = createFileRoute("/")({
       { property: "og:image", content: OG_IMAGE },
       {
         property: "og:image:alt",
-        content: "qali — the AI-native calendar for Google Calendar",
+        content: "qali — one place to plan your time, for Google Calendar",
       },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:title", content: OG_TITLE },
@@ -166,14 +166,14 @@ function Hero() {
             Now in beta for Google Calendar
           </span>
           <h1 className="chroma-text chroma-text-animate max-w-3xl font-display text-[2.35rem] leading-[1.05] font-medium tracking-tight text-balance sm:text-6xl sm:leading-[1.1]">
-            Work and personal, one calendar
+            One place to plan your time
           </h1>
           <p
             className="hero-reveal-blur max-w-xl text-base text-muted-foreground text-balance sm:text-lg"
             style={{ "--hero-delay": "0.7s" } as CSSProperties}
           >
-            Every Google account in a single week, with an assistant that
-            asks before it acts.
+            Every calendar, booking and reminder in a single week, on the web
+            and on your Mac.
           </p>
           <div
             className="hero-reveal-blur flex flex-wrap items-center justify-center gap-3"

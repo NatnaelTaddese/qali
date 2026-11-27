@@ -97,6 +97,7 @@ nonisolated struct PreferencesPatch: Sendable {
   var defaultCalendarId: String?
   var defaultReminderMinutes: [Double]?
   var defaultAllDayReminderMinutes: [Double]?
+  var assistantAutoApply: Bool?
   var reset: [Field] = []
 
   var args: [String: ConvexEncodable?] {
@@ -113,6 +114,7 @@ nonisolated struct PreferencesPatch: Sendable {
     if let defaultAllDayReminderMinutes {
       args["defaultAllDayReminderMinutes"] = defaultAllDayReminderMinutes.map { $0 as ConvexEncodable? }
     }
+    if let assistantAutoApply { args["assistantAutoApply"] = assistantAutoApply }
     if !reset.isEmpty { args["reset"] = reset.map { $0.rawValue as ConvexEncodable? } }
     return args
   }

@@ -322,6 +322,13 @@ struct AssistantPane: View {
         VStack(spacing: 3) {
           AssistantAvatar(size: Self.headerAvatar)
           HStack(spacing: 2) {
+            // Auto mode at a glance: Qali may act without asking.
+            if assistant.autoMode {
+              Image(systemName: "bolt.fill")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(BubbleColors.sent)
+                .help("Auto mode is on")
+            }
             Text("Qali")
               .font(.sans(TextSize.xs, .medium))
               .foregroundStyle(Palette.foreground)
@@ -922,7 +929,11 @@ private struct EmptyConversation: View {
         Text("Qali")
           .font(.display(TextSize.xl2))
           .foregroundStyle(Palette.foreground)
-        Text("Ask about your calendar. Qali checks with you before it changes anything.")
+        Text(
+          assistant.autoMode
+            ? "Ask about your calendar. Qali makes small changes itself and checks with you before anything bigger."
+            : "Ask about your calendar. Qali checks with you before it changes anything."
+        )
           .font(.sans(TextSize.xs))
           .foregroundStyle(Palette.mutedForeground)
           .multilineTextAlignment(.center)

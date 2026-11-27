@@ -8,6 +8,18 @@ struct AssistantContactCard: View {
   let assistant: AssistantData
   let newConversation: () -> Void
   let deleteConversation: () -> Void
+  @State private var saveError: String?
+
+  private func setAutoMode(_ on: Bool) {
+    saveError = nil
+    Task {
+      do {
+        try await assistant.setAutoMode(on)
+      } catch {
+        saveError = "Couldn't save that. \(bookingErrorMessage(error))"
+      }
+    }
+  }
 
   var body: some View {
     VStack(spacing: 14) {
@@ -33,11 +45,28 @@ struct AssistantContactCard: View {
       }
 
       VStack(alignment: .leading, spacing: 0) {
-        CardRow(symbol: "checkmark.shield") {
-          Text("Asks before it changes anything")
-            .foregroundStyle(Palette.foreground)
-          Text("Nothing reaches your calendar or anyone's inbox until you confirm.")
-            .foregroundStyle(Palette.mutedForeground)
+        CardRow(symbol: assistant.autoMode ? "bolt.fill" : "checkmark.shield") {
+          HStack(alignment: .firstTextBaseline) {
+            Text("Auto mode")
+              .foregroundStyle(Palette.foreground)
+            Spacer(minLength: 8)
+            Toggle(
+              "Auto mode",
+              isOn: Binding(get: { assistant.autoMode }, set: { on in setAutoMode(on) })
+            )
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .labelsHidden()
+          }
+          Text(
+            assistant.autoMode
+              ? "Qali makes changes to your own calendar itself. Anything that invites or notifies people, deletes, or repeats still waits for you."
+              : "Qali asks before it changes anything. Nothing reaches your calendar or anyone's inbox until you confirm."
+          )
+          .foregroundStyle(Palette.mutedForeground)
+          if let saveError {
+            Text(saveError).foregroundStyle(Palette.destructive)
+          }
         }
         if let quota = assistant.quota {
           Divider().padding(.leading, 30)

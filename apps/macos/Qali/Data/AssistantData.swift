@@ -55,6 +55,15 @@ final class AssistantData {
   /// The composer has the keyboard: the calendar's bare-key shortcuts must
   /// leave the typing alone.
   var composerFocused = false
+  /// Auto mode: Qali makes changes to the user's own calendar without a
+  /// confirm click (the backend decides which ones may). Follows the stored
+  /// preference, and moves at once when switched here.
+  private(set) var autoMode = false
+  /// A switch the server hasn't echoed back yet, so a stale result doesn't
+  /// flip the toggle back mid-save.
+  @ObservationIgnored private var autoModeSaving = false
+  /// Writes a preferences patch; set by CalendarData.
+  @ObservationIgnored var savePreferences: ((PreferencesPatch) async throws -> Void)?
   /// The panel is out. While it isn't, a reply that finishes marks the
   /// conversation unread; opening it clears that.
   var isPanelOpen = false {
@@ -91,6 +100,8 @@ final class AssistantData {
     #if DEBUG
       if let fixture {
         if fixture.startsEmpty { startFresh = true } else { threadId = fixture.threads.first?.id }
+        // `-QaliAssistantAuto YES` starts the fixture in auto mode.
+        autoMode = UserDefaults.standard.bool(forKey: "QaliAssistantAuto")
         return
       }
     #endif
@@ -200,6 +211,33 @@ final class AssistantData {
     startFresh = false
     pending = nil
     setThread(thread.id)
+  }
+
+  /// The stored preference, as it arrives.
+  func syncAutoMode(_ on: Bool) {
+    #if DEBUG
+      if fixture != nil { return }
+    #endif
+    guard !autoModeSaving, autoMode != on else { return }
+    autoMode = on
+  }
+
+  /// Switches auto mode, optimistically; throws (and switches back) when it
+  /// couldn't be saved.
+  func setAutoMode(_ on: Bool) async throws {
+    guard on != autoMode else { return }
+    autoMode = on
+    #if DEBUG
+      if fixture != nil { return }
+    #endif
+    autoModeSaving = true
+    defer { autoModeSaving = false }
+    do {
+      try await savePreferences?(PreferencesPatch(assistantAutoApply: on))
+    } catch {
+      autoMode = !on
+      throw error
+    }
   }
 
   /// Deletes the conversation on show, with its messages and any unconfirmed

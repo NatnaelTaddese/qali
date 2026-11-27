@@ -15,8 +15,9 @@ struct ProposalCard: View {
   /// The card's secondary text (the kind label, details, status lines). Not
   /// the theme's muted grey, which sank into the event tint behind it ("RESCHEDULE",
   /// "Event rescheduled." on a red card): the text colour at reduced strength
-  /// keeps its contrast over any hue, in light and dark.
-  static let secondaryText = Palette.foreground.opacity(0.72)
+  /// keeps its contrast over any hue, in light and dark. 60%: 72% read as
+  /// loud as the sentence it sits under.
+  static let secondaryText = Palette.foreground.opacity(0.6)
 
   @State private var busy: Bool?
   @State private var showDetails = false

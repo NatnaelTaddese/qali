@@ -414,3 +414,18 @@
 .legal-prose ul li::marker {
   color: color-mix(in oklab, var(--muted-foreground) 60%, transparent);
 }
+
+/* The concept page's links: the chroma colours as a gradient on the text,
+ * the hero sweep's palette at rest. */
+.concept-link {
+  background-image: linear-gradient(
+    90deg,
+    var(--chroma-1),
+    var(--chroma-2) 35%,
+    var(--chroma-3) 60%,
+    var(--chroma-5)
+  );
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}

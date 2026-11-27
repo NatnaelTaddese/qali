@@ -11,6 +11,7 @@ import type { CSSProperties } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
+import { DrumHeadline } from "@/components/day/drum-headline";
 import { FeatureGrid } from "@/components/features/feature-grid";
 import { useInViewOnce } from "@/components/features/lib";
 import { Mascot } from "@/components/mascot";
@@ -55,6 +56,17 @@ function LandingPage() {
     </main>
   );
 }
+
+/** What the hero's headline spins through before it settles on "all of
+ * your time": everything qali puts on the one calendar. */
+const HERO_PHRASES = [
+  "work.",
+  "home.",
+  "side projects.",
+  "every Google account.",
+  "booking links.",
+  "time zones.",
+];
 
 /** How far the page scrolls while the hero card grows to full size. */
 const HERO_GROW_SCROLL = 360;
@@ -165,9 +177,16 @@ function Hero() {
           >
             Now in beta for Google Calendar
           </span>
-          <h1 className="chroma-text chroma-text-animate max-w-3xl font-display text-[2.35rem] leading-[1.05] font-medium tracking-tight text-balance sm:text-6xl sm:leading-[1.1]">
-            One place to plan your time
-          </h1>
+          <DrumHeadline
+            lead="One calendar for"
+            phrases={HERO_PHRASES}
+            final="all of your time."
+            delay={0.6}
+            preview={false}
+            // Full width, so the drum's window fits the longest phrase, not
+            // just "One calendar for"; phones a size down so it fits there.
+            className="w-full max-w-3xl font-display text-[2.1rem] font-medium tracking-tight sm:text-6xl"
+          />
           <p
             className="hero-reveal-blur max-w-xl text-base text-muted-foreground text-balance sm:text-lg"
             style={{ "--hero-delay": "0.7s" } as CSSProperties}

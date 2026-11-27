@@ -30,6 +30,23 @@ describe("user preferences", () => {
     expect(rows[0]).toMatchObject({ weekStartsOn: 1, timeFormat: "24h" });
   });
 
+  test("stores the assistant's auto mode and resets it to off", async () => {
+    const t = convexTest(schema, modules);
+    const userId = "user_auto";
+    const row = () =>
+      t.run((ctx) =>
+        ctx.db
+          .query("userPreferences")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .unique(),
+      );
+
+    await t.run((ctx) => updatePreferencesCore(ctx, userId, { assistantAutoApply: true }));
+    expect((await row())?.assistantAutoApply).toBe(true);
+    await t.run((ctx) => updatePreferencesCore(ctx, userId, { reset: ["assistantAutoApply"] }));
+    expect((await row())?.assistantAutoApply).toBeUndefined();
+  });
+
   test("reset removes the field, and wins over a set in the same call", async () => {
     const t = convexTest(schema, modules);
     const userId = "user_reset";

@@ -59,13 +59,28 @@ export interface ToolContext {
   /** The browser's IANA zone for this turn. Never inferred from the runtime. */
   timeZone: string;
   nowMs: number;
+  /** Auto mode is on: a change the floor allows is carried out at once. */
+  autoApply?: boolean;
+  /** Carries out a recorded proposal through the confirm path, returning
+   * its result summary; throws when it couldn't be made. */
+  applyNow?(actionId: Id<"assistantActions">): Promise<string>;
 }
 
 /** What a tool hands back to the loop. A `proposal` also produces a confirm
  * card, which is why it carries the row id alongside the model-facing text. */
 export type ToolOutcome =
   | { kind: "result"; content: string; isError?: boolean }
-  | { kind: "proposal"; content: string; actionId: Id<"assistantActions"> };
+  | {
+      kind: "proposal";
+      content: string;
+      actionId: Id<"assistantActions">;
+      /** Auto mode carried it out; the result summary. */
+      applied?: string;
+      /** Auto mode tried and the change didn't go through. */
+      applyError?: string;
+      /** Why it waits for the user despite auto mode. */
+      held?: string;
+    };
 
 export interface AssistantTool {
   name: string;
@@ -172,6 +187,13 @@ function writeTool<S extends z.ZodType, M extends z.ZodType = S>(spec: {
     tc: ToolContext,
     args: z.infer<S>,
   ): Promise<Record<string, unknown>> | Record<string, unknown>;
+  /**
+   * Auto mode's floor for this change: null when it may be carried out
+   * without a click, else why it must wait for the user. Tools without one
+   * (delete_event, decide_booking_request) always wait. The model can ask
+   * for confirmation on top of this (confirmFirst), never get around it.
+   */
+  autoBlocker?(tc: ToolContext, args: z.infer<S>): Promise<string | null> | string | null;
 }): AssistantTool {
   return {
     name: spec.name,
@@ -240,8 +262,36 @@ function writeTool<S extends z.ZodType, M extends z.ZodType = S>(spec: {
 
       // The preview quotes calendar and booking text, so it travels as data;
       // the envelope's status field and the system prompt carry the "not yet
-      // confirmed" meaning.
-      return { kind: "proposal", actionId, content: preview };
+      // confirmed" (or "applied") meaning.
+      if (!tc.autoApply || !tc.applyNow) {
+        return { kind: "proposal", actionId, content: preview };
+      }
+      if (!spec.autoBlocker) {
+        return { kind: "proposal", actionId, content: preview, held: "this kind of change always needs the user's confirmation" };
+      }
+      if ((fromModel.data as { confirmFirst?: unknown }).confirmFirst === true) {
+        return { kind: "proposal", actionId, content: preview, held: "you asked for confirmation" };
+      }
+      let blocker: string | null;
+      try {
+        blocker = await spec.autoBlocker(tc, parsed.data);
+      } catch (error) {
+        blocker = error instanceof Error ? error.message : String(error);
+      }
+      if (blocker !== null) {
+        return { kind: "proposal", actionId, content: preview, held: blocker };
+      }
+      try {
+        const applied = await tc.applyNow(actionId);
+        return { kind: "proposal", actionId, content: preview, applied };
+      } catch (error) {
+        return {
+          kind: "proposal",
+          actionId,
+          content: preview,
+          applyError: error instanceof Error ? error.message : String(error),
+        };
+      }
     },
   };
 }
@@ -796,8 +846,37 @@ const createEventSchema = z.object({
   repeat: repeatSchema.optional(),
 });
 
+/** The model's way to ask anyway in auto mode. Never stored. */
+const confirmFirstField = z
+  .boolean()
+  .optional()
+  .describe(
+    "Only matters in auto mode: true to have the user confirm this change " +
+      "even though it could be made straight away — when the request is " +
+      "ambiguous, you are guessing at a detail, it overlaps something already " +
+      "on the calendar, or the change is large.",
+  );
+
+/** Auto mode's floor for a change to an existing event: only the user's own,
+ * with nobody else on it to notify. */
+async function existingEventBlocker(
+  tc: ToolContext,
+  eventId: string,
+): Promise<string | null> {
+  const { row } = await resolveEventForWrite(tc.ctx, tc.userId, eventId as Id<"events">, ["canEdit"]);
+  const others = (row.attendees ?? []).filter((a) => !a.self);
+  if (others.length > 0) {
+    return `it would notify ${others.length} guest${others.length === 1 ? "" : "s"}`;
+  }
+  if (row.organizer && row.organizer.self === false) {
+    return "someone else organizes this event";
+  }
+  return null;
+}
+
 const createEventModelSchema = createEventSchema.extend({
   time: modelEventRangeSchema.describe(MODEL_TIME_DESCRIPTION),
+  confirmFirst: confirmFirstField,
 });
 
 const createEvent = writeTool({
@@ -809,6 +888,12 @@ const createEvent = writeTool({
   schema: createEventSchema,
   modelSchema: createEventModelSchema,
   normalize: (tc, args) => ({ ...args, time: toStoredRange(args.time, tc.timeZone) }),
+  autoBlocker: (_tc, args) =>
+    args.guestEmails?.length
+      ? "it invites guests"
+      : args.repeat !== undefined
+        ? "it creates a repeating series"
+        : null,
   preview(tc, args) {
     const parts = [`at ${formatAssistantRange(args.time, tc.timeZone)}`];
     if (args.description !== undefined) {
@@ -877,6 +962,7 @@ async function requireEditable(tc: ToolContext, eventId: string): Promise<Doc<"e
 
 const updateEventModelSchema = updateEventSchema.extend({
   time: modelEventRangeSchema.optional().describe(`Replacement time. ${MODEL_TIME_DESCRIPTION}`),
+  confirmFirst: confirmFirstField,
 });
 
 const updateEvent = writeTool({
@@ -890,6 +976,12 @@ const updateEvent = writeTool({
   modelSchema: updateEventModelSchema,
   normalize: (tc, args) =>
     args.time === undefined ? args : { ...args, time: toStoredRange(args.time, tc.timeZone) },
+  autoBlocker: (tc, args) => {
+    if (args.guestEmails !== undefined) return "it changes the guest list";
+    if (args.repeat !== undefined) return "it turns the event into a repeating series";
+    if (args.scope !== undefined && args.scope !== "thisEvent") return "it changes more than one occurrence";
+    return existingEventBlocker(tc, args.eventId);
+  },
   async preview(tc, args) {
     const { row, capabilities } = await resolveEventForWrite(
       tc.ctx,
@@ -982,6 +1074,7 @@ const moveEventSchema = z.object({
 
 const moveEventModelSchema = moveEventSchema.extend({
   time: modelEventRangeSchema.describe(`New time. ${MODEL_TIME_DESCRIPTION}`),
+  confirmFirst: confirmFirstField,
 });
 
 const moveEvent = writeTool({
@@ -993,6 +1086,7 @@ const moveEvent = writeTool({
   schema: moveEventSchema,
   modelSchema: moveEventModelSchema,
   normalize: (tc, args) => ({ ...args, time: toStoredRange(args.time, tc.timeZone) }),
+  autoBlocker: (tc, args) => existingEventBlocker(tc, args.eventId),
   async preview(tc, args) {
     const row = await requireEditable(tc, args.eventId);
     return (

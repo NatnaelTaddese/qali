@@ -19,6 +19,7 @@ const resettableField = v.union(
   v.literal("defaultCalendarId"),
   v.literal("defaultReminderMinutes"),
   v.literal("defaultAllDayReminderMinutes"),
+  v.literal("assistantAutoApply"),
 );
 
 const updateArgs = v.object({

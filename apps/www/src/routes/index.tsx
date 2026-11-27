@@ -185,8 +185,9 @@ function Hero() {
             preview={false}
             settledClassName="chroma-sweep-once"
             // Full width, so the drum's window fits the longest phrase, not
-            // just "One calendar for"; phones a size down so it fits there.
-            className="w-full max-w-3xl font-display text-[2.1rem] font-medium tracking-tight sm:text-6xl"
+            // just "One calendar for"; on phones the size follows the screen
+            // (capped at 2.1rem) so "every Google account." fits even at 320.
+            className="w-full max-w-3xl font-display text-[min(2.1rem,8vw)] font-medium tracking-tight sm:text-6xl"
           />
           {/* Over the sky, not the page: the muted grey washed out against
               blue and cloud, so it takes the heading's ink a touch lighter

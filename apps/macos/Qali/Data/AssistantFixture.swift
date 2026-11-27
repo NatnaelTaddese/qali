@@ -86,7 +86,7 @@
         AssistantMessage(
           id: "m8", threadId: "t1", role: .assistant,
           blocks: [
-            .toolCall(id: "c5", name: "move_event"), .toolResult(id: "c5", isError: false),
+            .toolCall(id: "c5", name: "move_event"), .toolResult(id: "c5", isError: false, status: "applied"),
             .proposal(toolCallId: "c5", actionId: "a2"),
             .text("Moved the vendor call to Thursday at 4:30."),
           ], status: .complete, createdAt: now - 0.1 * hour + 3000),

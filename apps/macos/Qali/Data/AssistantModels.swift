@@ -21,7 +21,9 @@ nonisolated struct AssistantThread: Decodable, Equatable, Identifiable, Sendable
 nonisolated enum AssistantBlock: Decodable, Equatable, Sendable {
   case text(String)
   case toolCall(id: String, name: String)
-  case toolResult(id: String, isError: Bool)
+  /// `status` is the server's word on a write: "applied" when auto mode
+  /// made the change, "apply_failed" when it didn't go through, else nil.
+  case toolResult(id: String, isError: Bool, status: String? = nil)
   case proposal(toolCallId: String, actionId: String)
   /// A block type this build doesn't know; skipped when drawing.
   case unknown
@@ -36,7 +38,18 @@ nonisolated enum AssistantBlock: Decodable, Equatable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case type, text, toolCallId, name, isError, actionId
+    case type, text, toolCallId, name, isError, actionId, content
+  }
+
+  /// The top-level `status` the loop's envelope puts on a write tool's
+  /// result. Only the top level: anything the calendar said sits nested
+  /// under `untrusted_data`, so an event title can't pose as a status.
+  private static func resultStatus(_ content: String?) -> String? {
+    guard let content, content.hasPrefix("{"), content.contains("\"status\""),
+      let data = content.data(using: .utf8),
+      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return nil }
+    return object["status"] as? String
   }
 
   init(from decoder: Decoder) throws {
@@ -51,7 +64,8 @@ nonisolated enum AssistantBlock: Decodable, Equatable, Sendable {
     case "tool_result":
       self = .toolResult(
         id: try c.decode(String.self, forKey: .toolCallId),
-        isError: try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false)
+        isError: try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false,
+        status: Self.resultStatus(try c.decodeIfPresent(String.self, forKey: .content)))
     case "proposal":
       self = .proposal(
         toolCallId: try c.decode(String.self, forKey: .toolCallId),

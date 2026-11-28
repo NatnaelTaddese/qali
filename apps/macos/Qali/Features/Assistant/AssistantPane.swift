@@ -645,7 +645,10 @@ private struct SentMessage: View {
 private struct ToolStep {
   let symbol: String
   let running: String
-  let done: String
+  var done: String
+  /// A write auto mode carried out, and one it couldn't.
+  var applied: String?
+  var applyFailed: String?
 
   static func of(_ name: String) -> ToolStep {
     table[name] ?? ToolStep(symbol: "sparkle", running: "Working", done: "Worked")
@@ -658,9 +661,15 @@ private struct ToolStep {
     "get_availability_settings": .init(
       symbol: "slider.horizontal.3", running: "Reading booking settings", done: "Read booking settings"),
     "list_pending_booking_requests": .init(symbol: "tray", running: "Checking requests", done: "Checked requests"),
-    "create_event": .init(symbol: "calendar.badge.plus", running: "Drafting event", done: "Drafted event"),
-    "update_event": .init(symbol: "pencil", running: "Drafting change", done: "Drafted change"),
-    "move_event": .init(symbol: "arrow.forward", running: "Drafting reschedule", done: "Drafted reschedule"),
+    "create_event": .init(
+      symbol: "calendar.badge.plus", running: "Drafting event", done: "Drafted event",
+      applied: "Added event", applyFailed: "Couldn't add event"),
+    "update_event": .init(
+      symbol: "pencil", running: "Drafting change", done: "Drafted change",
+      applied: "Updated event", applyFailed: "Couldn't update event"),
+    "move_event": .init(
+      symbol: "arrow.forward", running: "Drafting reschedule", done: "Drafted reschedule",
+      applied: "Rescheduled", applyFailed: "Couldn't reschedule"),
     "delete_event": .init(symbol: "calendar.badge.minus", running: "Drafting cancellation", done: "Drafted cancellation"),
     "decide_booking_request": .init(symbol: "envelope", running: "Drafting reply", done: "Drafted reply"),
   ]
@@ -812,9 +821,9 @@ private struct AssistantTurn: View {
     return lastShown.map { lastTool > $0 } ?? true
   }
 
-  private var results: [String: Bool] {
-    var out: [String: Bool] = [:]
-    for case .toolResult(let id, let isError) in message.blocks { out[id] = isError }
+  private var results: [String: (failed: Bool, status: String?)] {
+    var out: [String: (failed: Bool, status: String?)] = [:]
+    for case .toolResult(let id, let isError, let status) in message.blocks { out[id] = (isError, status) }
     return out
   }
 
@@ -835,19 +844,31 @@ private struct AssistantTurn: View {
     let streaming = message.status == .streaming
     var out: [(step: ToolStep, state: StepChip.State, count: Int, name: String)] = []
     for case .toolCall(let id, let name) in message.blocks {
+      var step = ToolStep.of(name)
       let state: StepChip.State
-      if let failed = results[id] {
-        state = failed ? .failed : .done
+      if let result = results[id] {
+        // A write auto mode made (or couldn't) is told apart from a draft.
+        if result.status == "applied", let label = step.applied {
+          step.done = label
+          state = .done
+        } else if result.status == "apply_failed", let label = step.applyFailed {
+          step.done = label
+          state = .failed
+        } else {
+          state = result.failed ? .failed : .done
+        }
       } else if streaming {
         state = .running
       } else {
         continue
       }
-      if let last = out.last, last.name == name, last.state == state || last.state == .done && state == .running {
+      // Repeats of the same step (same label) count up rather than repeat.
+      let key = "\(name):\(step.done)"
+      if let last = out.last, last.name == key, last.state == state || last.state == .done && state == .running {
         out[out.count - 1].count += 1
         out[out.count - 1].state = state
       } else {
-        out.append((ToolStep.of(name), state, 1, name))
+        out.append((step, state, 1, key))
       }
     }
     return out.map { ($0.step, $0.state, $0.count) }
